@@ -905,6 +905,235 @@ fn variable_fillet_mid_radii_round_trip() {
     assert_eq!(p["params"]["mid"], json!([]), "{p}");
 }
 
+/// Use an actual mesh point, as a viewport pick does; analytic cylinder points need not lie
+/// on the display mesh's facets.
+fn thread_face(app: &SolveApp, body: &str) -> Sel {
+    let state = app.session.world_state();
+    let body_state = state.body(body).unwrap();
+    let index = solidcraft_engine::doc::naming::face_spots(body_state)
+        .into_iter()
+        .enumerate()
+        .find_map(|(index, spot)| {
+            spot.filter(|spot| matches!(spot.surface, Some(solidcraft_engine::kernel::FaceSurface::Cylinder { .. }))).map(|_| index)
+        })
+        .unwrap();
+    let mesh = body_state.mesh();
+    let point = mesh
+        .triangles
+        .iter()
+        .zip(&mesh.tri_face)
+        .find_map(|(triangle, face)| {
+            if *face as usize != index {
+                return None;
+            }
+            mesh.tri(triangle).map(|[a, b, c]| (a + b + c) / 3.0)
+        })
+        .unwrap();
+    Sel::Face { body: body.into(), index, point }
+}
+
+#[test]
+fn thread_size_suggestion_matches_the_feature_for_shafts_and_holes() {
+    for (diameter, internal, expected) in [(8.0, false, "M8"), (20.0, false, "M20"), (5.0, true, "M6")] {
+        let mut app = app_with(json!([]));
+        if internal {
+            app.run("solid.box", json!({"corner":[-10,-10,0],"length":20,"width":20,"height":10})).unwrap();
+        }
+        app.run("solid.cylinder", json!({"radius":diameter / 2.0,"height":10,"body_name":"Cylinder"})).unwrap();
+        if internal {
+            app.run("solid.combine", json!({"target":"Body1","tools":["Cylinder"],"operation":"cut"})).unwrap();
+        }
+        let pick = thread_face(&app, if internal { "Body1" } else { "Cylinder" });
+        let saved = app.session.doc.to_json();
+        let d = start(&mut app, vec![pick], "solid.thread");
+        assert!(matches!(&d.kind, Kind::Thread { designation, .. } if designation == expected), "{:?}", d.kind);
+        assert_eq!(app.session.doc.to_json(), saved, "suggesting a size is read-only");
+        let (command, params) = apply_commands(&app, &d).unwrap().remove(0);
+        assert!(params.get("designation").is_none(), "an automatic size stays automatic");
+        let result = app.session.execute(&command, &params).unwrap();
+        assert_eq!(result["thread"]["designation"], expected);
+        assert_eq!(result["thread"]["internal"], internal);
+    }
+}
+
+#[test]
+fn thread_size_suggestion_follows_picks_without_overwriting_manual_sizes() {
+    let mut app = app_with(json!([
+        {"command":"solid.cylinder","params":{"radius":4,"height":10}},
+        {"command":"solid.cylinder","params":{"base":[30,0,0],"radius":10,"height":10}},
+        {"command":"solid.cylinder","params":{"base":[200,0,0],"radius":50,"height":10}}
+    ]));
+    let small = thread_face(&app, "Body1");
+    let large = thread_face(&app, "Body2");
+    let unsupported = thread_face(&app, "Body3");
+    let planar = crate::dialogs::face_sel(&app.session, Vec3::new(0.0, 0.0, 10.0)).unwrap();
+    let mut d = start(&mut app, vec![], "solid.thread");
+    for (pick, expected) in [
+        (small.clone(), "M8"),
+        (large.clone(), "M20"),
+        (large.clone(), "M20"),
+        (small.clone(), "M8"),
+        (unsupported, ""),
+        (small.clone(), "M8"),
+        (planar, ""),
+    ] {
+        d.pick(&app.session, pick);
+        assert!(matches!(&d.kind, Kind::Thread { designation, .. } if designation == expected), "{:?}", d.kind);
+    }
+    d.take_box(&app.session, vec![], false);
+    assert!(matches!(&d.kind, Kind::Thread { designation, .. } if designation.is_empty()));
+    d.take_box(&app.session, vec![small], false);
+    assert!(matches!(&d.kind, Kind::Thread { designation, .. } if designation == "M8"));
+    if let Kind::Thread { designation, .. } = &mut d.kind {
+        *designation = "M8x1".into();
+    }
+    d.pick(&app.session, large);
+    assert!(matches!(&d.kind, Kind::Thread { designation, .. } if designation == "M8x1"));
+    assert_eq!(apply_commands(&app, &d).unwrap()[0].1["designation"], "M8x1");
+}
+
+#[test]
+fn thread_size_suggestion_reopens_without_changing_saved_thread_parameters() {
+    for designation in [None, Some("M8"), Some("M8x1")] {
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("solid.cylinder", json!({"radius":4,"height":10})).unwrap();
+        let Sel::Face { point, .. } = thread_face(&h.app, "Body1") else { panic!("a face") };
+        let mut params = json!({"face":point});
+        if let Some(size) = designation {
+            params["designation"] = json!(size);
+        }
+        let id = h.app.run("solid.thread", params).unwrap()["feature"].as_u64().unwrap();
+        let before = h.app.session.doc.feature(id).unwrap().kind.clone();
+        h.app.edit_feature(id);
+        h.frames(2);
+        let d = h.app.dialog.as_ref().unwrap();
+        assert!(matches!(&d.kind, Kind::Thread { designation: size, .. } if size == designation.unwrap_or("M8")), "{d:?}");
+        let (command, params) = apply_commands(&h.app, d).unwrap().remove(0);
+        h.app.session.execute(&command, &params).unwrap();
+        assert_eq!(h.app.session.doc.feature(id).unwrap().kind, before);
+    }
+}
+
+#[test]
+fn thread_size_suggestion_can_be_cleared_and_edited_in_the_dialog() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("solid.cylinder", json!({"radius":4,"height":10})).unwrap();
+    let pick = thread_face(&h.app, "Body1");
+    h.app.session.selection = vec![pick.clone()];
+    h.step(&json!({"start":"solid.thread"})).unwrap();
+    h.step(&json!({"click":{"handle":"dialog:clear:Cylindrical face"}})).unwrap();
+    assert!(matches!(&h.app.dialog.as_ref().unwrap().kind, Kind::Thread { designation, .. } if designation.is_empty()));
+    h.app.dialog.as_mut().unwrap().pick(&h.app.session, pick.clone());
+    h.frames(2);
+    h.step(&json!({"click":{"handle":"dialog:thread_size"}})).unwrap();
+    h.step(&json!({"key":"A","cmd":true})).unwrap();
+    // Even deliberately typing the same size turns it into an explicit override.
+    h.step(&json!({"text":"M8"})).unwrap();
+    let d = h.app.dialog.as_ref().unwrap();
+    assert_eq!(apply_commands(&h.app, d).unwrap()[0].1["designation"], "M8");
+    h.step(&json!({"click":{"handle":"dialog:clear:Cylindrical face"}})).unwrap();
+    h.app.dialog.as_mut().unwrap().pick(&h.app.session, pick);
+    h.frames(2);
+    assert_eq!(apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap()[0].1["designation"], "M8");
+}
+
+#[test]
+fn thread_choices_apply_a_fine_pitch_and_partial_modelled_thread() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("solid.cylinder", json!({"radius":4,"height":10})).unwrap();
+    h.app.session.selection = vec![thread_face(&h.app, "Body1")];
+    h.step(&json!({"start":"solid.thread"})).unwrap();
+    let saved = h.app.session.doc.to_json();
+    for handle in ["dialog:Pitch", "dialog:Pitch:1 mm", "dialog:Full Length", "dialog:Length"] {
+        h.step(&json!({"click":{"handle":handle}})).unwrap();
+    }
+    h.step(&json!({"key":"A","cmd":true})).unwrap();
+    h.step(&json!({"text":"4 mm"})).unwrap();
+    h.step(&json!({"click":{"handle":"dialog:Modeled"}})).unwrap();
+    let (command, params) = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap().remove(0);
+    assert_eq!(params["designation"], "M8x1");
+    assert_eq!(params["length"], "4 mm");
+    assert_eq!(params["modeled"], true);
+    assert_eq!(h.app.session.doc.to_json(), saved, "changing options only previews");
+    let before = h.app.session.world_state().body("Body1").unwrap().mesh().measure().volume;
+    let result = h.app.session.execute(&command, &params).unwrap();
+    let state = h.app.session.world_state();
+    let after = state.body("Body1").unwrap().mesh().measure().volume;
+    assert!(before - after > 1.0, "the selected fine pitch must cut the shaft");
+    let id = result["feature"].as_u64().unwrap();
+    let kind = &h.app.session.doc.feature(id).unwrap().kind;
+    assert!(matches!(kind, solidcraft_engine::doc::FeatureKind::Thread { designation: Some(d), length: Some(l), modeled: true, .. }
+        if d == "M8x1" && l == "4 mm"));
+}
+
+#[test]
+fn thread_choices_reset_to_the_face_and_can_freeze_the_same_size() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("solid.cylinder", json!({"radius":4,"height":10})).unwrap();
+    h.app.session.selection = vec![thread_face(&h.app, "Body1")];
+    h.step(&json!({"start":"solid.thread"})).unwrap();
+    for handle in ["dialog:Size", "dialog:Size:6 mm", "dialog:Pitch", "dialog:Pitch:0.75 mm"] {
+        h.step(&json!({"click":{"handle":handle}})).unwrap();
+    }
+    let d = h.app.dialog.as_ref().unwrap();
+    assert_eq!(apply_commands(&h.app, d).unwrap()[0].1["designation"], "M6x0.75");
+    h.step(&json!({"click":{"handle":"dialog:Automatic size"}})).unwrap();
+    h.frames(2);
+    let d = h.app.dialog.as_ref().unwrap();
+    assert!(matches!(&d.kind, Kind::Thread { designation, .. } if designation == "M8"));
+    assert!(apply_commands(&h.app, d).unwrap()[0].1.get("designation").is_none());
+    h.step(&json!({"click":{"handle":"dialog:Automatic size"}})).unwrap();
+    assert_eq!(apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap()[0].1["designation"], "M8");
+}
+
+#[test]
+fn thread_choices_preserve_custom_saved_pairs_and_offer_large_fine_pitches() {
+    for (diameter, designation) in [(7.3, "M7.3x0.6"), (56.0, "M56")] {
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("solid.cylinder", json!({"radius":diameter / 2.0,"height":10})).unwrap();
+        let Sel::Face { point, .. } = thread_face(&h.app, "Body1") else { panic!("a face") };
+        let id = h.app.run("solid.thread", json!({"face":point,"designation":designation})).unwrap()["feature"].as_u64().unwrap();
+        h.app.edit_feature(id);
+        h.frames(2);
+        assert!(h.widget(&format!("{diameter} mm")).is_some());
+        assert!(h.widget(if diameter == 56.0 { "5.5 mm" } else { "0.6 mm" }).is_some());
+        let (_, params) = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap().remove(0);
+        assert_eq!(params["params"]["designation"], designation);
+        if diameter == 56.0 {
+            for handle in ["dialog:Pitch", "dialog:Pitch:2 mm"] {
+                h.step(&json!({"click":{"handle":handle}})).unwrap();
+            }
+            let (command, params) = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap().remove(0);
+            assert_eq!(params["params"]["designation"], "M56x2");
+            h.app.session.execute(&command, &params).unwrap();
+            let mut reopened = solidcraft_engine::doc::Document::from_json(&h.app.session.doc.to_json()).unwrap();
+            // This test submits the edit command directly; finish the editor's rollback
+            // before checking the complete saved design.
+            reopened.marker = None;
+            let session = Session::new(reopened);
+            assert_eq!(session.world_state().threads[0].designation, "M56x2");
+        }
+    }
+}
+
+#[test]
+fn thread_choices_can_start_without_a_face_and_recover_from_invalid_text() {
+    let mut h = crate::scenario::Harness::new();
+    h.step(&json!({"start":"solid.thread"})).unwrap();
+    for handle in ["dialog:Size", "dialog:Size:8 mm", "dialog:thread_size"] {
+        h.step(&json!({"click":{"handle":handle}})).unwrap();
+    }
+    h.step(&json!({"key":"A","cmd":true})).unwrap();
+    h.step(&json!({"text":"Munknown"})).unwrap();
+    h.frames(2);
+    assert!(matches!(&h.app.dialog.as_ref().unwrap().kind, Kind::Thread { designation, .. } if designation == "Munknown"));
+    for handle in ["dialog:Size", "dialog:Size:8 mm"] {
+        h.step(&json!({"click":{"handle":handle}})).unwrap();
+    }
+    assert!(matches!(&h.app.dialog.as_ref().unwrap().kind, Kind::Thread { designation, .. } if designation == "M8x1.25"));
+    assert!(apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).is_err(), "a face is still required");
+}
+
 #[test]
 fn newer_options_reach_their_commands() {
     let mut app = boxed();
@@ -1419,4 +1648,27 @@ fn patch_dialog_rows_are_translated() {
         assert!(h.widget(continuity).is_some(), "{lang}: the Continuity row must show {continuity:?}");
         assert!(h.widget(through).is_some(), "{lang}: the points input must show {through:?}");
     }
+}
+
+/// Midplane opens a two-plane dialog. Starting it with nothing selected used to run the
+/// command and report that `a` is required.
+#[test]
+fn midplane_asks_for_two_planes_then_builds_the_one_between_them() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("construct.plane.offset", json!({"base":"XY","offset":"20 mm","name":"Shelf"})).unwrap();
+    h.app.start("construct.plane.midplane");
+    h.frames(2);
+    let d = h.app.dialog.as_ref().unwrap();
+    assert!(matches!(d.kind, Kind::Midplane));
+    assert_eq!(d.inputs.len(), 2);
+    let status = h.app.status.as_ref().map(|s| s.0.clone()).unwrap_or_default();
+    assert!(!status.contains("is required"), "{status}");
+    h.app.dialog.as_mut().unwrap().inputs[0].items = vec![Sel::Plane { name: "XY".into() }];
+    h.app.dialog.as_mut().unwrap().inputs[1].items = vec![Sel::Plane { name: "Shelf".into() }];
+    h.step(&json!({"key":"Enter"})).unwrap();
+    assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().and_then(|d| d.error.clone()));
+    let (_, _, pl) =
+        solidcraft_engine::view::construction_planes(&h.app.session).into_iter().find(|(_, name, _)| name != "Shelf").expect("the midplane");
+    assert!(pl.normal().cross(Vec3::Z).len() < 1e-6, "{pl:?}");
+    assert!((pl.origin.z - 10.0).abs() < 1e-6, "{pl:?}");
 }

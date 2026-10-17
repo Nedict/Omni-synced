@@ -14,6 +14,8 @@ use super::joints::{cannot_move, effective_values, joint_id, occurrence_id, reso
 use crate::params::{bad, bool_, str_, vec3};
 use crate::{EngineError, Result, Session};
 
+#[path = "motion_analysis.rs"]
+mod analysis;
 #[path = "motion_animation.rs"]
 mod animation;
 #[path = "contact_sweep.rs"]
@@ -28,35 +30,41 @@ macro_rules! trace_doc {
 }
 
 pub static COMMANDS: &[CommandSpec] = &[
-    CommandSpec::new("contact.enable_sets", "Enable Contact Sets", enable_sets).at("SOLID", "ASSEMBLE").icon("joint").params(
+    CommandSpec::new("contact.enable_sets", "Enable Contact Sets", enable_sets).at("SOLID", "ASSEMBLE").icon("contact_sets").params(
         "enabled?: bool (default true) — driving joints and motion studies stop where bodies in one contact set would pass through each other",
     ),
     CommandSpec::new("contact.enable_all", "Enable All Contact", enable_all)
         .at("SOLID", "ASSEMBLE")
-        .icon("joint")
+        .icon("contact_all")
         .params("every occurrence takes part in contact (one set of all)"),
-    CommandSpec::new("contact.disable_all", "Disable Contact", disable_all).at("SOLID", "ASSEMBLE").icon("joint").params("contact off"),
+    CommandSpec::new("contact.disable_all", "Disable Contact", disable_all).at("SOLID", "ASSEMBLE").icon("contact_off").params("contact off"),
     CommandSpec::new("contact.create", "New Contact Set", new_set)
         .at("SOLID", "ASSEMBLE")
-        .icon("joint")
+        .icon("contact_new")
         .params("occurrences: [ids or names] (two or more); name?"),
-    CommandSpec::new("contact.edit", "Edit Contact Set", edit_set).params("set: id|name; occurrences?; name?; suppressed?: bool; delete?: bool"),
-    CommandSpec::new("contact.list", "List Contact Sets", list_sets).noundo().doc_only().params("→ sets, enabled, all"),
-    CommandSpec::new("contact.check", "Check Contact", check).noundo().params("→ pairs in contact sets that pass through each other now"),
-    CommandSpec::new("motion.study", "Motion Study", study).at("SOLID", "ASSEMBLE").icon("joint").params(
+    CommandSpec::new("contact.edit", "Edit Contact Set", edit_set)
+        .icon("edit")
+        .params("set: id|name; occurrences?; name?; suppressed?: bool; delete?: bool"),
+    CommandSpec::new("contact.list", "List Contact Sets", list_sets).icon("list").noundo().doc_only().params("→ sets, enabled, all"),
+    CommandSpec::new("contact.check", "Check Contact", check)
+        .icon("interference")
+        .noundo()
+        .params("→ pairs in contact sets that pass through each other now"),
+    CommandSpec::new("motion.study", "Motion Study", study).at("SOLID", "ASSEMBLE").icon("play").params(
         "name?; study? (edit an existing one); steps? (timeline length, default 100); keys: [{joint, index?, points: [[step, value], …]}] \
          (values: degrees for angles, mm for distances, or expressions)",
     ),
-    CommandSpec::new("motion.play", "Play Motion Study", play).params(
+    CommandSpec::new("motion.play", "Play Motion Study", play).icon("play").params(
         "study: id|name; step (0…steps) — sets the joints to the study's values there (contact sets stop them); quiet?: bool \
          (positions of only the occurrences that moved) → values: [{joint, values: [{name, value, unit}]}], positions, moved: whether \
          any occurrence moved, unmoved: [{joint, name, reason}] (keyed joints that can move nothing, such as a chain joined to \
          nothing grounded)",
     ),
     CommandSpec::new("motion.export", "Export Motion Study", export)
+        .icon("export")
         .noundo()
         .params("study; samples? (default steps + 1); path? (.json or .csv) → occurrence positions per step (the design is not changed)"),
-    CommandSpec::new("motion.export_animation", "Export Motion Animation", animation::export).noundo().params(
+    CommandSpec::new("motion.export_animation", "Export Motion Animation", animation::export).icon("export").noundo().params(
         "study: id|name, or joint: id|name with from and to (degrees for angles, mm for distances, or expressions) and index?;          path: a .gif file, or a folder for PNG frames (frame-0001.png, frame-0002.png, …); samples? (frames, 2…1000; default the          study's steps + 1, or 100); width?, height? (16…4096 pixels, default 800 × 500); camera?: {target, yaw, pitch, roll?,          distance, fov?, up?} (ui.camera's reply; fields left out keep the default view: view.apply's camera, or the home view          framing the model); fps? (1…50, default 20); grid?, axes? (default true: the ground grid and the origin's axes) - draws the study as it plays, or the joint as it is driven, with the headless          renderer → path, format, frames, width, height, fps (GIF), bytes, renderer, stopped_at, stopped_by_loop,          stopped_by_contact (the design is not changed)",
     ),
     CommandSpec::new("motion.trace", "Motion Trace", trace).at("SOLID", "ASSEMBLE").icon("trace").noundo().params(concat!(
@@ -64,22 +72,25 @@ pub static COMMANDS: &[CommandSpec] = &[
         " → points: [[x,y,z]…] world positions, samples (taken), stopped_at (the sample where the motion stopped short; the trace \
          ends there), stopped_by_loop, stopped_by_contact (the design is not changed)"
     )),
-    CommandSpec::new("motion.trace.keep", "Keep Motion Trace", keep_trace).params(concat!(
+    CommandSpec::new("motion.trace.keep", "Keep Motion Trace", keep_trace).icon("trace").params(concat!(
         trace_doc!(),
         "; name? (default Motion TraceN) - keeps the trace as a 3D sketch spline through its points (a new sketch with 3D Sketch \
          on, in the root component, where no joint moves it; a fixed curve, it does not follow later changes) → sketch, name, curves, points"
     )),
-    CommandSpec::new("motion.list", "List Motion Studies", list_studies).noundo(),
-    CommandSpec::new("motion.delete", "Delete Motion Study", delete_study).params("study"),
-    CommandSpec::new("explode.create", "Exploded View", explode_create).at("SOLID", "ASSEMBLE").icon("joint").params(
+    CommandSpec::new("motion.plot", "Plot Motion Study", analysis::plot).icon("graph").noundo().params(analysis::PLOT_DOC),
+    CommandSpec::new("motion.interference", "Motion Interference", analysis::interference).icon("interference").noundo().params(analysis::INTERFERENCE_DOC),
+    CommandSpec::new("motion.list", "List Motion Studies", list_studies).icon("list").noundo(),
+    CommandSpec::new("motion.delete", "Delete Motion Study", delete_study).icon("delete").params("study"),
+    CommandSpec::new("explode.create", "Exploded View", explode_create).at("SOLID", "ASSEMBLE").icon("explode").params(
         "name?; scale? (automatic: each occurrence pushed away from the assembly's centre by scale × its offset, default 1); \
          moves?: [{occurrence, translate: [x,y,z]}] (instead of automatic)",
     ),
     CommandSpec::new("explode.show", "Show Exploded View", explode_show)
+        .icon("explode")
         .noundo()
         .params("view: id|name (or none: back to the assembled placement) — shown only; the design keeps its placements"),
-    CommandSpec::new("explode.list", "List Exploded Views", explode_list).noundo(),
-    CommandSpec::new("explode.delete", "Delete Exploded View", explode_delete).params("view"),
+    CommandSpec::new("explode.list", "List Exploded Views", explode_list).icon("list").noundo(),
+    CommandSpec::new("explode.delete", "Delete Exploded View", explode_delete).icon("delete").params("view"),
 ];
 
 const MAX_ITEMS: usize = 10_000;
@@ -472,12 +483,15 @@ fn check(s: &mut Session, _p: &Value) -> Result<Value> {
 // ---- Motion studies ----
 
 fn study_index(s: &Session, p: &Value, cmd: &str) -> Result<usize> {
-    let key = match p.get("study") {
-        Some(Value::Number(n)) => n.to_string(),
-        Some(Value::String(x)) => x.clone(),
+    // A number is an id first, text a name first: a study may be named like another's id.
+    let (key, id_first) = match p.get("study") {
+        Some(Value::Number(n)) => (n.to_string(), true),
+        Some(Value::String(x)) => (x.clone(), false),
         _ => return Err(bad(cmd, "`study` must be an id or a name")),
     };
-    s.doc.assembly.studies.iter().position(|m| m.id.to_string() == key || m.name == key).ok_or_else(|| bad(cmd, format!("no motion study `{key}`")))
+    let studies = &s.doc.assembly.studies;
+    let (by_id, by_name) = (studies.iter().position(|m| m.id.to_string() == key), studies.iter().position(|m| m.name == key));
+    if id_first { by_id.or(by_name) } else { by_name.or(by_id) }.ok_or_else(|| bad(cmd, format!("no motion study `{key}`")))
 }
 
 fn study(s: &mut Session, p: &Value) -> Result<Value> {
@@ -688,13 +702,11 @@ const MAX_TRACE: usize = solidcraft_sketch::MAX_FIT_POINTS;
 /// The joint values a trace drives to at sample `k` of `n`.
 type Plan = Box<dyn Fn(&Session, usize, usize) -> Vec<(u64, Vec<f64>)>>;
 
-/// Where a point of an occurrence goes as a study plays or a joint is driven: its world
-/// positions, sampled on a copy (the design is not changed). Each sample is driven from the one
-/// before, so closed loops follow on their branch and contact sets stop them; the trace ends at
-/// the sample where the motion stops short. Returns the points and the answer without them.
-fn sample_trace(s: &Session, p: &Value, cmd: &str) -> Result<(Vec<Vec3>, Value)> {
-    // The placement traced: an occurrence path through nested sub-assemblies (one instance of
-    // each), or an occurrence at its first placement (none: the root).
+/// The point `p` names (`occurrence` and `point`): the occurrence path placing it and the point
+/// in that placement's frame. The occurrence is an occurrence path through nested sub-assemblies
+/// (one instance of each), or an occurrence at its first placement (none: the root). The point
+/// is a world point where the parts are placed (moves only shown are left out).
+fn traced_point(s: &Session, p: &Value, cmd: &str) -> Result<(Vec<u64>, Vec3)> {
     let path: Vec<u64> = match p.get("occurrence") {
         Some(Value::Array(ids)) if ids.len() <= 64 => {
             ids.iter().map(|v| v.as_u64().ok_or_else(|| bad(cmd, "an occurrence path lists occurrence ids"))).collect::<Result<_>>()?
@@ -710,19 +722,29 @@ fn sample_trace(s: &Session, p: &Value, cmd: &str) -> Result<(Vec<Vec3>, Value)>
     };
     let at = p.get("point").and_then(vec3).filter(|v| v.len() < 1e7).ok_or_else(|| bad(cmd, "`point` must be [x, y, z], a world point"))?;
     let mut t = s.scratch();
+    t.pending_moves.clear();
+    let local = solidcraft_doc::mat_inverse(&path_world(&t, &path, cmd)?)
+        .map(|m| solidcraft_doc::apply_point(&m, at))
+        .ok_or_else(|| bad(cmd, "the occurrence's placement is not invertible"))?;
+    Ok((path, local))
+}
+
+/// The world placement of an occurrence path (empty: the root).
+fn path_world(t: &Session, path: &[u64], cmd: &str) -> Result<Mat> {
+    if path.is_empty() { Ok(solidcraft_doc::IDENTITY) } else { t.occurrence_placement(path).map(|o| o.world).map_err(|e| bad(cmd, e.to_string())) }
+}
+
+/// Where a point of an occurrence goes as a study plays or a joint is driven: its world
+/// positions, sampled on a copy (the design is not changed). Each sample is driven from the one
+/// before, so closed loops follow on their branch and contact sets stop them; the trace ends at
+/// the sample where the motion stops short. Returns the points and the answer without them.
+fn sample_trace(s: &Session, p: &Value, cmd: &str) -> Result<(Vec<Vec3>, Value)> {
+    let (path, local) = traced_point(s, p, cmd)?;
+    let mut t = s.scratch();
     // Traced from where the parts are placed: moves only shown (an exploded view, a move not
     // captured yet) are not where the joints are solved.
     t.pending_moves.clear();
-    let world = |t: &Session| -> Result<Mat> {
-        if path.is_empty() {
-            Ok(solidcraft_doc::IDENTITY)
-        } else {
-            t.occurrence_placement(&path).map(|o| o.world).map_err(|e| bad(cmd, e.to_string()))
-        }
-    };
-    let local = solidcraft_doc::mat_inverse(&world(&t)?)
-        .map(|m| solidcraft_doc::apply_point(&m, at))
-        .ok_or_else(|| bad(cmd, "the occurrence's placement is not invertible"))?;
+    let world = |t: &Session| path_world(t, &path, cmd);
     let (default, given, plan) = motion_plan(s, p, cmd)?;
     let n = sample_count(p, default.min(MAX_TRACE), MAX_TRACE, cmd)?;
     let mut points = Vec::new();

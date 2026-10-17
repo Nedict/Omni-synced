@@ -299,6 +299,31 @@ impl SweepOrientation {
     }
 }
 
+/// A sweep's guide rail: a chain of curves of a sketch, followed from the end nearest the path's
+/// start.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
+pub struct SweepRail {
+    pub sketch: SketchId,
+    pub curves: Vec<String>,
+}
+
+/// How a sweep's guide rails reshape its profile.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RailFit {
+    /// Evenly, with the distance across to the rail (between the rails).
+    #[default]
+    Scale,
+    /// Only across to the rail (between the rails).
+    Stretch,
+}
+
+impl RailFit {
+    pub fn is_scale(&self) -> bool {
+        *self == RailFit::Scale
+    }
+}
+
 /// Where a thin wall lies against its curves. A closed loop's inside is the area it encloses;
 /// an open chain's is the side it bends toward (a straight one's, the left of its first
 /// curve as drawn).
@@ -657,11 +682,22 @@ pub enum FeatureKind {
         /// Join each mirrored body with its original.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         combine: bool,
+        /// Where each of `bodies` is mirrored from: the occurrence path of the placement it was
+        /// picked at. The body is mirrored where that placement shows it, as the feature's own
+        /// component sees it. Empty in older designs, which mirror the bodies' own geometry.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        placements: Vec<Vec<u64>>,
     },
     /// A drilled hole (simple, counterbore or countersink) at a point, into the material.
     Hole {
         #[walk(pick_if = points.is_none())]
         position: FacePick,
+        /// The position as length expressions, when it was given that way (#1678): the hole is
+        /// drilled where they evaluate, and follows the parameters. `position` keeps the point
+        /// they gave when the hole was made.
+        #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_point_expr")]
+        #[walk(placement)]
+        at: Option<PointExpr>,
         /// Drilling direction (into the material).
         direction: Dir,
         #[walk(length = "Diameter")]
@@ -723,6 +759,12 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[walk(unitless = "Scale")]
         scale: Option<Expr>,
+        /// Guide rails (one or two) the profile follows, instead of orientation, twist and scale.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        rails: Vec<SweepRail>,
+        /// How the rails reshape the profile.
+        #[serde(default, skip_serializing_if = "RailFit::is_scale")]
+        rail_fit: RailFit,
         #[serde(default)]
         operation: Operation,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1310,6 +1352,12 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[walk(unitless = "Scale")]
         scale: Option<Expr>,
+        /// Guide rails (one or two) the curves follow, instead of orientation, twist and scale.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        rails: Vec<SweepRail>,
+        /// How the rails reshape the curves.
+        #[serde(default, skip_serializing_if = "RailFit::is_scale")]
+        rail_fit: RailFit,
     },
     /// A surface body lofted through sections in order, each one open or closed chain of
     /// sketch curves: walls only, no caps.
@@ -1932,6 +1980,22 @@ mod point_expr {
         };
         let [x, y, z] = <[Coord; 3]>::deserialize(d)?;
         Ok([c(x), c(y), c(z)])
+    }
+}
+
+/// [`point_expr`] for an optional point.
+mod opt_point_expr {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Serialize, Deserialize)]
+    struct Wrap(#[serde(with = "super::point_expr")] super::PointExpr);
+
+    pub fn serialize<S: Serializer>(p: &Option<super::PointExpr>, s: S) -> Result<S::Ok, S::Error> {
+        p.as_ref().map(|p| Wrap(p.clone())).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<super::PointExpr>, D::Error> {
+        Ok(Option::<Wrap>::deserialize(d)?.map(|w| w.0))
     }
 }
 

@@ -36,6 +36,7 @@ pub mod dialogs_save_mesh;
 pub mod dialogs_sheet;
 pub mod dialogs_surface;
 pub mod dialogs_sweep;
+mod dialogs_thread;
 pub mod dialogs_view_dxf;
 pub mod dim_view;
 #[cfg(test)]
@@ -59,6 +60,7 @@ pub mod i18n;
 mod i18n_menu_tests;
 #[cfg(test)]
 mod i18n_ui_tests;
+pub mod icon_svg;
 pub mod icons;
 pub mod inference;
 pub mod install;
@@ -111,6 +113,8 @@ mod fillet_spline_handle_tests;
 pub(crate) mod navigation;
 pub mod palette;
 pub mod params_dialog;
+pub(crate) mod pick_buffer;
+pub(crate) mod pick_index;
 pub mod prefs;
 #[cfg(test)]
 mod preselect_tests;
@@ -251,7 +255,9 @@ impl Default for UiState {
 /// Host services injected by the app so this crate stays portable.
 #[derive(Default)]
 pub struct Services {
-    pub pick_open: Option<Box<dyn Fn() -> FilePickerFuture>>,
+    /// Ask for a file to open. The extensions are the file type the command reads, offered as
+    /// the picker's first filter (`&[]`: designs, CAD files and meshes, #1801).
+    pub pick_open: Option<Box<dyn Fn(&[&str]) -> FilePickerFuture>>,
     pub pick_save: Option<Box<dyn Fn(&str, &[&str]) -> FilePickerFuture>>,
     /// Open a dialog asking for a program (a slicer); `None` when the host has no such dialog.
     pub pick_program: Option<Box<dyn Fn() -> FilePickerFuture>>,
@@ -733,8 +739,8 @@ impl SolveApp {
         dim_view::cancel();
         self.tool = None;
         self.home.open = false;
-        if matches!(id, "sketch.insert_dxf" | "sketch.insert_svg") {
-            self.pick_open_command(id, json!({}));
+        if let Some(ext) = id.strip_prefix("sketch.insert_").filter(|e| matches!(*e, "dxf" | "svg")) {
+            self.pick_open_command(id, json!({}), &[ext]);
             return;
         }
         if id == "component.insert_design" {
@@ -958,13 +964,16 @@ impl SolveApp {
         v
     }
 
-    /// Is the origin widget shown (always while picking a sketch plane)?
-    /// Origin planes and axes are drawn and pickable. Hidden ones only come back while Create
-    /// Sketch has nothing else to offer (no body shown).
+    /// Is the origin widget shown? Origin planes and axes are drawn and pickable. While Create
+    /// Sketch picks its plane the Origin is always shown, drawn through the model (a plane
+    /// inside a body stays visible), even when the browser hides it.
     pub fn origin_visible(&self) -> bool {
-        self.ui.show_origin
-            || (self.dialog.as_ref().is_some_and(|d| matches!(d.kind, dialogs::Kind::Sketch))
-                && !self.session.world_state().bodies.iter().any(|b| self.session.body_visible(&b.name)))
+        self.ui.show_origin || self.picking_sketch_plane()
+    }
+
+    /// Is Create Sketch open, waiting for its plane?
+    pub fn picking_sketch_plane(&self) -> bool {
+        self.dialog.as_ref().is_some_and(|d| matches!(d.kind, dialogs::Kind::Sketch))
     }
 
     pub fn set_status(&mut self, s: impl Into<String>, error: bool) {
@@ -1445,6 +1454,11 @@ impl SolveApp {
                 control::Outcome::Done(v) => {
                     let _ = reply.send(v);
                 }
+                // A window that is minimised or covered (another macOS Space) presents no frame:
+                // say so at once rather than after the deadline (#1677).
+                control::Outcome::Screenshot { .. } if window_hidden(ctx) => {
+                    let _ = reply.send(json!({"ok": false, "hidden": true, "error": "no frame was presented (window hidden?); use ui.render"}));
+                }
                 control::Outcome::Screenshot { path } => {
                     self.shot_token += 1;
                     let token = self.shot_token;
@@ -1498,14 +1512,22 @@ impl SolveApp {
             }
         }
         let now = now_ms();
+        // Hidden while waiting: no frame is coming.
+        let hidden = window_hidden(ctx);
         self.pending_shots.retain(|(_, _, reply, deadline)| {
-            if now < *deadline {
+            if now < *deadline && !hidden {
                 return true;
             }
             let _ = reply.send(json!({"ok": false, "error": "no frame was presented (window hidden?); use ui.render"}));
             false
         });
     }
+}
+
+/// The window is minimised or fully covered, so it presents no frames (#1677). Unknown counts as
+/// shown: the screenshot deadline still ends a wait for a frame that never comes.
+fn window_hidden(ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.viewport().visible()) == Some(false)
 }
 
 /// A command's name as people see it (its label), for the status bar.
