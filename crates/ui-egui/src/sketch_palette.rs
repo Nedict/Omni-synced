@@ -786,13 +786,13 @@ mod tests {
         }
         h.app.run("sketch.line", json!({"points": [[20, 0], [30, 5]], "infer": false, "connect": false})).unwrap();
         h.settle();
-        assert!(h.widget("Open ends: 2").is_some(), "the status counts the open ends");
-        assert!(h.widget("Untied ends: 4").is_some(), "the status counts the untied ends");
+        assert!(h.widget("Open 2").is_some(), "the status counts the open ends");
+        assert!(h.widget("Untied 4").is_some(), "the status counts the untied ends");
         let at = crate::scenario::handle_at("sketch_palette:tie_ends").unwrap();
         h.call("ui.click", json!({"x": at.x, "y": at.y}));
         h.settle();
-        assert!(h.widget("Untied ends: 4").is_none(), "Tie constrains every untied end");
-        assert!(h.widget("Open ends: 2").is_some(), "open ends have nothing to tie to");
+        assert!(h.widget("Untied 4").is_none(), "Tie constrains every untied end");
+        assert!(h.widget("Open 2").is_some(), "open ends have nothing to tie to");
         let r = h.app.run("sketch.loose_ends", json!({})).unwrap();
         assert!(r["untied"].as_array().is_some_and(Vec::is_empty), "{r}");
     }
