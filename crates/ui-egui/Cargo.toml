@@ -26,6 +26,11 @@ sha2 = { workspace = true }
 minisign-verify = "0.3"
 zip = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+# Updates: the folder the Windows installer recorded, so an install outside Program Files is still
+# updated by its installer (MIT; already in the tree as a build dependency).
+winreg = "0.56"
+
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # The offscreen viewport render test opens a device without a window.
 pollster = { workspace = true }

@@ -4247,6 +4247,7 @@ dependencies = [
  "solidcraft-gpu",
  "ttf-parser",
  "web-time",
+ "winreg",
  "zip 3.0.0",
 ]
 
