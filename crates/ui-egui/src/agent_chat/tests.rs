@@ -812,6 +812,24 @@ fn a_message_carries_its_files() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// Review of #1744: the prompt cap applied to the typed text only, so eight 256 KB text files
+/// took a message to about 2 MB. The whole message stays within it now, every file still named.
+#[test]
+fn a_message_with_large_text_files_stays_within_the_prompt_cap() {
+    let d = attachable("cap");
+    let (mut app, script, ctx) = app_with_script();
+    for i in 0..attach::MAX_FILES {
+        let path = d.join(format!("notes{i}.txt"));
+        std::fs::write(&path, "y".repeat(250 * 1024)).unwrap();
+        control(&mut app, &ctx, &json!({"attach": path.to_string_lossy()})).unwrap();
+    }
+    send(&mut app, &ctx, "read these".into());
+    let text = text_of(&script.prompts()[0]);
+    assert!(text.chars().count() <= MAX_PROMPT, "{} characters", text.chars().count());
+    assert!((0..attach::MAX_FILES).all(|i| text.contains(&format!("`notes{i}.txt`"))), "every file is named");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 /// A message sent before the agent is ready keeps its files until it goes; an agent that takes
 /// no pictures gets none, and the message says which were left out. Files alone make a message,
 /// and its undo step is named after the first file.

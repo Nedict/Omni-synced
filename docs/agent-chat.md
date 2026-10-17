@@ -67,7 +67,8 @@ sketch, a brief, a part to fit around.
   BMP and TIFF go as PNG. HEIC can't be read: export it as JPEG or PNG first. An agent that takes
   no pictures gets none, and the message says which were left out.
 - **Text files** (UTF-8, up to 256 KB: Markdown, plain text, JSON, CSV, YAML, TOML, XML, SVG…)
-  go in the message's text, whole.
+  go in the message's text, whole as far as the message's 100,000-character cap allows: past it
+  a file is cut (and says how much is missing) or named only.
 - **CAD files** (STEP, IGES, FreeCAD, Rhino, STL, 3MF, OBJ, glTF) are imported into the design
   at once, as components of their own, and the message tells the agent they were added.
 - Every file is named in the message, and listed under it in the conversation. A file that

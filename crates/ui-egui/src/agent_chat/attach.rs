@@ -217,10 +217,12 @@ fn thumbnail(img: &image::DynamicImage) -> Option<Arc<egui::ColorImage>> {
     Some(Arc::new(egui::ColorImage::from_rgba_unmultiplied(size, t.as_raw())))
 }
 
-/// What the message says about its files, after the person's words: the text files in full, and
-/// the pictures and imported parts by name (the agent sees the pictures themselves as images).
-/// `pictures_sent`: whether this agent takes pictures.
-pub fn note(files: &[Attachment], pictures_sent: bool) -> String {
+/// What the message says about its files, after the person's words: the text files' text, and the
+/// pictures and imported parts by name (the agent sees the pictures themselves as images).
+/// `pictures_sent`: whether this agent takes pictures. The text files share `budget` characters
+/// in order: one that doesn't fit is cut and says how much is missing, and one past the budget
+/// is named only, so the message stays within the prompt cap.
+pub fn note(files: &[Attachment], pictures_sent: bool, budget: usize) -> String {
     let mut out = String::new();
     let pictures: Vec<&str> = files.iter().filter(|f| f.is_picture()).map(|f| f.name.as_str()).collect();
     if !pictures.is_empty() {
@@ -231,9 +233,23 @@ pub fn note(files: &[Attachment], pictures_sent: bool) -> String {
             format!("\n\n(Pictures attached but not sent, this agent takes none: {list}.)")
         };
     }
+    let mut left = budget;
     for f in files {
         match &f.content {
-            Content::Text(t) => out += &format!("\n\nAttached file `{}`:\n```\n{}\n```", f.name, t.trim_end()),
+            Content::Text(t) => {
+                let t = t.trim_end();
+                let len = t.chars().count();
+                if left == 0 {
+                    out += &format!("\n\nAttached file `{}`: left out, the message is at its size limit.", f.name);
+                } else if len <= left {
+                    out += &format!("\n\nAttached file `{}`:\n```\n{t}\n```", f.name);
+                    left -= len;
+                } else {
+                    let kept: String = t.chars().take(left).collect();
+                    out += &format!("\n\nAttached file `{}` (cut: {} more characters left out):\n```\n{kept}\n```", f.name, len - left);
+                    left = 0;
+                }
+            }
             Content::Imported => out += &format!("\n\n(I added `{}` to the design as a component of its own.)", f.name),
             Content::Picture { .. } => {}
         }
@@ -403,17 +419,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    /// Review of #1744: eight 256 KB text files took a message to about 2 MB, past the prompt cap
+    /// that only trimmed the typed text. The files' text now gets a budget: a file that doesn't
+    /// fit is cut and says so, and a file past it is named only.
+    #[test]
+    fn attached_text_is_kept_within_the_prompt_budget() {
+        let file = |n: &str, len: usize| Attachment { name: n.into(), content: Content::Text(Arc::new("x".repeat(len))), thumb: None };
+        let files = vec![file("a.md", 600), file("b.md", 600), file("c.md", 600)];
+        let n = note(&files, true, 1000);
+        assert!(n.contains("`a.md`") && n.contains("`b.md`") && n.contains("`c.md`"), "every file is named: {n}");
+        assert!(n.matches('x').count() <= 1000, "the files' text stays within the budget");
+        assert!(n.contains("200 more characters"), "a cut file says how much is missing: {n}");
+        assert!(n.contains("left out"), "a file past the budget is named only: {n}");
+        assert_eq!(note(&files, true, usize::MAX).matches('x').count(), 1800, "with room, every file goes whole");
+    }
+
     #[test]
     fn the_message_names_its_files_and_carries_the_pictures() {
         let pic = from_rgba("target.png".into(), 2, 2, &[9; 16]).unwrap();
         let text = Attachment { name: "brief.md".into(), content: Content::Text(Arc::new("wall 2 mm\n".into())), thumb: None };
         let part = Attachment::imported("motor.step".into());
         let files = vec![pic, text, part];
-        let n = note(&files, true);
+        let n = note(&files, true, usize::MAX);
         assert!(n.contains("Attached pictures: target.png."), "{n}");
         assert!(n.contains("Attached file `brief.md`:\n```\nwall 2 mm\n```"), "{n}");
         assert!(n.contains("`motor.step` to the design"), "{n}");
-        assert!(note(&files, false).contains("not sent"));
+        assert!(note(&files, false, usize::MAX).contains("not sent"));
         let p = parts(&files);
         assert_eq!(p.len(), 1);
         assert!(matches!(&p[0], PromptPart::Image { mime, base64 } if mime == "image/png" && base64.starts_with("iVBORw0KGgo")));

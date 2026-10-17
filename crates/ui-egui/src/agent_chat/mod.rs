@@ -49,6 +49,8 @@ pub use panel::{show, tip as panel_tip, toggle};
 const MAX_ITEMS: usize = 2000;
 /// Longest message sent.
 const MAX_PROMPT: usize = 100_000;
+/// Room kept in a message for the files' names and the words around their text.
+const FILE_NAMES_ROOM: usize = 2_000;
 /// How long a request waits for Allow or Deny before it is declined (the agent's MCP server gives
 /// up on a request after five minutes).
 const APPROVAL_TIMEOUT_MS: f64 = 240_000.0;
@@ -743,11 +745,14 @@ fn start_turn(app: &mut SolveApp, text: String, image: bool, files: Vec<attach::
 /// that takes them.
 fn start_turn_with(app: &mut SolveApp, text: String, image: bool, files: Vec<attach::Attachment>, note: Option<&str>) {
     let pictures = app.agent_chat.images;
-    let about_files = attach::note(&files, pictures);
-    let sent = match note {
-        Some(n) => format!("{n}\n\n{text}{about_files}"),
-        None => format!("{text}{about_files}"),
+    let lead = match note {
+        Some(n) => format!("{n}\n\n{text}"),
+        None => text.clone(),
     };
+    // The whole message stays within the cap: the files' text gets what the words leave.
+    let budget = MAX_PROMPT.saturating_sub(lead.chars().count() + FILE_NAMES_ROOM);
+    let about_files = attach::note(&files, pictures, budget);
+    let sent: String = format!("{lead}{about_files}").chars().take(MAX_PROMPT).collect();
     let mut parts = vec![PromptPart::Text(sent)];
     if image {
         match crate::control::view_png(app, VIEW_IMAGE.0, VIEW_IMAGE.1) {
