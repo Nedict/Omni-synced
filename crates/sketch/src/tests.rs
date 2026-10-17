@@ -1037,3 +1037,21 @@ fn profiles_crossing_next_to_a_stray_end_still_splits() {
     assert_eq!(areas.len(), 2, "{areas:?}");
     assert!(areas.iter().all(|x| (x - 1.0).abs() < 1e-9), "{areas:?}");
 }
+
+/// A line whose own end overshoots a crossing line by 2e-5, with a rectangle standing on it 1e-3
+/// further on: the crossing next to that end gives way to the rectangle's corner, which still
+/// cuts the line, and the rectangle stays a profile.
+#[test]
+fn profiles_crossing_next_to_an_overshooting_end_keeps_the_corner_beside_it() {
+    let mut sk = Sketch::new();
+    sk.add_line(v(-2e-5, 0.0), v(3.0, 0.0), None, None, None).unwrap();
+    sk.add_line(v(0.0, -0.5), v(0.0, 0.5), None, None, None).unwrap();
+    let x = 0.00099999;
+    let p = [v(x, 0.0000099), v(x, 1.0), v(2.0, 1.0), v(2.0, 0.0)].map(|q| sk.add_point(q, None).unwrap());
+    for w in p.windows(2) {
+        sk.add_line_pts(w[0], w[1], None).unwrap();
+    }
+    let areas: Vec<f64> = find_profiles(&sk).iter().map(|p| p.area).collect();
+    assert_eq!(areas.len(), 1, "{areas:?}");
+    assert!(areas.iter().all(|a| (a - (2.0 - x)).abs() < 1e-4), "{areas:?}");
+}
