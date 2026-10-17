@@ -1139,7 +1139,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 note(ui, crate::i18n::tr("nav.touchpad.help"));
             } else {
                 let snap_help = if app.preferences.nav == OPENSCAD_NAV { "" } else { "; hold Shift during orbit to snap" };
-                let raw_help = format!("{}; Ctrl+left drag on empty space orbits{snap_help}; the wheel zooms", nav_preset(&app.preferences.nav).help);
+                let raw_help = format!("{}; Ctrl+left drag on empty space orbits{snap_help}; hold Space to pan; the wheel zooms", nav_preset(&app.preferences.nav).help);
                 note(ui, crate::i18n::tr_label(&raw_help));
             }
             ui.label(crate::i18n::tr_label("Context menu"));

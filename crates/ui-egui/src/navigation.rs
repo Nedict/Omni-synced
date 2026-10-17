@@ -387,8 +387,19 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     } else if !primary_down && !primary_released {
         app.viewport.primary_nav = None;
     }
-    // The fixed navigation mode (navigation bar) or the preset's left-button binding.
-    let primary_nav = app.viewport.nav.or(app.viewport.primary_nav);
+    // Hold Space for a momentary pan: the hand tool of design apps. It overrides whatever the
+    // left button would otherwise do - selecting, dragging geometry, the preset's binding or the
+    // navigation bar's fixed mode - and lasts only while the key is held. Space still types in a
+    // text field, and while a dimension's text is being edited, so those keep the keyboard.
+    let space_pan = (inside || primary_down)
+        && !ui.ctx().egui_wants_keyboard_input()
+        && !crate::dim_view::editing()
+        && ui.input(|i| i.key_down(egui::Key::Space));
+    if space_pan {
+        ui.ctx().set_cursor_icon(if primary_down { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
+    }
+    // The fixed navigation mode (navigation bar), a held Space, or the preset's left-button binding.
+    let primary_nav = if space_pan { Some(NavMode::Pan) } else { app.viewport.nav.or(app.viewport.primary_nav) };
     let button = if middle {
         Some(crate::prefs::NavButton::Middle)
     } else if secondary_down {

@@ -4110,6 +4110,40 @@ mod tests {
         app
     }
 
+    fn space(pressed: bool) -> egui::Event {
+        egui::Event::Key { key: egui::Key::Space, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::default() }
+    }
+
+    /// Holding Space is a momentary pan: the drag moves the view rather than the geometry under the
+    /// pointer, in every preset. The point is over the sketch's own point, so without Space this
+    /// drag would drag it (and the undo stack would grow).
+    #[test]
+    fn holding_space_pans_instead_of_dragging_geometry() {
+        for preset in crate::prefs::NAV_PRESETS.iter().map(|p| p.id) {
+            let ctx = egui::Context::default();
+            let mut app = hover_app(false);
+            app.preferences.nav = preset.into();
+            app.ui.show_origin = false;
+            hover_frame(&mut app, &ctx, vec![]);
+            let point = projection(&app, app.viewport.rect.unwrap()).to_screen(Vec3::ZERO).unwrap();
+            let before = app.cam;
+            let undo = app.session.undo.len();
+            let press = |pressed: bool, at: Pos2| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            };
+            hover_frame(&mut app, &ctx, vec![space(true)]);
+            hover_frame(&mut app, &ctx, vec![space(true), egui::Event::PointerMoved(point), press(true, point)]);
+            hover_frame(&mut app, &ctx, vec![space(true), egui::Event::PointerMoved(point + vec2(40.0, 25.0))]);
+            assert_ne!(app.cam, before, "{preset}: holding Space must pan the view");
+            assert_eq!(app.session.undo.len(), undo, "{preset}: holding Space must not edit the design");
+            assert!(app.viewport.point_drag.is_none(), "{preset}: holding Space must not drag geometry");
+            hover_frame(&mut app, &ctx, vec![press(false, point + vec2(40.0, 25.0)), space(false)]);
+        }
+    }
+
     #[test]
     fn ctrl_left_drag_from_empty_space_orbits_in_every_preset() {
         for preset in crate::prefs::NAV_PRESETS.iter().map(|p| p.id) {
