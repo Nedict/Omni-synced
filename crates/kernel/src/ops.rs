@@ -1558,15 +1558,36 @@ fn off_plane(body: &Body, plane: &solidcraft_geom::Plane, positive: bool) -> Opt
     let mut out: Option<Body> = None;
     for n in [keep, -keep] {
         let d = n.dot(plane.origin);
-        let lies = body.solid.face_iter().any(|f| match f.oriented_surface() {
-            mt::Surface::Plane(p) => {
-                let q = p.normal();
-                Vec3::new(q.x, q.y, q.z).normalized().is_some_and(|q| q.dot(n) > 1.0 - 1e-9) && (n.dot(from_p3(p.origin())) - d).abs() < tol
-            }
-            _ => false,
-        });
-        if !lies {
+        // The faces `push_faces` takes for this plane (by their surface), which must all lie in
+        // it: one only nearly parallel, its origin in the plane, would be moved where it isn't.
+        let taken: Vec<&mt::Face> = body
+            .solid
+            .face_iter()
+            .filter(|f| match f.oriented_surface() {
+                mt::Surface::Plane(p) => {
+                    let q = p.normal();
+                    Vec3::new(q.x, q.y, q.z).normalized().is_some_and(|q| q.dot(n) > 1.0 - 1e-9)
+                        && (n.dot(from_p3(p.origin())) - d).abs() < tol * 10.0
+                }
+                _ => false,
+            })
+            .collect();
+        if taken.is_empty() {
             continue;
+        }
+        // Its vertices and points along its edges (a disc has one vertex).
+        let lies = |f: &mt::Face| {
+            use mt::{BoundedCurve, ParametricCurve};
+            let on = |p: mt::Point3| (n.dot(from_p3(p)) - d).abs() < tol;
+            f.vertex_iter().all(|v| on(v.point()))
+                && f.edge_iter().all(|e| {
+                    let c = e.curve();
+                    let (t0, t1) = c.range_tuple();
+                    [0.25, 0.5, 0.75].iter().all(|k| on(c.subs(t0 + (t1 - t0) * k)))
+                })
+        };
+        if !taken.iter().all(|f| lies(f)) {
+            return None;
         }
         // Along -keep: inwards for a face facing the kept side, outwards for one facing away.
         let shift = if n.dot(keep) > 0.0 { -delta } else { delta };

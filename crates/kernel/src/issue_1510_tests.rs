@@ -43,3 +43,26 @@ fn a_split_in_the_plane_of_a_face_keeps_all_of_the_body() {
         assert!((z[0].0 - 1.5).abs() < 1e-6 && (z[1].1 - 1.5).abs() < 1e-6, "{width}: {z:?}; {:?}", d.summary());
     }
 }
+
+/// A slab whose bottom rises 0.03 mm over its 700 mm length, its plane through the origin: its
+/// normal is within 1e-9 of the split plane's, but it doesn't lie in the plane, so the split
+/// leaves it where it is and the part on the upper side is the whole slab.
+#[test]
+fn a_face_only_nearly_in_the_plane_is_not_moved() {
+    use truck_modeling as mt;
+    let v = |x: f64, y: f64, z: f64| mt::builder::vertex(crate::body::p3(Vec3::new(x, y, z)));
+    let p = [v(0.0, 0.0, 0.0), v(0.0, 100.0, 0.0), v(700.0, 100.0, 0.03), v(700.0, 0.0, 0.03)];
+    let wire: mt::Wire = (0..4).map(|i| mt::builder::line(&p[i], &p[(i + 1) % 4])).collect();
+    let bottom = mt::Face::new(
+        vec![wire],
+        mt::Surface::Plane(mt::Plane::new(crate::body::p3(Vec3::ZERO), crate::body::p3(Vec3::Y), crate::body::p3(Vec3::new(700.0, 0.0, 0.03)))),
+    );
+    let solid: mt::Solid = mt::builder::tsweep(&bottom, mt::Vector3::new(0.0, 0.0, 10.0));
+    let b = Body::new(solid).unwrap();
+    let v0 = b.volume_at(1e-2).unwrap();
+    assert!((v0 - 700.0 * 100.0 * 10.0).abs() < 1.0, "{v0}");
+    let plane = Plane::from_normal(Vec3::ZERO, Vec3::Z).unwrap();
+    let up = crate::ops::half_space(&b, &plane, true).unwrap().0.unwrap();
+    let v1 = up.volume_at(1e-2).unwrap();
+    assert!((v1 - v0).abs() < 1e-3 * v0, "{v1} against {v0}");
+}
