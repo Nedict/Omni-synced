@@ -1,4 +1,4 @@
-//! Fusion Inspection → Probing + Manual dialogs.
+//! Inspection → Probing + Manual dialogs.
 
 use egui::RichText;
 use serde_json::json;

@@ -1,4 +1,4 @@
-//! Fusion-style MODIFY dialogs: Trim, Delete Passes, Leads and Links, Replace Tool,
+//! MODIFY dialogs: Trim, Delete Passes, Leads and Links, Replace Tool,
 //! Move Entry Positions.
 
 use egui::RichText;

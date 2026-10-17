@@ -1,4 +1,4 @@
-//! Fusion-style Drill operation dialog (Tool / Geometry / Heights / Cycle / Linking).
+//! Drill operation dialog (Tool / Geometry / Heights / Cycle / Linking).
 
 use egui::{Color32, RichText, Stroke, Vec2};
 use serde_json::json;

@@ -1,4 +1,4 @@
-//! Fusion-style Post Process / NC Program dialog (Settings + Operations) and
+//! Post Process / NC Program dialog (Settings + Operations) and
 //! ACTIONS helpers: Setup Sheet, Machining Time.
 
 use egui::RichText;
@@ -285,7 +285,7 @@ fn settings_tab(ui: &mut egui::Ui, draft: &mut NcProgram, posts: &[(String, Stri
         ui.label("Output folder");
         ui.text_edit_singleline(&mut draft.output_folder);
     });
-    ui.checkbox(&mut draft.post_to_hub, "Post to Fusion Hub");
+    ui.checkbox(&mut draft.post_to_hub, "Post to hub");
     ui.horizontal(|ui| {
         ui.label("NC extension");
         ui.text_edit_singleline(&mut draft.nc_extension);

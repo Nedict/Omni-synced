@@ -1,4 +1,4 @@
-//! Fusion-style Hole Recognition dialog (Hole Groups / Tool Libraries / Options).
+//! Hole Recognition dialog (Hole Groups / Tool Libraries / Options).
 //! Manufacture → Milling → Drilling → Hole Recognition.
 
 use egui::RichText;
@@ -130,7 +130,7 @@ fn groups_tab(ui: &mut egui::Ui, draft: &mut HoleRecognitionOperation, selected:
         ui.label(RichText::new("Modifiers").weak());
         let can_mod = selected.and_then(|i| draft.groups.get(i)).is_some();
         if ui.add_enabled(can_mod, egui::Button::new("Delete top segment")).clicked() {
-            // L0: no multi-segment topology yet — no-op placeholder matching Fusion control.
+            // L0: no multi-segment topology yet — no-op placeholder for the control.
         }
         ui.add_enabled(can_mod, egui::Button::new("Delete bottom segment")).clicked();
         if ui.add_enabled(can_mod, egui::Button::new("Split signature")).clicked()

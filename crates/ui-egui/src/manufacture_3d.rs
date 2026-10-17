@@ -1,4 +1,4 @@
-//! Fusion-style 3D milling dialogs (Tool / Geometry / Heights / Passes / Linking)
+//! 3D milling dialogs (Tool / Geometry / Heights / Passes / Linking)
 //! for Adaptive Roughing, Offset Roughing, Steep and Shallow, Flat, Parallel, Scallop,
 //! Contour, Ramp, Pencil, Horizontal, Spiral, Radial, Morphed Spiral, Project, Blend,
 //! Morph, Corner, Flow, Deburr, Geodesic, and 3+2 Roughing.

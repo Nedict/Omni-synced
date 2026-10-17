@@ -115,12 +115,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .doc_only()
         .params("No parameters. Polls the active machine plugin for live status (execution, tool, spindle, feed)."),
-    // ── Ribbon: SETUP (Fusion Setup menu order) ───────────────────────────────
+    // ── Ribbon: SETUP (Setup menu order) ───────────────────────────────
     CommandSpec::new("manufacture.setup.new", "New Setup", setup_new)
         .doc_only()
         .at("MANUFACTURE", "SETUP")
         .icon("new")
-        .params("name?: setup name (default SetupN). Creates an empty setup; UI opens the Fusion Setup dialog."),
+        .params("name?: setup name (default SetupN). Creates an empty setup; UI opens the Setup dialog."),
     CommandSpec::new("manufacture.nc_program.new", "Create NC Program", nc_program_new_cmd)
         .noundo()
         .doc_only()
@@ -222,7 +222,7 @@ pub static COMMANDS: &[CommandSpec] = &[
             "Exactly one of: nc_program | folder | pattern | manual_nc | manufacturing_model | \
              toolpath_modification (object). Appends to the document manufacture containers; one undo step.",
         ),
-    // ── Ribbon: MODIFY (Fusion toolpath edit menu) ────────────────────────────
+    // ── Ribbon: MODIFY (toolpath edit menu) ────────────────────────────
     CommandSpec::new("manufacture.modify.trim", "Trim", modify_trim_cmd)
         .noundo()
         .doc_only()
@@ -253,7 +253,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("MANUFACTURE", "MODIFY")
         .icon("move")
         .params("UI opens Move Entry Positions modification dialog."),
-    // ── Ribbon: 2D (Fusion 2D menu order) ─────────────────────────────────────
+    // ── Ribbon: 2D (2D menu order) ─────────────────────────────────────
     CommandSpec::new("manufacture.op.adaptive", "2D Adaptive Roughing", op_adaptive)
         .doc_only()
         .at("MANUFACTURE", "2D")
@@ -309,7 +309,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("MANUFACTURE", "2D")
         .icon("combine")
         .params("setup?: setup name. Appends a 2D Chamfer operation."),
-    // ── Ribbon: 3D (Fusion 3D menu order) ──────────────────────────────────────
+    // ── Ribbon: 3D (3D menu order) ──────────────────────────────────────
     CommandSpec::new("manufacture.op.3d_adaptive", "3D Adaptive Roughing", op_3d_adaptive)
         .doc_only()
         .at("MANUFACTURE", "3D")
@@ -415,7 +415,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("MANUFACTURE", "3D")
         .icon("sphere")
         .params("setup?: setup name. Appends a Geodesic finishing operation."),
-    // ── Ribbon: DRILLING (Fusion: Drill + Hole Recognition) ───────────────────
+    // ── Ribbon: DRILLING (Drill + Hole Recognition) ───────────────────
     CommandSpec::new("manufacture.op.drill", "Drill", op_drill)
         .doc_only()
         .at("MANUFACTURE", "DRILLING")
@@ -426,7 +426,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("MANUFACTURE", "DRILLING")
         .icon("cylinder")
         .params("setup?: setup name. Appends a Hole Recognition operation (groups + options)."),
-    // ── Ribbon: MULTI-AXIS (Fusion Multi-Axis menu order) ─────────────────────
+    // ── Ribbon: MULTI-AXIS (Multi-Axis menu order) ─────────────────────
     CommandSpec::new("manufacture.op.ma_rotary_pocket", "Rotary Offset Roughing (Pocket)", op_ma_rotary_pocket)
         .doc_only()
         .at("MANUFACTURE", "MULTI-AXIS")
@@ -467,7 +467,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("MANUFACTURE", "MULTI-AXIS")
         .icon("sphere")
         .params("setup?: setup name. Appends Multi-Axis Finishing."),
-    // ── Ribbon: TURNING (Fusion Turning tab menu order) ───────────────────────
+    // ── Ribbon: TURNING (Turning tab menu order) ───────────────────────
     CommandSpec::new("manufacture.op.turn_face", "Turning Face", op_turn_face)
         .doc_only()
         .at("MANUFACTURE", "TURNING")
@@ -548,7 +548,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("MANUFACTURE", "PART HANDLING")
         .icon("revolve")
         .params("setup?: setup name. Appends a Tool Call part-handling step."),
-    // ── Ribbon: ACTIONS (Fusion: Generate / Simulate / Post / Setup Sheet / Time)
+    // ── Ribbon: ACTIONS (Generate / Simulate / Post / Setup Sheet / Time)
     CommandSpec::new("manufacture.generate", "Generate", generate_cmd)
         .noundo()
         .doc_only()
@@ -585,7 +585,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("MANUFACTURE", "ACTIONS")
         .icon("measure")
         .params("UI estimates cycle time from toolpath segments and machine rates."),
-    // ── Ribbon: MANAGE (Fusion: Form Mill … Reset Defaults) ───────────────────
+    // ── Ribbon: MANAGE (Form Mill … Reset Defaults) ───────────────────
     CommandSpec::new("manufacture.manage.form_mill", "Form Mill", manage_stub_cmd)
         .noundo()
         .doc_only()
@@ -603,7 +603,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .doc_only()
         .at("MANUFACTURE", "MANAGE")
         .icon("measure")
-        .params("UI opens the Fusion-style Tool Library and Edit Tool dialogs."),
+        .params("UI opens the Tool Library and Edit Tool dialogs."),
     CommandSpec::new("manufacture.manage.machine_library", "Machine Library", manage_stub_cmd)
         .noundo()
         .doc_only()

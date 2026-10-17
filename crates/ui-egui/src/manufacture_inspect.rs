@@ -1,4 +1,4 @@
-//! Fusion Manufacture → INSPECT: Sustainability Insights dialog, plus a thin host for
+//! Manufacture → INSPECT: Sustainability Insights dialog, plus a thin host for
 //! inspect tools already implemented in the engine (Measure, Section, analyses).
 
 use egui::RichText;
@@ -81,7 +81,7 @@ fn show_sustainability(app: &mut SolveApp, ui: &mut egui::Ui) {
         .default_width(420.0)
         .show(ui.ctx(), |ui| {
             ui.label(RichText::new("Cradle-to-gate carbon (illustrative)").strong());
-            ui.small("Fusion MSI-style inputs: process, material, and region. Values are order-of-magnitude only.");
+            ui.small("Illustrative inputs: process, material, and region. Values are order-of-magnitude only.");
             ui.separator();
 
             ui.horizontal(|ui| {

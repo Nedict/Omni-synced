@@ -1,4 +1,4 @@
-//! Fusion-style Tool Library + Edit Tool dialogs
+//! Tool Library + Edit Tool dialogs
 //! (General / Cutter / Shaft / Holder / Cutting data / Post processor)
 //! and MANAGE ribbon stubs (Form Mill, libraries, defaults).
 

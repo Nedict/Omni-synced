@@ -1,4 +1,4 @@
-//! Fusion-style New Setup dialog (Setup / Stock / Post Process) and SETUP menu helpers.
+//! New Setup dialog (Setup / Stock / Post Process) and SETUP menu helpers.
 
 use egui::RichText;
 use serde_json::json;

@@ -1,4 +1,4 @@
-//! Fusion-style Turning dialogs (Tool / Geometry / Radii / Passes / Linking)
+//! Turning dialogs (Tool / Geometry / Radii / Passes / Linking)
 //! for Face, Profile Rough/Finish, Groove variants, Adaptive, Thread, Chamfer, Part, Trace.
 
 use egui::RichText;

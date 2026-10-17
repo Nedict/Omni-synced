@@ -431,10 +431,10 @@ fn validate_post(p: &PostProfile, path: &str) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Stock (Fusion Setup → Stock tab)
+// Stock (Setup → Stock tab)
 // ---------------------------------------------------------------------------
 
-/// How relative-box stock offsets are applied (Fusion Stock Offset Mode).
+/// How relative-box stock offsets are applied (stock offset mode).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StockOffsetMode {
@@ -454,7 +454,7 @@ impl StockOffsetMode {
     }
 }
 
-/// The raw material for a setup (Fusion Stock Mode).
+/// The raw material for a setup (stock mode).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Stock {
@@ -556,10 +556,10 @@ fn validate_stock(s: &Stock, path: &str) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Work Coordinate System (Fusion Setup → WCS)
+// Work Coordinate System (Setup → WCS)
 // ---------------------------------------------------------------------------
 
-/// How the WCS axes are chosen (Fusion Orientation).
+/// How the WCS axes are chosen (orientation).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WcsOrientationMode {
@@ -583,7 +583,7 @@ impl WcsOrientationMode {
     }
 }
 
-/// How part zero is located (Fusion Origin).
+/// How part zero is located (origin).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WcsOriginMode {
@@ -605,7 +605,7 @@ impl WcsOriginMode {
     }
 }
 
-/// Axis reference on a stock/model box (Fusion stock/model box point picker).
+/// Axis reference on a stock/model box (stock/model box point picker).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BoxAxisRef {
@@ -634,7 +634,7 @@ pub struct BoxPoint {
     pub z: BoxAxisRef,
 }
 
-/// Operation type selected with the machine (Fusion Setup).
+/// Operation type selected with the machine (Setup).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SetupOperationType {
@@ -770,7 +770,7 @@ impl ToolKind {
         }
     }
 
-    /// Rough category for Tool Library Filters (Fusion-style).
+    /// Rough category for Tool Library Filters.
     pub fn category(self) -> ToolCategory {
         match self {
             ToolKind::Drill | ToolKind::Tap => ToolCategory::HoleMaking,
@@ -785,7 +785,7 @@ impl ToolKind {
     }
 }
 
-/// Tool Library filter category (Fusion Filters pane).
+/// Tool Library filter category (Filters pane).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolCategory {
@@ -814,7 +814,7 @@ impl ToolCategory {
     }
 }
 
-/// Cutter substrate (Fusion Cutter → Material).
+/// Cutter substrate (Cutter → Material).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolMaterial {
@@ -843,7 +843,7 @@ impl ToolMaterial {
     }
 }
 
-/// One conical/cylindrical shaft segment (Fusion Shaft tab).
+/// One conical/cylindrical shaft segment (Shaft tab).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ShaftSegment {
@@ -858,7 +858,7 @@ impl Default for ShaftSegment {
     }
 }
 
-/// Tool holder metadata (Fusion Holder tab).
+/// Tool holder metadata (Holder tab).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ToolHolder {
@@ -875,7 +875,7 @@ impl Default for ToolHolder {
     }
 }
 
-/// Named cutting-data preset (Fusion Cutting data tab).
+/// Named cutting-data preset (Cutting data tab).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CuttingPreset {
@@ -918,7 +918,7 @@ impl Default for CuttingPreset {
 
 /// A cutting tool definition within a setup's tool library.
 ///
-/// Maps to Fusion Tool Library edit tabs: General / Cutter / Shaft / Holder /
+/// Maps to Tool Library edit tabs: General / Cutter / Shaft / Holder /
 /// Cutting data / Post processor. `number` must be unique within its setup.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -1229,7 +1229,7 @@ impl Coolant {
     }
 }
 
-/// Absolute reference used by a height plane (Fusion Heights tab).
+/// Absolute reference used by a height plane (Heights tab).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HeightFrom {
@@ -1278,7 +1278,7 @@ impl Default for HeightPlane {
     }
 }
 
-/// Clearance / retract / feed / top / bottom (Fusion Heights) — shared by drill and contour.
+/// Clearance / retract / feed / top / bottom (Heights) — shared by drill and contour.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DrillHeights {
@@ -1306,7 +1306,7 @@ impl Default for DrillHeights {
 /// Contour height planes — same layout as [`DrillHeights`].
 pub type ContourHeights = DrillHeights;
 
-/// Absolute Z positions for the five Fusion height planes.
+/// Absolute Z positions for the five height planes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DrillHeightZs {
     pub clearance: f64,
@@ -1383,7 +1383,7 @@ impl ProfileSide {
     }
 }
 
-/// Sideways cutter compensation (Fusion Passes tab).
+/// Sideways cutter compensation (Passes tab).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SidewaysCompensation {
@@ -1478,7 +1478,7 @@ impl Default for ContourTabs {
     }
 }
 
-/// Geometry options for a 2D Contour (Fusion Geometry tab).
+/// Geometry options for a 2D Contour (Geometry tab).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 #[derive(Default)]
@@ -1488,7 +1488,7 @@ pub struct ContourGeometryOpts {
     pub tabs: ContourTabs,
 }
 
-/// Passes / depths for a 2D Contour (Fusion Passes tab).
+/// Passes / depths for a 2D Contour (Passes tab).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ContourPasses {
@@ -1519,7 +1519,7 @@ impl Default for ContourPasses {
     }
 }
 
-/// Linking / leads / ramp for a 2D Contour (Fusion Linking tab).
+/// Linking / leads / ramp for a 2D Contour (Linking tab).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ContourLinking {
@@ -1562,7 +1562,7 @@ impl Default for ContourLinking {
     }
 }
 
-/// 2D Contour / 2.5D profile (Fusion Tool / Geometry / Heights / Passes / Linking).
+/// 2D Contour / 2.5D profile (Tool / Geometry / Heights / Passes / Linking).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProfileOperation {
@@ -1645,7 +1645,7 @@ impl ProfileOperation {
     }
 }
 
-/// Face milling (Fusion 2D → Face).
+/// Face milling (2D → Face).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FaceOperation {
@@ -1684,7 +1684,7 @@ impl Default for FaceOperation {
     }
 }
 
-/// 2D Offset Roughing / Pocket (Fusion 2D → 2D Pocket).
+/// 2D Offset Roughing / Pocket (2D → 2D Pocket).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PocketOperation {
@@ -1728,7 +1728,7 @@ impl Default for PocketOperation {
     }
 }
 
-/// Drilling cycle variant (Fusion “Cycle” tab).
+/// Drilling cycle variant (Cycle tab).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DrillCycle {
@@ -1754,7 +1754,7 @@ impl DrillCycle {
     }
 }
 
-/// Linking moves between holes (Fusion Linking tab).
+/// Linking moves between holes (Linking tab).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RetractionPolicy {
@@ -1794,7 +1794,7 @@ impl Default for DrillLinking {
     }
 }
 
-/// Hole selection / ordering options (Fusion Geometry tab).
+/// Hole selection / ordering options (Geometry tab).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DrillOrder {
@@ -1838,7 +1838,7 @@ impl Default for DrillGeometryOpts {
     }
 }
 
-/// Action assigned to a recognized hole diameter group (Fusion Hole Recognition → Hole Groups).
+/// Action assigned to a recognized hole diameter group (Hole Recognition → Hole Groups).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HoleAction {
@@ -1872,7 +1872,7 @@ impl HoleAction {
     }
 }
 
-/// How generated hole operations are ordered (Fusion Hole Recognition → Options).
+/// How generated hole operations are ordered (Hole Recognition → Options).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HoleOrganizeMode {
@@ -1911,7 +1911,7 @@ impl Default for HoleGroup {
     }
 }
 
-/// Hole Recognition wizard (Fusion Drilling → Hole Recognition).
+/// Hole Recognition wizard (Drilling → Hole Recognition).
 ///
 /// Persists groups + options; Generate later expands into individual drill/tap ops.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1968,7 +1968,7 @@ impl HoleRecognitionOperation {
     }
 }
 
-/// Drilling operation (Fusion Drill dialog: Tool / Geometry / Heights / Cycle / Linking).
+/// Drilling operation (Drill dialog: Tool / Geometry / Heights / Cycle / Linking).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DrillOperation {
@@ -2030,7 +2030,7 @@ impl DrillOperation {
     }
 }
 
-/// 2D Adaptive Roughing (Fusion 2D → 2D Adaptive Clearing).
+/// 2D Adaptive Roughing (2D → 2D Adaptive Clearing).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AdaptiveOperation {
@@ -2075,7 +2075,7 @@ impl Default for AdaptiveOperation {
     }
 }
 
-/// Slot milling (Fusion 2D → Slot).
+/// Slot milling (2D → Slot).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SlotOperation {
@@ -2117,7 +2117,7 @@ impl Default for SlotOperation {
     }
 }
 
-/// Trace along edges/curves (Fusion 2D → Trace).
+/// Trace along edges/curves (2D → Trace).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TraceOperation {
@@ -2154,7 +2154,7 @@ impl Default for TraceOperation {
     }
 }
 
-/// Thread milling (Fusion 2D → Thread).
+/// Thread milling (2D → Thread).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ThreadOperation {
@@ -2199,7 +2199,7 @@ impl Default for ThreadOperation {
     }
 }
 
-/// Helical bore (Fusion 2D → Bore).
+/// Helical bore (2D → Bore).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BoreOperation {
@@ -2242,7 +2242,7 @@ impl Default for BoreOperation {
     }
 }
 
-/// Circular milling of holes/bosses (Fusion 2D → Circular).
+/// Circular milling of holes/bosses (2D → Circular).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CircularOperation {
@@ -2285,7 +2285,7 @@ impl Default for CircularOperation {
     }
 }
 
-/// Engrave with pointed tools (Fusion 2D → Engrave).
+/// Engrave with pointed tools (2D → Engrave).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EngraveOperation {
@@ -2321,7 +2321,7 @@ impl Default for EngraveOperation {
     }
 }
 
-/// 2D Chamfer (Fusion 2D → 2D Chamfer).
+/// 2D Chamfer (2D → 2D Chamfer).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChamferOperation {
@@ -2359,7 +2359,7 @@ impl Default for ChamferOperation {
     }
 }
 
-/// Fusion Manufacture → 3D milling strategy (shared Tool / Geometry / Heights / Passes / Linking).
+/// Manufacture → 3D milling strategy (shared Tool / Geometry / Heights / Passes / Linking).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreedStrategy {
@@ -2419,7 +2419,7 @@ impl ThreedStrategy {
     }
 }
 
-/// Shallow-area strategy used by Steep and Shallow (Fusion Passes tab).
+/// Shallow-area strategy used by Steep and Shallow (Passes tab).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ShallowStyle {
@@ -2437,7 +2437,7 @@ impl ShallowStyle {
     }
 }
 
-/// 3D milling operation (Fusion 3D menu — one dialog shell, strategy-specific passes).
+/// 3D milling operation (3D menu — one dialog shell, strategy-specific passes).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ThreedOperation {
@@ -2550,7 +2550,7 @@ impl ThreedOperation {
     }
 }
 
-/// Fusion Manufacture → Multi-Axis milling strategy.
+/// Manufacture → Multi-Axis milling strategy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MultiAxisStrategy {
@@ -2588,7 +2588,7 @@ impl MultiAxisStrategy {
     }
 }
 
-/// Rotary Parallel / Contour pass style (Fusion Passes → Rotary Passes).
+/// Rotary Parallel / Contour pass style (Passes → Rotary Passes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RotaryPassStyle {
@@ -2608,7 +2608,7 @@ impl RotaryPassStyle {
     }
 }
 
-/// Swarf drive mode (Fusion Geometry → Drive Mode).
+/// Swarf drive mode (Geometry → Drive Mode).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SwarfDriveMode {
@@ -2664,7 +2664,7 @@ impl MultiAxisMachiningType {
     }
 }
 
-/// Rotary axis orientation (Fusion Geometry → Orientation).
+/// Rotary axis orientation (Geometry → Orientation).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RotaryAxisOrientation {
@@ -2704,7 +2704,7 @@ impl MultiAxisFinishPattern {
     }
 }
 
-/// Multi-axis milling operation (Fusion MULTI-AXIS menu).
+/// Multi-axis milling operation (MULTI-AXIS menu).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MultiAxisOperation {
@@ -2837,7 +2837,7 @@ impl MultiAxisOperation {
     }
 }
 
-/// Spindle rotation for turning (Fusion Tool tab).
+/// Spindle rotation for turning (Tool tab).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TurningSpindleRotation {
@@ -2873,7 +2873,7 @@ impl TurningMode {
     }
 }
 
-/// Fusion Manufacture → Turning strategies (Turning tab menu order).
+/// Manufacture → Turning strategies (Turning tab menu order).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TurningStrategy {
@@ -2941,7 +2941,7 @@ impl TurningStrategy {
     }
 }
 
-/// Radii containment for turning (Fusion Radii tab): outer / inner X extents.
+/// Radii containment for turning (Radii tab): outer / inner X extents.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct TurningRadii {
@@ -2957,7 +2957,7 @@ impl Default for TurningRadii {
     }
 }
 
-/// Z-axis front/back containment for turning (Fusion Geometry tab).
+/// Z-axis front/back containment for turning (Geometry tab).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct TurningBounds {
@@ -2973,7 +2973,7 @@ impl Default for TurningBounds {
     }
 }
 
-/// A Fusion Turning operation (Face / Profile / Groove / Thread / Part / …).
+/// A Turning operation (Face / Profile / Groove / Thread / Part / …).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct TurningOperation {
@@ -3093,7 +3093,7 @@ impl TurningOperation {
     }
 }
 
-/// Fusion Turning → Part Handling strategy (no cutting toolpath; post emits machine motion).
+/// Turning → Part Handling strategy (no cutting toolpath; post emits machine motion).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PartHandlingKind {
@@ -3118,7 +3118,7 @@ impl PartHandlingKind {
     }
 }
 
-/// Chuck open behaviour on Subspindle Return (Fusion Open Spindle Chucks).
+/// Chuck open behaviour on Subspindle Return (Open Spindle Chucks).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChuckOpenMode {
@@ -3140,7 +3140,7 @@ impl ChuckOpenMode {
     }
 }
 
-/// How bar-pull shifts subsequent Z (Fusion Pull Mode).
+/// How bar-pull shifts subsequent Z (Pull Mode).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BarPullMode {
@@ -3333,7 +3333,7 @@ impl AdditiveOperation {
     }
 }
 
-/// CNC probe / surface inspection strategy (Fusion Inspection → Probing).
+/// CNC probe / surface inspection strategy (Inspection → Probing).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InspectionKind {
@@ -3428,7 +3428,7 @@ impl InspectionOperation {
     }
 }
 
-/// Manual inspection item type (Fusion Create Manual Inspection).
+/// Manual inspection item type (Create Manual Inspection).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ManualItemType {
@@ -3482,7 +3482,7 @@ impl Default for ManualInspectionItem {
     }
 }
 
-/// Create vs Record manual inspection (Fusion Inspection → Manual).
+/// Create vs Record manual inspection (Inspection → Manual).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ManualInspectionKind {
@@ -3529,7 +3529,7 @@ impl ManualInspectionOperation {
     }
 }
 
-/// Fabrication 2D Profile cutting mode (Fusion Tool → Cutting Mode).
+/// Fabrication 2D Profile cutting mode (Tool → Cutting Mode).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FabricationCuttingMode {
@@ -4491,13 +4491,13 @@ pub struct MfgSetup {
     /// Name of a post profile (in the same document's `posts` map).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post: Option<String>,
-    /// Fusion Setup → Operation Type.
+    /// Setup → Operation Type.
     #[serde(default)]
     pub operation_type: SetupOperationType,
-    /// Fusion Setup → WCS Orientation mode.
+    /// Setup → WCS Orientation mode.
     #[serde(default)]
     pub wcs_orientation: WcsOrientationMode,
-    /// Fusion Setup → Origin mode.
+    /// Setup → Origin mode.
     #[serde(default)]
     pub wcs_origin_mode: WcsOriginMode,
     /// When origin is stock/model box point.
@@ -4510,7 +4510,7 @@ pub struct MfgSetup {
     /// Bodies that define this setup's work area. Empty is not a valid "machine everything".
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub model_bodies: Vec<String>,
-    /// Fusion Setup → Post Process tab.
+    /// Setup → Post Process tab.
     #[serde(default)]
     pub post_opts: SetupPostOpts,
 }
@@ -4584,7 +4584,7 @@ fn validate_setup(setup: &MfgSetup, path: &str) -> Result<()> {
 /// Maximum NC programs / folders / patterns stored in the document.
 pub const MAX_SETUP_CONTAINERS: usize = 64;
 
-/// Output unit for NC Program / Post Process (Fusion Settings → Unit).
+/// Output unit for NC Program / Post Process (Settings → Unit).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NcUnit {
@@ -4604,7 +4604,7 @@ impl NcUnit {
     }
 }
 
-/// One operation included in an NC Program (Fusion Operations tab).
+/// One operation included in an NC Program (Operations tab).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 #[derive(Default)]
@@ -4628,7 +4628,7 @@ pub struct NcProgram {
     pub post: Option<String>,
     /// When empty and [`Self::operation_refs`] is empty, all ops in these setups are posted.
     pub setup_names: Vec<String>,
-    /// Explicit operation selection (Fusion Operations tab). When non-empty, takes precedence.
+    /// Explicit operation selection (Operations tab). When non-empty, takes precedence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub operation_refs: Vec<NcOpRef>,
     pub use_machine_configuration: bool,
@@ -4641,7 +4641,7 @@ pub struct NcProgram {
     /// Persist this NC program in the document browser (Create NC program).
     pub create_in_document: bool,
     pub reorder_minimize_tool_changes: bool,
-    /// Post-processor-specific key/value properties (Fusion Post properties column).
+    /// Post-processor-specific key/value properties (Post properties column).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub post_properties: BTreeMap<String, String>,
 }
@@ -4724,7 +4724,7 @@ fn dist3(a: [f64; 3], b: [f64; 3]) -> f64 {
     (dx * dx + dy * dy + dz * dz).sqrt()
 }
 
-/// Format seconds as `H:MM:SS` (Fusion status-bar style).
+/// Format seconds as `H:MM:SS` (status-bar style).
 pub fn format_cycle_time(secs: f64) -> String {
     let total = if secs.is_finite() && secs > 0.0 { secs.round() as u64 } else { 0 };
     let h = total / 3600;
@@ -4892,10 +4892,10 @@ impl Default for ManufacturingModel {
 }
 
 // ---------------------------------------------------------------------------
-// Toolpath modifications (Fusion Manufacture → MODIFY)
+// Toolpath modifications (Manufacture → MODIFY)
 // ---------------------------------------------------------------------------
 
-/// Trim region type (Fusion Modify → Trim).
+/// Trim region type (Modify → Trim).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrimType {
@@ -4988,7 +4988,7 @@ pub struct ToolpathModHeader {
     pub notes: String,
 }
 
-/// Fusion Modify → Trim.
+/// Modify → Trim.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TrimModification {
@@ -5014,7 +5014,7 @@ impl Default for TrimModification {
     }
 }
 
-/// Fusion Modify → Delete Passes.
+/// Modify → Delete Passes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DeletePassesModification {
@@ -5038,7 +5038,7 @@ impl Default for DeletePassesModification {
     }
 }
 
-/// Fusion Modify → Leads and Links.
+/// Modify → Leads and Links.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LeadsLinksModification {
@@ -5083,7 +5083,7 @@ impl Default for LeadsLinksModification {
     }
 }
 
-/// Fusion Modify → Replace Tool.
+/// Modify → Replace Tool.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ReplaceToolModification {
@@ -5120,7 +5120,7 @@ impl Default for EntrySketchLine {
     }
 }
 
-/// Fusion Modify → Move Entry Positions.
+/// Modify → Move Entry Positions.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MoveEntryModification {
@@ -5136,7 +5136,7 @@ impl Default for MoveEntryModification {
     }
 }
 
-/// Persisted toolpath modification (Fusion MODIFY menu).
+/// Persisted toolpath modification (MODIFY menu).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolpathModification {
@@ -5316,7 +5316,7 @@ pub struct ManufactureSettings {
     pub manual_nc: Vec<ManualNc>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub manufacturing_models: Vec<ManufacturingModel>,
-    /// Fusion MODIFY timeline entries (Trim, Delete Passes, …).
+    /// MODIFY timeline entries (Trim, Delete Passes, …).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub toolpath_modifications: Vec<ToolpathModification>,
     /// Template Library entries owned by this document.

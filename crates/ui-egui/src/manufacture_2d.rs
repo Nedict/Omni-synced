@@ -1,4 +1,4 @@
-//! Fusion-style 2D milling dialogs (Tool / Geometry / Heights / Passes / Linking)
+//! 2D milling dialogs (Tool / Geometry / Heights / Passes / Linking)
 //! for Face, Adaptive, Pocket, Slot, Trace, Thread, Bore, Circular, Engrave, Chamfer.
 //! Contour remains in [`crate::manufacture_contour`].
 

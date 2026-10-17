@@ -1,4 +1,4 @@
-//! Fusion Additive: New Setup from G-Code + Simulate Additive Toolpath dialogs.
+//! Additive: New Setup from G-Code + Simulate Additive Toolpath dialogs.
 
 use egui::RichText;
 use serde_json::json;

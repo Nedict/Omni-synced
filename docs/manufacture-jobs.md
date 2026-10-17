@@ -82,13 +82,13 @@ manufacture.machine.status {}
 
 Live MTConnect uses loopback-only `StdHttpGet` (`http://127.0.0.1:8082/<MODEL>`). FOCAS / THINC plugins are listed as planned native companions.
 
-In the app (Fusion-style milling ribbon + right panel):
+In the app (milling ribbon + right panel):
 
 **Ribbon** (while workspace = Manufacture): **SETUP** · **2D** (Face / Adaptive / Pocket / Contour) · **DRILLING** · **ACTIONS** (Generate / Simulate / Post Process) · **MANAGE** (Tool Library / Machine)
 
 **Right panel:**
 - **Setup** — machine profile (ATC / probe / integration), live machine plugin, post
-- **Tools** — tool library with Fusion-style bit measurements (Ø, corner radius, overall / flute length, flutes, description); ATC overflow warnings when a machine is assigned
+- **Tools** — tool library with bit measurements (Ø, corner radius, overall / flute length, flutes, description); ATC overflow warnings when a machine is assigned
 - **Operations** — ops list + companion generate
 - **Simulate** / **Post** — scrubber and G-code preview
 

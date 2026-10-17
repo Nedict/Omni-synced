@@ -14,7 +14,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .key("I")
         .noundo()
         .params("bodies?: [names] (default all); or items: [1-2 selections] → length/area/volume; diameter, radius, circumference or arc_length/angle_deg of circles, arcs and cylinders; slot sizes; min (distance_mm, from, to), max, center_distance (centre to centre, or from an axis) and angle"),
-    // Fusion Manufacture → Inspect → Sustainability Insights (illustrative cradle-to-gate CO₂e).
+    // Manufacture → Inspect → Sustainability Insights (illustrative cradle-to-gate CO₂e).
     CommandSpec::new("inspect.sustainability", "Sustainability Insights", sustainability)
         .at("MANUFACTURE", "INSPECT")
         .icon("environment_map")
@@ -151,7 +151,7 @@ fn measure(s: &mut Session, p: &Value) -> Result<Value> {
     if !want.is_empty() && bodies.len() != want.len() {
         return Err(bad("inspect.measure", "unknown body name"));
     }
-    // Sheet metal keeps the edges where bends meet flat faces (as Fusion does): count its
+    // Sheet metal keeps the edges where bends meet flat faces: count its
     // B-rep faces as they are, without merging coplanar neighbours.
     let sheets = s.model.state().sheets.clone();
     for b in &mut bodies {

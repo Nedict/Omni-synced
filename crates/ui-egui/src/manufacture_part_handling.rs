@@ -1,4 +1,4 @@
-//! Fusion Turning → Part Handling dialogs
+//! Turning → Part Handling dialogs
 //! (Subspindle Grab / Bar Pull / Subspindle Return / Tool Call).
 
 use egui::RichText;

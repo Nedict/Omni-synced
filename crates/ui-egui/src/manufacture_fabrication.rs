@@ -1,4 +1,4 @@
-//! Fusion Fabrication: Nest + Cutting → 2D Profile (waterjet / laser / plasma).
+//! Fabrication: Nest + Cutting → 2D Profile (waterjet / laser / plasma).
 
 use egui::RichText;
 use serde_json::json;

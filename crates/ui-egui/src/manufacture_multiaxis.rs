@@ -1,4 +1,4 @@
-//! Fusion-style Multi-Axis milling dialogs (Tool / Geometry / Heights / Passes / Multi-Axis / Linking).
+//! Multi-Axis milling dialogs (Tool / Geometry / Heights / Passes / Multi-Axis / Linking).
 //! Rotary Offset Roughing, Multi-Axis Roughing, Swarf, Advanced Swarf, Multi-Axis Contour,
 //! Rotary Parallel, Rotary Contour, Multi-Axis Finishing.
 

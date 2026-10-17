@@ -1,6 +1,6 @@
 //! CAM asset libraries (posts, machines, templates) with local + remote git sources.
 //!
-//! Fusion-style layout:
+//! Browser layout:
 //! - Document — assets already in this file
 //! - Local — built-in presets shipped with SolidCraft
 //! - Linked — user-configured git remotes (central catalog or vendor forks)
@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::{MachineProfile, PostProfile, Result, invalid, machines, post};
 
 /// Default central SolidCraft CAM library (posts + machines + templates).
-/// Point additional remotes at vendor forks the same way Fusion links cloud libraries.
+/// Point additional remotes at vendor forks the same way linked remotes attach cloud libraries.
 pub const DEFAULT_CAM_LIBRARY_REMOTE: &str = "https://devops.quasarke.net/wdunn001/solidcraft-cam-libraries.git";
 
 pub const MAX_LIBRARY_REMOTES: usize = 32;
@@ -292,7 +292,7 @@ fn slug(s: &str) -> String {
     s.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect::<String>().trim_matches('-').to_string()
 }
 
-/// Sample templates mirroring Fusion Template Library categories.
+/// Sample templates for Template Library categories.
 pub fn sample_templates() -> Vec<CamTemplate> {
     vec![
         CamTemplate {

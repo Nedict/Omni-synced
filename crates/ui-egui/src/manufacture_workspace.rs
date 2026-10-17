@@ -59,7 +59,7 @@ pub enum MfgTab {
     Post,
 }
 
-/// Fusion Manufacture workspace tab (ribbon content switches).
+/// Manufacture workspace tab (ribbon content switches).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CamMode {
     #[default]
@@ -91,7 +91,7 @@ pub struct State {
     pub active_setup: String,
     /// Which sub-panel is displayed in the right panel.
     pub tab: MfgTab,
-    /// Fusion Manufacture MILLING / TURNING workspace tab.
+    /// Manufacture MILLING / TURNING workspace tab.
     pub cam_mode: CamMode,
     pub(crate) revision: u64,
 
@@ -130,53 +130,53 @@ pub struct State {
     pub selected_tool: Option<usize>,
     /// Selected operation index in the Operations browser.
     pub selected_op: Option<usize>,
-    /// Open Fusion-style drill inspector (session only).
+    /// Open drill inspector (session only).
     pub drill_dialog: Option<crate::manufacture_drill::DrillDialogState>,
-    /// Open Fusion-style 2D Contour inspector (session only).
+    /// Open 2D Contour inspector (session only).
     pub contour_dialog: Option<crate::manufacture_contour::ContourDialogState>,
-    /// Open Fusion-style New Setup / Edit Setup dialog.
+    /// Open New Setup / Edit Setup dialog.
     pub setup_dialog: Option<crate::manufacture_setup::SetupDialogState>,
     /// Open secondary SETUP menu dialog (NC Program / Folder / Pattern / …).
     pub menu_dialog: Option<crate::manufacture_setup::MenuDialogState>,
-    /// Open Fusion-style 2D op dialog (Face / Adaptive / Pocket / Slot / …).
+    /// Open 2D op dialog (Face / Adaptive / Pocket / Slot / …).
     pub twod_dialog: Option<crate::manufacture_2d::TwodDialogState>,
-    /// Open Fusion-style 3D milling dialog (Adaptive / Scallop / Parallel / …).
+    /// Open 3D milling dialog (Adaptive / Scallop / Parallel / …).
     pub threed_dialog: Option<crate::manufacture_3d::ThreedDialogState>,
-    /// Open Fusion-style Hole Recognition dialog (Hole Groups / Libraries / Options).
+    /// Open Hole Recognition dialog (Hole Groups / Libraries / Options).
     pub hole_rec_dialog: Option<crate::manufacture_hole_recognition::HoleRecDialogState>,
-    /// Open Fusion-style Multi-Axis dialog (Swarf / Rotary / Finishing / …).
+    /// Open Multi-Axis dialog (Swarf / Rotary / Finishing / …).
     pub multiaxis_dialog: Option<crate::manufacture_multiaxis::MultiAxisDialogState>,
-    /// Open Fusion-style MODIFY dialog (Trim / Delete Passes / …).
+    /// Open MODIFY dialog (Trim / Delete Passes / …).
     pub modify_dialog: Option<crate::manufacture_modify::ModifyDialogState>,
-    /// Fusion NC Program / Post Process dialog.
+    /// NC Program / Post Process dialog.
     pub post_dialog: Option<crate::manufacture_post::PostDialogState>,
     /// Machining Time estimate dialog.
     pub machining_time_dialog: Option<crate::manufacture_post::MachiningTimeState>,
     /// Setup Sheet preview dialog.
     pub setup_sheet_dialog: Option<crate::manufacture_post::SetupSheetState>,
-    /// Fusion Tool Library browser dialog.
+    /// Tool Library browser dialog.
     pub tool_library_dialog: Option<crate::manufacture_tools::ToolLibraryState>,
-    /// Fusion Edit Tool dialog (General / Cutter / Shaft / Holder / Cutting / Post).
+    /// Edit Tool dialog (General / Cutter / Shaft / Holder / Cutting / Post).
     pub edit_tool_dialog: Option<crate::manufacture_tools::EditToolState>,
     /// MANAGE ribbon placeholder dialogs (Form Mill, libraries, defaults).
     pub manage_stub_dialog: Option<crate::manufacture_tools::ManageStubState>,
-    /// Fusion Inspect → Sustainability Insights dialog.
+    /// Inspect → Sustainability Insights dialog.
     pub sustainability_dialog: Option<crate::manufacture_inspect::SustainabilityState>,
-    /// Fusion Turning operation dialog (Tool / Geometry / Radii / Passes / Linking).
+    /// Turning operation dialog (Tool / Geometry / Radii / Passes / Linking).
     pub turning_dialog: Option<crate::manufacture_turning::TurningDialogState>,
-    /// Fusion Part Handling dialog (Subspindle Grab / Bar Pull / Return / Tool Call).
+    /// Part Handling dialog (Subspindle Grab / Bar Pull / Return / Tool Call).
     pub part_handling_dialog: Option<crate::manufacture_part_handling::PartHandlingDialogState>,
-    /// Fusion Additive toolpath dialog.
+    /// Additive toolpath dialog.
     pub additive_dialog: Option<crate::manufacture_additive::AdditiveDialogState>,
     /// New Setup from G-Code dialog.
     pub from_gcode_dialog: Option<crate::manufacture_additive::FromGcodeState>,
-    /// Fusion Inspection → Probing dialog.
+    /// Inspection → Probing dialog.
     pub inspection_dialog: Option<crate::manufacture_inspection::InspectionDialogState>,
-    /// Fusion Inspection → Manual dialog.
+    /// Inspection → Manual dialog.
     pub manual_inspection_dialog: Option<crate::manufacture_inspection::ManualInspectionDialogState>,
-    /// Fusion Fabrication → 2D Profile dialog.
+    /// Fabrication → 2D Profile dialog.
     pub fabrication_dialog: Option<crate::manufacture_fabrication::FabricationDialogState>,
-    /// Fusion Fabrication → Nest dialog.
+    /// Fabrication → Nest dialog.
     pub nest_dialog: Option<crate::manufacture_fabrication::NestDialogState>,
     /// Machine / Post / Template Library browser (with linked remotes).
     pub library_dialog: Option<crate::manufacture_libraries::LibraryDialogState>,
@@ -700,7 +700,7 @@ fn maybe_sync(app: &mut SolveApp) {
 
 // ── Floating dialogs (no sticky right aside) ───────────────────────────────────
 
-/// Manufacture uses Fusion-style floating dialogs + Browser setups — not a right dock.
+/// Manufacture uses floating dialogs + Browser setups — not a right dock.
 /// Setup / Tool Library / Post / ops open as drag-and-drop windows; dismiss with Cancel/Close/X.
 pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     maybe_sync(app);
@@ -788,7 +788,7 @@ pub fn browser_setup_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
                 app.manufacture_workspace.selected_op = Some(i);
                 open_op_dialog(app, &name, i);
             }
-            // Nested tool line (Fusion-style under the op).
+            // Nested tool line (under the op).
             if let Some(tool) = setup.tools.iter().find(|t| t.number == tnum) {
                 let desc = if tool.description.is_empty() { tool_kind_label(tool.kind) } else { tool.description.as_str() };
                 let tool_label = format!("#{tnum} - ø{:.2}mm {desc}", tool.diameter);

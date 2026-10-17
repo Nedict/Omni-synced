@@ -879,7 +879,7 @@
   "manufacture.tools.flutes": "Flutes",
   "manufacture.tools.geometry": "Geometry (mm)",
   "manufacture.tools.heading": "Tool library",
-  "manufacture.tools.hint": "MANAGE → Tool Library for the full Fusion dialog (General / Cutter / Shaft / Holder / Cutting data / Post). Quick edits below.",
+  "manufacture.tools.hint": "MANAGE → Tool Library for the full tool dialog (General / Cutter / Shaft / Holder / Cutting data / Post). Quick edits below.",
   "manufacture.tools.kind": "Type",
   "manufacture.tools.length": "Overall length",
   "manufacture.tools.number": "Tool #",

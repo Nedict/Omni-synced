@@ -862,34 +862,42 @@ mod tests {
 
     #[test]
     fn fusion_f3d_is_not_a_solidcraft_design_container() {
-        let sample = std::path::Path::new("C:\\Users\\willi\\Nextcloud\\3D Prints\\Fusion Cloud Offline\\21700 cylindrical_holder.f3d");
-        if !sample.is_file() {
+        let sample = std::env::var_os("F3D_SAMPLE")
+            .map(std::path::PathBuf::from)
+            .or_else(|| Some(std::path::PathBuf::from("/tmp/f3d-corpus/sample.f3d")))
+            .filter(|p| p.is_file());
+        let Some(sample) = sample else {
             return;
-        }
-        let bytes = std::fs::read(sample).unwrap();
+        };
+        let bytes = std::fs::read(&sample).unwrap();
         assert!(looks_like_fusion_archive(&bytes));
-        assert!(!is_design_container(&bytes), "Fusion ZIP must not parse as .solidcraft");
+        assert!(!is_design_container(&bytes), "Fusion archive ZIP must not parse as .solidcraft");
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn fusion_f3d_imports_as_step_bodies() {
-        let sample = std::path::Path::new("C:\\Users\\willi\\Nextcloud\\3D Prints\\Fusion Cloud Offline\\21700 cylindrical_holder.f3d");
-        if !sample.is_file() {
+        let sample = std::env::var_os("F3D_SAMPLE")
+            .map(std::path::PathBuf::from)
+            .or_else(|| Some(std::path::PathBuf::from("/tmp/f3d-corpus/sample.f3d")))
+            .filter(|p| p.is_file());
+        let Some(sample) = sample else {
             return;
-        }
-        let bytes = std::fs::read(sample).unwrap();
+        };
+        let bytes = std::fs::read(&sample).unwrap();
         let sf = f3d_import_feature(&bytes, sample.to_str().unwrap()).expect("import sample f3d");
         assert!(!sf.body_names.is_empty(), "expected at least one body");
     }
 
-    /// Every `.f3d` in the offline Fusion folder (or `/tmp/f3d-corpus` on the build host).
+    /// Every `.f3d` under `F3D_CORPUS` or `/tmp/f3d-corpus` on the build host.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn fusion_offline_corpus_smoke() {
         use std::path::PathBuf;
-        let dir = [PathBuf::from("/tmp/f3d-corpus"), PathBuf::from(r"C:\Users\willi\Nextcloud\3D Prints\Fusion Cloud Offline")]
+        let dir = std::env::var_os("F3D_CORPUS")
+            .map(PathBuf::from)
             .into_iter()
+            .chain(std::iter::once(PathBuf::from("/tmp/f3d-corpus")))
             .find(|p| p.is_dir());
         let Some(dir) = dir else {
             eprintln!("fusion_offline_corpus_smoke: no corpus directory");
@@ -974,18 +982,21 @@ mod tests {
 
     #[test]
     fn fusion_f3d_is_not_read_as_design_container() {
-        for sample in [
-            std::path::Path::new("/tmp/camelion.f3d"),
-            std::path::Path::new("C:\\Users\\willi\\Nextcloud\\3D Prints\\Fusion Cloud Offline\\camelion v2.f3d"),
-        ] {
-            if !sample.is_file() {
-                continue;
-            }
-            let bytes = std::fs::read(sample).unwrap();
-            let err = read_design(&bytes).unwrap_err().to_string();
-            assert!(err.contains("Fusion"), "{err}");
-            assert!(!err.contains("duplicate or invalid"), "{err}");
-        }
+        let sample = std::env::var_os("F3D_SAMPLE")
+            .map(std::path::PathBuf::from)
+            .into_iter()
+            .chain([
+                std::path::PathBuf::from("/tmp/f3d-corpus/sample.f3d"),
+                std::path::PathBuf::from("/tmp/holder.f3d"),
+            ])
+            .find(|p| p.is_file());
+        let Some(sample) = sample else {
+            return;
+        };
+        let bytes = std::fs::read(&sample).unwrap();
+        let err = read_design(&bytes).unwrap_err().to_string();
+        assert!(err.contains("Fusion"), "{err}");
+        assert!(!err.contains("duplicate or invalid"), "{err}");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! Fusion-style Machine / Post / Template Library browsers with linked git remotes.
+//! Machine / Post / Template Library browsers with linked git remotes.
 
 use egui::RichText;
 use serde_json::json;
