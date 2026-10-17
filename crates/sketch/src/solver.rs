@@ -954,13 +954,15 @@ fn lm_capped(
             }
         }
         let mut improved = false;
-        // Damping floor: variables the residuals barely see must not take huge steps.
-        let floor = (0..n).map(|i| a.get(i, i)).fold(0.0_f64, f64::max) * 1e-4;
+        // The same damping for every variable (Levenberg): of the steps that fit the residuals
+        // equally well it takes the shortest, so what the constraints leave free moves as little
+        // as it can. Scaled by JᵀJ's diagonal (Marquardt), a variable the residuals see weakly
+        // is cheap to move: a point held on a line made the line's far end swing round instead
+        // of the point sliding along it.
         for _ in 0..30 {
             let mut m = a.clone();
             for i in 0..n {
-                let d = a.get(i, i);
-                m.add(i, i, lambda * (d.max(floor) + 1e-9) + 1e-12);
+                m.add(i, i, lambda + 1e-12);
             }
             let rhs: Vec<f64> = g.iter().map(|v| -v).collect();
             let Some(step) = lin_solve(m, rhs) else {
