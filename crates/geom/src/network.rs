@@ -38,6 +38,10 @@
 //! - The three surfaces are brought into one space ([`crate::spline_space::embed`]: Bézier degree
 //!   elevation and knot insertion) and summed.
 //!
+//! - A side may collapse to a point ([`PointCurve`]: the apex of a three-sided patch, where the
+//!   two sides beside it meet). The curves through it cross it at the point itself, so the side
+//!   stays one point; the surface is singular there, as a three-sided tensor patch must be.
+//!
 //! Continuity conditions may sit on curves of one direction only (on two boundaries that meet
 //! at a corner the cross derivatives would also have to agree on the twist there: not supported
 //! yet), and only on the first and last curves of that direction. Closed curves are not
@@ -70,6 +74,26 @@ const CURVATURE_TOL: f64 = 0.02;
 /// parameterisation; the network measures its arc length).
 pub trait NetCurve {
     fn point(&mut self, t: f64) -> Option<Vec3>;
+
+    /// A side collapsed to a point (a three-sided patch: the apex where two sides meet). Any
+    /// other curve of no length is refused.
+    fn is_point(&self) -> bool {
+        false
+    }
+}
+
+/// A side of a network collapsed to one point: the apex of a three-sided patch, where the two
+/// sides beside it meet.
+pub struct PointCurve(pub Vec3);
+
+impl NetCurve for PointCurve {
+    fn point(&mut self, _: f64) -> Option<Vec3> {
+        Some(self.0)
+    }
+
+    fn is_point(&self) -> bool {
+        true
+    }
 }
 
 /// A face along a boundary curve, seen from a point of the curve.
@@ -141,6 +165,8 @@ struct Track<'a> {
     pts: Vec<Vec3>,
     length: f64,
     flipped: bool,
+    /// A side collapsed to a point ([`PointCurve`]).
+    point: bool,
     condition: Option<(Continuity, Box<dyn CrossFace + 'a>)>,
 }
 
@@ -161,6 +187,17 @@ impl<'a> Track<'a> {
             acc += w[0].dist(w[1]);
             s.push(acc);
         }
+        let point = curve.is_point();
+        if point {
+            // Its parameter runs evenly: every value is the same point.
+            if acc > 1e-9 || !acc.is_finite() {
+                return invalid(format!("{label} is meant to be a point but moves"));
+            }
+            if condition.as_ref().is_some_and(|(g, _)| *g != Continuity::G0) {
+                return invalid(format!("{label} is a point: a continuity condition needs a curve"));
+            }
+            return Ok(Track { label, curve, s: t.clone(), t, pts, length: 0.0, flipped: false, point, condition: None });
+        }
         if !(acc > 1e-9 && acc.is_finite()) {
             return invalid(format!("{label} has no length"));
         }
@@ -168,7 +205,7 @@ impl<'a> Track<'a> {
             *x /= acc;
         }
         let condition = condition.filter(|(g, _)| *g != Continuity::G0);
-        Ok(Track { label, curve, s, t, pts, length: acc, flipped: false, condition })
+        Ok(Track { label, curve, s, t, pts, length: acc, flipped: false, point, condition })
     }
 
     fn continuity(&self) -> Continuity {
@@ -545,7 +582,7 @@ pub fn network_surface(u: Vec<NetworkCurve>, v: Vec<NetworkCurve>, tol: Toleranc
     }
     let mut us: Vec<Track> = u.into_iter().map(Track::new).collect::<SplineResult<_>>()?;
     let mut vs: Vec<Track> = v.into_iter().map(Track::new).collect::<SplineResult<_>>()?;
-    for t in us.iter().chain(&vs) {
+    for t in us.iter().chain(&vs).filter(|t| !t.point) {
         if t.pts.first().zip(t.pts.last()).is_some_and(|(a, b)| a.dist(*b) <= tol.cross) {
             return Err(SplineError::Unsupported(format!("{} is closed: closed curves in a boundary surface", t.label)));
         }
@@ -570,25 +607,49 @@ pub fn network_surface(u: Vec<NetworkCurve>, v: Vec<NetworkCurve>, tol: Toleranc
         _ => {}
     }
     let (nu, nv) = (us.len(), vs.len());
+    // A side collapsed to a point: one at most, with another curve beside it in its own direction,
+    // and the curves the other way (if any) running from it to the far side.
+    let points = |ts: &[Track]| ts.iter().filter(|t| t.point).count();
+    match (points(&us), points(&vs)) {
+        (0, 0) => {}
+        (1, 0) if nu >= 2 && nv != 1 => {}
+        (0, 1) if nv >= 2 && nu >= 2 => {}
+        _ => return invalid("a point can stand for one side of the patch only, with curves running from it to the side across"),
+    }
 
     // Crossings: x[i][j] where u-curve i meets v-curve j (s along u-curve i, r along v-curve j).
+    // Where one of them is a point, the crossing is that point itself, so that every curve
+    // through it is moved onto it and the side stays collapsed.
     let mut x: Vec<Vec<Crossing>> = Vec::with_capacity(nu);
     for a in us.iter_mut() {
         let mut row = Vec::with_capacity(nv);
         for b in vs.iter_mut() {
-            row.push(closest(a, b, tol.cross)?);
+            let mut c = closest(a, b, tol.cross)?;
+            if a.point {
+                c.at = a.point(0.0)?;
+            } else if b.point {
+                c.at = b.point(0.0)?;
+            }
+            row.push(c);
         }
         x.push(row);
     }
+    // The first curve of a direction that is not a point (orders are read along it).
+    let first_curve = |ts: &[Track]| ts.iter().position(|t| !t.point).unwrap_or(0);
 
     // Order and orient: the u-curves in their order along the first v-curve, each v-curve running
     // from the first u-curve to the last; likewise the v-curves along the first u-curve.
     if nv >= 1 && nu >= 2 {
         let mut order: Vec<usize> = (0..nu).collect();
-        order.sort_by(|a, b| x[*a][0].r.total_cmp(&x[*b][0].r));
+        let j0 = first_curve(&vs);
+        order.sort_by(|a, b| x[*a][j0].r.total_cmp(&x[*b][j0].r));
         us = reorder(us, &order);
         x = reorder(x, &order);
         for j in 0..nv {
+            // A point runs no way: nothing to orient.
+            if vs[j].point {
+                continue;
+            }
             let rs: Vec<f64> = x.iter().map(|row| row[j].r).collect();
             match direction(&rs) {
                 Some(true) => {}
@@ -612,12 +673,16 @@ pub fn network_surface(u: Vec<NetworkCurve>, v: Vec<NetworkCurve>, tol: Toleranc
     }
     if nv >= 2 {
         let mut order: Vec<usize> = (0..nv).collect();
-        order.sort_by(|a, b| x[0][*a].s.total_cmp(&x[0][*b].s));
+        let i0 = first_curve(&us);
+        order.sort_by(|a, b| x[i0][*a].s.total_cmp(&x[i0][*b].s));
         vs = reorder(vs, &order);
         for row in x.iter_mut() {
             *row = reorder(std::mem::take(row), &order);
         }
         for (i, row) in x.iter_mut().enumerate() {
+            if us[i].point {
+                continue;
+            }
             let ss: Vec<f64> = row.iter().map(|c| c.s).collect();
             match direction(&ss) {
                 Some(true) => {}
@@ -633,6 +698,9 @@ pub fn network_surface(u: Vec<NetworkCurve>, v: Vec<NetworkCurve>, tol: Toleranc
     } else {
         // No order along the u-curves: each runs the way the one before it does.
         for i in 1..nu {
+            if us[i].point || us[i - 1].point {
+                continue;
+            }
             let (ps, pe) = (us[i - 1].point(0.0)?, us[i - 1].point(1.0)?);
             let (s, e) = (us[i].point(0.0)?, us[i].point(1.0)?);
             if s.dist(ps) + e.dist(pe) > s.dist(pe) + e.dist(ps) {
@@ -644,6 +712,14 @@ pub fn network_surface(u: Vec<NetworkCurve>, v: Vec<NetworkCurve>, tol: Toleranc
         }
     }
 
+    // A point is a side: the first or last curve of its direction.
+    for ts in [&us, &vs] {
+        for (i, t) in ts.iter().enumerate() {
+            if t.point && i != 0 && i + 1 != ts.len() {
+                return invalid(format!("{} lies inside the network: a point can only stand for a side", t.label));
+            }
+        }
+    }
     // Conditions only on the first and last u-curve.
     for (i, t) in us.iter().enumerate() {
         if t.condition.is_some() && i != 0 && i + 1 != nu {
@@ -652,12 +728,13 @@ pub fn network_surface(u: Vec<NetworkCurve>, v: Vec<NetworkCurve>, tol: Toleranc
     }
     let end_order = [us.first().map_or(0, |t| t.continuity().order()), if nu >= 2 { us.last().map_or(0, |t| t.continuity().order()) } else { 0 }];
 
-    // Network parameters.
-    let ubar = network_params(&x.iter().map(|row| row.iter().map(|c| c.s).collect()).collect::<Vec<Vec<f64>>>(), nv)?;
+    // Network parameters (a point has no positions along it to average).
+    let rows: Vec<Vec<f64>> = x.iter().zip(&us).filter(|(_, t)| !t.point).map(|(row, _)| row.iter().map(|c| c.s).collect()).collect();
+    let ubar = network_params(&rows, nv)?;
     let vbar: Vec<f64> = if nv == 0 {
         chord_params(&mut us)?
     } else if nu >= 2 {
-        let cols: Vec<Vec<f64>> = (0..nv).map(|j| x.iter().map(|row| row[j].r).collect()).collect();
+        let cols: Vec<Vec<f64>> = (0..nv).filter(|j| !vs[*j].point).map(|j| x.iter().map(|row| row[j].r).collect()).collect();
         network_params(&cols, nu)?
     } else {
         // One conditioned curve, crossed at the start of every v-curve.
@@ -668,6 +745,18 @@ pub fn network_surface(u: Vec<NetworkCurve>, v: Vec<NetworkCurve>, tol: Toleranc
         }
         vec![0.0]
     };
+
+    // A point is placed evenly: its crossings sit at the network parameters themselves.
+    for (i, row) in x.iter_mut().enumerate() {
+        for (j, c) in row.iter_mut().enumerate() {
+            if us.get(i).is_some_and(|t| t.point) {
+                c.s = ubar.get(j).copied().unwrap_or(c.s);
+            }
+            if vs.get(j).is_some_and(|t| t.point) {
+                c.r = vbar.get(i).copied().unwrap_or(c.r);
+            }
+        }
+    }
 
     // Placements: each curve through its crossings at the network parameters.
     let mut up = Vec::with_capacity(nu);
@@ -1198,6 +1287,105 @@ mod tests {
         for q in grid(&s, 20) {
             assert!((q.z - (0.3 * q.x + 0.2 * q.y + 1.0)).abs() < 1e-9, "{q:?} off the plane");
         }
+    }
+
+    /// Area of a surface over its whole domain: |S_u × S_v| by central differences on an n × n grid
+    /// of cell centres.
+    fn area(s: &NurbsSurface, n: usize) -> f64 {
+        let [du, dv] = s.domain();
+        let (hu, hv) = ((du[1] - du[0]) / n as f64, (dv[1] - dv[0]) / n as f64);
+        let mut a = 0.0;
+        for i in 0..n {
+            for j in 0..n {
+                let (u, v) = (du[0] + hu * (i as f64 + 0.5), dv[0] + hv * (j as f64 + 0.5));
+                let su = (s.eval(u + hu * 0.25, v).unwrap() - s.eval(u - hu * 0.25, v).unwrap()) / (hu * 0.5);
+                let sv = (s.eval(u, v + hv * 0.25).unwrap() - s.eval(u, v - hv * 0.25).unwrap()) / (hv * 0.5);
+                a += su.cross(sv).len() * hu * hv;
+            }
+        }
+        a
+    }
+
+    fn apex<'a>(label: &str, p: Vec3) -> NetworkCurve<'a> {
+        NetworkCurve { label: label.into(), curve: Box::new(PointCurve(p)), condition: None }
+    }
+
+    /// Three sides: one of them a point. A triangle of lines and a quarter disc (two radii and the
+    /// arc, the apex at the centre) are filled flat, the whole patch on their plane, every point of
+    /// the collapsed side at the apex, with the area of the triangle and of the quarter disc.
+    #[test]
+    fn three_sides_collapse_one_to_a_point() {
+        let (a, b, c) = (Vec3::new(0.0, 0.0, 2.0), Vec3::new(10.0, 0.0, 2.0), Vec3::new(4.0, 8.0, 2.0));
+        let s = network_surface(vec![line("ab", a, b), apex("c", c)], vec![line("ac", a, c), line("cb", c, b)], TOL).unwrap();
+        for q in grid(&s, 20) {
+            assert!((q.z - 2.0).abs() < 1e-9, "{q:?} off the plane");
+        }
+        let [du, dv] = s.domain();
+        let collapsed = [s.eval(du[0], dv[0]).unwrap(), s.eval(du[1], dv[0]).unwrap(), s.eval(du[0], dv[1]).unwrap(), s.eval(du[1], dv[1]).unwrap()];
+        assert!(collapsed.iter().filter(|p| p.dist(c) < 1e-12).count() == 2, "two corners at the apex: {collapsed:?}");
+        let tri = area(&s, 200);
+        assert!((tri - 40.0).abs() < 1e-3, "triangle area {tri}");
+        // The quarter disc of radius 10 about the origin.
+        let r = 10.0;
+        let arc = move |t: f64| Vec3::new(r * (std::f64::consts::FRAC_PI_2 * t).cos(), r * (std::f64::consts::FRAC_PI_2 * t).sin(), 0.0);
+        let s = network_surface(
+            vec![curve("arc", arc), apex("centre", Vec3::ZERO)],
+            vec![line("x", Vec3::ZERO, Vec3::X * r), line("y", Vec3::Y * r, Vec3::ZERO)],
+            TOL,
+        )
+        .unwrap();
+        for q in grid(&s, 20) {
+            assert!(q.z.abs() < 1e-9 && q.len() <= r + 1e-4, "{q:?} off the quarter disc");
+        }
+        let quarter = area(&s, 200);
+        let want = std::f64::consts::PI * r * r / 4.0;
+        assert!((quarter - want).abs() < 2e-3 * want, "quarter disc area {quarter} vs {want}");
+        // A point given as a v-curve is the same patch.
+        let s2 = network_surface(
+            vec![line("x", Vec3::ZERO, Vec3::X * r), line("y", Vec3::Y * r, Vec3::ZERO)],
+            vec![curve("arc", arc), apex("centre", Vec3::ZERO)],
+            TOL,
+        )
+        .unwrap();
+        assert!((area(&s2, 200) - quarter).abs() < 1e-6);
+    }
+
+    /// Points where a patch has no side for them, a point that moves, and a point with a
+    /// continuity condition are refused, never a panic.
+    #[test]
+    fn misplaced_points_are_refused() {
+        let (a, b, c) = (Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0), Vec3::new(4.0, 8.0, 0.0));
+        let two = network_surface(vec![apex("p", a), apex("q", c)], vec![], TOL).unwrap_err();
+        assert!(two.to_string().contains("point"), "{two}");
+        let both = network_surface(vec![line("ab", a, b), apex("c", c)], vec![apex("a", a), line("cb", c, b)], TOL).unwrap_err();
+        assert!(both.to_string().contains("point"), "{both}");
+        let lone = network_surface(vec![apex("c", c)], vec![line("ac", a, c), line("cb", c, b)], TOL);
+        assert!(lone.is_err());
+        let one_across = network_surface(vec![line("ab", a, b), apex("c", c)], vec![line("ac", a, c)], TOL).unwrap_err();
+        assert!(one_across.to_string().contains("point"), "{one_across}");
+        // A point between two curves of its direction.
+        let mid = network_surface(
+            vec![line("low", a, b), apex("mid", Vec3::new(5.0, 4.0, 0.0)), line("high", Vec3::new(0.0, 8.0, 0.0), Vec3::new(10.0, 8.0, 0.0))],
+            vec![],
+            TOL,
+        )
+        .unwrap_err();
+        assert!(mid.to_string().contains("inside"), "{mid}");
+        struct Moving;
+        impl NetCurve for Moving {
+            fn point(&mut self, t: f64) -> Option<Vec3> {
+                Some(Vec3::new(t, 0.0, 0.0))
+            }
+            fn is_point(&self) -> bool {
+                true
+            }
+        }
+        let moving = NetworkCurve { label: "m".into(), curve: Box::new(Moving), condition: None };
+        let e = network_surface(vec![line("ab", a, b), moving], vec![], TOL).unwrap_err();
+        assert!(e.to_string().contains("moves"), "{e}");
+        let with_g1 = NetworkCurve { label: "g".into(), curve: Box::new(PointCurve(c)), condition: Some((Continuity::G1, Box::new(Plane))) };
+        let e = network_surface(vec![line("ab", a, b), with_g1], vec![], TOL).unwrap_err();
+        assert!(e.to_string().contains("point"), "{e}");
     }
 
     /// Two curves loft straight between them; three or more pass smoothly through all; curves

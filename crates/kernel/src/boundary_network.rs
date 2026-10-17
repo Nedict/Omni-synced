@@ -15,7 +15,7 @@ use std::collections::HashSet;
 
 use mt::{BoundedCurve, Cut, InnerSpace, ParametricCurve, ParametricSurface, SearchNearestParameter};
 use solidcraft_geom::bspline::{CurveN, NurbsSurface, SplineError};
-use solidcraft_geom::network::{self, CrossFace, FaceFrame, NetCurve, NetworkCurve, Tolerances};
+use solidcraft_geom::network::{self, CrossFace, FaceFrame, NetCurve, NetworkCurve, PointCurve, Tolerances};
 use solidcraft_geom::{Plane, Seg2, Vec3};
 use truck_modeling as mt;
 
@@ -52,6 +52,9 @@ pub enum CurveSource<'a> {
     Points(Vec<Vec3>),
     /// A chain of a body's edges, each picked by a point on it.
     Edges { body: &'a Body, at: Vec<Vec3> },
+    /// A side collapsed to a point: the apex of a three-sided patch, where the sides beside it
+    /// meet.
+    Point(Vec3),
 }
 
 /// A curve of a boundary surface: a name for messages, where it comes from, and (for edges of a
@@ -80,6 +83,12 @@ pub fn boundary_surface(u: &[BoundaryCurve], v: &[BoundaryCurve]) -> Result<Body
             let (curve, face): (Box<dyn NetCurve>, Option<EdgeFaces>) = match &c.source {
                 CurveSource::Sketch { plane, segs } => (Box::new(SketchChain::new(&c.label, plane, segs)?), None),
                 CurveSource::Points(pts) => (Box::new(Polyline::new(&c.label, pts)?), None),
+                CurveSource::Point(p) => {
+                    if !p.is_finite() {
+                        return Err(KernelError::Invalid(format!("{} is not a finite point", c.label)));
+                    }
+                    (Box::new(PointCurve(*p)), None)
+                }
                 CurveSource::Edges { body, at } => {
                     if at.is_empty() || at.len() > MAX_PICKS || at.iter().any(|p| !p.is_finite()) {
                         return Err(KernelError::Invalid(format!("{}: pick 1 to {MAX_PICKS} points on its edges", c.label)));
@@ -389,20 +398,36 @@ fn face_of(s: &NurbsSurface, corners: &[Vec3]) -> Result<mt::Face> {
     };
     let (c00, c10, c11, c01) = (corner(&bottom, false), corner(&bottom, true), corner(&top, true), corner(&top, false));
     let size = [c00, c10, c11, c01].iter().map(|p| from_p3(*p).dist(from_p3(c00))).fold(0.0, f64::max).max(1.0);
-    for (a, b) in [(c00, c10), (c10, c11), (c11, c01), (c01, c00)] {
-        if from_p3(a).dist(from_p3(b)) <= size * 1e-9 {
-            return Err(KernelError::Invalid("not supported yet: a boundary surface with a side that shrinks to a point".into()));
-        }
+    // A side collapsed to a point (a three-sided patch) is left out of the loop: the two sides
+    // beside it meet at one vertex there.
+    let sides = [(c00, c10), (c10, c11), (c01, c11), (c00, c01)];
+    let collapsed: Vec<bool> = sides.iter().map(|(a, b)| from_p3(*a).dist(from_p3(*b)) <= size * 1e-9).collect();
+    match collapsed.iter().filter(|c| **c).count() {
+        0 | 1 => {}
+        _ => return Err(KernelError::Invalid("not supported yet: a boundary surface with more than one side shrunk to a point".into())),
     }
-    let verts: Vec<mt::Vertex> = [c00, c10, c11, c01].into_iter().map(mt::Vertex::new).collect();
+    let mut verts: Vec<mt::Vertex> = Vec::with_capacity(4);
+    for c in [c00, c10, c11, c01] {
+        let same = verts.iter().find(|v| from_p3(v.point()).dist(from_p3(c)) <= size * 1e-9).cloned();
+        verts.push(same.unwrap_or_else(|| mt::Vertex::new(c)));
+    }
     let (Some(v00), Some(v10), Some(v11), Some(v01)) = (verts.first(), verts.get(1), verts.get(2), verts.get(3)) else {
         return Err(fail("corners"));
     };
+    let is = |k: usize| collapsed.get(k).copied().unwrap_or(false);
     let mut wire: Vec<mt::Edge> = Vec::new();
-    wire.extend(side_edges(bottom, v00, v10, corners));
-    wire.extend(side_edges(right, v10, v11, corners));
-    wire.extend(side_edges(top, v01, v11, corners).into_iter().rev().map(|e| e.inverse()));
-    wire.extend(side_edges(left, v00, v01, corners).into_iter().rev().map(|e| e.inverse()));
+    if !is(0) {
+        wire.extend(side_edges(bottom, v00, v10, corners));
+    }
+    if !is(1) {
+        wire.extend(side_edges(right, v10, v11, corners));
+    }
+    if !is(2) {
+        wire.extend(side_edges(top, v01, v11, corners).into_iter().rev().map(|e| e.inverse()));
+    }
+    if !is(3) {
+        wire.extend(side_edges(left, v00, v01, corners).into_iter().rev().map(|e| e.inverse()));
+    }
     // u along the bottom, v up the left: counter-clockwise in (u, v).
     mt::Face::try_new(vec![wire.into()], mt::Surface::BSplineSurface(surface)).map_err(|e| fail(&e.to_string()))
 }
@@ -537,6 +562,39 @@ mod tests {
         assert!(near(tess), "measuring mesh: {tess}");
         let display = body.display_mesh(0.01).unwrap().measure().area;
         assert!(near(display), "display mesh: {display}");
+    }
+
+    /// Three sides: a quarter disc of radius 10 (two radii and the arc) is one face with three
+    /// edges, the collapsed side left out of its loop, and measures 25π by its faces and both
+    /// meshes.
+    #[test]
+    fn a_three_sided_patch_is_one_face_with_three_edges() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        let r = 10.0;
+        let arc = Seg2::Arc { center: Vec2::new(0.0, 0.0), radius: r, start: 0.0, sweep: FRAC_PI_2 };
+        let x = Seg2::Line { a: Vec2::new(0.0, 0.0), b: Vec2::new(r, 0.0) };
+        let y = Seg2::Line { a: Vec2::new(0.0, r), b: Vec2::new(0.0, 0.0) };
+        let pl = Plane::XY;
+        let apex = BoundaryCurve { label: "centre".into(), source: CurveSource::Point(Vec3::ZERO), continuity: Continuity::G0 };
+        let body = boundary_surface(&[sketch("arc", pl, vec![arc]), apex], &[sketch("x", pl, vec![x]), sketch("y", pl, vec![y])]).unwrap();
+        assert!(body.is_surface() && body.face_count() == 1);
+        let edges: std::collections::HashSet<_> = body.solid.edge_iter().map(|e| e.id()).collect();
+        assert_eq!(edges.len(), 3, "the collapsed side is no edge");
+        let want = PI * r * r / 4.0;
+        let near = |a: f64| (a - want).abs() < 0.2;
+        let faces = body.faces(0.01).unwrap();
+        assert!(near(faces[0].area), "faces: {faces:?}");
+        let tess = body.tessellate(0.01).unwrap().measure().area;
+        assert!(near(tess), "measuring mesh: {tess}");
+        let display = body.display_mesh(0.01).unwrap().measure().area;
+        assert!(near(display), "display mesh: {display}");
+        // Two collapsed sides are no patch.
+        let p = |l: &str, q: Vec3| BoundaryCurve { label: l.into(), source: CurveSource::Point(q), continuity: Continuity::G0 };
+        assert!(
+            boundary_surface(&[sketch("arc", pl, vec![arc]), p("o", Vec3::ZERO)], &[p("a", Vec3::new(r, 0.0, 0.0)), sketch("y", pl, vec![y])])
+                .is_err()
+        );
+        assert!(boundary_surface(&[sketch("arc", pl, vec![arc]), p("nan", Vec3::new(f64::NAN, 0.0, 0.0))], &[]).is_err());
     }
 
     /// The angle between the two faces' normals across the edge at `p`.
