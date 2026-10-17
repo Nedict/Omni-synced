@@ -1023,3 +1023,17 @@ fn profiles_crossing_next_to_a_corner_keeps_the_corner() {
     assert_eq!(areas.len(), 1, "{areas:?}");
     assert!(areas.iter().all(|x| (x - 1.0).abs() < 1e-9), "{areas:?}");
 }
+
+/// A line across a rectangle, and a stray line ending on it 1e-3 from where it crosses the
+/// rectangle's side: both the crossing and that end cut the long line, and the rectangle is
+/// split into its two halves.
+#[test]
+fn profiles_crossing_next_to_a_stray_end_still_splits() {
+    let mut sk = Sketch::new();
+    rect(&mut sk, [v(0.0, -1.0), v(1.0, -1.0), v(1.0, 1.0), v(0.0, 1.0)]);
+    sk.add_line(v(-1.0, 0.0), v(2.0, 0.0), None, None, None).unwrap();
+    sk.add_line(v(0.00099998, 0.0000099), v(0.3, 0.6), None, None, None).unwrap();
+    let areas: Vec<f64> = find_profiles(&sk).iter().map(|p| p.area).collect();
+    assert_eq!(areas.len(), 2, "{areas:?}");
+    assert!(areas.iter().all(|x| (x - 1.0).abs() < 1e-9), "{areas:?}");
+}
