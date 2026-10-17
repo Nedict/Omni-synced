@@ -143,3 +143,11 @@ fn a_thin_tube_on_a_huge_torus_stops_a_ray() {
     // The implicit form cancels terms of 4e20 here: the roots are good to about 1e-6 mm.
     assert!(hits.len() == 2 && (hits[0] - 4.).abs() < 1e-5 && (hits[1] - 6.).abs() < 1e-5, "{roots:?}");
 }
+
+#[test]
+fn a_hair_thin_tube_on_a_kilometre_torus_stops_a_ray() {
+    // R 1 km, r 0.1 mm (R/r = 1e7): roots at 0.9 and 1.1 mm, good to about 1e-4 mm here.
+    let roots = surface::torus_roots(Vec3::new(1e6 - 1., 0., 0.), Vec3::new(1., 0., 0.), Vec3::new(0., 0., 1.), 1e6, 0.1, [0., 2.]);
+    let hits: Vec<f64> = roots.iter().filter(|(_, grazing)| !grazing).map(|(l, _)| *l).collect();
+    assert!(hits.len() == 2 && (hits[0] - 0.9).abs() < 1e-3 && (hits[1] - 1.1).abs() < 1e-3, "{roots:?}");
+}

@@ -591,7 +591,10 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
     }
     stats.tracks = tracks.len();
     // 2. Screen samples.
-    for t in &mut tracks {
+    for (ti, t) in tracks.iter_mut().enumerate() {
+        if ti % 64 == 0 && cancel() {
+            return Err(HlrError::Cancelled);
+        }
         let Some(p) = scene.get(t.placement) else { continue };
         let c = t.c3();
         let mut ts: Vec<f64> = c.breaks().into_iter().filter(|x| *x > t.range[0] && *x < t.range[1]).collect();
@@ -715,7 +718,7 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
     stats.phase_ms[2] = clock.lap();
     // Coverage is checked every 1e-4 of the scene (5 um to 0.5 mm): a gap narrower than that
     // in a coincident line is not seen.
-    cover(&mut lines, 1e-7 + 1e-9 * scale, (1e-4 * scale).clamp(0.005, 0.5));
+    cover(&mut lines, 1e-7 + 1e-9 * scale, (1e-4 * scale).clamp(0.005, 0.5), cancel)?;
     stats.phase_ms[3] = clock.lap();
     for p in lines.iter().flat_map(|l| l.pieces.iter()) {
         stats.covered_pieces += usize::from(p.covered);
@@ -940,7 +943,7 @@ fn refine(tracks: &[Track], ctx: &Ctx, ta: usize, sa: f64, tb: usize, sb: f64) -
 }
 
 /// Marks hidden and uncertain pieces lying within `tol` of a visible piece of another line.
-fn cover(lines: &mut [Line], tol: f64, step: f64) {
+fn cover(lines: &mut [Line], tol: f64, step: f64, cancel: &dyn Fn() -> bool) -> Result<(), HlrError> {
     // Chords of visible and hidden pieces, keyed by (line, piece) so a piece never covers
     // itself; another piece of the same line may (a circle seen edge-on folds over itself).
     // `tol` is the base; each chord adds its own sag, each query point the sag of its chord.
@@ -952,7 +955,7 @@ fn cover(lines: &mut [Line], tol: f64, step: f64) {
     }
     let reach = segs.iter().map(|s| s.4).fold(0., f64::max) * 2. + tol;
     if segs.is_empty() {
-        return;
+        return Ok(());
     }
     // Bucket the chords on a grid of cells at least `tol` wide.
     let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
@@ -985,7 +988,9 @@ fn cover(lines: &mut [Line], tol: f64, step: f64) {
                 _ => false,
             }
     };
+    let checks = std::cell::Cell::new(0usize);
     let near = |key: (usize, usize), own: Visibility, q: [f64; 2], slack: f64| {
+        checks.set(checks.get() + 1);
         let Some(bucket) = grid.get(at(q[1], 1) * n + at(q[0], 0)) else { return false };
         bucket
             .iter()
@@ -998,6 +1003,12 @@ fn cover(lines: &mut [Line], tol: f64, step: f64) {
             // chord's ends and middle yet leave gaps between them). Points between the exact
             // ones lie on the chord, up to the piece's sag from its curve.
             let mut covered = !p.points.is_empty();
+            if checks.get() > 200_000_000 {
+                return Err(HlrError::Budget("coverage"));
+            }
+            if pi % 16 == 0 && cancel() {
+                return Err(HlrError::Cancelled);
+            }
             for w in p.points.windows(2) {
                 let (Some(a), Some(b)) = (w.first(), w.get(1)) else { continue };
                 let k = ((a[0] - b[0]).hypot(a[1] - b[1]) / step).ceil().clamp(1., 1e6) as usize;
@@ -1019,6 +1030,7 @@ fn cover(lines: &mut [Line], tol: f64, step: f64) {
             p.covered = covered;
         }
     }
+    Ok(())
 }
 
 fn point_segment(q: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
@@ -1148,7 +1160,7 @@ fn classify_point(ctx: &Ctx, placement: usize, own: &[usize], own_eps: f64, worl
             for h in &hits {
                 let p = f.surface.point(h.uv);
                 let margin = f.trim.margin(p);
-                let tol = 2. * f.trim.chord_error + 1e-7 * ctx.scale;
+                let tol = 2. * f.trim.chord_error + 1e-7 * (f.hi - f.lo).len();
                 let inside = f.trim.contains(h.uv);
                 if let Some(log) = log.as_mut() {
                     log.push(format!(
