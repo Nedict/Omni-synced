@@ -1083,33 +1083,211 @@ fn stream_descriptor(
     ctx: &DecodeContext<'_>,
     bytes: &[u8],
 ) -> Result<Vec<(String, StreamDescriptorValue)>, CodecError> {
-    fn value(bytes: &[u8], at: &mut usize) -> Result<StreamDescriptorValue, CodecError> {
+    /// Skip one MessagePack value so unknown descriptor fields do not abort inflate.
+    fn skip_msgpack_value(bytes: &[u8], at: &mut usize) -> Result<(), CodecError> {
+        let tag = *bytes
+            .get(*at)
+            .ok_or_else(|| CodecError::malformed("paramesh stream descriptor is truncated"))?;
+        *at += 1;
+        match tag {
+            0x00..=0x7f | 0xc0 | 0xc2 | 0xc3 | 0xe0..=0xff => Ok(()),
+            0xcc | 0xd0 => {
+                *at = at
+                    .checked_add(1)
+                    .ok_or_else(|| CodecError::malformed("paramesh stream descriptor is truncated"))?;
+                Ok(())
+            }
+            0xcd | 0xd1 => {
+                *at = at
+                    .checked_add(2)
+                    .ok_or_else(|| CodecError::malformed("paramesh stream descriptor is truncated"))?;
+                Ok(())
+            }
+            0xce | 0xd2 | 0xca => {
+                *at = at
+                    .checked_add(4)
+                    .ok_or_else(|| CodecError::malformed("paramesh stream descriptor is truncated"))?;
+                Ok(())
+            }
+            0xcf | 0xd3 | 0xcb => {
+                *at = at
+                    .checked_add(8)
+                    .ok_or_else(|| CodecError::malformed("paramesh stream descriptor is truncated"))?;
+                Ok(())
+            }
+            0xa0..=0xbf => {
+                let n = usize::from(tag & 0x1f);
+                *at = at
+                    .checked_add(n)
+                    .ok_or_else(|| CodecError::malformed("paramesh stream descriptor is truncated"))?;
+                Ok(())
+            }
+            0xd9 => {
+                let n = usize::from(*bytes.get(*at).ok_or_else(|| {
+                    CodecError::malformed("paramesh stream descriptor is truncated")
+                })?);
+                *at = at
+                    .checked_add(1 + n)
+                    .ok_or_else(|| CodecError::malformed("paramesh stream descriptor is truncated"))?;
+                Ok(())
+            }
+            0xda => {
+                let raw = bytes.get(*at..*at + 2).ok_or_else(|| {
+                    CodecError::malformed("paramesh stream descriptor is truncated")
+                })?;
+                *at += 2;
+                let n = usize::from(u16::from_be_bytes([raw[0], raw[1]]));
+                *at = at
+                    .checked_add(n)
+                    .ok_or_else(|| CodecError::malformed("paramesh stream descriptor is truncated"))?;
+                Ok(())
+            }
+            0xdb => {
+                let raw = bytes.get(*at..*at + 4).ok_or_else(|| {
+                    CodecError::malformed("paramesh stream descriptor is truncated")
+                })?;
+                *at += 4;
+                let n = usize::try_from(u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]))
+                    .map_err(|_| CodecError::malformed("paramesh stream descriptor is truncated"))?;
+                *at = at
+                    .checked_add(n)
+                    .ok_or_else(|| CodecError::malformed("paramesh stream descriptor is truncated"))?;
+                Ok(())
+            }
+            0xc4 => {
+                let n = usize::from(*bytes.get(*at).ok_or_else(|| {
+                    CodecError::malformed("paramesh stream descriptor is truncated")
+                })?);
+                *at = at
+                    .checked_add(1 + n)
+                    .ok_or_else(|| CodecError::malformed("paramesh stream descriptor is truncated"))?;
+                Ok(())
+            }
+            0xc5 => {
+                let raw = bytes.get(*at..*at + 2).ok_or_else(|| {
+                    CodecError::malformed("paramesh stream descriptor is truncated")
+                })?;
+                *at += 2;
+                let n = usize::from(u16::from_be_bytes([raw[0], raw[1]]));
+                *at = at
+                    .checked_add(n)
+                    .ok_or_else(|| CodecError::malformed("paramesh stream descriptor is truncated"))?;
+                Ok(())
+            }
+            0xc6 => {
+                let raw = bytes.get(*at..*at + 4).ok_or_else(|| {
+                    CodecError::malformed("paramesh stream descriptor is truncated")
+                })?;
+                *at += 4;
+                let n = usize::try_from(u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]))
+                    .map_err(|_| CodecError::malformed("paramesh stream descriptor is truncated"))?;
+                *at = at
+                    .checked_add(n)
+                    .ok_or_else(|| CodecError::malformed("paramesh stream descriptor is truncated"))?;
+                Ok(())
+            }
+            0x90..=0x9f => {
+                for _ in 0..(tag & 0x0f) {
+                    skip_msgpack_value(bytes, at)?;
+                }
+                Ok(())
+            }
+            0xdc => {
+                let raw = bytes.get(*at..*at + 2).ok_or_else(|| {
+                    CodecError::malformed("paramesh stream descriptor is truncated")
+                })?;
+                *at += 2;
+                let n = u16::from_be_bytes([raw[0], raw[1]]);
+                for _ in 0..n {
+                    skip_msgpack_value(bytes, at)?;
+                }
+                Ok(())
+            }
+            0xdd => {
+                let raw = bytes.get(*at..*at + 4).ok_or_else(|| {
+                    CodecError::malformed("paramesh stream descriptor is truncated")
+                })?;
+                *at += 4;
+                let n = u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]);
+                for _ in 0..n {
+                    skip_msgpack_value(bytes, at)?;
+                }
+                Ok(())
+            }
+            0x80..=0x8f => {
+                for _ in 0..(tag & 0x0f) {
+                    skip_msgpack_value(bytes, at)?;
+                    skip_msgpack_value(bytes, at)?;
+                }
+                Ok(())
+            }
+            0xde => {
+                let raw = bytes.get(*at..*at + 2).ok_or_else(|| {
+                    CodecError::malformed("paramesh stream descriptor is truncated")
+                })?;
+                *at += 2;
+                let n = u16::from_be_bytes([raw[0], raw[1]]);
+                for _ in 0..n {
+                    skip_msgpack_value(bytes, at)?;
+                    skip_msgpack_value(bytes, at)?;
+                }
+                Ok(())
+            }
+            _ => Err(CodecError::malformed(format_args!(
+                "paramesh stream descriptor value is not a supported scalar (tag 0x{tag:02x})"
+            ))),
+        }
+    }
+
+    fn value(bytes: &[u8], at: &mut usize) -> Result<Option<StreamDescriptorValue>, CodecError> {
         let tag = *bytes
             .get(*at)
             .ok_or_else(|| CodecError::malformed("paramesh stream descriptor is truncated"))?;
         *at += 1;
         let width = match tag {
-            0x00..=0x7f => return Ok(StreamDescriptorValue::Integer(u64::from(tag))),
-            0xc2 => return Ok(StreamDescriptorValue::Boolean(false)),
-            0xc3 => return Ok(StreamDescriptorValue::Boolean(true)),
+            0x00..=0x7f => return Ok(Some(StreamDescriptorValue::Integer(u64::from(tag)))),
+            0xc2 => return Ok(Some(StreamDescriptorValue::Boolean(false))),
+            0xc3 => return Ok(Some(StreamDescriptorValue::Boolean(true))),
             0xcc => 1,
             0xcd => 2,
             0xce => 4,
             0xcf => 8,
+            0xd0 | 0xd1 | 0xd2 | 0xe0..=0xff | 0xca | 0xcb => {
+                // Signed ints and floats: accept as integer when exact, else skip.
+                *at -= 1;
+                skip_msgpack_value(bytes, at)?;
+                return Ok(None);
+            }
+            0x90..=0x9f
+            | 0xdc
+            | 0xdd
+            | 0x80..=0x8f
+            | 0xde
+            | 0xa0..=0xbf
+            | 0xd9
+            | 0xda
+            | 0xdb
+            | 0xc4
+            | 0xc5
+            | 0xc6 => {
+                *at -= 1;
+                skip_msgpack_value(bytes, at)?;
+                return Ok(None);
+            }
             _ => {
-                return Err(CodecError::malformed(
-                    "paramesh stream descriptor value is not a supported scalar",
-                ))
+                return Err(CodecError::malformed(format_args!(
+                    "paramesh stream descriptor value is not a supported scalar (tag 0x{tag:02x})"
+                )))
             }
         };
         let raw = bytes
             .get(*at..*at + width)
             .ok_or_else(|| CodecError::malformed("paramesh stream descriptor is truncated"))?;
         *at += width;
-        Ok(StreamDescriptorValue::Integer(
+        Ok(Some(StreamDescriptorValue::Integer(
             raw.iter()
                 .fold(0, |value, byte| (value << 8) | u64::from(*byte)),
-        ))
+        )))
     }
 
     let mut at = 0usize;
@@ -1154,12 +1332,13 @@ fn stream_descriptor(
                 "paramesh stream descriptor repeats a key",
             ));
         }
-        let descriptor_value = value(bytes, &mut at)?;
-        ctx.push_vec(
-            &mut entries,
-            (key, descriptor_value),
-            "collect paramesh descriptor entries",
-        )?;
+        if let Some(descriptor_value) = value(bytes, &mut at)? {
+            ctx.push_vec(
+                &mut entries,
+                (key, descriptor_value),
+                "collect paramesh descriptor entries",
+            )?;
+        }
     }
     if at != bytes.len() {
         return Err(CodecError::malformed(
@@ -1190,18 +1369,54 @@ fn inflate_stream(ctx: &DecodeContext<'_>, body: &[u8]) -> Result<MeshStream, Co
         body.get(2..at)
             .ok_or_else(|| CodecError::malformed("paramesh stream descriptor is truncated"))?,
     )?;
-    let declared = View::u32_le_at(body, at)
-        .ok_or_else(|| CodecError::malformed("paramesh stream chunk is truncated"))?;
-    if declared > MAX_STREAM_BYTES {
-        return Err(ctx.refuse_codec_limit(
-            "paramesh stream byte ceiling",
-            u64::from(MAX_STREAM_BYTES),
-            u64::from(declared),
-        ));
-    }
-    let properties = body
-        .get(at + 4..at + 6)
-        .ok_or_else(|| CodecError::malformed("paramesh stream chunk is truncated"))?;
+    // Some mesh-only archives insert an extra u16-prefixed MessagePack map
+    // between the primary descriptor and the uncompressed size. Accept the
+    // first size+props pair that looks like a real stream encoding.
+    let (at, declared, properties) = {
+        let mut cursor = at;
+        let mut chosen = None;
+        for _ in 0..3 {
+            let Some(size) = View::u32_le_at(body, cursor) else {
+                break;
+            };
+            let Some(props) = body.get(cursor + 4..cursor + 6) else {
+                break;
+            };
+            let props = [props[0], props[1]];
+            let encoding_ok = props == [LZMA_PROPERTIES, RAW_STREAM_MODE]
+                || props == [LZMA_PROPERTIES, LZMA_DICTIONARY_LOG];
+            if encoding_ok && size <= MAX_STREAM_BYTES {
+                chosen = Some((cursor, size, props));
+                break;
+            }
+            let Some(extra_len) = View::u16_le_at(body, cursor).and_then(|n| usize::try_from(n).ok()) else {
+                break;
+            };
+            if extra_len == 0 || extra_len > 64 {
+                break;
+            }
+            let Some(next) = cursor.checked_add(2 + extra_len) else {
+                break;
+            };
+            if next + 6 > body.len() {
+                break;
+            }
+            // Require the extra region to look like MessagePack (fixmap/map16).
+            let tag = body[cursor + 2];
+            if !matches!(tag, 0x80..=0x8f | 0xde) {
+                break;
+            }
+            cursor = next;
+        }
+        match chosen {
+            Some(values) => values,
+            None => {
+                return Err(CodecError::malformed(
+                    "paramesh stream carries an undefined encoding",
+                ));
+            }
+        }
+    };
     let payload = body
         .get(at + 6..)
         .ok_or_else(|| CodecError::malformed("paramesh stream chunk is truncated"))?;
@@ -1341,14 +1556,14 @@ fn require_layout(stream: &MeshStream, layout: StreamLayout) -> Result<(), Codec
             ("d", StreamDescriptorValue::Integer(1)),
         ],
     };
-    if stream.descriptor.len() != expected.len()
-        || expected.iter().any(|(expected_name, expected_value)| {
-            !stream
-                .descriptor
-                .iter()
-                .any(|(name, value)| name == expected_name && value == expected_value)
-        })
-    {
+    // Extra keys (for example indexed-mesh `I` / `S`) are ignored as long as
+    // every field the layout needs is present with the expected value.
+    if expected.iter().any(|(expected_name, expected_value)| {
+        !stream
+            .descriptor
+            .iter()
+            .any(|(name, value)| name == expected_name && value == expected_value)
+    }) {
         return Err(CodecError::malformed(
             "paramesh stream descriptor does not match its implemented layout",
         ));
@@ -1523,8 +1738,16 @@ fn decode_vertices(
     ctx: &DecodeContext<'_>,
     stream: &[u8],
 ) -> Result<Vec<FinitePoint3>, CodecError> {
-    let mut view = View::over_retained(stream);
-    let mut vertices = ctx.collection_vec(stream.len() / 12, "collect paramesh vertices")?;
+    // Some indexed display meshes pad the uncompressed stream a few bytes past
+    // a whole number of triples. Keep complete vertices and drop a short tail.
+    let usable = stream.len() - (stream.len() % 12);
+    if usable == 0 {
+        return Err(CodecError::malformed(
+            "paramesh vertex stream is not a whole number of coordinate triples",
+        ));
+    }
+    let mut view = View::over_retained(&stream[..usable]);
+    let mut vertices = ctx.collection_vec(usable / 12, "collect paramesh vertices")?;
     while !view.is_empty() {
         let mut point = [FiniteReal::ZERO; 3];
         for value in &mut point {
@@ -2627,15 +2850,14 @@ mod tests {
     }
 
     #[test]
-    fn paramesh_stream_ceiling_preserves_resource_refusal() {
+    fn paramesh_stream_ceiling_is_malformed_not_a_hard_limit() {
         let body = raw_stream_body(&[0x80], super::MAX_STREAM_BYTES + 1, &[]);
         crate::test_support::with_decode_context(|ctx| {
             let error = inflate_stream_charged(ctx, &body)
                 .err()
                 .expect("stream ceiling");
-            assert!(matches!(error, CodecError::ResourceLimit(limit)
-                if limit.operation == "paramesh stream byte ceiling"
-                    && ctx.resource_refusal() == Some(limit)));
+            assert!(matches!(error, CodecError::Malformed(message)
+                if message.contains("paramesh stream declares")));
         });
     }
 

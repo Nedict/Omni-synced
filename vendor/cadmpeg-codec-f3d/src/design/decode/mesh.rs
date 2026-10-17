@@ -2371,6 +2371,40 @@ mod tests {
         bytes
     }
 
+    /// Bridged prefix (nine zeros, count at 20, five-byte bridge, nested at 42)
+    /// and a 4-byte owner gap used by some mesh-only Fusion archives.
+    fn mesh_collection_record_bridged(
+        class_tag: u32,
+        base_class_tag: u32,
+        record_index: u32,
+        texture_table_record_index: u32,
+        body_record_indices: &[u32],
+        owner_record_index: u32,
+    ) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        push_indexed_header(&mut bytes, class_tag, record_index);
+        bytes.extend_from_slice(&[0; 9]);
+        bytes.extend_from_slice(
+            &(u32::try_from(body_record_indices.len()).expect("fixture value fits u32"))
+                .to_le_bytes(),
+        );
+        bytes.extend_from_slice(&[0, 1, 0, 0, 0]);
+        bytes.extend_from_slice(&[1, 1]);
+        push_reference(&mut bytes, texture_table_record_index);
+        push_indexed_header(&mut bytes, base_class_tag, record_index);
+        bytes.extend_from_slice(&[0; 9]);
+        bytes.extend_from_slice(
+            &(u32::try_from(body_record_indices.len()).expect("fixture value fits u32"))
+                .to_le_bytes(),
+        );
+        for body in body_record_indices {
+            push_reference(&mut bytes, *body);
+        }
+        bytes.extend_from_slice(&[0; 4]);
+        push_reference(&mut bytes, owner_record_index);
+        bytes
+    }
+
     fn mesh_texture_table_record(
         class_tag: u32,
         record_index: u32,
@@ -3166,6 +3200,25 @@ mod tests {
         assert_eq!(textures.len(), 2);
         assert_eq!(textures[0].file.record(), textures[1].file.record());
         assert_eq!(textures[0].asset, textures[1].asset);
+    }
+
+    #[test]
+    fn mesh_collection_layout_accepts_bridged_prefix_and_owner_gap() {
+        let known = mesh_collection_record(261, 264, 225, 226, &[229], 187);
+        assert_eq!(
+            super::mesh_collection_layout(&known),
+            Some((mesh_collection::BODY_COUNT, mesh_collection::LEN))
+        );
+        let bridged = mesh_collection_record_bridged(261, 264, 225, 226, &[229], 187);
+        assert_eq!(super::mesh_collection_layout(&bridged), Some((20, 42)));
+        let nested_count_at = 42 + mesh_collection_base::BODY_COUNT;
+        let body_at = nested_count_at + 4;
+        let owner_at = body_at + SAME_SEGMENT_REFERENCE_BYTES;
+        assert_eq!(
+            super::mesh_collection_owner_index(&bridged, owner_at),
+            Some(187)
+        );
+        assert_eq!(bridged.len(), 92);
     }
 
     #[test]
