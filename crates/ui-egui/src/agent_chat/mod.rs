@@ -798,7 +798,7 @@ pub fn attach_path(app: &mut SolveApp, path: &str) -> std::result::Result<String
     let p = std::path::Path::new(path);
     let file = if attach::kind(p) == attach::Kind::Cad {
         if !p.is_file() {
-            return Err(format!("{path}: not a file"));
+            return Err(trf("ui.agent_chat_file_not_a_file", &[("name", path)]));
         }
         app.insert_path_async(path);
         attach::Attachment::imported(p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string()))

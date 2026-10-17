@@ -7,6 +7,19 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::backend::{self, PromptPart};
+use crate::i18n::format as trf;
+
+/// A refusal in the app's language: the file's name, then why.
+fn refused(key: &str, name: &str, args: &[(&str, &str)]) -> String {
+    let mut all = vec![("name", name)];
+    all.extend_from_slice(args);
+    trf(key, &all)
+}
+
+/// A refusal carrying the system's or the decoder's own words.
+fn failed(name: &str, e: impl std::fmt::Display) -> String {
+    refused("ui.agent_chat_file_error", name, &[("error", &e.to_string())])
+}
 
 /// Most files on one message.
 pub const MAX_FILES: usize = 8;
@@ -100,33 +113,31 @@ fn name_of(path: &Path) -> String {
 /// Read a picture or text file for a message. CAD files are imported by the caller, not read here.
 pub fn read(path: &Path) -> Result<Attachment, String> {
     let name = name_of(path);
-    let meta = std::fs::metadata(path).map_err(|e| format!("{name}: {e}"))?;
+    let meta = std::fs::metadata(path).map_err(|e| failed(&name, e))?;
     if !meta.is_file() {
-        return Err(format!("{name}: not a file"));
+        return Err(refused("ui.agent_chat_file_not_a_file", &name, &[]));
     }
     match kind(path) {
         Kind::Picture => {
             if meta.len() > MAX_PICTURE_BYTES {
-                return Err(format!("{name}: a picture of at most {} MB", MAX_PICTURE_BYTES / 1024 / 1024));
+                return Err(refused("ui.agent_chat_file_picture_too_big", &name, &[("max", &(MAX_PICTURE_BYTES / 1024 / 1024).to_string())]));
             }
-            let bytes = std::fs::read(path).map_err(|e| format!("{name}: {e}"))?;
+            let bytes = std::fs::read(path).map_err(|e| failed(&name, e))?;
             picture(name, &bytes)
         }
         Kind::Text => {
             if meta.len() > MAX_TEXT_BYTES {
-                return Err(format!("{name}: a text file of at most {} KB", MAX_TEXT_BYTES / 1024));
+                return Err(refused("ui.agent_chat_file_text_too_big", &name, &[("max", &(MAX_TEXT_BYTES / 1024).to_string())]));
             }
-            let bytes = std::fs::read(path).map_err(|e| format!("{name}: {e}"))?;
-            let text = String::from_utf8(bytes).map_err(|_| format!("{name}: not UTF-8 text"))?;
+            let bytes = std::fs::read(path).map_err(|e| failed(&name, e))?;
+            let text = String::from_utf8(bytes).map_err(|_| refused("ui.agent_chat_file_not_utf8", &name, &[]))?;
             Ok(Attachment { id: 0, name, content: Content::Text(Arc::new(text)), thumb: None })
         }
-        Kind::Cad => Err(format!("{name}: a CAD file is imported into the design, not read")),
+        Kind::Cad => Err(refused("ui.agent_chat_file_cad_not_read", &name, &[])),
         Kind::Other if matches!(path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(), Some("heic" | "heif")) => {
-            Err(format!("{name}: HEIC pictures can't be read here; export it as JPEG or PNG first"))
+            Err(refused("ui.agent_chat_file_heic", &name, &[]))
         }
-        Kind::Other => Err(format!(
-            "{name}: pictures (PNG, JPEG, GIF, WebP, BMP, TIFF), text files (SVG too) and CAD files (STEP, IGES, FreeCAD, Rhino, STL, 3MF, OBJ, glTF) can be attached"
-        )),
+        Kind::Other => Err(refused("ui.agent_chat_file_kinds", &name, &[])),
     }
 }
 
@@ -138,7 +149,7 @@ pub fn picture(name: String, bytes: &[u8]) -> Result<Attachment, String> {
 }
 
 fn picture_within(name: String, bytes: &[u8], limit: usize) -> Result<Attachment, String> {
-    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().map_err(|e| format!("{name}: {e}"))?;
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().map_err(|e| failed(&name, e))?;
     let format = reader.format();
     let mime = match format {
         Some(image::ImageFormat::Png) => Some("image/png"),
@@ -146,16 +157,16 @@ fn picture_within(name: String, bytes: &[u8], limit: usize) -> Result<Attachment
         Some(image::ImageFormat::Gif) => Some("image/gif"),
         Some(image::ImageFormat::WebP) => Some("image/webp"),
         Some(image::ImageFormat::Bmp | image::ImageFormat::Tiff) => None,
-        _ => return Err(format!("{name}: not a picture this can read")),
+        _ => return Err(refused("ui.agent_chat_file_unreadable_picture", &name, &[])),
     };
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_DECODE_SIDE);
     limits.max_image_height = Some(MAX_DECODE_SIDE);
     limits.max_alloc = Some(1024 * 1024 * 1024);
     reader.limits(limits);
-    let img = reader.decode().map_err(|e| format!("{name}: {e}"))?;
+    let img = reader.decode().map_err(|e| failed(&name, e))?;
     if img.width() == 0 || img.height() == 0 {
-        return Err(format!("{name}: an empty picture"));
+        return Err(refused("ui.agent_chat_file_empty_picture", &name, &[]));
     }
     if let Some(mime) = mime
         && img.width().max(img.height()) <= MAX_SIDE
@@ -175,12 +186,12 @@ fn picture_within(name: String, bytes: &[u8], limit: usize) -> Result<Attachment
 /// A picture copied to the clipboard (RGBA rows from the system), sent as PNG.
 pub fn from_rgba(name: String, width: usize, height: usize, rgba: &[u8]) -> Result<Attachment, String> {
     let (w, h) = (u32::try_from(width).ok(), u32::try_from(height).ok());
-    let (Some(w), Some(h)) = (w, h) else { return Err(format!("{name}: too large")) };
+    let (Some(w), Some(h)) = (w, h) else { return Err(refused("ui.agent_chat_file_too_large", &name, &[])) };
     if w == 0 || h == 0 || w > MAX_DECODE_SIDE || h > MAX_DECODE_SIDE || width.checked_mul(height).and_then(|n| n.checked_mul(4)) != Some(rgba.len())
     {
-        return Err(format!("{name}: not a picture"));
+        return Err(refused("ui.agent_chat_file_not_a_picture", &name, &[]));
     }
-    let img = image::RgbaImage::from_raw(w, h, rgba.to_vec()).ok_or_else(|| format!("{name}: not a picture"))?;
+    let img = image::RgbaImage::from_raw(w, h, rgba.to_vec()).ok_or_else(|| refused("ui.agent_chat_file_not_a_picture", &name, &[]))?;
     encoded(name, image::DynamicImage::ImageRgba8(img), MAX_SENT_BYTES)
 }
 
@@ -192,11 +203,11 @@ fn encoded(name: String, img: image::DynamicImage, limit: usize) -> Result<Attac
     let opaque = opaque(&img);
     loop {
         let mut png = Vec::new();
-        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(|e| format!("{name}: {e}"))?;
+        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(|e| failed(&name, e))?;
         let mut sent = (png.len() <= limit).then_some(("image/png", png));
         if sent.is_none() && opaque {
             let mut jpeg = Vec::new();
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 85).encode_image(&img.to_rgb8()).map_err(|e| format!("{name}: {e}"))?;
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 85).encode_image(&img.to_rgb8()).map_err(|e| failed(&name, e))?;
             sent = (jpeg.len() <= limit).then_some(("image/jpeg", jpeg));
         }
         if let Some((mime, bytes)) = sent {
@@ -209,7 +220,7 @@ fn encoded(name: String, img: image::DynamicImage, limit: usize) -> Result<Attac
             });
         }
         if img.width().max(img.height()) <= MIN_SIDE {
-            return Err(format!("{name}: too large to send, even scaled down"));
+            return Err(refused("ui.agent_chat_file_too_large_to_send", &name, &[]));
         }
         img = img.resize((img.width() / 2).max(1), (img.height() / 2).max(1), image::imageops::FilterType::Triangle);
     }
@@ -391,6 +402,27 @@ mod tests {
         assert!(from_rgba("x".into(), usize::MAX, 2, &[]).is_err());
         let ok = from_rgba("pasted.png".into(), 3, 2, &[255; 24]).unwrap();
         assert!(matches!(ok.content, Content::Picture { size: [3, 2], .. }));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Review of #1744: the refusals were English whatever the app's language.
+    #[test]
+    fn refusals_speak_the_apps_language() {
+        let d = dir("lang");
+        let binary = d.join("bin.json");
+        std::fs::write(&binary, [0xff, 0xfe, 0x00, 0x80]).unwrap();
+        let other = d.join("movie.mov");
+        std::fs::write(&other, b"x").unwrap();
+        {
+            let _ja = crate::i18n::scope("ja");
+            assert!(read(&binary).unwrap_err().contains("UTF-8 のテキストではありません"));
+            assert!(read(&other).unwrap_err().starts_with("movie.mov: 添付できるのは"));
+        }
+        {
+            let _zh = crate::i18n::scope("zh");
+            assert!(read(&binary).unwrap_err().contains("不是 UTF-8 文本"));
+        }
+        assert!(read(&binary).unwrap_err().contains("not UTF-8 text"), "English again outside the scope");
         let _ = std::fs::remove_dir_all(&d);
     }
 
