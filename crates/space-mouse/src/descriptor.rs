@@ -1,13 +1,17 @@
 //! Just enough of a HID report descriptor reader to recognise a 3D mouse and to find its six
-//! motion axes in its input reports. Written from the public USB HID specification (Device Class
-//! Definition for HID 1.11, section 6.2.2). Malformed input never panics; it simply yields less
-//! information.
+//! motion axes and its buttons in its input reports. Written from the public USB HID
+//! specification (Device Class Definition for HID 1.11, section 6.2.2, and the HID Usage Tables).
+//! Malformed input never panics; it simply yields less information.
 
 /// Generic Desktop usage page, and the usages in it that matter here.
 const PAGE_GENERIC_DESKTOP: u32 = 0x01;
 const USAGE_MULTI_AXIS_CONTROLLER: u32 = 0x08;
 const FIRST_AXIS_USAGE: u32 = 0x30; // X, Y, Z, Rx, Ry, Rz are 0x30..=0x35
 const AXIS_COUNT: usize = 6;
+/// The Button usage page: usage N is button N, from 1.
+const PAGE_BUTTON: u32 = 0x09;
+/// Buttons 1 to this are read; [`Report::buttons`] has one bit for each.
+pub const MAX_BUTTONS: usize = 32;
 
 /// Descriptors are small (hidapi reserves 4 KiB). Anything past this is ignored.
 const MAX_DESCRIPTOR_BYTES: usize = 4096;
@@ -22,7 +26,7 @@ const MAX_PUSHED: usize = 16;
 /// of the 3D mouse code is tuned for. A device declaring ±350 is passed through unchanged.
 pub const FULL_SCALE: i16 = 350;
 
-/// Where one axis sits in the device's input reports.
+/// Where one axis or button sits in the device's input reports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Field {
     /// The report that carries it; 0 when the device doesn't number its reports.
@@ -66,36 +70,47 @@ impl Field {
     }
 }
 
-/// Where a device puts its six axes.
+/// Where a device puts its six axes and its buttons.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Layout {
     /// X, Y, Z, Rx, Ry, Rz, for each axis the device has.
     pub axes: [Option<Field>; AXIS_COUNT],
+    /// Buttons 1 to [`MAX_BUTTONS`] at indices 0 to 31, for each the device has. Devices number
+    /// them with gaps (3Dconnexion's do), so the index is the button's own number less one.
+    pub buttons: [Option<Field>; MAX_BUTTONS],
     /// The descriptor declares report ids, so every report starts with its id byte.
     pub numbered: bool,
 }
 
 impl Default for Layout {
     /// 3Dconnexion's: report 1 carries X Y Z and report 2 Rx Ry Rz, three signed 16-bit values
-    /// each. It is assumed when a descriptor can't be read or names no axes.
+    /// each. It is assumed when a descriptor can't be read or names no axes. Where its buttons
+    /// are differs from model to model, so it has none.
     fn default() -> Self {
         let translation = |index| Some(Field::sixteen_bit(1, index));
         let rotation = |index| Some(Field::sixteen_bit(2, index));
-        Self { axes: [translation(0), translation(1), translation(2), rotation(0), rotation(1), rotation(2)], numbered: true }
+        Self {
+            axes: [translation(0), translation(1), translation(2), rotation(0), rotation(1), rotation(2)],
+            buttons: [None; MAX_BUTTONS],
+            numbered: true,
+        }
     }
 }
 
-/// The axes one input report carries, scaled to ±[`FULL_SCALE`]. A group is present when the
-/// report carries any of its axes; the group's other axes are then 0.
+/// What one input report carries: axes scaled to ±[`FULL_SCALE`], and buttons. A group is
+/// present when the report carries any of its axes; the group's other axes are then 0.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Report {
     pub translation: Option<[i16; 3]>,
     pub rotation: Option<[i16; 3]>,
+    /// When the report carries buttons, which are down: bit N for button N + 1. A report with
+    /// every button up is how a device says they were released, so `Some(0)` matters.
+    pub buttons: Option<u32>,
 }
 
 impl Layout {
-    /// The axes in one input report, or None when it carries none of them or is too short for
-    /// one of its fields (a truncated report is dropped whole). Padding after them is ignored.
+    /// The axes and buttons in one input report, or None when it carries none of them or is too
+    /// short for one of its fields (a truncated report is dropped whole). Padding is ignored.
     pub fn decode(&self, report: &[u8]) -> Option<Report> {
         let (id, body) = if self.numbered { (*report.first()?, report.get(1..)?) } else { (0, report) };
         let mut values = [None; AXIS_COUNT];
@@ -104,9 +119,16 @@ impl Layout {
                 *value = Some(field.scaled(field.read(body)?));
             }
         }
+        let mut buttons = None;
+        for (bit, field) in self.buttons.iter().enumerate() {
+            if let Some(field) = field.filter(|field| field.report_id == id) {
+                let down = field.read(body)? != 0;
+                buttons = Some(buttons.unwrap_or(0) | (u32::from(down) << bit));
+            }
+        }
         let group = |axes: &[Option<i16>]| axes.iter().any(Option::is_some).then(|| [0, 1, 2].map(|i| axes.get(i).copied().flatten().unwrap_or(0)));
         let (translation, rotation) = values.split_at(3);
-        let report = Report { translation: group(translation), rotation: group(rotation) };
+        let report = Report { translation: group(translation), rotation: group(rotation), buttons };
         (report != Report::default()).then_some(report)
     }
 }
@@ -186,16 +208,17 @@ impl Globals {
 pub struct Descriptor {
     multi_axis_controller: bool,
     axes: [Option<Field>; AXIS_COUNT],
+    buttons: [Option<Field>; MAX_BUTTONS],
     numbered: bool,
 }
 
 impl Descriptor {
     pub fn parse(descriptor: &[u8]) -> Self {
-        let mut summary = Self { multi_axis_controller: false, axes: [None; AXIS_COUNT], numbered: false };
+        let mut summary = Self { multi_axis_controller: false, axes: [None; AXIS_COUNT], buttons: [None; MAX_BUTTONS], numbered: false };
         let mut globals = Globals::default();
         let mut pushed: Vec<Globals> = Vec::new();
         let mut depth = 0_u32;
-        // The depth of the open Multi-axis Controller application collection; its axes count.
+        // The depth of the open Multi-axis Controller application collection; its fields count.
         let mut controller: Option<u32> = None;
         // The next free input bit of each report id.
         let mut offsets: Vec<(u8, u32)> = Vec::new();
@@ -245,7 +268,7 @@ impl Descriptor {
                     };
                     // Data (not constant) and variable (not an array): one value per usage.
                     if controller.is_some() && item.value & 0b11 == 0b10 {
-                        summary.note_axes(&globals, &usages, start, item.value & 0b100 != 0);
+                        summary.note_fields(&globals, &usages, start, item.value & 0b100 != 0);
                     }
                     let end = start.saturating_add(globals.report_size.saturating_mul(globals.report_count)).min(MAX_REPORT_BITS);
                     if let Some((_, bits)) = offsets.iter_mut().find(|(id, _)| *id == globals.report_id) {
@@ -276,22 +299,28 @@ impl Descriptor {
         summary
     }
 
-    /// Records the axes among an input item's fields: the `i`th field takes the `i`th usage, and
-    /// fields past the last usage take the last one (HID 1.11, 6.2.2.8). The first declaration of
-    /// an axis wins.
-    fn note_axes(&mut self, globals: &Globals, usages: &[u32], start: u32, relative: bool) {
+    /// Records the axes and buttons among an input item's fields: the `i`th field takes the `i`th
+    /// usage, and fields past the last usage take the last one (HID 1.11, 6.2.2.8). The first
+    /// declaration of an axis or button wins.
+    fn note_fields(&mut self, globals: &Globals, usages: &[u32], start: u32, relative: bool) {
         let bits = globals.report_size;
         if !(1..=32).contains(&bits) {
             return;
         }
         for index in 0..globals.report_count.min(MAX_USAGES_PER_ITEM) {
             let Some(usage) = usages.get(index as usize).or(usages.last()) else { return };
-            let axis = usage.wrapping_sub((PAGE_GENERIC_DESKTOP << 16) | FIRST_AXIS_USAGE) as usize;
             let Some(bit_offset) = index.checked_mul(bits).and_then(|offset| offset.checked_add(start)) else { return };
             if bit_offset.saturating_add(bits) > MAX_REPORT_BITS {
                 return;
             }
-            if let Some(slot) = self.axes.get_mut(axis)
+            let axis = usage.wrapping_sub((PAGE_GENERIC_DESKTOP << 16) | FIRST_AXIS_USAGE) as usize;
+            // Button usages start at 1; usage 0 on the page means "no button".
+            let button = usage.wrapping_sub((PAGE_BUTTON << 16) | 1) as usize;
+            let slot = match self.axes.get_mut(axis) {
+                Some(slot) => Some(slot),
+                None => self.buttons.get_mut(button),
+            };
+            if let Some(slot) = slot
                 && slot.is_none()
             {
                 *slot = Some(Field {
@@ -313,9 +342,14 @@ impl Descriptor {
         self.multi_axis_controller
     }
 
-    /// Where the device's axes are. When the descriptor names none, 3Dconnexion's layout.
+    /// Where the device's axes and buttons are. When the descriptor names no axes, 3Dconnexion's
+    /// axes, with whatever buttons it names.
     pub fn layout(&self) -> Layout {
-        if self.axes.iter().all(Option::is_none) { Layout::default() } else { Layout { axes: self.axes, numbered: self.numbered } }
+        if self.axes.iter().all(Option::is_none) {
+            Layout { buttons: self.buttons, ..Layout::default() }
+        } else {
+            Layout { axes: self.axes, buttons: self.buttons, numbered: self.numbered }
+        }
     }
 }
 
@@ -431,8 +465,38 @@ mod tests {
                 field(2, 32, 16, r, true)
             ]
         );
-        // The same as what is assumed for a device whose descriptor can't be read.
-        assert_eq!(layout, Layout::default());
+        // The same axes as are assumed for a device whose descriptor can't be read.
+        assert_eq!(layout.axes, Layout::default().axes);
+        // Buttons 1 to 15 are report 3's first 15 bits; the 16th is padding.
+        assert_eq!(layout.buttons[0], field(3, 0, 1, (0, 1), false));
+        assert_eq!(layout.buttons[14], field(3, 14, 1, (0, 1), false));
+        assert_eq!(layout.buttons[15], None);
+        // Buttons 1, 3 and 15 down; then all up, which is a report too.
+        let down = layout.decode(&[3, 0b101, 0b0100_0000]).expect("report 3 carries the buttons");
+        assert_eq!(down, Report { translation: None, rotation: None, buttons: Some(0b101 | 1 << 14) });
+        assert_eq!(layout.decode(&[3, 0, 0]).map(|r| r.buttons), Some(Some(0)));
+        // A motion report says nothing about the buttons.
+        assert_eq!(layout.decode(&[1, 1, 0, 2, 0, 3, 0]).map(|r| r.buttons), Some(None));
+    }
+
+    #[test]
+    fn buttons_keep_their_own_numbers_across_gaps() {
+        // Buttons 1 to 3, a constant bit, then buttons 5 and 6, in report 3, as 3Dconnexion numbers them.
+        let layout = Descriptor::parse(&[
+            0x05, 0x01, 0x09, 0x08, 0xA1, 0x01, 0x85, 0x03, 0x05, 0x09, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01, // report 3, 1-bit fields
+            0x19, 0x01, 0x29, 0x03, 0x95, 0x03, 0x81, 0x02, // buttons 1 to 3
+            0x95, 0x01, 0x81, 0x03, // a constant bit
+            0x19, 0x05, 0x29, 0x06, 0x95, 0x02, 0x81, 0x02, // buttons 5 and 6
+            0xC0,
+        ])
+        .layout();
+        assert_eq!(layout.buttons[3], None);
+        assert_eq!(layout.buttons[4], field(3, 4, 1, (0, 1), false));
+        assert_eq!(layout.buttons[5], field(3, 5, 1, (0, 1), false));
+        // Bits 0 and 5 set: buttons 1 and 6.
+        assert_eq!(layout.decode(&[3, 0b10_0001]).and_then(|r| r.buttons), Some(0b10_0001));
+        // No axes named: 3Dconnexion's axes, still with these buttons.
+        assert_eq!(layout.axes, Layout::default().axes);
     }
 
     #[test]
@@ -460,6 +524,8 @@ mod tests {
         let decoded = layout.decode(&report).expect("report 1 carries the axes");
         assert_eq!(decoded.translation, Some([-1, 0, 0]));
         assert_eq!(decoded.rotation, Some([0, 0, 350]));
+        // The same report carries buttons 1 to 8: 1 and 3 are down.
+        assert_eq!(decoded.buttons, Some(0b101));
     }
 
     #[test]
@@ -505,17 +571,23 @@ mod tests {
         assert_eq!(layout.decode(&[1, 1, 2]), None);
         assert_eq!(layout.decode(&[]), None);
         assert_eq!(layout.decode(&[3, 1, 0, 0, 0, 0, 0]), None);
-        assert_eq!(layout.decode(&[1, 0x9c, 0xff, 0x2c, 0x01, 0, 0]), Some(Report { translation: Some([-100, 300, 0]), rotation: None }));
-        assert_eq!(layout.decode(&[2, 0, 0, 1, 0, 0xff, 0xff]), Some(Report { translation: None, rotation: Some([0, 1, -1]) }));
+        assert_eq!(
+            layout.decode(&[1, 0x9c, 0xff, 0x2c, 0x01, 0, 0]),
+            Some(Report { translation: Some([-100, 300, 0]), rotation: None, buttons: None })
+        );
+        assert_eq!(layout.decode(&[2, 0, 0, 1, 0, 0xff, 0xff]), Some(Report { translation: None, rotation: Some([0, 1, -1]), buttons: None }));
         // A padded translation report: its padding is not rotation.
-        assert_eq!(layout.decode(&[1, 1, 0, 2, 0, 3, 0, 9, 9, 9, 9, 9, 9]), Some(Report { translation: Some([1, 2, 3]), rotation: None }));
+        assert_eq!(
+            layout.decode(&[1, 1, 0, 2, 0, 3, 0, 9, 9, 9, 9, 9, 9]),
+            Some(Report { translation: Some([1, 2, 3]), rotation: None, buttons: None })
+        );
     }
 
     #[test]
     fn combined_reports_carry_both_groups() {
         let layout = Descriptor::parse(COMBINED).layout();
         let report = [1, 0x9c, 0xff, 0x2c, 0x01, 0, 0, 1, 0, 0, 0, 0xff, 0xff, 0, 0];
-        assert_eq!(layout.decode(&report), Some(Report { translation: Some([-100, 300, 0]), rotation: Some([1, 0, -1]) }));
+        assert_eq!(layout.decode(&report), Some(Report { translation: Some([-100, 300, 0]), rotation: Some([1, 0, -1]), buttons: None }));
         // One byte short of Rz: dropped whole rather than half read.
         assert_eq!(layout.decode(&report[..12]), None);
     }
