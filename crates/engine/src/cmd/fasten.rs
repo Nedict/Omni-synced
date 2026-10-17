@@ -5,11 +5,16 @@
 //! Everything is worked out first (sizes, lengths, the faces and the hole walls to joint to);
 //! then each distinct part is built once and placed again as further occurrences, and the
 //! joints are solved once at the end.
+//!
+//! `refresh: true` makes a fill repeatable after the model changes: the parts an earlier fill
+//! seated (found by their seat joints) stay where their stack still wants the same parts, are
+//! replaced where it now wants others (a new grip), and go where their hole has gone; stacks
+//! with nothing in them are filled. Running it twice changes nothing the second time.
 
 use serde_json::{Value, json};
 use solidcraft_geom::Vec3;
 
-use solidcraft_doc::joints::{JointOrigin, Snap};
+use solidcraft_doc::joints::{JointKind, JointOrigin, Snap};
 
 use super::CommandSpec;
 use super::hole_stacks::{Layer, Options, SlotShape, Stack};
@@ -26,9 +31,12 @@ pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("parts.fasten", "Fill H
      default 1.5 × d); head_side?: start | end | {body} (default start: the head on the stack's start face; {body}: on the face of that body's layer); \
      washer?: true | family | {family, size?}; washer_side?: head | nut | both (default both with a nut, else head); \
      nut?: true | family | {family, size?} (on the far face; true: the built-in hex_nut and washer); \
-     drawn?: \"set\" | \"unset\" (blind rivets; default set: the shank as long as the grip, with its formed tail beyond the far face); dry_run?: bool (only work out what goes where) \
+     drawn?: \"set\" | \"unset\" (blind rivets; default set: the shank as long as the grip, with its formed tail beyond the far face); dry_run?: bool (only work out what goes where); \
+     refresh?: bool (fill again after the model changed: parts an earlier fill of this family seated stay where their stack still takes the same parts, re-seated on faces \
+     that moved; they are replaced where it now takes others, and removed where their hole has gone (with stacks: all only); stacks holding another family's parts are left alone) \
      → placed: [{component, occurrence, joint, stack, head_side, size, length_mm, grip_mm, grip_range?, article?, drawn?, part, washers?: [occurrence], nut?: occurrence}], \
-     unfilled: [{stack, reason}]. Each distinct part is one component, placed as occurrences. One undo step",
+     unfilled: [{stack, reason}]; with refresh also kept: [{stack, occurrence, joint, part, reseated}], removed: [occurrence]. Each distinct part is one component, \
+     placed as occurrences. One undo step",
 )];
 
 /// Stacks filled by one command, at most.
@@ -194,6 +202,8 @@ struct Fill {
     /// Blind rivets drawn set on their stack's grip.
     set: bool,
     dry_run: bool,
+    /// Keep, replace or remove what earlier fills seated, instead of adding to it.
+    refresh: bool,
 }
 
 impl Fill {
@@ -242,6 +252,10 @@ impl Fill {
             None | Some(Value::Null) => false,
             Some(_) => bool_(p, "dry_run").ok_or_else(|| bad(cmd, "`dry_run` must be true or false"))?,
         };
+        let refresh = match p.get("refresh") {
+            None | Some(Value::Null) => false,
+            Some(_) => bool_(p, "refresh").ok_or_else(|| bad(cmd, "`refresh` must be true or false"))?,
+        };
         let rivet = parts::blind_rivet(s, &family);
         let set = match str_(p, "drawn") {
             None => rivet,
@@ -250,7 +264,7 @@ impl Fill {
             Some("set") => return Err(bad(cmd, "`drawn: set` is for blind rivets")),
             Some(d) => return Err(bad(cmd, format!("`drawn` must be set or unset, not `{d}`"))),
         };
-        Ok(Self { family, size, rule, head_side, washer, nut, set, dry_run })
+        Ok(Self { family, size, rule, head_side, washer, nut, set, dry_run, refresh })
     }
 }
 
@@ -364,6 +378,8 @@ struct Face {
     at: Vec3,
     out: Vec3,
     hole: Option<JointOrigin>,
+    /// The hole's origin lands on this face (not only the first origin found round the hole).
+    on_face: bool,
 }
 
 /// The occurrence that holds `body` (the root's bodies: 0), or the one nearest `at`.
@@ -390,7 +406,7 @@ fn host(s: &Session, body: &str, at: Vec3) -> Option<u64> {
 /// first origin found is kept.
 fn face(s: &Session, at: Vec3, out: Vec3, layer: &Layer, cmd: &str) -> std::result::Result<Face, String> {
     if layer.slot.is_some() {
-        return Ok(Face { at, out, hole: None });
+        return Ok(Face { at, out, hole: None, on_face: false });
     }
     let inset = ((layer.t1 - layer.t0) * 0.25).clamp(1e-3, 0.5);
     let (u, v) = (across(out), out.cross(across(out)));
@@ -413,7 +429,7 @@ fn face(s: &Session, at: Vec3, out: Vec3, layer: &Layer, cmd: &str) -> std::resu
                     )
                 });
                 if seat.is_some_and(|q| (q - at).dot(out).abs() <= near) {
-                    return Ok(Face { at, out, hole: Some(origin) });
+                    return Ok(Face { at, out, hole: Some(origin), on_face: true });
                 }
                 first.get_or_insert(origin);
             }
@@ -421,7 +437,7 @@ fn face(s: &Session, at: Vec3, out: Vec3, layer: &Layer, cmd: &str) -> std::resu
             Err(_) => {}
         }
     }
-    first.map(|origin| Face { at, out, hole: Some(origin) }).ok_or(why)
+    first.map(|origin| Face { at, out, hole: Some(origin), on_face: false }).ok_or(why)
 }
 
 /// Its placement with +z along `out` at `at`.
@@ -515,12 +531,155 @@ fn fasten(s: &mut Session, p: &Value) -> Result<Value> {
     r
 }
 
+/// A part an earlier fill seated: its seat joint (rigid, from a hole wall to the part's own
+/// origin), where that joint puts the seat now, and the line the part sits on.
+struct Seat {
+    joint: u64,
+    occ: u64,
+    comp: u64,
+    family: String,
+    offset: f64,
+    /// The hole's occurrence (the joint's first origin).
+    host: u64,
+    /// The seat and the way out of the hole, as the joint resolves them now (none: the hole the
+    /// joint names is gone).
+    at: Option<(Vec3, Vec3)>,
+    /// Where the part sits now: its origin and axis.
+    line: (Vec3, Vec3),
+}
+
+/// The parts seated by earlier fills (or placed the same way by hand): standard parts held by a
+/// rigid joint whose second origin is the part's own origin, facing into the hole.
+fn seats(s: &Session) -> Vec<Seat> {
+    let st = s.model.state();
+    let down = Vec3::Z * -1.0;
+    s.doc
+        .assembly
+        .joints
+        .iter()
+        .filter(|j| j.kind == JointKind::Rigid && !j.suppressed && !j.flip)
+        .filter(|j| matches!(j.b.snap, Snap::Point { point, z: Some(z) } if point == Vec3::ZERO && z == down))
+        .filter_map(|j| {
+            let o = s.doc.occurrences.iter().find(|o| o.id == j.b.occurrence)?;
+            let part = s.doc.parts.get(&o.component)?;
+            let at = solidcraft_doc::joints::resolve_origin(&s.doc, &st, &j.a).ok().map(|f| {
+                let w = solidcraft_doc::joints::occurrence_world(&s.doc, j.a.occurrence);
+                (
+                    solidcraft_doc::apply_point(&w, Vec3::new(f[3][0], f[3][1], f[3][2])),
+                    solidcraft_doc::apply_vector(&w, Vec3::new(f[2][0], f[2][1], f[2][2])),
+                )
+            });
+            let m = solidcraft_doc::joints::occurrence_world(&s.doc, o.id);
+            let line = (solidcraft_doc::apply_point(&m, Vec3::ZERO), solidcraft_doc::apply_vector(&m, Vec3::Z));
+            Some(Seat { joint: j.id, occ: o.id, comp: o.component, family: part.family.clone(), offset: j.offset, host: j.a.occurrence, at, line })
+        })
+        .collect()
+}
+
+/// Whether a seat at `at`, facing `out`, is on stack `st`, and if so whether on its end face.
+fn on_stack(st: &Stack, at: Vec3, out: Vec3) -> Option<bool> {
+    let out = out.normalized()?;
+    if out.dot(st.axis).abs() < 0.99 {
+        return None;
+    }
+    let d = at - st.start;
+    let t = d.dot(st.axis);
+    let narrowest = st.layers.iter().map(|l| l.d).fold(f64::INFINITY, f64::min);
+    let slack = st.grip * 0.5 + 0.5;
+    ((d - st.axis * t).len() <= (narrowest / 2.0).max(0.25) && t >= -slack && t <= st.grip + slack).then_some(t > st.grip / 2.0)
+}
+
+/// Whether two seated parts sit on one axis.
+fn same_line(a: (Vec3, Vec3), b: (Vec3, Vec3)) -> bool {
+    let (Some(u), Some(v)) = (a.1.normalized(), b.1.normalized()) else { return false };
+    let d = b.0 - a.0;
+    u.dot(v).abs() > 0.99 && (d - u * d.dot(u)).len() < 0.5
+}
+
+/// What a stack holds now against what it should: the same parts on the same faces at the same
+/// offsets (`head_end`: the head goes on the stack's end face).
+fn holds(s: &Session, f: &Fill, plan: &Plan, head_end: bool, group: &[(usize, bool)], seats: &[Seat]) -> bool {
+    let comp = |p: &Part| parts::existing_part(s, &p.family, &p.size, p.length, p.set);
+    let fastener = Part { family: f.family.clone(), size: plan.size.clone(), length: Some(plan.length), set: plan.set };
+    let mut want = Vec::new();
+    let under_head = plan.head_washer.as_ref().map_or(0.0, |w| w.1);
+    let under_nut = plan.nut_washer.as_ref().map_or(0.0, |w| w.1);
+    let items = [
+        plan.head_washer.as_ref().map(|w| (&w.0, head_end, 0.0)),
+        Some((&fastener, head_end, under_head)),
+        plan.nut_washer.as_ref().map(|w| (&w.0, !head_end, 0.0)),
+        plan.nut.as_ref().map(|n| (&n.0, !head_end, under_nut)),
+    ];
+    for (part, end, offset) in items.into_iter().flatten() {
+        let Some(c) = comp(part) else { return false };
+        want.push((c, end, offset));
+    }
+    let mut have: Vec<(u64, bool, f64)> = group.iter().filter_map(|(i, end)| seats.get(*i).map(|x| (x.comp, *end, x.offset))).collect();
+    let key = |a: &(u64, bool, f64), b: &(u64, bool, f64)| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.total_cmp(&b.2));
+    want.sort_by(key);
+    have.sort_by(key);
+    want.len() == have.len() && want.iter().zip(&have).all(|(a, b)| a.0 == b.0 && a.1 == b.1 && (a.2 - b.2).abs() < 1e-6)
+}
+
+/// Take out what a refresh replaces or clears: the occurrences, every joint on them, and a
+/// component whose last occurrence goes.
+fn remove(s: &mut Session, occs: &[u64]) -> Result<()> {
+    if occs.is_empty() {
+        return Ok(());
+    }
+    let joints: Vec<u64> =
+        s.doc.assembly.joints.iter().filter(|j| occs.contains(&j.a.occurrence) || occs.contains(&j.b.occurrence)).map(|j| j.id).collect();
+    let mut emptied = Vec::new();
+    let doc = s.doc_mut();
+    doc.assembly.joints.retain(|j| !joints.contains(&j.id));
+    doc.assembly.links.retain(|l| !joints.contains(&l.a) && !joints.contains(&l.b));
+    for o in occs {
+        let Some(comp) = doc.occurrences.iter().find(|x| x.id == *o).map(|x| x.component) else { continue };
+        if doc.occurrences.iter().filter(|x| x.component == comp).count() > 1 {
+            doc.occurrences.retain(|x| x.id != *o);
+        } else {
+            emptied.push(comp);
+        }
+    }
+    s.visibility.hidden_joints.retain(|h| !joints.contains(h));
+    for o in occs {
+        s.pending_moves.remove(o);
+    }
+    emptied.sort_unstable();
+    emptied.dedup();
+    if !emptied.is_empty() {
+        let spec = super::find_command("component.delete").ok_or_else(|| bad("parts.fasten", "component.delete"))?;
+        for c in emptied {
+            spec.run_nested(s, &json!({"component": c}))?;
+            s.doc_mut().parts.remove(&c);
+        }
+        s.refresh();
+    }
+    Ok(())
+}
+
+/// One target stack, worked out: its id, the stack, which face the head goes on, and its plan
+/// (or why it cannot be filled).
+struct Want {
+    id: Value,
+    st: Stack,
+    head_end: bool,
+    plan: std::result::Result<Plan, String>,
+}
+
+/// The stack's face on its end (`end`) or start, facing out, and the layer there.
+fn stack_face(s: &Session, st: &Stack, end: bool, cmd: &str) -> std::result::Result<Face, String> {
+    let (Some(first), Some(last)) = (st.layers.first(), st.layers.last()) else { return Err("an empty stack".into()) };
+    if end { face(s, st.end(), st.axis, last, cmd) } else { face(s, st.start, st.axis * -1.0, first, cmd) }
+}
+
 fn fill(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "parts.fasten";
     let f = Fill::parse(s, p, cmd)?;
+    let all = p.get("stack").is_none() && p.get("stacks").is_none_or(|v| v == "all");
     let targets = targets(s, p, cmd)?;
     // Work everything out before anything is placed.
-    let (mut jobs, mut unfilled) = (Vec::new(), Vec::new());
+    let (mut wants, mut unfilled) = (Vec::new(), Vec::new());
     for (id, st, side) in targets {
         let (Some(first), Some(last)) = (st.layers.first(), st.layers.last()) else { continue };
         let head_end = match side.as_ref().unwrap_or(&f.head_side) {
@@ -533,26 +692,134 @@ fn fill(s: &mut Session, p: &Value) -> Result<Value> {
                 continue;
             }
         };
-        let (near, far) = if head_end { (last, first) } else { (first, last) };
-        let plan = match plan(s, &st, far, &f) {
-            Ok(plan) => plan,
+        let far = if head_end { first } else { last };
+        let plan = plan(s, &st, far, &f);
+        wants.push(Want { id, st, head_end, plan });
+    }
+    // A refresh sorts what earlier fills seated: kept where the stack still takes the same
+    // parts, replaced where it takes others, removed where the hole has gone.
+    let (mut kept, mut gone, mut fill_in) = (Vec::new(), Vec::<u64>::new(), vec![true; wants.len()]);
+    if f.refresh {
+        let seats = seats(s);
+        let ours = parts::family_name(s, &f.family).unwrap_or_else(|| f.family.clone());
+        let mut claimed = vec![false; seats.len()];
+        for (k, w) in wants.iter().enumerate() {
+            let group: Vec<(usize, bool)> = seats
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !claimed.get(*i).copied().unwrap_or(true))
+                .filter_map(|(i, x)| x.at.and_then(|(at, out)| on_stack(&w.st, at, out)).map(|end| (i, end)))
+                .collect();
+            for (i, _) in &group {
+                if let Some(c) = claimed.get_mut(*i) {
+                    *c = true;
+                }
+            }
+            if group.is_empty() {
+                continue;
+            }
+            let fill = fill_in.get_mut(k);
+            if !group.iter().any(|(i, _)| seats.get(*i).is_some_and(|x| x.family == ours)) {
+                let other = group.first().and_then(|(i, _)| seats.get(*i)).map_or(String::new(), |x| x.family.clone());
+                unfilled.push(json!({"stack": w.id, "reason": format!("holds {other} parts: a refresh of `{}` leaves them", f.family)}));
+                if let Some(x) = fill {
+                    *x = false;
+                }
+                continue;
+            }
+            match &w.plan {
+                Ok(plan) if holds(s, &f, plan, w.head_end, &group, &seats) => {
+                    if let Some(x) = fill {
+                        *x = false;
+                    }
+                    // The seats whose face moved along the axis (a layer got thicker) are seated
+                    // again on the face as it is now.
+                    let moved = |end: bool| {
+                        let t = if end { w.st.grip } else { 0.0 };
+                        group.iter().any(|(i, e)| {
+                            *e == end && seats.get(*i).and_then(|x| x.at).is_some_and(|(at, _)| ((at - w.st.start).dot(w.st.axis) - t).abs() > 1e-3)
+                        })
+                    };
+                    let fastener = group
+                        .iter()
+                        .filter_map(|(i, e)| seats.get(*i).map(|x| (x, *e)))
+                        .find(|(x, e)| x.family == ours && *e == w.head_end)
+                        .map(|(x, _)| x);
+                    let joints =
+                        |end: bool| group.iter().filter(|(_, e)| *e == end).filter_map(|(i, _)| seats.get(*i).map(|x| x.joint)).collect::<Vec<u64>>();
+                    kept.push((
+                        w.id.clone(),
+                        fastener.map(|x| (x.occ, x.joint)),
+                        identity(plan, &f.family),
+                        [(false, moved(false), joints(false)), (true, moved(true), joints(true))],
+                        w.st.clone(),
+                    ));
+                }
+                _ => gone.extend(group.iter().filter_map(|(i, _)| seats.get(*i).map(|x| x.occ))),
+            }
+        }
+        // Seats on no stack any more: a whole fill of this family whose hole has gone (only when
+        // every stack was looked at, and with `bodies`, on those bodies).
+        if all {
+            let bodies: Vec<u64> = match p.get("bodies").and_then(Value::as_array) {
+                Some(names) => {
+                    let st = s.model.state();
+                    names
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .filter_map(|n| st.bodies.iter().find(|b| b.name == n))
+                        .map(|b| s.doc.model_body_component(b))
+                        .collect()
+                }
+                None => Vec::new(),
+            };
+            let in_scope = |x: &Seat| {
+                bodies.is_empty()
+                    || s.doc.occurrences.iter().find(|o| o.id == x.host).map_or(x.host == 0 && bodies.contains(&0), |o| bodies.contains(&o.component))
+            };
+            let loose: Vec<usize> = (0..seats.len()).filter(|i| !claimed.get(*i).copied().unwrap_or(true)).collect();
+            let mut done = vec![false; seats.len()];
+            for &i in &loose {
+                let Some(x) = seats.get(i) else { continue };
+                if done.get(i).copied().unwrap_or(true) || x.family != ours || !in_scope(x) {
+                    continue;
+                }
+                for &j in &loose {
+                    if let (Some(y), Some(d)) = (seats.get(j), done.get_mut(j))
+                        && !*d
+                        && same_line(x.line, y.line)
+                    {
+                        *d = true;
+                        gone.push(y.occ);
+                    }
+                }
+            }
+        }
+        gone.sort_unstable();
+        gone.dedup();
+        if !f.dry_run {
+            remove(s, &gone)?;
+        }
+    }
+    // The faces to seat on, found once what is replaced has gone.
+    let mut jobs = Vec::new();
+    for (w, go) in wants.into_iter().zip(fill_in) {
+        let plan = match w.plan {
+            Ok(plan) if go => plan,
+            Ok(_) => continue,
             Err(reason) => {
-                unfilled.push(json!({"stack": id, "reason": reason}));
+                if go {
+                    unfilled.push(json!({"stack": w.id, "reason": reason}));
+                }
                 continue;
             }
         };
-        let (start, end) = (st.start, st.end());
-        let faces = if head_end {
-            face(s, end, st.axis, near, cmd).and_then(|h| Ok((h, face(s, start, st.axis * -1.0, far, cmd)?)))
-        } else {
-            face(s, start, st.axis * -1.0, near, cmd).and_then(|h| Ok((h, face(s, end, st.axis, far, cmd)?)))
-        };
+        let faces = stack_face(s, &w.st, w.head_end, cmd).and_then(|h| Ok((h, stack_face(s, &w.st, !w.head_end, cmd)?)));
         match faces {
-            Ok((head, tail)) => jobs.push(Job { id, grip: st.grip, head_end, plan, head, tail }),
-            Err(reason) => unfilled.push(json!({"stack": id, "reason": reason})),
+            Ok((head, tail)) => jobs.push(Job { id: w.id, grip: w.st.grip, head_end: w.head_end, plan, head, tail }),
+            Err(reason) => unfilled.push(json!({"stack": w.id, "reason": reason})),
         }
     }
-    let identity = |plan: &Plan, family: &str| plan.article.clone().unwrap_or_else(|| format!("{family}/{}x{}", plan.size, plan.length));
     let mut placed = Vec::new();
     let mut built = Built::default();
     for job in &jobs {
@@ -601,10 +868,40 @@ fn fill(s: &mut Session, p: &Value) -> Result<Value> {
         placed.push(v);
     }
     let mut out = json!({"placed": placed, "unfilled": unfilled});
+    if f.refresh {
+        let mut list = Vec::new();
+        for (id, fastener, part, sides, st) in kept {
+            let mut reseated = false;
+            for (end, moved, joints) in sides {
+                if !moved {
+                    continue;
+                }
+                reseated = true;
+                if f.dry_run {
+                    continue;
+                }
+                // Only an origin that lands on the face as it is now replaces the stored one.
+                if let Ok(Face { hole: Some(origin), on_face: true, .. }) = stack_face(s, &st, end, cmd) {
+                    for j in s.doc_mut().assembly.joints.iter_mut().filter(|j| joints.contains(&j.id)) {
+                        j.a = origin.clone();
+                    }
+                }
+            }
+            let (occurrence, joint) = fastener.map_or((None, None), |(o, j)| (Some(o), Some(j)));
+            list.push(json!({"stack": id, "occurrence": occurrence, "joint": joint, "part": part, "reseated": reseated}));
+        }
+        out["kept"] = json!(list);
+        out["removed"] = json!(gone);
+    }
     if f.dry_run {
         out["dry_run"] = json!(true);
     }
     Ok(out)
+}
+
+/// What the result calls a fastener: its library article, else `family/sizexlength`.
+fn identity(plan: &Plan, family: &str) -> String {
+    plan.article.clone().unwrap_or_else(|| format!("{family}/{}x{}", plan.size, plan.length))
 }
 
 #[cfg(test)]

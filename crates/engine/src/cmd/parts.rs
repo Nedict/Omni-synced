@@ -810,6 +810,11 @@ pub(super) fn existing_part(s: &Session, family: &str, size: &str, length: Optio
         .map(|(c, _)| *c)
 }
 
+/// The family name a placed part of `family` records (a library family's own name).
+pub(super) fn family_name(s: &Session, family: &str) -> Option<String> {
+    if builtin(family) { Some(family.to_string()) } else { file_family(s, family).map(|(d, _)| d.name) }
+}
+
 /// Whether `family` is a library family of blind rivets (drawn set when placed in a stack).
 pub(super) fn blind_rivet(s: &Session, family: &str) -> bool {
     !builtin(family) && file_family(s, family).is_some_and(|(d, _)| d.shape == FastenerShape::BlindRivet)

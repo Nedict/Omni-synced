@@ -448,3 +448,147 @@ fn a_hole_in_a_body_placed_by_an_offset_is_seated_on() {
     assert!(near(hi.z, 7.0 + 3.5) && near(lo.z, 7.0 - 14.0), "{lo:?} {hi:?}");
     assert!(near((lo.x + hi.x) / 2.0, 20.0) && near((lo.y + hi.y) / 2.0, 15.0), "{lo:?} {hi:?}");
 }
+
+/// Two plates, the lower 3 thick and the upper `t` (a parameter, 4 mm) on it, with 5.5 mm
+/// holes through both at x = 10, 40 and 70: the holes' features.
+fn template(s: &mut Session) -> Vec<u64> {
+    run(s, "parameters.add", json!({"name": "t", "expression": "4 mm"}));
+    run(s, "solid.box", json!({"length": 80, "width": 30, "height": 3, "corner": [0, 0, 0], "operation": "new", "body_name": "Lower"}));
+    run(s, "solid.box", json!({"length": 80, "width": 30, "height": "t", "corner": [0, 0, 3], "operation": "new", "body_name": "Upper"}));
+    [10, 40, 70]
+        .iter()
+        .map(|x| {
+            run(s, "solid.hole", json!({"position": [x, 15, "3 mm + t"], "diameter": 5.5}));
+            s.doc.features.last().map_or(0, |f| f.id)
+        })
+        .collect()
+}
+
+/// The occurrences of standard parts.
+fn part_occurrences(s: &Session) -> usize {
+    s.doc.occurrences.iter().filter(|o| s.doc.parts.contains_key(&o.component)).count()
+}
+
+fn count(r: &Value, key: &str) -> usize {
+    r[key].as_array().map_or(0, Vec::len)
+}
+
+#[test]
+fn a_refresh_keeps_replaces_and_removes_what_the_holes_now_need() {
+    let lib = Library::bolts();
+    let mut s = Session::default();
+    run(&mut s, "parts.library.load", json!({"path": lib.path()}));
+    let holes = template(&mut s);
+    let fill = json!({"family": "hex_bolt_grip", "refresh": true});
+    // A first refresh fills: grip 7 takes M5 × 14.
+    let r = run(&mut s, "parts.fasten", fill.clone());
+    assert_eq!((count(&r, "placed"), count(&r, "kept"), count(&r, "removed")), (3, 0, 0), "{r}");
+    assert_eq!(r["placed"][0]["length_mm"].as_f64(), Some(14.0), "{r}");
+    // Nothing changed: nothing moves.
+    let joints = s.doc.assembly.joints.len();
+    let r = run(&mut s, "parts.fasten", fill.clone());
+    assert_eq!((count(&r, "placed"), count(&r, "kept"), count(&r, "removed")), (0, 3, 0), "{r}");
+    assert!(r["kept"].as_array().into_iter().flatten().all(|k| k["reseated"] == json!(false)), "{r}");
+    assert_eq!((part_occurrences(&s), s.doc.assembly.joints.len()), (3, joints));
+    // The upper plate 1 mm thicker: grip 8 still takes M5 × 14, its head on the top as it is now.
+    run(&mut s, "parameters.change", json!({"name": "t", "expression": "5 mm"}));
+    let r = run(&mut s, "parts.fasten", fill.clone());
+    assert_eq!((count(&r, "placed"), count(&r, "kept"), count(&r, "removed")), (0, 3, 0), "{r}");
+    for k in r["kept"].as_array().into_iter().flatten() {
+        let (_, hi) = bbox(&s, occ(&k["occurrence"]));
+        assert!(near(hi.z, 8.0 + 3.5), "head on the new top: {hi:?} {r}");
+    }
+    // 3 mm thicker still: grip 10 takes M5 × 18, so each bolt is replaced, and the old part goes.
+    run(&mut s, "parameters.change", json!({"name": "t", "expression": "7 mm"}));
+    let r = run(&mut s, "parts.fasten", fill.clone());
+    assert_eq!((count(&r, "placed"), count(&r, "kept"), count(&r, "removed")), (3, 0, 3), "{r}");
+    assert_eq!((part_occurrences(&s), s.doc.parts.iter().filter(|(c, _)| s.doc.occurrence_of(**c).is_some()).count()), (3, 1), "{r}");
+    for p in r["placed"].as_array().into_iter().flatten() {
+        let (lo, hi) = bbox(&s, occ(&p["occurrence"]));
+        assert!(near(hi.z, 10.0 + 3.5) && near(lo.z, 10.0 - 18.0) && p["length_mm"].as_f64() == Some(18.0), "{lo:?} {hi:?} {r}");
+    }
+    // A hole suppressed: its bolt goes; back again: it is filled; then nothing changes.
+    run(&mut s, "timeline.suppress", json!({"feature": holes[1], "suppressed": true}));
+    let r = run(&mut s, "parts.fasten", fill.clone());
+    assert_eq!((count(&r, "placed"), count(&r, "kept"), count(&r, "removed")), (0, 2, 1), "{r}");
+    assert_eq!(part_occurrences(&s), 2);
+    assert!(s.doc.assembly.joints.iter().all(|j| s.doc.occurrences.iter().any(|o| o.id == j.b.occurrence)), "no joint on a removed part");
+    run(&mut s, "timeline.suppress", json!({"feature": holes[1], "suppressed": false}));
+    let r = run(&mut s, "parts.fasten", fill.clone());
+    assert_eq!((count(&r, "placed"), count(&r, "kept"), count(&r, "removed")), (1, 2, 0), "{r}");
+    let (lo, hi) = bbox(&s, occ(&r["placed"][0]["occurrence"]));
+    assert!(near((lo.x + hi.x) / 2.0, 40.0), "{lo:?} {hi:?}");
+    let r = run(&mut s, "parts.fasten", fill);
+    assert_eq!((count(&r, "placed"), count(&r, "kept"), count(&r, "removed")), (0, 3, 0), "{r}");
+    assert_eq!(part_occurrences(&s), 3);
+    // The whole refresh is one undo step.
+    run(&mut s, "timeline.suppress", json!({"feature": holes[0], "suppressed": true}));
+    run(&mut s, "parts.fasten", json!({"family": "hex_bolt_grip", "refresh": true}));
+    assert_eq!(part_occurrences(&s), 2);
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(part_occurrences(&s), 3);
+}
+
+#[test]
+fn a_refresh_takes_out_the_washers_and_nut_with_their_bolt() {
+    let mut s = Session::default();
+    let holes = template(&mut s);
+    let fill = json!({"family": "hex_bolt", "washer": true, "nut": true, "refresh": true});
+    let r = run(&mut s, "parts.fasten", fill.clone());
+    assert_eq!(count(&r, "placed"), 3, "{r}");
+    assert_eq!(part_occurrences(&s), 12, "a bolt, two washers and a nut in each stack");
+    let r = run(&mut s, "parts.fasten", fill.clone());
+    assert_eq!((count(&r, "placed"), count(&r, "kept"), count(&r, "removed")), (0, 3, 0), "{r}");
+    run(&mut s, "timeline.suppress", json!({"feature": holes[2], "suppressed": true}));
+    let r = run(&mut s, "parts.fasten", fill);
+    assert_eq!((count(&r, "placed"), count(&r, "kept"), count(&r, "removed")), (0, 2, 4), "{r}");
+    assert_eq!(part_occurrences(&s), 8);
+    assert!(s.doc.assembly.joints.iter().all(|j| s.doc.occurrences.iter().any(|o| o.id == j.b.occurrence)), "no joint on a removed part");
+}
+
+#[test]
+fn a_refresh_leaves_other_families_and_a_dry_run_or_a_chosen_stack_removes_nothing() {
+    let lib = Library::bolts();
+    let mut s = Session::default();
+    run(&mut s, "parts.library.load", json!({"path": lib.path()}));
+    let holes = template(&mut s);
+    run(&mut s, "parts.fasten", json!({"family": "hex_bolt_grip", "stack": 0}));
+    // Screws fill the two empty stacks and leave the bolt's alone.
+    let r = run(&mut s, "parts.fasten", json!({"family": "socket_head_cap_screw", "size": "M5", "refresh": true}));
+    assert_eq!((count(&r, "placed"), count(&r, "unfilled")), (2, 1), "{r}");
+    assert!(r["unfilled"][0]["reason"].as_str().is_some_and(|w| w.contains("hex_bolt_grip")), "{r}");
+    assert_eq!(part_occurrences(&s), 3);
+    // A hole gone: a dry run says what would go and changes nothing; a refresh of one chosen
+    // stack does not look at the others.
+    run(&mut s, "timeline.suppress", json!({"feature": holes[2], "suppressed": true}));
+    let screws = json!({"family": "socket_head_cap_screw", "size": "M5", "refresh": true, "dry_run": true});
+    let r = run(&mut s, "parts.fasten", screws);
+    assert_eq!(count(&r, "removed"), 1, "{r}");
+    assert_eq!(part_occurrences(&s), 3);
+    let r = run(&mut s, "parts.fasten", json!({"family": "socket_head_cap_screw", "size": "M5", "refresh": true, "stacks": [1]}));
+    assert_eq!(count(&r, "removed"), 0, "{r}");
+    assert_eq!(part_occurrences(&s), 3);
+    assert!(s.execute("parts.fasten", &json!({"family": "hex_bolt", "refresh": "yes"})).is_err());
+}
+
+#[test]
+fn a_refresh_seats_a_part_again_on_a_face_that_moved_along_its_hole() {
+    let lib = Library::bolts();
+    let mut s = Session::default();
+    run(&mut s, "parts.library.load", json!({"path": lib.path()}));
+    run(&mut s, "parameters.add", json!({"name": "tl", "expression": "3 mm"}));
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": "tl", "corner": [0, 0, 0], "operation": "new", "body_name": "Lower"}));
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 4, "corner": [0, 0, "tl"], "operation": "new", "body_name": "Upper"}));
+    run(&mut s, "solid.hole", json!({"position": [20, 15, "tl + 4 mm"], "diameter": 5.5}));
+    let fill = json!({"family": "hex_bolt_grip", "refresh": true});
+    let r = run(&mut s, "parts.fasten", fill.clone());
+    let o = occ(&r["placed"][0]["occurrence"]);
+    // The lower plate 1.8 thicker lifts the upper one: grip 8.8 still takes M5 × 14. The seat
+    // joint takes the end of the wall nearest its stored point, now the upper plate's bottom, so
+    // the bolt stands on the joint between the plates; the refresh seats it on the top again.
+    run(&mut s, "parameters.change", json!({"name": "tl", "expression": "4.8 mm"}));
+    let r = run(&mut s, "parts.fasten", fill);
+    assert_eq!((count(&r, "placed"), count(&r, "removed"), r["kept"][0]["reseated"].as_bool()), (0, 0, Some(true)), "{r}");
+    let (lo, hi) = bbox(&s, o);
+    assert!(near(hi.z, 8.8 + 3.5) && near(lo.z, 8.8 - 14.0), "{lo:?} {hi:?} {r}");
+}
