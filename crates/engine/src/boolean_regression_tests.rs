@@ -45,6 +45,64 @@ fn volume(s: &Session, body: &str) -> f64 {
     s.model.state().body(body).map(|b| solidcraft_kernel::measure(&b.body).unwrap().volume).unwrap_or(0.0)
 }
 
+/// #2059: tabs exactly as wide as their supporting ribs share the ribs' side
+/// planes. The base's remote conical chamfer must not prevent their join.
+#[test]
+fn eighteen_tabs_join_the_ribs_of_a_chamfered_base() {
+    let s = replay(include_str!("../../../examples/regressions/tabs_on_chamfered_ribbed_base.json"));
+    let check = |s: &Session| {
+        assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+        assert_eq!(s.model.state().bodies.len(), 1);
+        let state = s.model.state();
+        let body = &state.body("Base").unwrap().body;
+        assert_eq!(body.shell_count(), 1);
+        assert!(body.validity().is_empty(), "{:?}", body.validity());
+        let mesh = body.tessellate(1e-4).unwrap();
+        // R40 x 4 disc less its 1 x 1 chamfer, six 32 x 2 ribs
+        // standing 4 above it, and eighteen 1 x 2 tabs another 8 higher.
+        let expected = std::f64::consts::PI * (6400.0 - 40.0 + 1.0 / 3.0) + 1536.0 + 288.0;
+        let got = mesh.measure().volume;
+        assert!((got - expected).abs() < 0.1, "{got} vs {expected}");
+        println!("#2059 volume {got:.6} / {expected:.6} mm³; one valid shell, eighteen tabs");
+        for k in 0..6 {
+            let angle = k as f64 * std::f64::consts::TAU / 6.0;
+            let p = |x: f64, y: f64, z| solidcraft_geom::Vec3::new(x * angle.cos() - y * angle.sin(), x * angle.sin() + y * angle.cos(), z);
+            for x in [15.5, 25.5, 35.5] {
+                assert!(mesh.contains(p(x, 0.0, 12.0)), "tab {k} at {x}");
+                assert!(!mesh.contains(p(x, 1.2, 12.0)), "tab {k} grew sideways at {x}");
+            }
+            assert!(mesh.contains(p(20.0, 0.0, 6.0)), "rib {k}");
+            assert!(mesh.contains(p(39.5, 0.0, 2.0)), "rim {k}");
+            assert!(!mesh.contains(p(39.75, 0.0, 3.75)), "chamfer {k}");
+        }
+        assert!((mesh.bounds().max.z - 16.0).abs() < 1e-8);
+    };
+    check(&s);
+    let reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    check(&reopened);
+}
+
+#[test]
+fn buried_join_end_ignores_bodies_in_other_components() {
+    for own_body in [false, true] {
+        let mut s = Session::default();
+        let run = |s: &mut Session, command: &str, params: Value| s.execute(command, &params).unwrap();
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 8, "body_name": "Other"}));
+        run(&mut s, "component.create", json!({"name": "Child"}));
+        if own_body {
+            run(&mut s, "solid.box", json!({"corner": [50, 0, 0], "length": 10, "width": 10, "height": 8, "body_name": "Child"}));
+        }
+        run(&mut s, "sketch.create", json!({"plane": "XY"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [2, 2], "p1": [4, 4]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance": 16, "operation": "join", "body_name": "Tab"}));
+        let got = volume(&s, if own_body { "Child" } else { "Tab" });
+        let expected = 64.0 + if own_body { 800.0 } else { 0.0 };
+        assert!((got - expected).abs() < 1e-6, "{got}");
+        assert!((volume(&s, "Other") - 800.0).abs() < 1e-6);
+    }
+}
+
 /// Slab less a 557.68 × 100 × 120 pocket and the loft below its floor (556.68 × 99 down 4 mm to
 /// 80 × 80; prismatoid: h/6 · (A_top + A_bottom + 4 A_mid)).
 fn slab_pocket_loft() -> (f64, f64) {
