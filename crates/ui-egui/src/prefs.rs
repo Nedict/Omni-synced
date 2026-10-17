@@ -1200,7 +1200,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.end_row();
             ui.label(crate::i18n::tr_label("Reverse horizontal pan direction"));
             ui.checkbox(&mut app.preferences.pan_reverse_x, "")
-                .on_hover_text(crate::i18n::tr_label("Horizontal two-finger scrolling moves the model with the fingers instead of the view (the model's position never changes)"));
+                .on_hover_text(crate::i18n::tr_label("Horizontal two-finger scrolling and the thumb wheel pan the other way"));
             ui.end_row();
             ui.label(crate::i18n::tr_label("Orbit around"));
             // Wrapped: three choices, and German or Russian labels are long.
