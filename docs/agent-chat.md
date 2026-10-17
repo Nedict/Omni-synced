@@ -60,10 +60,12 @@ sketch, a brief, a part to fit around.
   pointer was last seen over the chat; **+** always works.
 - The files show as chips above the text box: a picture's thumbnail, the name, and × to take the
   file off. **Send** sends files with no text.
-- **Pictures** (PNG, JPEG, GIF, WebP) go to the agent as they are, scaled down to 2048 px on the
-  long side when larger (then as PNG); BMP and TIFF go as PNG. HEIC can't be read: export it as
-  JPEG or PNG first. An agent that takes no pictures gets none, and the message says which were
-  left out.
+- **Pictures** (PNG, JPEG, GIF, WebP) go to the agent as they are when they are at most 2048 px
+  on the long side and 3.75 MB (a picture's base64 then stays under 5 MB, so eight still fit in a
+  prompt). Otherwise they are scaled down to 2048 px and re-encoded: as PNG when that fits, as
+  JPEG when the picture has no transparency, halved until it fits; a GIF goes as its first frame.
+  BMP and TIFF go as PNG. HEIC can't be read: export it as JPEG or PNG first. An agent that takes
+  no pictures gets none, and the message says which were left out.
 - **Text files** (UTF-8, up to 256 KB: Markdown, plain text, JSON, CSV, YAML, TOML, XML, SVG…)
   go in the message's text, whole.
 - **CAD files** (STEP, IGES, FreeCAD, Rhino, STL, 3MF, OBJ, glTF) are imported into the design

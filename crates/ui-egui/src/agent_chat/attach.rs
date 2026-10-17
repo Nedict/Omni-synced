@@ -16,6 +16,11 @@ const MAX_PICTURE_BYTES: u64 = 40 * 1024 * 1024;
 const MAX_TEXT_BYTES: u64 = 256 * 1024;
 /// A picture's longer side is scaled down to this before it is sent.
 pub const MAX_SIDE: u32 = 2048;
+/// Largest picture sent, as it came or re-encoded: its base64 (a third larger) stays under 5 MB,
+/// so eight of them still fit in a prompt.
+pub const MAX_SENT_BYTES: usize = 3_750_000;
+/// A picture is not halved below this to fit; past it, it is refused.
+const MIN_SIDE: u32 = 64;
 /// Largest picture decoded (pixels on a side), so a hostile header can't ask for gigabytes.
 const MAX_DECODE_SIDE: u32 = 20_000;
 /// The chip's picture.
@@ -122,10 +127,14 @@ pub fn read(path: &Path) -> Result<Attachment, String> {
     }
 }
 
-/// A picture from a file's bytes: decoded within limits, scaled down when larger than
-/// [`MAX_SIDE`] (and then sent as PNG); otherwise sent as it came if the agents read that format
-/// (PNG, JPEG, GIF, WebP), else as PNG (BMP, TIFF).
+/// A picture from a file's bytes: decoded within limits, and sent as it came when the agents read
+/// that format (PNG, JPEG, GIF, WebP), it is at most [`MAX_SIDE`] on a side and at most
+/// [`MAX_SENT_BYTES`]; otherwise re-encoded (see [`encoded`]).
 pub fn picture(name: String, bytes: &[u8]) -> Result<Attachment, String> {
+    picture_within(name, bytes, MAX_SENT_BYTES)
+}
+
+fn picture_within(name: String, bytes: &[u8], limit: usize) -> Result<Attachment, String> {
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().map_err(|e| format!("{name}: {e}"))?;
     let format = reader.format();
     let mime = match format {
@@ -147,6 +156,7 @@ pub fn picture(name: String, bytes: &[u8]) -> Result<Attachment, String> {
     }
     if let Some(mime) = mime
         && img.width().max(img.height()) <= MAX_SIDE
+        && bytes.len() <= limit
     {
         let thumb = thumbnail(&img);
         return Ok(Attachment {
@@ -155,7 +165,7 @@ pub fn picture(name: String, bytes: &[u8]) -> Result<Attachment, String> {
             thumb,
         });
     }
-    encoded(name, img)
+    encoded(name, img, limit)
 }
 
 /// A picture copied to the clipboard (RGBA rows from the system), sent as PNG.
@@ -167,16 +177,38 @@ pub fn from_rgba(name: String, width: usize, height: usize, rgba: &[u8]) -> Resu
         return Err(format!("{name}: not a picture"));
     }
     let img = image::RgbaImage::from_raw(w, h, rgba.to_vec()).ok_or_else(|| format!("{name}: not a picture"))?;
-    encoded(name, image::DynamicImage::ImageRgba8(img))
+    encoded(name, image::DynamicImage::ImageRgba8(img), MAX_SENT_BYTES)
 }
 
-/// Scale down to [`MAX_SIDE`] if needed and encode as PNG.
-fn encoded(name: String, img: image::DynamicImage) -> Result<Attachment, String> {
-    let img = if img.width().max(img.height()) > MAX_SIDE { img.resize(MAX_SIDE, MAX_SIDE, image::imageops::FilterType::Triangle) } else { img };
-    let mut png = Vec::new();
-    img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(|e| format!("{name}: {e}"))?;
-    let thumb = thumbnail(&img);
-    Ok(Attachment { name, content: Content::Picture { mime: "image/png", bytes: Arc::new(png), size: [img.width(), img.height()] }, thumb })
+/// Scale down to [`MAX_SIDE`] and encode within `limit` bytes: as PNG when that fits; else as JPEG
+/// when the picture has no transparency; else halved and tried again. A GIF arrives here as its
+/// first frame.
+fn encoded(name: String, img: image::DynamicImage, limit: usize) -> Result<Attachment, String> {
+    let mut img = if img.width().max(img.height()) > MAX_SIDE { img.resize(MAX_SIDE, MAX_SIDE, image::imageops::FilterType::Triangle) } else { img };
+    let opaque = opaque(&img);
+    loop {
+        let mut png = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(|e| format!("{name}: {e}"))?;
+        let mut sent = (png.len() <= limit).then_some(("image/png", png));
+        if sent.is_none() && opaque {
+            let mut jpeg = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 85).encode_image(&img.to_rgb8()).map_err(|e| format!("{name}: {e}"))?;
+            sent = (jpeg.len() <= limit).then_some(("image/jpeg", jpeg));
+        }
+        if let Some((mime, bytes)) = sent {
+            let thumb = thumbnail(&img);
+            return Ok(Attachment { name, content: Content::Picture { mime, bytes: Arc::new(bytes), size: [img.width(), img.height()] }, thumb });
+        }
+        if img.width().max(img.height()) <= MIN_SIDE {
+            return Err(format!("{name}: too large to send, even scaled down"));
+        }
+        img = img.resize((img.width() / 2).max(1), (img.height() / 2).max(1), image::imageops::FilterType::Triangle);
+    }
+}
+
+/// No pixel is see-through (a screenshot or a photo, even when stored with an alpha channel).
+fn opaque(img: &image::DynamicImage) -> bool {
+    !img.color().has_alpha() || img.to_rgba8().pixels().all(|p| p.0[3] == 255)
 }
 
 fn thumbnail(img: &image::DynamicImage) -> Option<Arc<egui::ColorImage>> {
@@ -255,6 +287,59 @@ mod tests {
         let c = read(&notes).unwrap();
         assert!(matches!(&c.content, Content::Text(t) if t.contains("wall 2 mm")));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Pixels that don't compress, so a small picture can be made larger than a small limit.
+    fn noise(w: u32, h: u32, alpha: bool) -> image::DynamicImage {
+        let mut seed = 0x2545_f491_u32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            (seed & 0xff) as u8
+        };
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_fn(w, h, |_, _| {
+            image::Rgba([next(), next(), next(), if alpha { next() } else { 255 }])
+        }))
+    }
+
+    fn encode(img: &image::DynamicImage, format: image::ImageFormat) -> Vec<u8> {
+        let mut out = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut out), format).unwrap();
+        out
+    }
+
+    /// Review of #1744: a picture up to 2048 px went byte for byte up to the 40 MB file cap, and
+    /// eight of those don't fit in a prompt. Over the limit a picture is re-encoded: PNG when that
+    /// fits, JPEG when it has no transparency, halved until it fits; a GIF goes as its first frame.
+    #[test]
+    fn pictures_over_the_send_limit_are_reencoded_to_fit() {
+        let limit = 40_000;
+        let photo = encode(&noise(300, 200, false), image::ImageFormat::Png);
+        assert!(photo.len() > limit, "the test picture is over the limit");
+        let a = picture_within("photo.png".into(), &photo, limit).unwrap();
+        let Content::Picture { mime, bytes, size } = &a.content else { panic!("a picture") };
+        assert!(bytes.len() <= limit, "{} bytes", bytes.len());
+        assert_eq!(*mime, "image/jpeg", "an opaque picture goes as JPEG when PNG is too big");
+        assert!(size[0] <= 300 && size[1] <= 200 && size[0] * 2 == size[1] * 3, "{size:?}: smaller, same shape");
+        let clear = encode(&noise(300, 200, true), image::ImageFormat::Png);
+        let b = picture_within("overlay.png".into(), &clear, limit).unwrap();
+        let Content::Picture { mime, bytes, size } = &b.content else { panic!("a picture") };
+        assert_eq!(*mime, "image/png", "transparency stays PNG");
+        assert!(bytes.len() <= limit && size[0] < 300, "{} bytes, {size:?}: halved to fit", bytes.len());
+        let gif = encode(
+            &image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(400, 300, image::Rgba([40, 90, 200, 255]))),
+            image::ImageFormat::Gif,
+        );
+        let c = picture_within("loop.gif".into(), &gif, gif.len() - 1).unwrap();
+        let Content::Picture { mime, size, bytes } = &c.content else { panic!("a picture") };
+        assert_eq!(*mime, "image/png", "a GIF over the limit goes as its first frame, as PNG");
+        assert!(bytes.len() < gif.len() && size[0] * 3 == size[1] * 4, "{size:?}: within the limit, same shape");
+        assert!(a.thumb.is_some() && b.thumb.is_some() && c.thumb.is_some());
+        let under = encode(&noise(60, 40, false), image::ImageFormat::Png);
+        let d = picture_within("small.png".into(), &under, limit).unwrap();
+        assert!(matches!(&d.content, Content::Picture { bytes, .. } if bytes.as_slice() == under.as_slice()), "under the limit: as it came");
+        assert_eq!(MAX_SENT_BYTES, 3_750_000, "its base64 stays under 5 MB");
     }
 
     #[test]
