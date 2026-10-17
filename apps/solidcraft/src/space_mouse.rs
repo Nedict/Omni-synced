@@ -1,8 +1,8 @@
-//! 3Dconnexion HID navigation on Windows (through hidapi) and Linux (through spacenavd when it
-//! runs, else hidraw). The device reader never touches the document or UI; it publishes the
-//! latest axes, and the egui thread applies them once per frame.
+//! 3D mouse navigation on Windows (through hidapi) and Linux (through spacenavd when it runs, else
+//! hidraw). Read directly, any HID multi-axis controller works: 3Dconnexion's and homemade ones.
+//! The device reader never touches the document or UI; it publishes the latest axes, and the egui
+//! thread applies them once per frame.
 
-mod hid_descriptor;
 #[cfg(target_os = "linux")]
 mod hidraw;
 #[cfg(target_os = "linux")]
@@ -12,11 +12,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use egui::Context;
-use hid_descriptor::Layout;
 #[cfg(target_os = "windows")]
 use hidapi::{DeviceInfo, HidApi};
 use quick_xml::Reader;
 use quick_xml::events::Event;
+use solidcraft_space_mouse::Layout;
 use solidcraft_ui_egui::SolveApp;
 use solidcraft_ui_egui::space_mouse::{Axes, AxisRule, DriverMapping, WheelGuard, navigate_frame};
 
@@ -180,50 +180,27 @@ impl Reading {
     }
 }
 
-/// The old SpaceNavigator uses Logitech's VID; newer 3Dconnexion devices use their own.
-fn is_3d_mouse_vendor(vendor_id: u16) -> bool {
-    matches!(vendor_id, 0x046d | 0x256f)
-}
-
-/// The HID usage excludes ordinary Logitech mice and the keyboard interfaces of SpaceMice.
+/// The Generic Desktop "Multi-Axis Controller" usage names a 3D mouse's motion interface, whoever
+/// made it, and excludes ordinary mice and the keyboard interfaces of 3D mice.
 #[cfg(target_os = "windows")]
 fn is_3d_mouse(info: &DeviceInfo) -> bool {
-    is_3d_mouse_vendor(info.vendor_id()) && info.usage_page() == 0x01 && info.usage() == 0x08
+    info.usage_page() == 0x01 && info.usage() == 0x08
 }
 
-fn three_axes(bytes: &[u8]) -> Option<[i16; 3]> {
-    let &[x0, x1, y0, y1, z0, z1] = bytes.get(..6)? else { return None };
-    Some([i16::from_le_bytes([x0, x1]), i16::from_le_bytes([y0, y1]), i16::from_le_bytes([z0, z1])])
-}
-
-/// SpaceNavigator reports 1 (translation) and 2 (rotation), each with three signed
-/// little-endian 16-bit values. The HID layer may pad either report to its maximum size.
-/// Some homemade devices send all six values in report 1 instead (`Layout::Combined`): only the
-/// device's report descriptor can tell the two apart, because a padded split report 1 is as long.
+/// Takes the axes an input report carries, as the device's descriptor laid them out. Translation
+/// and rotation may come in separate reports (3Dconnexion's wired devices) or one (its wireless
+/// ones and most homemade devices); each group keeps its own age.
 fn decode_report(report: &[u8], layout: Layout, reading: &mut Reading, now: Instant) -> bool {
-    match report.first().copied() {
-        Some(1) if layout == Layout::Combined => {
-            let Some(body) = report.get(1..) else { return false };
-            let (Some(translation), Some(rotation)) = (body.get(..6).and_then(three_axes), body.get(6..).and_then(three_axes)) else { return false };
-            reading.axes = Axes { translation, rotation };
-            reading.translation_at = now;
-            reading.rotation_at = now;
-            true
-        }
-        Some(1) => {
-            let Some(translation) = report.get(1..).and_then(three_axes) else { return false };
-            reading.axes.translation = translation;
-            reading.translation_at = now;
-            true
-        }
-        Some(2) => {
-            let Some(rotation) = report.get(1..).and_then(three_axes) else { return false };
-            reading.axes.rotation = rotation;
-            reading.rotation_at = now;
-            true
-        }
-        _ => false,
+    let Some(decoded) = layout.decode(report) else { return false };
+    if let Some(translation) = decoded.translation {
+        reading.axes.translation = translation;
+        reading.translation_at = now;
     }
+    if let Some(rotation) = decoded.rotation {
+        reading.axes.rotation = rotation;
+        reading.rotation_at = now;
+    }
+    true
 }
 
 /// Publishes one input report from the device to the egui thread.
@@ -280,16 +257,16 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>) {
     }
 }
 
-/// How the device packs its axes, from its report descriptor; the usual split layout if the
+/// How the device packs its axes, from its report descriptor; 3Dconnexion's layout if the
 /// descriptor cannot be read.
 #[cfg(target_os = "windows")]
 fn device_layout(device: &hidapi::HidDevice) -> Layout {
     let mut descriptor = [0_u8; hidapi::MAX_REPORT_DESCRIPTOR_SIZE];
     match device.get_report_descriptor(&mut descriptor) {
-        Ok(size) => hid_descriptor::Descriptor::parse(descriptor.get(..size).unwrap_or_default()).layout(),
+        Ok(size) => solidcraft_space_mouse::Descriptor::parse(descriptor.get(..size).unwrap_or_default()).layout(),
         Err(error) => {
             log::info!("3D mouse: no report descriptor, assuming separate translation and rotation reports: {error}");
-            Layout::Split
+            Layout::default()
         }
     }
 }
@@ -312,7 +289,7 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>) {
             match std::fs::File::open(&device.path) {
                 Ok(mut file) => {
                     denied = None;
-                    log::info!("3D mouse: reading {} ({:?} reports)", device.path.display(), device.layout);
+                    log::info!("3D mouse: reading {}", device.path.display());
                     let mut report = [0_u8; 64];
                     loop {
                         match file.read(&mut report) {
@@ -418,20 +395,29 @@ mod tests {
     }
 
     #[test]
-    fn decodes_separate_reports_without_stale_motion_or_padding_interference() {
+    fn each_group_keeps_its_own_age_so_stale_motion_stops() {
+        // Report layouts are tested in solidcraft-space-mouse; here, what the reader keeps.
         let now = Instant::now();
         let mut reading = Reading::new(now);
-        assert!(!decode_report(&[1, 1, 2], Layout::Split, &mut reading, now));
+        let layout = Layout::default();
+        assert!(!decode_report(&[1, 1, 2], layout, &mut reading, now));
         assert_eq!(reading.current(now), Axes::default());
-        assert!(decode_report(&[1, 0x9c, 0xff, 0x2c, 0x01, 0, 0], Layout::Split, &mut reading, now));
-        assert_eq!(reading.current(now).translation, [-100, 300, 0]);
-        assert!(decode_report(&[2, 0, 0, 1, 0, 0xff, 0xff], Layout::Split, &mut reading, now));
-        assert_eq!(reading.current(now).rotation, [0, 1, -1]);
+        assert!(decode_report(&[1, 0x9c, 0xff, 0x2c, 0x01, 0, 0], layout, &mut reading, now));
+        assert!(decode_report(&[2, 0, 0, 1, 0, 0xff, 0xff], layout, &mut reading, now));
+        assert_eq!(reading.current(now), Axes { translation: [-100, 300, 0], rotation: [0, 1, -1] });
+        // Only rotation arrives again: translation goes stale, rotation stays current.
         let later = now + STALE_AFTER + Duration::from_millis(1);
-        assert_eq!(reading.current(later), Axes::default());
-        assert!(decode_report(&[2, 4, 0, 5, 0, 6, 0], Layout::Split, &mut reading, later));
-        assert!(decode_report(&[1, 1, 0, 2, 0, 3, 0, 0, 0, 0, 0, 0, 0], Layout::Split, &mut reading, later));
-        assert_eq!(reading.current(later), Axes { translation: [1, 2, 3], rotation: [4, 5, 6] });
+        assert!(decode_report(&[2, 4, 0, 5, 0, 6, 0], layout, &mut reading, later));
+        assert_eq!(reading.current(later), Axes { translation: [0; 3], rotation: [4, 5, 6] });
+        // A device sending all six in one report updates both at once.
+        let combined = solidcraft_space_mouse::Descriptor::parse(&[
+            0x05, 0x01, 0x09, 0x08, 0xA1, 0x01, 0x85, 0x01, 0x16, 0xA2, 0xFE, 0x26, 0x5E, 0x01, 0x75, 0x10, 0x95, 0x06, 0x19, 0x30, 0x29, 0x35, 0x81,
+            0x02, 0xC0,
+        ])
+        .layout();
+        let mut both = Reading::new(now);
+        assert!(decode_report(&[1, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0], combined, &mut both, now));
+        assert_eq!(both.current(now), Axes { translation: [1, 2, 3], rotation: [4, 5, 6] });
     }
 
     #[test]
@@ -445,33 +431,6 @@ mod tests {
         // A HID device repeats its report: silence means the cap, or the device, is gone.
         let hid = Reading { axes, ..Reading::new(now) };
         assert_eq!(hid.current(later), Axes::default());
-    }
-
-    #[test]
-    fn combined_report_one_carries_translation_and_rotation_together() {
-        let now = Instant::now();
-        let mut reading = Reading::new(now);
-        // Report id 1, then X Y Z Rx Ry Rz as signed little-endian 16-bit values.
-        let report = [1, 0x9c, 0xff, 0x2c, 0x01, 0, 0, 1, 0, 0, 0, 0xff, 0xff];
-        assert!(decode_report(&report, Layout::Combined, &mut reading, now));
-        assert_eq!(reading.current(now), Axes { translation: [-100, 300, 0], rotation: [1, 0, -1] });
-        // The same bytes on a split device are only the translation report; its padding is not rotation.
-        let mut split = Reading::new(now);
-        assert!(decode_report(&report, Layout::Split, &mut split, now));
-        assert_eq!(split.current(now), Axes { translation: [-100, 300, 0], rotation: [0; 3] });
-    }
-
-    #[test]
-    fn combined_layout_ignores_short_and_other_reports() {
-        let now = Instant::now();
-        let mut reading = Reading::new(now);
-        assert!(!decode_report(&[1, 1, 0, 2, 0, 3, 0], Layout::Combined, &mut reading, now));
-        assert!(!decode_report(&[3, 1, 0, 0, 0, 0], Layout::Combined, &mut reading, now));
-        assert!(!decode_report(&[], Layout::Combined, &mut reading, now));
-        assert_eq!(reading.current(now), Axes::default());
-        // Extra padding after the six values is fine.
-        assert!(decode_report(&[1, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 0, 0], Layout::Combined, &mut reading, now));
-        assert_eq!(reading.current(now), Axes { translation: [1, 2, 3], rotation: [4, 5, 6] });
     }
 
     #[test]
