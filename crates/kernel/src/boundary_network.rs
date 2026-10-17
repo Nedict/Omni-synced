@@ -6,8 +6,10 @@
 //!
 //! The reusable pieces: [`CurveSource`] turns each kind of curve into a curve the network can
 //! measure, [`EdgeFaces`] gives the frame and second fundamental form of the faces along a chain
-//! of edges (what a G1 or G2 condition needs), and [`boundary_surface`] builds the face. Patch
-//! with continuity (#759) and Blend Surface (#764) are built from the same pieces.
+//! of edges (what a G1 or G2 condition needs), and [`boundary_surface`] builds the face.
+//!
+//! The two-curve bridge with G0–G3 against a sketch's plane is [`crate::boundary`]; this is the
+//! general case: three or four sides, interior curves, 3D curves and edges.
 
 use std::collections::HashSet;
 
@@ -68,11 +70,6 @@ pub struct BoundaryCurve<'a> {
 /// condition on anything but an open edge of a surface, or on curves of both directions.
 pub fn boundary_surface(u: &[BoundaryCurve], v: &[BoundaryCurve]) -> Result<Body> {
     for c in u.iter().chain(v) {
-        if c.continuity == Continuity::G2 {
-            // The network supports it (solidcraft_geom::network), but measured on a body the
-            // curvature across the edge does not match yet.
-            return Err(KernelError::Invalid(format!("not supported yet: G2 (curvature) continuity on {}", c.label)));
-        }
         if let CurveSource::Edges { body, .. } = &c.source {
             body.require_brep("boundary surface")?;
         }
@@ -351,20 +348,17 @@ impl CrossFace for EdgeFaces {
         if !(det.abs() > 1e-24) {
             return None;
         }
-        // II(w, w) = −dn(w)·w: the unit normal's change along w, by central differences in the
-        // surface's parameters (rational surfaces included).
-        let unit = |a: f64, b: f64| {
-            let m = s.uder(a, b).cross(s.vder(a, b));
-            (m.magnitude2() > 0.0).then(|| m.normalize())
-        };
+        // II(w, w) = L·α² + 2M·αβ + N·β² for w = α·S_u + β·S_v, with L, M, N the surface's
+        // second derivatives along its unit normal (do Carmo, §3-3): exact, rational surfaces
+        // included, and with nothing sampled beyond the edge, where the face's domain ends.
+        let nv = mt::Vector3::new(normal.x, normal.y, normal.z);
+        let (l, m, nn) = (s.uuder(u, v).dot(nv), s.uvder(u, v).dot(nv), s.vvder(u, v).dot(nv));
         let ii = |w: Vec3| -> Option<f64> {
             let wv = mt::Vector3::new(w.x, w.y, w.z);
             let (p, q) = (wv.dot(su), wv.dot(sv));
             let (alpha, beta) = ((p * g - q * f) / det, (q * e - p * f) / det);
-            let h = 1e-5 / (alpha * alpha + beta * beta).sqrt().max(1e-12);
-            let (np, nm) = (unit(u + alpha * h, v + beta * h)?, unit(u - alpha * h, v - beta * h)?);
-            let dn = (np - nm) / (2.0 * h);
-            Some(-dn.dot(wv))
+            let out = l * alpha * alpha + 2.0 * m * alpha * beta + nn * beta * beta;
+            out.is_finite().then_some(out)
         };
         let (tt, bb) = (ii(t)?, ii(b)?);
         let tb = (ii(t + b)? - tt - bb) / 2.0;
@@ -563,14 +557,64 @@ mod tests {
         );
     }
 
-    /// G2 is refused for now (not supported yet), never a panic.
+    /// Normal curvature of `s` at the point nearest `p` in the direction `w` (projected into the
+    /// tangent plane), signed against the unit normal `n`.
+    fn normal_curvature(s: &mt::Surface, p: Vec3, w: Vec3, n: Vec3) -> f64 {
+        let (u, v) = s.search_nearest_parameter(p3(p), None, 100).unwrap();
+        let v3 = |x: mt::Vector3| Vec3::new(x.x, x.y, x.z);
+        let (su, sv) = (v3(s.uder(u, v)), v3(s.vder(u, v)));
+        let (suu, suv, svv) = (v3(s.uuder(u, v)), v3(s.uvder(u, v)), v3(s.vvder(u, v)));
+        let (e, f, g) = (su.dot(su), su.dot(sv), sv.dot(sv));
+        let (l, m, nn) = (suu.dot(n), suv.dot(n), svv.dot(n));
+        let (p1, q1) = (w.dot(su), w.dot(sv));
+        let det = e * g - f * f;
+        let (a, b) = ((p1 * g - q1 * f) / det, (q1 * e - p1 * f) / det);
+        (l * a * a + 2.0 * m * a * b + nn * b * b) / (e * a * a + 2.0 * f * a * b + g * b * b)
+    }
+
+    /// G2 against a real cylinder's open edge (R = 10, the face below the edge): across the edge
+    /// the surface's normal curvature is the cylinder's, −1/R about its outward normal, within
+    /// 0.1 % — also when the far curve is sheared along the edge, so that the surface's own
+    /// cross direction leans. With G1 alone it is not.
     #[test]
-    fn g2_is_not_supported_yet() {
+    fn g2_matches_a_cylinder_across_its_edge() {
+        let r = 10.0;
+        let pl = Plane::new(Vec3::ZERO, Vec3::Y, Vec3::Z).unwrap();
+        let arc = Seg2::Arc { center: Vec2::new(0.0, 0.0), radius: r, start: -std::f64::consts::FRAC_PI_2, sweep: std::f64::consts::FRAC_PI_2 };
+        let cyl = crate::extrude_sheet(&pl, &[vec![arc]], 0.0, 10.0).unwrap();
+        let sc = face_surface(&cyl);
+        let made = |g, shear: f64| {
+            let edge =
+                BoundaryCurve { label: "rim".into(), source: CurveSource::Edges { body: &cyl, at: vec![Vec3::new(5.0, r, 0.0)] }, continuity: g };
+            let top = line3("top", Vec3::new(shear, 3.0, 12.0), Vec3::new(10.0 + shear, 3.0, 12.0));
+            face_surface(&boundary_surface(&[edge, top], &[]).unwrap())
+        };
+        for shear in [0.0, 5.0] {
+            let sm = made(Continuity::G2, shear);
+            for k in 1..=9 {
+                let p = Vec3::new(k as f64, r, 0.0);
+                let kc = normal_curvature(&sc, p, Vec3::Z, Vec3::Y);
+                assert!((kc + 1.0 / r).abs() < 1e-9, "the cylinder's own curvature: {kc}");
+                let km = normal_curvature(&sm, p, Vec3::Z, Vec3::Y);
+                assert!((km - kc).abs() < 1e-3 / r, "shear {shear}, x = {k}: {km} across the edge where the cylinder has {kc}");
+                // Along the edge both are straight.
+                assert!(normal_curvature(&sm, p, Vec3::X, Vec3::Y).abs() < 1e-6);
+                assert!(normal_angle(&sc, &sm, p) < 0.1);
+            }
+        }
+        let g1 = made(Continuity::G1, 0.0);
+        let k1 = normal_curvature(&g1, Vec3::new(5.0, r, 0.0), Vec3::Z, Vec3::Y);
+        assert!((k1 + 1.0 / r).abs() > 0.1 / r, "G1 alone does not carry the curvature: {k1}");
+    }
+
+    /// G3 is more than a network holds: refused, never a panic.
+    #[test]
+    fn g3_is_not_supported() {
         let base = sheet();
         let edge = BoundaryCurve {
             label: "edge".into(),
             source: CurveSource::Edges { body: &base, at: vec![Vec3::new(5.0, 0.0, 0.0)] },
-            continuity: Continuity::G2,
+            continuity: Continuity::G3,
         };
         let e = boundary_surface(&[edge, line3("far", Vec3::new(0.0, 10.0, 5.0), Vec3::new(10.0, 10.0, 5.0))], &[]).unwrap_err();
         assert!(e.to_string().contains("not supported yet"), "{e}");
