@@ -421,6 +421,54 @@ impl Rev {
         self.o + self.a * h + (self.e1 * uv[0].cos() + self.e2 * uv[0].sin()) * r
     }
 
+    /// Profile parameters where component `k` of the profile's (r, h) tangent vanishes: sign
+    /// changes between samples, refined by bisection, exact zeros at samples, and for a closed
+    /// profile the change across the seam where its ends meet.
+    fn roots(&self, ss: &[f64], k: usize) -> Vec<f64> {
+        let f = |s: f64| self.rh_d(s).get(k).copied().unwrap_or(0.);
+        let vals: Vec<f64> = ss.iter().map(|s| f(*s)).collect();
+        let scale = vals.iter().fold(0f64, |m, v| m.max(v.abs())).max(1e-300);
+        let zero = |v: f64| v.abs() <= 1e-12 * scale;
+        let mut out: Vec<f64> = Vec::new();
+        let mut pairs: Vec<(usize, usize)> = (0..ss.len().saturating_sub(1)).map(|i| (i, i + 1)).collect();
+        if self.closed && ss.len() > 2 {
+            // The last sample repeats the first; the pair across the seam is (n-1, 1).
+            pairs.push((ss.len() - 2, 1));
+        }
+        for (i, sv) in vals.iter().enumerate() {
+            if zero(*sv)
+                && !(self.closed && i + 1 == vals.len())
+                && let Some(s0) = ss.get(i)
+            {
+                out.push(*s0);
+            }
+        }
+        for (i, j) in pairs {
+            let (Some(&a), Some(&b), Some(&sa), Some(&sb)) = (vals.get(i), vals.get(j), ss.get(i), ss.get(j)) else { continue };
+            if zero(a) || zero(b) || a.signum() == b.signum() {
+                continue;
+            }
+            // Across the seam, walk sb forward a period so the interval is increasing.
+            let sb = if sb < sa { sb + (self.dom[1] - self.dom[0]) } else { sb };
+            let wrap = |x: f64| if x > self.dom[1] { x - (self.dom[1] - self.dom[0]) } else { x };
+            let (mut lo, mut hi, mut flo) = (sa, sb, a);
+            for _ in 0..60 {
+                let mid = 0.5 * (lo + hi);
+                let fm = f(wrap(mid));
+                if fm.signum() == flo.signum() && !zero(fm) {
+                    lo = mid;
+                    flo = fm;
+                } else {
+                    hi = mid;
+                }
+            }
+            out.push(wrap(0.5 * (lo + hi)));
+        }
+        out.sort_by(f64::total_cmp);
+        out.dedup_by(|x, y| (*x - *y).abs() <= 1e-9 * (self.dom[1] - self.dom[0]));
+        out
+    }
+
     /// cos(theta - phi) = dr (a.d) / (dh rho) along the profile; see `S3::rev_silhouette`.
     fn silhouette(&self, d: Vec3) -> Vec<(C3, f64)> {
         let (d1, d2, da) = (d.dot(self.e1), d.dot(self.e2), d.dot(self.a));
@@ -431,25 +479,10 @@ impl Rev {
         let mut out = Vec::new();
         if rho <= 1e-12 {
             // Along the axis: circles where the profile runs parallel to the axis (dr = 0).
-            let dr: Vec<f64> = ss.iter().map(|s| self.rh_d(*s)[0]).collect();
-            for i in 0..n {
-                let (Some(&a), Some(&b), Some(&sa), Some(&sb)) = (dr.get(i), dr.get(i + 1), ss.get(i), ss.get(i + 1)) else { continue };
-                if a != 0. && a.signum() != b.signum() {
-                    let (mut lo, mut hi, mut flo) = (sa, sb, a);
-                    for _ in 0..60 {
-                        let mid = 0.5 * (lo + hi);
-                        let fm = self.rh_d(mid)[0];
-                        if fm != 0. && fm.signum() == flo.signum() {
-                            lo = mid;
-                            flo = fm;
-                        } else {
-                            hi = mid;
-                        }
-                    }
-                    let [r, h] = self.rh(0.5 * (lo + hi));
-                    if r > 1e-12 {
-                        out.push((C3::Arc { o: self.o + self.a * h, x: self.e1, y: self.e2, r: [r, r], range: [0., TAU] }, 0.));
-                    }
+            for s0 in self.roots(&ss, 0) {
+                let [r, h] = self.rh(s0);
+                if r > 1e-12 {
+                    out.push((C3::Arc { o: self.o + self.a * h, x: self.e1, y: self.e2, r: [r, r], range: [0., TAU] }, 0.));
                 }
             }
             return out;
@@ -457,25 +490,10 @@ impl Rev {
         if da.abs() <= 1e-12 {
             // Square to the axis: where the profile runs radially (dh = 0) the normal is the
             // axis, square to d for every angle, so the whole parallel circle is a silhouette.
-            let dh: Vec<f64> = ss.iter().map(|s| self.rh_d(*s)[1]).collect();
-            for i in 0..n {
-                let (Some(&a), Some(&b), Some(&sa), Some(&sb)) = (dh.get(i), dh.get(i + 1), ss.get(i), ss.get(i + 1)) else { continue };
-                if a != 0. && a.signum() != b.signum() {
-                    let (mut lo, mut hi, mut flo) = (sa, sb, a);
-                    for _ in 0..60 {
-                        let mid = 0.5 * (lo + hi);
-                        let fm = self.rh_d(mid)[1];
-                        if fm != 0. && fm.signum() == flo.signum() {
-                            lo = mid;
-                            flo = fm;
-                        } else {
-                            hi = mid;
-                        }
-                    }
-                    let [r, h] = self.rh(0.5 * (lo + hi));
-                    if r > 1e-12 {
-                        out.push((C3::Arc { o: self.o + self.a * h, x: self.e1, y: self.e2, r: [r, r], range: [0., TAU] }, 0.));
-                    }
+            for s0 in self.roots(&ss, 1) {
+                let [r, h] = self.rh(s0);
+                if r > 1e-12 {
+                    out.push((C3::Arc { o: self.o + self.a * h, x: self.e1, y: self.e2, r: [r, r], range: [0., TAU] }, 0.));
                 }
             }
         }

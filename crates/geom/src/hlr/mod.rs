@@ -4,7 +4,7 @@
 //! trimmed faces. A piece too close to a face boundary to classify reliably is reported as
 //! uncertain instead of guessed. Investigation code: not a stable API or a W06 contract.
 
-mod curve;
+pub(crate) mod curve;
 mod silhouette;
 pub(crate) mod surface;
 mod trim;
@@ -397,6 +397,9 @@ pub struct Piece {
     pub mid: [f64; 3],
     /// Screen points along the piece (for drawing; exact points on the projected curve).
     pub points: Vec<[f64; 2]>,
+    /// Largest distance between the projected curve and the chords joining `points`.
+    #[serde(skip)]
+    sag: f64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -450,6 +453,8 @@ struct Track<'a> {
     /// again after about sqrt(2 * radius * deviation).
     own_eps: f64,
     samples: Vec<(f64, [f64; 2])>,
+    /// Per sample chord: the distance of the exact projected curve from it at its middle.
+    sags: Vec<f64>,
     splits: Vec<f64>,
 }
 
@@ -548,6 +553,7 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
                     _ => ctx.eps_own,
                 },
                 samples: Vec::new(),
+                sags: Vec::new(),
                 splits: Vec::new(),
             });
         }
@@ -573,6 +579,7 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
                             _ => ctx.eps_own,
                         },
                         samples: Vec::new(),
+                        sags: Vec::new(),
                         splits: Vec::new(),
                     });
                 }
@@ -604,8 +611,31 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
             }
         }
         params.push(t.range[1]);
-        let samples = params.into_iter().map(|x| (x, view.screen(p.apply(c.at(x))))).collect();
+        let samples: Vec<(f64, [f64; 2])> = params.into_iter().map(|x| (x, view.screen(p.apply(c.at(x))))).collect();
+        // Chord sag on screen: exact for lines, measured at the middle for curves; a sampled
+        // silhouette's chords stand for the true curve to within its measured deviation.
+        // A fitted source record stands for the true curve to within its bound.
+        let fitted = match t.acc {
+            Accuracy::Bounded(tol) => tol,
+            _ => 0.,
+        };
+        let sags = samples
+            .windows(2)
+            .map(|w| {
+                fitted
+                    + match (c, w.first(), w.get(1)) {
+                        (C3::Line { .. }, _, _) => 0.,
+                        (C3::Polyline(_), _, _) => match t.acc {
+                            Accuracy::Sampled(dev) => dev,
+                            _ => 0.,
+                        },
+                        (_, Some(a), Some(b)) => point_segment(view.screen(p.apply(c.at(0.5 * (a.0 + b.0)))), a.1, b.1),
+                        _ => 0.,
+                    }
+            })
+            .collect();
         t.samples = samples;
+        t.sags = sags;
     }
     stats.phase_ms[0] = clock.lap();
     // 3. Crossings between projected curves (and each curve with itself).
@@ -630,7 +660,7 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
             for (r, vis) in classify_range(t, a, b, &ctx)? {
                 match pieces.last_mut() {
                     Some(last) if last.visibility == vis && (last.t[1] - r[0]).abs() <= 1e-12 * span.max(1e-300) => last.t[1] = r[1],
-                    _ => pieces.push(Piece { t: r, visibility: vis, covered: false, mid: [0.; 3], points: Vec::new() }),
+                    _ => pieces.push(Piece { t: r, visibility: vis, covered: false, mid: [0.; 3], points: Vec::new(), sag: 0. }),
                 }
             }
         }
@@ -641,6 +671,13 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
             pts.extend(t.samples.iter().filter(|(x, _)| *x > piece.t[0] && *x < piece.t[1]).map(|(_, s)| *s));
             pts.push(view.screen(p.apply(c.at(piece.t[1]))));
             piece.points = pts;
+            piece.sag = t
+                .samples
+                .windows(2)
+                .zip(&t.sags)
+                .filter(|(w, _)| w.get(1).is_some_and(|b| b.0 > piece.t[0]) && w.first().is_some_and(|a| a.0 < piece.t[1]))
+                .map(|(_, sag)| *sag)
+                .fold(0., f64::max);
             let m = p.apply(c.at(0.5 * (piece.t[0] + piece.t[1])));
             piece.mid = [m.x, m.y, m.z];
         }
@@ -649,7 +686,9 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
         lines.push(Line { placement: t.placement, source: t.source, accuracy: t.acc, shape: shape2(c, t.range, p, view), pieces });
     }
     stats.phase_ms[2] = clock.lap();
-    cover(&mut lines, 1e-4 * scale);
+    // Coverage is checked every 1e-4 of the scene (5 um to 0.5 mm): a gap narrower than that
+    // in a coincident line is not seen.
+    cover(&mut lines, 1e-7 + 1e-9 * scale, (1e-4 * scale).clamp(0.005, 0.5));
     stats.phase_ms[3] = clock.lap();
     for p in lines.iter().flat_map(|l| l.pieces.iter()) {
         stats.covered_pieces += usize::from(p.covered);
@@ -682,6 +721,7 @@ fn crossings(tracks: &mut [Track], ctx: &Ctx) -> Result<usize, HlrError> {
         i: usize,
         a: [f64; 2],
         b: [f64; 2],
+        sag: f64,
     }
     let mut segs = Vec::new();
     let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
@@ -692,7 +732,7 @@ fn crossings(tracks: &mut [Track], ctx: &Ctx) -> Result<usize, HlrError> {
                 lo = [lo[0].min(p[0]), lo[1].min(p[1])];
                 hi = [hi[0].max(p[0]), hi[1].max(p[1])];
             }
-            segs.push(Seg { track: ti, i, a: a.1, b: b.1 });
+            segs.push(Seg { track: ti, i, a: a.1, b: b.1, sag: t.sags.get(i).copied().unwrap_or(0.) });
         }
     }
     if segs.is_empty() {
@@ -717,12 +757,25 @@ fn crossings(tracks: &mut [Track], ctx: &Ctx) -> Result<usize, HlrError> {
     let tol = 1e-9 * ctx.scale;
     let mut found = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
-    for (ci, cellv) in grid.iter().enumerate() {
-        if ci % 4096 == 0 && (ctx.cancel)() {
-            return Err(HlrError::Cancelled);
-        }
+    let mut pairs = 0usize;
+    // Screen points of a segment's exact curve, `k` pieces (one for lines and polylines).
+    let sub = |track: usize, i: usize, k: usize| -> Vec<[f64; 2]> {
+        let Some(tr) = tracks.get(track) else { return Vec::new() };
+        let (Some(a), Some(b)) = (tr.samples.get(i), tr.samples.get(i + 1)) else { return Vec::new() };
+        let Some(p) = ctx.scene.get(tr.placement) else { return Vec::new() };
+        let k = if matches!(tr.c3(), C3::Line { .. } | C3::Polyline(_)) { 1 } else { k };
+        (0..=k).map(|j| ctx.view.screen(p.apply(tr.c3().at(a.0 + (b.0 - a.0) * j as f64 / k as f64)))).collect()
+    };
+    for cellv in &grid {
         for (k, &i) in cellv.iter().enumerate() {
             for &j in cellv.iter().skip(k + 1) {
+                pairs += 1;
+                if pairs.is_multiple_of(65536) && (ctx.cancel)() {
+                    return Err(HlrError::Cancelled);
+                }
+                if pairs > 500_000_000 {
+                    return Err(HlrError::Budget("crossing pair"));
+                }
                 let (Some(s), Some(t)) = (segs.get(i), segs.get(j)) else { continue };
                 if s.track == t.track && s.i.abs_diff(t.i) <= 1 {
                     continue;
@@ -733,13 +786,29 @@ fn crossings(tracks: &mut [Track], ctx: &Ctx) -> Result<usize, HlrError> {
                 }
                 let straight = |k: usize| tracks.get(k).is_some_and(|tr| matches!(tr.c3(), C3::Line { .. }));
                 let overlaps = straight(s.track) && straight(t.track);
-                for (u, v) in seg_hits(s.a, s.b, t.a, t.b, tol, overlaps) {
-                    found.push((s.track, s.i, u, t.track, t.i, v));
+                let hits = seg_hits(s.a, s.b, t.a, t.b, tol, overlaps);
+                if hits.is_empty() && s.sag + t.sag > 0. && seg_gap(s.a, s.b, t.a, t.b) <= s.sag + t.sag + tol {
+                    // The chords miss but the curves may not: two crossings close together can
+                    // lie within one chord's sag. Intersect finer pieces of the exact curves.
+                    let (ps, pt) = (sub(s.track, s.i, 16), sub(t.track, t.i, 16));
+                    let (ns, nt) = (ps.len().saturating_sub(1).max(1) as f64, pt.len().saturating_sub(1).max(1) as f64);
+                    for (x, w) in ps.windows(2).enumerate() {
+                        for (y, z) in pt.windows(2).enumerate() {
+                            let (Some(a), Some(b), Some(c), Some(d)) = (w.first(), w.get(1), z.first(), z.get(1)) else { continue };
+                            for (u, v) in seg_hits(*a, *b, *c, *d, tol, false) {
+                                found.push((s.track, s.i, (x as f64 + u) / ns, t.track, t.i, (y as f64 + v) / nt));
+                            }
+                        }
+                    }
+                } else {
+                    for (u, v) in hits {
+                        found.push((s.track, s.i, u, t.track, t.i, v));
+                    }
+                }
+                if found.len() > 50_000_000 {
+                    return Err(HlrError::Budget("crossing"));
                 }
             }
-        }
-        if found.len() > 50_000_000 {
-            return Err(HlrError::Budget("crossing"));
         }
     }
     // Curves that nearly coincide in projection (two fitted copies of one intersection, say)
@@ -817,33 +886,35 @@ fn refine(tracks: &[Track], ctx: &Ctx, ta: usize, sa: f64, tb: usize, sb: f64) -
 }
 
 /// Marks hidden and uncertain pieces lying within `tol` of a visible piece of another line.
-fn cover(lines: &mut [Line], tol: f64) {
+fn cover(lines: &mut [Line], tol: f64, step: f64) {
     // Chords of visible and hidden pieces, keyed by (line, piece) so a piece never covers
     // itself; another piece of the same line may (a circle seen edge-on folds over itself).
-    let mut segs: Vec<((usize, usize), Visibility, [f64; 2], [f64; 2])> = Vec::new();
+    // `tol` is the base; each chord adds its own sag, each query point the sag of its chord.
+    let mut segs: Vec<((usize, usize), Visibility, [f64; 2], [f64; 2], f64)> = Vec::new();
     for (li, l) in lines.iter().enumerate() {
         for (pi, p) in l.pieces.iter().enumerate().filter(|(_, p)| p.visibility != Visibility::Uncertain) {
-            segs.extend(p.points.windows(2).filter_map(|w| Some(((li, pi), p.visibility, *w.first()?, *w.get(1)?))));
+            segs.extend(p.points.windows(2).filter_map(|w| Some(((li, pi), p.visibility, *w.first()?, *w.get(1)?, p.sag))));
         }
     }
+    let reach = segs.iter().map(|s| s.4).fold(0., f64::max) * 2. + tol;
     if segs.is_empty() {
         return;
     }
     // Bucket the chords on a grid of cells at least `tol` wide.
     let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
-    for (_, _, a, b) in &segs {
+    for (_, _, a, b, _) in &segs {
         for p in [a, b] {
             lo = [lo[0].min(p[0]), lo[1].min(p[1])];
             hi = [hi[0].max(p[0]), hi[1].max(p[1])];
         }
     }
     let n = ((segs.len() as f64).sqrt().ceil() as usize).clamp(1, 1024);
-    let cell = [((hi[0] - lo[0]) / n as f64).max(tol), ((hi[1] - lo[1]) / n as f64).max(tol)];
+    let cell = [((hi[0] - lo[0]) / n as f64).max(reach), ((hi[1] - lo[1]) / n as f64).max(reach)];
     let at = |x: f64, k: usize| (((x - lo[k]) / cell[k]).floor().max(0.) as usize).min(n - 1);
     let mut grid: Vec<Vec<usize>> = vec![Vec::new(); n * n];
-    for (i, (_, _, a, b)) in segs.iter().enumerate() {
-        for y in at(a[1].min(b[1]) - tol, 1)..=at(a[1].max(b[1]) + tol, 1) {
-            for x in at(a[0].min(b[0]) - tol, 0)..=at(a[0].max(b[0]) + tol, 0) {
+    for (i, (_, _, a, b, _)) in segs.iter().enumerate() {
+        for y in at(a[1].min(b[1]) - reach, 1)..=at(a[1].max(b[1]) + reach, 1) {
+            for x in at(a[0].min(b[0]) - reach, 0)..=at(a[0].max(b[0]) + reach, 0) {
                 if let Some(c) = grid.get_mut(y * n + x) {
                     c.push(i);
                 }
@@ -860,25 +931,50 @@ fn cover(lines: &mut [Line], tol: f64) {
                 _ => false,
             }
     };
-    let near = |key: (usize, usize), own: Visibility, q: [f64; 2]| {
+    let near = |key: (usize, usize), own: Visibility, q: [f64; 2], slack: f64| {
         let Some(bucket) = grid.get(at(q[1], 1) * n + at(q[0], 0)) else { return false };
-        bucket.iter().filter_map(|i| segs.get(*i)).any(|(k, state, a, b)| {
-            hides(key, own, *k, *state) && {
-                let (ex, ey) = (b[0] - a[0], b[1] - a[1]);
-                let l2 = ex * ex + ey * ey;
-                let t = if l2 > 0. { (((q[0] - a[0]) * ex + (q[1] - a[1]) * ey) / l2).clamp(0., 1.) } else { 0. };
-                (a[0] + t * ex - q[0]).hypot(a[1] + t * ey - q[1]) <= tol
-            }
-        })
+        bucket
+            .iter()
+            .filter_map(|i| segs.get(*i))
+            .any(|(k, state, a, b, sag)| hides(key, own, *k, *state) && point_segment(q, *a, *b) <= tol + sag + slack)
     };
     for (li, l) in lines.iter_mut().enumerate() {
         for (pi, p) in l.pieces.iter_mut().enumerate() {
-            // The piece's points and its chord midpoints.
-            let mids = p.points.windows(2).filter_map(|w| Some([0.5 * (w.first()?[0] + w.get(1)?[0]), 0.5 * (w.first()?[1] + w.get(1)?[1])]));
-            let all: Vec<[f64; 2]> = p.points.iter().copied().chain(mids).collect();
-            p.covered = !all.is_empty() && all.iter().all(|q| near((li, pi), p.visibility, *q));
+            // Points along every chord at most `step` apart (a coincident line may cover a long
+            // chord's ends and middle yet leave gaps between them). Points between the exact
+            // ones lie on the chord, up to the piece's sag from its curve.
+            let mut covered = !p.points.is_empty();
+            for w in p.points.windows(2) {
+                let (Some(a), Some(b)) = (w.first(), w.get(1)) else { continue };
+                let k = ((a[0] - b[0]).hypot(a[1] - b[1]) / step).ceil().clamp(1., 1e6) as usize;
+                covered = covered
+                    && (0..=k).all(|j| {
+                        let f = j as f64 / k as f64;
+                        let slack = if j == 0 || j == k { 0. } else { p.sag };
+                        near((li, pi), p.visibility, [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f], slack)
+                    });
+                if !covered {
+                    break;
+                }
+            }
+            if let [q] = p.points.as_slice() {
+                covered = near((li, pi), p.visibility, *q, 0.);
+            }
+            p.covered = covered;
         }
     }
+}
+
+fn point_segment(q: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
+    let (ex, ey) = (b[0] - a[0], b[1] - a[1]);
+    let l2 = ex * ex + ey * ey;
+    let t = if l2 > 0. { (((q[0] - a[0]) * ex + (q[1] - a[1]) * ey) / l2).clamp(0., 1.) } else { 0. };
+    (a[0] + t * ex - q[0]).hypot(a[1] + t * ey - q[1])
+}
+
+/// Smallest distance between two screen segments that do not cross.
+fn seg_gap(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> f64 {
+    point_segment(a, c, d).min(point_segment(b, c, d)).min(point_segment(c, a, b)).min(point_segment(d, a, b))
 }
 
 /// Intersections of two screen segments, touching included: fractions along each.

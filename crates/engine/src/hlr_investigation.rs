@@ -240,6 +240,7 @@ fn compare(d: &Drawing, dxf: &[(bool, [f64; 2], [f64; 2])]) -> Value {
     };
     // Every classified piece, drawn or not: covered hidden pieces lie under visible lines, where
     // the DXF also draws its hidden lines, so classification is compared against these.
+    // Uncertain pieces carry no classification, covered or not (their length is reported).
     let classified: Vec<(bool, [f64; 2], [f64; 2])> = d
         .lines
         .iter()
@@ -247,7 +248,6 @@ fn compare(d: &Drawing, dxf: &[(bool, [f64; 2], [f64; 2])]) -> Value {
         .filter_map(|p| match p.visibility {
             Visibility::Visible => Some((false, p)),
             Visibility::Hidden => Some((true, p)),
-            Visibility::Uncertain if p.covered => Some((true, p)),
             Visibility::Uncertain => None,
         })
         .flat_map(|(h, p)| p.points.windows(2).map(move |w| (h, w[0], w[1])))

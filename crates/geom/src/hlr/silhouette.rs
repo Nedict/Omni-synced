@@ -104,7 +104,8 @@ pub(crate) fn inside_ranges(c: &C3, s: &S3, trim: &Trim) -> Vec<[f64; 2]> {
     // interval is bounded by boundary crossings, so a narrow one between two uniform samples
     // still gets samples on both of its sides.
     let mut ts: Vec<f64> = (0..=n).map(|i| t0 + (t1 - t0) * i as f64 / n as f64).collect();
-    ts.extend(trim.chords.iter().step_by(8).filter_map(|(q, _)| closest_param(c, *q)));
+    let near = 0.02 * (trim.hi - trim.lo).len();
+    ts.extend(trim.chords.iter().step_by(4).filter_map(|(q, _)| closest_param(c, *q).filter(|t| c.at(*t).dist(*q) <= near)));
     ts.retain(|t| *t >= t0 && *t <= t1);
     ts.sort_by(f64::total_cmp);
     ts.dedup_by(|a, b| (*a - *b).abs() <= 1e-12 * (t1 - t0));

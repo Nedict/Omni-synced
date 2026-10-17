@@ -89,3 +89,40 @@ fn quadratic_roots_with_no_linear_term() {
     roots.sort_by(|a, b| a.0.total_cmp(&b.0));
     assert!((roots[0].0 + 10.).abs() < 1e-12 && (roots[1].0 - 10.).abs() < 1e-12, "{roots:?}");
 }
+
+#[test]
+fn a_torus_seen_along_its_axis_has_both_equator_silhouettes() {
+    // A whole-meridian torus record: the outer equator sits where the closed profile's ends meet.
+    let frame = crate::brep::Frame { origin: [0.; 3], x_axis: [1., 0., 0.], y_axis: [0., 1., 0.] };
+    let tau = std::f64::consts::TAU;
+    let s = surface::S3::new(&Surface::Torus { frame, major_radius: 20., minor_radius: 5., longitude: [0., tau], meridian: [0., tau] }).unwrap();
+    let mut radii: Vec<f64> = s
+        .rev_silhouette(Vec3::new(0., 0., -1.))
+        .iter()
+        .map(|(c, _)| match c {
+            curve::C3::Arc { r, .. } => r[0],
+            _ => panic!("circles expected"),
+        })
+        .collect();
+    radii.sort_by(f64::total_cmp);
+    assert_eq!(radii.len(), 2, "{radii:?}");
+    assert!((radii[0] - 15.).abs() < 1e-9 && (radii[1] - 25.).abs() < 1e-9, "{radii:?}");
+}
+
+#[test]
+fn far_apart_bodies_do_not_merge_nearby_visible_edges() {
+    // A 5 mm cube and a box 100 m away: coincidence is judged at the chords' own accuracy,
+    // not at a fraction of the scene's size, so none of the cube's edges is taken as a duplicate.
+    let near = prepare(&cuboid([0.; 3], [5.; 3]), &Options::default()).unwrap();
+    let far = prepare(&cuboid([100_000.; 3], [100_001.; 3]), &Options::default()).unwrap();
+    let view = View::new(Vec3::new(-1., -0.7, -0.4), Vec3::new(0., 0., 1.)).unwrap();
+    let d = hidden_lines(&[near, far], &[identity(0, [0.; 3]), identity(1, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    let covered_visible = d
+        .lines
+        .iter()
+        .filter(|l| l.placement == 0)
+        .flat_map(|l| l.pieces.iter())
+        .filter(|p| p.visibility == Visibility::Visible && p.covered)
+        .count();
+    assert_eq!(covered_visible, 0);
+}
