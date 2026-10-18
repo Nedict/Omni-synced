@@ -181,16 +181,20 @@ pub fn apply(s: &mut Session, bodies: &[&str], tools: &[&str], section: Option<&
                 return Err(format!("--tool: no body `{t}` in the design (it has {})", body_list(s)));
             }
         }
-        // The tool solid in the tool colour; everything else see-through, in the colour it
-        // already has, so the tool reads against the material it meets.
-        for name in &names {
-            let look = if tools.contains(&name.as_str()) {
-                BodyLook { name: name.clone(), opacity: Some(1.0), color: Some(TOOL_COLOR.to_owned()) }
-            } else {
-                BodyLook { name: name.clone(), opacity: Some(TARGET_OPACITY), color: None }
-            };
-            assign(s, &look)?;
+        // Everything but the tool see-through, in the colour it already has, so the tool reads
+        // against the material it meets. Bodies that share a colour are assigned together: a
+        // design of many bodies then costs a command or two rather than one for each.
+        let mut around: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+        for name in names.iter().filter(|n| !tools.contains(&n.as_str())) {
+            around.entry(current_look(s, name)?.0).or_default().push(name.clone());
         }
+        for (hex, sharing_it) in around {
+            let params = json!({"bodies": sharing_it, "color": hex, "opacity": TARGET_OPACITY});
+            s.execute("appearance.assign", &params).map_err(|e| format!("--tool: {e}"))?;
+        }
+        // Then the tool itself, solid in the tool colour.
+        let params = json!({"bodies": tools, "color": TOOL_COLOR, "opacity": 1.0});
+        s.execute("appearance.assign", &params).map_err(|e| format!("--tool: {e}"))?;
     }
     for look in &looks {
         assign(s, look)?;
