@@ -4126,10 +4126,47 @@ const MAX_INSTANCES: usize = 1000;
 /// mirror the body's own geometry.
 fn mirrored_placement(doc: &Document, mb: &ModelBody, path: Option<&[u64]>) -> Result<Option<(u64, Mat, Mat)>> {
     let Some(path) = path else { return Ok(None) };
-    let (component, frame, picked) =
-        mirror_copy_frame(doc, path).ok_or_else(|| DocError::Invalid(format!("the placement `{}` was mirrored at no longer exists", mb.name)))?;
+    let lost = || DocError::Invalid(format!("the placement `{}` was mirrored at no longer exists", mb.name));
+    // A stale or edited path that leads to another component no longer shows the body.
+    let (at, _) = doc.path_placement(path).ok_or_else(lost)?;
+    if !placement_shows(doc, mb, at) {
+        return Err(lost());
+    }
+    let (component, frame, picked) = mirror_copy_frame(doc, path).ok_or_else(lost)?;
     let source = doc.model_body_offset(mb).map(|offset| crate::mat_mul(&picked, offset)).unwrap_or(picked);
     Ok(Some((component, frame, source)))
+}
+
+/// Whether a placement of component `at` shows body `mb`: `at` is the body's component. That is
+/// the evaluated body's own where a transfer recorded it, else the component its name is recorded
+/// in (an import's bodies) or its feature's. Inserting the same file again reuses the body names
+/// and points them at the new insert's components: when the recorded component lies outside the
+/// components the body's own feature made, the name is another body's, and the placement only has
+/// to lie inside the components the body's feature made.
+fn placement_shows(doc: &Document, mb: &ModelBody, at: u64) -> bool {
+    let owner = doc.model_body_component(mb);
+    if owner == at {
+        return true;
+    }
+    if mb.transferred || mb.source_name.is_some() {
+        return false;
+    }
+    let made_in = doc.feature(mb.feature).map(|f| f.component).unwrap_or(0);
+    !component_within(doc, owner, made_in) && component_within(doc, at, made_in)
+}
+
+/// Whether component `c` is `ancestor` or lies inside it (every component lies in the root).
+fn component_within(doc: &Document, mut c: u64, ancestor: u64) -> bool {
+    for _ in 0..=doc.components.len() {
+        if c == ancestor || ancestor == 0 {
+            return true;
+        }
+        match doc.components.iter().find(|x| x.id == c) {
+            Some(x) if c != 0 => c = x.parent,
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// For a body mirrored at placement `path` (which, not the body's name, says where it is: a later

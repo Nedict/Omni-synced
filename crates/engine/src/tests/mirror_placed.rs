@@ -206,3 +206,26 @@ fn mirrored_copies_of_a_placed_component_intersect() {
     let v = run(&mut s, "inspect.measure", json!({"bodies": [copies[0]]}))["total"]["volume_mm3"].as_f64().unwrap();
     assert!((v - 125.0).abs() < 1e-6, "{v}");
 }
+
+/// A saved placement that leads to another component (a stale or edited path) no longer shows the
+/// mirrored body: the mirror reports that, instead of mirroring it where the other one is placed.
+#[test]
+fn a_placement_leading_to_another_component_is_reported_lost() {
+    let mut s = Session::default();
+    moved_arm(&mut s);
+    let other = run(&mut s, "component.create", json!({"name": "Other"}))["occurrence"].as_u64().unwrap();
+    run(&mut s, "solid.box", json!({"length": 5, "width": 5, "height": 5, "body_name": "OtherBody"}));
+    run(&mut s, "component.activate", json!({"component": 0}));
+    run(&mut s, "occurrence.move", json!({"occurrence": other, "translate": [-500, 0, 0]}));
+    let copy = created(&run(&mut s, "solid.mirror", json!({"bodies": ["ArmBody"], "plane": "YZ"})));
+    let mirror = s.doc.features.last().unwrap().id;
+    if let Some(f) = std::sync::Arc::make_mut(&mut s.doc).feature_mut(mirror)
+        && let solidcraft_doc::FeatureKind::Mirror { placements, .. } = &mut f.kind
+    {
+        *placements = vec![vec![other]];
+    }
+    s.refresh();
+    let e = s.model.result(mirror).and_then(|r| r.error.clone()).unwrap_or_else(|| panic!("mirrored at the wrong placement"));
+    assert!(e.contains("no longer exists"), "{e}");
+    assert!(s.world_state().body(&copy).is_none());
+}
