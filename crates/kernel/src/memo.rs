@@ -1,20 +1,25 @@
-//! Work a blend repeats on one body, done once while the blend runs: the body healed, and its
-//! edges at a tolerance. Bodies are never changed in place, so the same body gives the same
+//! Work a blend repeats on one body, done once while the blend runs: the body healed, its
+//! edges at a tolerance, and its meshes. Bodies are never changed in place, so the same body gives the same
 //! answer; the entries go when the outermost blend returns.
 
 use std::cell::RefCell;
 use std::sync::Arc;
+
+use solidcraft_geom::Mesh;
 
 use crate::Result;
 use crate::body::{Body, EdgeInfo};
 
 /// Bodies remembered at once: a blend works on its input and a few stages of it.
 const KEEP: usize = 4;
+/// Meshes remembered at once: those bodies, each at a few tolerances.
+const KEEP_MESHES: usize = 8;
 
 #[derive(Default)]
 struct Memo {
     healed: Vec<(Body, Body)>,
     edges: Vec<(Body, u64, Arc<Vec<EdgeInfo>>)>,
+    meshes: Vec<(Body, [u64; 3], Arc<Mesh>)>,
 }
 
 thread_local! {
@@ -25,6 +30,8 @@ thread_local! {
 thread_local! {
     /// Bodies healed and edge sets made on this thread, not taken from the memo (tests count them).
     pub(crate) static MADE: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    /// Meshes made on this thread, not taken from the memo.
+    pub(crate) static MESHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `f`, remembering healed bodies and edges while it runs (a nested call shares the outer memo).
@@ -73,6 +80,27 @@ pub(crate) fn edges(body: &Body, tol: f64, make: impl FnOnce() -> Result<Vec<Edg
     MEMO.with(|m| {
         if let Some(m) = m.borrow_mut().as_mut() {
             keep(&mut m.edges, (body.clone(), key, out.clone()));
+        }
+    });
+    Ok(out)
+}
+
+/// `make()`, the mesh of `body` with these settings, unless made already in this scope.
+pub(crate) fn mesh(body: &Body, key: [u64; 3], make: impl FnOnce() -> Result<Mesh>) -> Result<Arc<Mesh>> {
+    let hit =
+        MEMO.with(|m| m.borrow().as_ref().and_then(|m| m.meshes.iter().find(|(k, t, _)| *t == key && same(k, body)).map(|(_, _, v)| v.clone())));
+    if let Some(mesh) = hit {
+        return Ok(mesh);
+    }
+    #[cfg(test)]
+    MESHED.with(|n| n.set(n.get() + 1));
+    let out = Arc::new(make()?);
+    MEMO.with(|m| {
+        if let Some(m) = m.borrow_mut().as_mut() {
+            if m.meshes.len() >= KEEP_MESHES {
+                m.meshes.remove(0);
+            }
+            m.meshes.push((body.clone(), key, out.clone()));
         }
     });
     Ok(out)

@@ -1104,7 +1104,15 @@ impl Body {
     /// [`Body::tessellate_with`] in which no facet turns more than `angle` radians either
     /// (infinite: the chord tolerance alone).
     fn tessellate_within(&self, tol: f64, angle: f64, refine: bool) -> Result<Mesh> {
-        crate::profile::timed(crate::profile::Kind::Tessellate, || self.tessellate_within_untimed(tol, angle, refine))
+        self.mesh_within(tol, angle, refine).map(|m| (*m).clone())
+    }
+
+    /// [`Body::tessellate_within`], shared: made once per body and settings while a blend runs.
+    fn mesh_within(&self, tol: f64, angle: f64, refine: bool) -> Result<std::sync::Arc<Mesh>> {
+        let key = [tol.to_bits(), angle.to_bits(), u64::from(refine)];
+        crate::memo::mesh(self, key, || {
+            crate::profile::timed(crate::profile::Kind::Tessellate, || self.tessellate_within_untimed(tol, angle, refine))
+        })
     }
 
     fn tessellate_within_untimed(&self, tol: f64, angle: f64, refine: bool) -> Result<Mesh> {
@@ -1486,7 +1494,7 @@ impl Body {
 
     /// Is the point inside the solid?
     pub fn contains(&self, p: Vec3) -> bool {
-        self.tessellate(self.size() * 2e-3).map(|m| m.contains(p)).unwrap_or(false)
+        self.mesh_within(self.size() * 2e-3, f64::INFINITY, false).map(|m| m.contains(p)).unwrap_or(false)
     }
 
     /// B-rep faces (a mesh body is one face; [`crate::measure`] counts its triangles).

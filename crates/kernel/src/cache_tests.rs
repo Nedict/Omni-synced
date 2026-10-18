@@ -121,3 +121,19 @@ fn one_blend_heals_its_input_and_finds_its_edges_once() {
     crate::fillet(&b, &top_edges(1), 0.5).unwrap();
     assert_eq!(MADE.with(|n| n.get()), (1, 1));
 }
+
+/// Point tests on one body while a blend runs mesh it once; outside a blend, each meshes it.
+#[test]
+fn a_body_is_meshed_once_for_its_point_tests_while_a_blend_runs() {
+    let b = bosses();
+    let probes = [Vec3::new(10.0, 10.0, 1.0), Vec3::new(10.0, 10.0, 9.0), Vec3::new(30.0, 10.0, 4.0)];
+    let meshed = || crate::memo::MESHED.with(|n| n.get());
+    let before = meshed();
+    let inside: Vec<bool> = crate::memo::scope(|| probes.iter().map(|p| b.contains(*p)).collect());
+    assert_eq!(meshed() - before, 1);
+    let before = meshed();
+    let outside: Vec<bool> = probes.iter().map(|p| b.clone().contains(*p)).collect();
+    assert_eq!(meshed() - before, probes.len());
+    assert_eq!(inside, outside);
+    assert_eq!(inside, [true, false, true]);
+}
