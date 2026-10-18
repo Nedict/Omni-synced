@@ -499,7 +499,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
         if pressed || key || dragging || motion.is_some() || !caps.orbit {
             app.viewport.spin = false;
         } else {
-            app.cam.orbit(f64::from(dt.min(0.1)) * 30.0, 0.0);
+            orbit_camera(app, f64::from(dt.min(0.1)) * 30.0, 0.0);
             ui.ctx().request_repaint();
         }
     }
@@ -525,13 +525,13 @@ pub(crate) fn device(app: &mut SolveApp, rect: Rect, caps: NavCaps) {
     let Some(queued) = app.viewport.device_motion.take() else { return };
     let turn = caps.orbit && app.session.active_sketch.is_none();
     let height = f64::from(rect.height().max(1.0));
-    device_camera(&mut app.cam, queued.motion, queued.seconds, height, turn, app.preferences.zoom_reverse);
+    device_camera(&mut app.cam, queued.motion, queued.seconds, height, turn, app.preferences.zoom_reverse, app.preferences.free_orbit);
 }
 
 /// `seconds` of 3D mouse `motion` on `cam`, in a view `height` points tall. A full deflection
 /// pans about 0.6 of the view's height a second and turns about two radians a second, whatever
 /// the frame rate. With `turn` off the view keeps its orientation.
-pub(crate) fn device_camera(cam: &mut Camera, motion: Motion, seconds: f64, height: f64, turn: bool, reverse_zoom: bool) {
+pub(crate) fn device_camera(cam: &mut Camera, motion: Motion, seconds: f64, height: f64, turn: bool, reverse_zoom: bool, free_orbit: bool) {
     if !(seconds > 0.0) || !seconds.is_finite() {
         return;
     }
@@ -546,8 +546,12 @@ pub(crate) fn device_camera(cam: &mut Camera, motion: Motion, seconds: f64, heig
         // These are logical 3DxWare coordinates after the profile mapping: Rx is Tilt, Ry is
         // Roll and Rz is Spin. The KMJ profile swaps physical Ry/Rz for the selected navigation
         // mode, so swapping them again here would make Roll behave like Spin.
-        cam.orbit(ry * 250.0 * seconds, rx * 250.0 * seconds);
-        cam.roll_by(rz * 2.0 * seconds);
+        if free_orbit {
+            cam.rotate_in_view(Vec3::new(-rx, -ry, rz) * (2.0 * seconds));
+        } else {
+            cam.orbit(ry * 250.0 * seconds, rx * 250.0 * seconds);
+            cam.roll_by(rz * 2.0 * seconds);
+        }
     }
 }
 
@@ -579,6 +583,17 @@ pub(crate) struct OrbitSnap {
 /// Pointer motion accumulates independently of the spring preview, so many small deltas
 /// still cross snap boundaries. Keep a small angular margin to avoid boundary flicker.
 pub(crate) fn orbit_drag(app: &mut SolveApp, rect: Rect, dx: f64, dy: f64, press: Option<Pos2>, snap: bool, around_cursor: bool) {
+    // Free rotation must not enter the yaw/pitch snap spring: it discards roll at the poles.
+    if app.preferences.free_orbit {
+        app.viewport.orbit_free = None;
+        app.viewport.orbit_snap = None;
+        if around_cursor {
+            orbit(app, rect, dx, dy, press);
+        } else {
+            orbit_camera(app, dx, dy);
+        }
+        return;
+    }
     let displayed = app.cam;
     if let Some(free) = app.viewport.orbit_free.take() {
         app.cam = free;
@@ -703,7 +718,7 @@ pub fn orbit(app: &mut SolveApp, rect: egui::Rect, dx: f64, dy: f64, press: Opti
         }),
     };
     let Some(pivot) = pivot else {
-        app.cam.orbit(dx, dy);
+        orbit_camera(app, dx, dy);
         return;
     };
     orbit_about(app, rect, dx, dy, pivot);
@@ -713,23 +728,159 @@ pub fn orbit(app: &mut SolveApp, rect: egui::Rect, dx: f64, dy: f64, press: Opti
 /// correction puts it back where it was.
 pub(crate) fn orbit_about(app: &mut SolveApp, rect: egui::Rect, dx: f64, dy: f64, pivot: Vec3) {
     let before = crate::viewport::projection(app, rect).to_screen(pivot);
-    app.cam.orbit(dx, dy);
-    let after = crate::viewport::projection(app, rect).to_screen(pivot);
+    orbit_camera(app, dx, dy);
+    let projected = crate::viewport::projection(app, rect);
+    let after = projected.to_screen(pivot);
     if let (Some(a), Some(b)) = (before, after) {
-        app.cam.pan(f64::from(a.x - b.x), f64::from(a.y - b.y), f64::from(rect.height().max(1.0)));
+        if app.preferences.free_orbit {
+            // The displayed camera carries the effective projection. In perspective the
+            // correction is at the pivot's depth, which can change as a free orbit passes a pole.
+            let mut correction = projected.cam;
+            let scale = if correction.fov > 0.0 { (correction.eye() - pivot).dot(correction.back()) / correction.distance } else { 1.0 };
+            correction.pan(f64::from(a.x - b.x) * scale, f64::from(a.y - b.y) * scale, f64::from(rect.height().max(1.0)));
+            app.cam.target = correction.target;
+        } else {
+            app.cam.pan(f64::from(a.x - b.x), f64::from(a.y - b.y), f64::from(rect.height().max(1.0)));
+        }
+    }
+}
+
+fn orbit_camera(app: &mut SolveApp, dx: f64, dy: f64) {
+    if app.preferences.free_orbit {
+        app.cam.rotate_in_view(Vec3::new(-dy * 0.008, -dx * 0.008, 0.0));
+    } else {
+        app.cam.orbit(dx, dy);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn free_orbit_is_opt_in_for_every_preset_and_shared_by_mouse_and_device() {
+        use super::*;
+        use crate::space_mouse::DeviceMotion;
+        let rect = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+        let initial = Camera { yaw: 0.0, pitch: 1.4, ..Default::default() };
+        for preset in crate::prefs::NAV_PRESETS {
+            for enabled in [false, true] {
+                let mut h = crate::scenario::Harness::new();
+                h.app.preferences.nav = preset.id.into();
+                h.app.preferences.free_orbit = enabled;
+                h.app.cam = initial;
+                orbit_drag(&mut h.app, rect, 0.0, 80.0, None, true, false);
+                if enabled {
+                    assert!((h.app.cam.back().dot(initial.back()) - 0.64_f64.cos()).abs() < 1e-9);
+                    assert!(h.app.viewport.orbit_snap.is_none());
+                } else {
+                    assert!(h.app.cam.pitch < std::f64::consts::FRAC_PI_2);
+                    assert!(h.app.viewport.orbit_snap.is_some(), "{} keeps Shift snap", preset.id);
+                }
+                h.app.cam = initial;
+                h.app.viewport.device_motion =
+                    Some(DeviceMotion { motion: Motion { translation: [0.0; 3], rotation: [1.0, 0.0, 0.0] }, seconds: 0.32 });
+                device(&mut h.app, rect, NavCaps::MODEL);
+                if enabled {
+                    assert!((h.app.cam.back().dot(initial.back()) - 0.64_f64.cos()).abs() < 1e-9);
+                } else {
+                    assert!(h.app.cam.pitch > initial.pitch && h.app.cam.pitch < std::f64::consts::FRAC_PI_2);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn solidworks_mouse_orbit_passes_the_pole_without_snapping() {
+        use serde_json::json;
+        for up in [solidcraft_engine::render::UpAxis::Z, solidcraft_engine::render::UpAxis::Y] {
+            for button in ["middle", "right"] {
+                let mut h = crate::scenario::Harness::new();
+                h.app.home.open = false;
+                h.app.preferences.nav = "solidworks".into();
+                h.app.preferences.free_orbit = true;
+                h.app.ui.up_axis = up;
+                h.app.cam = solidcraft_engine::render::Camera { yaw: 0.0, pitch: 1.4, up, ..Default::default() };
+                let before = h.app.cam;
+                h.call("ui.drag", json!({"x0":800,"y0":400,"x1":800,"y1":480,"button":button,"steps":40}));
+                assert!((h.app.cam.back().dot(before.back()) - 0.64_f64.cos()).abs() < 1e-6, "{up:?} {button}: {:?}", h.app.cam);
+                assert!(h.app.viewport.orbit_snap.is_none() && h.app.viewport.orbit_free.is_none());
+                let before = h.app.cam;
+                h.call("ui.drag", json!({"x0":800,"y0":400,"x1":850,"y1":400,"button":"right","shift":true,"steps":20}));
+                assert!((h.app.cam.back().dot(before.back()) - 0.4_f64.cos()).abs() < 1e-6);
+                assert!(h.app.viewport.orbit_snap.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn solidworks_device_and_mouse_keep_turning_with_the_same_screen_axes() {
+        use super::*;
+        use crate::space_mouse::DeviceMotion;
+        for caps in [NavCaps::MODEL, NavCaps::RENDER] {
+            for rotation in [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+                let mut h = crate::scenario::Harness::new();
+                h.app.preferences.nav = "solidworks".into();
+                h.app.preferences.free_orbit = true;
+                let rect = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+                let initial = Camera { yaw: 0.0, pitch: 0.0, roll: 0.7, ..Default::default() };
+                h.app.cam = initial;
+                let mut mouse = initial;
+                let seconds = std::f64::consts::TAU / 512.0;
+                for _ in 0..256 {
+                    let before = h.app.cam;
+                    h.app.viewport.device_motion = Some(DeviceMotion { motion: Motion { translation: [0.0; 3], rotation }, seconds });
+                    device(&mut h.app, rect, caps);
+                    assert!((before.back().dot(h.app.cam.back()) - (seconds * 2.0).cos()).abs() < 1e-9);
+                    let device_cam = h.app.cam;
+                    h.app.cam = mouse;
+                    orbit_drag(&mut h.app, rect, rotation[1] * seconds * 250.0, rotation[0] * seconds * 250.0, None, true, false);
+                    mouse = h.app.cam;
+                    assert!(mouse.back().dist(device_cam.back()) < 1e-9 && mouse.basis().0.dist(device_cam.basis().0) < 1e-9);
+                    h.app.cam = device_cam;
+                }
+                assert!(h.app.cam.back().dist(initial.back()) < 1e-8 && h.app.cam.basis().0.dist(initial.basis().0) < 1e-8);
+            }
+        }
+        // Other presets keep the existing upright camera behavior.
+        let mut cam = Camera { yaw: 0.0, pitch: 1.5, ..Default::default() };
+        device_camera(&mut cam, Motion { translation: [0.0; 3], rotation: [1.0, 0.0, 0.0] }, 0.1, 600.0, true, false, false);
+        assert!(cam.pitch < std::f64::consts::FRAC_PI_2 && cam.pitch > 1.5);
+    }
+
+    #[test]
+    fn solidworks_free_orbit_keeps_the_configured_pivot_on_screen() {
+        use super::*;
+        let mut h = crate::scenario::Harness::new();
+        h.app.preferences.nav = "solidworks".into();
+        h.app.preferences.free_orbit = true;
+        let rect = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+        for fov in [0.0, 0.6] {
+            h.app.ui.perspective = fov > 0.0;
+            for pivot in [Vec3::ZERO, Vec3::new(10.0, 20.0, 30.0), Vec3::new(10.0, -20.0, -30.0)] {
+                h.app.cam = Camera { target: Vec3::new(2.0, 3.0, 4.0), yaw: 0.0, pitch: 1.5, roll: 0.7, fov, ..Default::default() };
+                let before = projection(&h.app, rect).to_screen(pivot).unwrap();
+                orbit_about(&mut h.app, rect, 30.0, 50.0, pivot);
+                let after = projection(&h.app, rect).to_screen(pivot).unwrap();
+                assert!(before.distance(after) < 1e-3, "{fov} {pivot:?}: {before:?} -> {after:?}");
+            }
+        }
+    }
+
     /// Every page with a camera navigates through [`super::handle`] (#1454). A page that reads
     /// the wheel or moves the view camera itself would drift from the user's navigation settings,
     /// so outside this module the camera may only be moved through it, the view commands or the
     /// navigators. The 3D mouse in both apps hands its motion to [`super::device`].
     #[test]
     fn hand_rolled_camera_input_is_rejected() {
-        const PATTERNS: [&str; 7] =
-            ["smooth_scroll_delta", "raw_scroll_delta", "zoom_delta()", "cam.orbit(", "cam.pan(", "cam.zoom_at(", "cam.roll_by("];
+        const PATTERNS: [&str; 8] = [
+            "smooth_scroll_delta",
+            "raw_scroll_delta",
+            "zoom_delta()",
+            "cam.orbit(",
+            "cam.pan(",
+            "cam.zoom_at(",
+            "cam.roll_by(",
+            "cam.rotate_in_view(",
+        ];
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let dirs = [root.join("src"), root.join("../../apps/solidcraft/src"), root.join("../../apps/solidcraft-web/src")];
         let allowed = ["navigation.rs"];
