@@ -1026,12 +1026,9 @@ fn dist_to(regions: &[Region2], p: Vec2) -> f64 {
 }
 
 /// The bounding box of a line or an arc, grown by twice the tolerance (and by the rounding of
-/// its own corners): (min, max). Whatever lies within the tolerance of the segment lies in the
-/// box. `None` for other segments and for values that are not finite: no box, and nothing is
-/// skipped for it.
-type SegBox = Aabb2;
-
-fn seg_box(s: &Seg2, tol: f64) -> Option<SegBox> {
+/// its own corners). Whatever lies within the tolerance of the segment lies in the box. `None`
+/// for other segments and for values that are not finite: no box, and nothing is skipped for it.
+fn seg_box(s: &Seg2, tol: f64) -> Option<Aabb2> {
     let mut pts = vec![s.start(), s.end()];
     match *s {
         Seg2::Line { .. } => {}
@@ -1052,25 +1049,25 @@ fn seg_box(s: &Seg2, tol: f64) -> Option<SegBox> {
     (pts.iter().all(|p| p.is_finite()) && g.is_finite()).then(|| pts.iter().copied().collect::<Aabb2>().inflated(g))
 }
 
-fn boxes_meet(a: Option<SegBox>, b: Option<SegBox>) -> bool {
+fn boxes_meet(a: Option<Aabb2>, b: Option<Aabb2>) -> bool {
     match (a, b) {
         (Some(a), Some(b)) => a.meets(&b),
         _ => true,
     }
 }
 
-fn box_holds(b: Option<SegBox>, p: Vec2) -> bool {
+fn box_holds(b: Option<Aabb2>, p: Vec2) -> bool {
     b.is_none_or(|b| b.contains(p))
 }
 
 /// Distance from `p` to the nearest of `segs` whose box holds it: infinite when none does (no
 /// segment is within the tolerance of `p` then).
-fn near_dist(segs: &[Seg2], boxes: &[Option<SegBox>], p: Vec2) -> f64 {
+fn near_dist(segs: &[Seg2], boxes: &[Option<Aabb2>], p: Vec2) -> f64 {
     segs.iter().zip(boxes).filter(|(_, b)| box_holds(**b, p)).map(|(s, _)| s.point_at(closest_param(s, p)).dist(p)).fold(f64::INFINITY, f64::min)
 }
 
 /// Direction of the first of `segs` through `p` (within `tol`), as it runs.
-fn near_dir(segs: &[Seg2], boxes: &[Option<SegBox>], p: Vec2, tol: f64) -> Option<Vec2> {
+fn near_dir(segs: &[Seg2], boxes: &[Option<Aabb2>], p: Vec2, tol: f64) -> Option<Vec2> {
     let (s, t) = segs
         .iter()
         .zip(boxes)
