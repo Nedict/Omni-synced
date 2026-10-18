@@ -177,6 +177,11 @@ milestone task lands. `docs/features.md` (SolidCraft's commands by area, from th
 `THIRD-PARTY-LICENSES.txt` are regenerated on `main` after each merge by the Generated files
 workflow; never regenerate them in a PR.
 
+## Reviewing pull requests
+Follow `docs/reviewing.md`: read the code first (CI never replaces it), check every earlier
+comment, write comments that thank the author and give concrete, verified asks, then run CI
+(stacked where PRs don't overlap). Merge when the review, the local stack and GitHub CI all pass.
+
 ## Lists many PRs add to
 Keep them conflict-free (CONTRIBUTING.md, "Lists many changes add to"): message catalogs sorted
 (`cargo xtask lists --fix`), `mod` lines in their sorted group, the language list English first
