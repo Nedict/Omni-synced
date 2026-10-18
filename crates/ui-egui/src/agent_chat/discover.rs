@@ -186,6 +186,9 @@ pub struct Found {
     pub argv: Vec<String>,
     pub version: Option<String>,
     pub login: Login,
+    /// The folder of the Node.js that runs it, when the first `node` on the search path is too
+    /// old for it and a newer one was found further on ([`node_dir_for`]); `None`: the PATH as it is.
+    pub node_dir: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -299,38 +302,88 @@ pub(super) fn node_too_old_in(tail: &[String]) -> Option<String> {
     (!node_runs_adapters(v)).then(|| line.trim_start_matches("Node.js ").to_string())
 }
 
-/// `dirs` for starting `program`, with one change: when `program` runs on `env node` and the
-/// first `node` in `dirs` is too old for it (Ubuntu's packaged Node ahead of a newer one from
-/// nvm, say), the folder of the first `node` that can run it is moved to the front. Otherwise
-/// `dirs` is returned as it is. `probe` reads a `node`'s version.
-fn dirs_for(program: &Path, mut dirs: Vec<PathBuf>, probe: impl Fn(&Path) -> Option<(u32, u32)>) -> Vec<PathBuf> {
+/// The most `node`s looked at for one program.
+const MAX_NODES: usize = 16;
+/// How long one `node --version` may take, and all of them in one detection together.
+const NODE_PROBE: Duration = Duration::from_secs(2);
+const NODE_PROBE_TOTAL: Duration = Duration::from_secs(4);
+
+/// The folder to put first on `program`'s PATH: when `program` runs on `env node` and the first
+/// `node` in `dirs` is too old for it (Ubuntu's packaged Node ahead of a newer one from nvm, say),
+/// the folder of the first `node` that can run it. `None` when nothing needs to move. `probe`
+/// reads a `node`'s version (`None`: unknown, so it is not chosen).
+pub(super) fn node_dir_for(program: &Path, dirs: &[PathBuf], mut probe: impl FnMut(&Path) -> Option<(u32, u32)>) -> Option<PathBuf> {
     if !cfg!(unix) || !runs_on_env_node(program) {
-        return dirs;
+        return None;
     }
-    let nodes: Vec<usize> = dirs.iter().enumerate().filter(|(_, d)| d.join("node").is_file()).map(|(i, _)| i).take(16).collect();
-    let Some(&first) = nodes.first() else { return dirs };
-    let ok = |i: usize| dirs.get(i).and_then(|d| probe(&d.join("node"))).is_some_and(node_runs_adapters);
-    if ok(first) {
-        return dirs;
+    let mut nodes = dirs.iter().filter(|d| d.join("node").is_file()).take(MAX_NODES);
+    let first = nodes.next()?;
+    if probe(&first.join("node")).is_some_and(node_runs_adapters) {
+        return None;
     }
-    if let Some(better) = nodes.iter().skip(1).copied().find(|&i| ok(i)) {
-        let d = dirs.remove(better);
-        dirs.insert(0, d);
+    nodes.find(|d| probe(&d.join("node")).is_some_and(node_runs_adapters)).cloned()
+}
+
+/// `dirs` with `node_dir` (from [`node_dir_for`]) moved to the front; everything else keeps its order.
+fn dirs_with(mut dirs: Vec<PathBuf>, node_dir: Option<&Path>) -> Vec<PathBuf> {
+    if let Some(n) = node_dir {
+        dirs.retain(|d| d != n);
+        dirs.insert(0, n.to_path_buf());
     }
     dirs
 }
 
-/// `node --version` of the `node` at `path`.
-fn node_version(path: &Path) -> Option<(u32, u32)> {
-    let mut cmd = Command::new(path);
-    cmd.arg("--version");
-    first_line(cmd, Duration::from_secs(2)).as_deref().and_then(node_version_of)
+/// Reads `node --version`s for one detection: each `node` at most once, each within
+/// [`NODE_PROBE`], all within [`NODE_PROBE_TOTAL`] (after that, versions are unknown).
+struct NodeProbe {
+    deadline: Instant,
+    seen: Vec<(PathBuf, Option<(u32, u32)>)>,
+}
+
+impl NodeProbe {
+    fn new(total: Duration) -> NodeProbe {
+        NodeProbe { deadline: Instant::now() + total, seen: Vec::new() }
+    }
+
+    fn version(&mut self, node: &Path) -> Option<(u32, u32)> {
+        if let Some((_, v)) = self.seen.iter().find(|(p, _)| p == node) {
+            return *v;
+        }
+        let left = self.deadline.saturating_duration_since(Instant::now()).min(NODE_PROBE);
+        let v = if left.is_zero() {
+            None
+        } else {
+            let mut cmd = Command::new(node);
+            cmd.arg("--version");
+            first_line(cmd, left).as_deref().and_then(node_version_of)
+        };
+        self.seen.push((node.to_path_buf(), v));
+        v
+    }
+}
+
+/// The Node folders [`detect`] chose, by program: [`command_for`] reads them and never starts a
+/// `node` itself, as Connect calls it on the window thread.
+static NODE_DIRS: std::sync::Mutex<Vec<(PathBuf, PathBuf)>> = std::sync::Mutex::new(Vec::new());
+
+fn remember_node_dir(program: &Path, node_dir: Option<&Path>) {
+    if let Ok(mut m) = NODE_DIRS.lock() {
+        m.retain(|(p, _)| p != program);
+        if let Some(n) = node_dir {
+            m.push((program.to_path_buf(), n.to_path_buf()));
+        }
+    }
+}
+
+fn remembered_node_dir(program: &Path) -> Option<PathBuf> {
+    NODE_DIRS.lock().ok()?.iter().find(|(p, _)| p == program).map(|(_, n)| n.clone())
 }
 
 /// Start probes and sessions with the same PATH used for discovery. Desktop launchers often
 /// omit Node's install folder even when we found an adapter with a `#!/usr/bin/env node` shebang.
 /// Only the child's environment changes; inherited absolute PATH entries keep precedence, except
-/// that a Node too old to run the adapter gives way to a newer one found later ([`dirs_for`]).
+/// that a Node too old to run the adapter gives way to the newer one [`detect`] chose. Nothing is
+/// started here: this runs on the window thread.
 pub(super) fn command_for(program: &Path) -> Command {
     // Older saved Windows commands may name npm's bare Unix script rather than its .cmd shim.
     let shim = if cfg!(windows) { runnable_sibling(program) } else { None };
@@ -342,7 +395,7 @@ pub(super) fn command_for(program: &Path) -> Command {
     } else {
         Command::new(program)
     };
-    if let Ok(path) = std::env::join_paths(dirs_for(program, search_dirs(), node_version)) {
+    if let Ok(path) = std::env::join_paths(dirs_with(search_dirs(), remembered_node_dir(program).as_deref())) {
         cmd.env("PATH", path);
     }
     cmd
@@ -413,6 +466,7 @@ pub fn detect() -> Detection {
 fn detect_in(dirs: &[PathBuf], home: Option<&Path>) -> Detection {
     let t0 = Instant::now();
     let mut d = Detection::default();
+    let mut nodes = NodeProbe::new(NODE_PROBE_TOTAL);
     for k in KNOWN {
         let Some(path) = k.programs.iter().find_map(|p| find_in(p, dirs)) else {
             if !k.retired {
@@ -423,8 +477,11 @@ fn detect_in(dirs: &[PathBuf], home: Option<&Path>) -> Detection {
         let login = login_of(k, home);
         let mut argv = vec![path.to_string_lossy().into_owned()];
         argv.extend(k.args.iter().map(|a| a.to_string()));
+        // Chosen before the version probe, which then runs on the same Node the session will.
+        let node_dir = node_dir_for(&path, dirs, |n| nodes.version(n));
+        remember_node_dir(&path, node_dir.as_deref());
         let version = if k.reports_version { version(&path, Duration::from_secs(3)) } else { None };
-        d.found.push(Found { id: k.id, name: k.name, version, argv, login });
+        d.found.push(Found { id: k.id, name: k.name, version, argv, login, node_dir });
     }
     d.took_ms = u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX);
     d
@@ -521,17 +578,74 @@ mod tests {
         let probe = |p: &Path| std::fs::read_to_string(p).ok().and_then(|s| s.parse().ok()).map(|m| (m, if m == 18 { 19 } else { 11 }));
         let dirs = vec![old.clone(), other.clone(), new.clone()];
 
-        assert_eq!(dirs_for(&adapter, dirs.clone(), probe), [new.clone(), old.clone(), other.clone()]);
+        let chosen = node_dir_for(&adapter, &dirs, probe);
+        assert_eq!(chosen.as_deref(), Some(new.as_path()));
+        assert_eq!(dirs_with(dirs.clone(), chosen.as_deref()), [new.clone(), old.clone(), other.clone()]);
         // A new enough first Node, a program that isn't a Node script, or no better Node: unchanged.
-        assert_eq!(dirs_for(&adapter, vec![new.clone(), old.clone()], probe), [new.clone(), old.clone()]);
-        assert_eq!(dirs_for(&native, dirs.clone(), probe), dirs);
-        assert_eq!(dirs_for(&adapter, vec![old.clone(), other.clone()], probe), [old.clone(), other.clone()]);
+        assert_eq!(node_dir_for(&adapter, &[new.clone(), old.clone()], probe), None);
+        assert_eq!(node_dir_for(&native, &dirs, probe), None);
+        assert_eq!(node_dir_for(&adapter, &[old.clone(), other.clone()], probe), None);
+        assert_eq!(dirs_with(dirs.clone(), None), dirs);
 
         std::fs::write(&adapter, "#!/usr/bin/env -S node --no-warnings\n").unwrap();
         assert!(runs_on_env_node(&adapter));
         std::fs::write(&adapter, "#!/bin/sh\nexec node \"$0\"\n").unwrap();
         assert!(!runs_on_env_node(&adapter), "a shell script picks its Node itself");
         assert!(!runs_on_env_node(&root.join("missing")));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Review of #2208: Connect calls `command_for` on the window thread, so it must not start a
+    /// `node`. It uses only the folder detection chose, and a program detection never saw keeps
+    /// the search path as it is.
+    #[test]
+    #[cfg(unix)]
+    fn starting_an_agent_uses_the_node_detection_chose_and_starts_none() {
+        let root = std::env::temp_dir().join(format!("sc-agent-node-cache-{}", std::process::id()));
+        let (new, bin) = (root.join("nvm-22"), root.join("adapters"));
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        let adapter = bin.join("claude-agent-acp");
+        std::fs::write(&adapter, "#!/usr/bin/env node\n").unwrap();
+        let path_of = |cmd: &Command| {
+            cmd.get_envs().find(|(k, _)| *k == "PATH").and_then(|(_, v)| v).map(|v| std::env::split_paths(v).collect::<Vec<_>>()).unwrap_or_default()
+        };
+
+        assert_eq!(path_of(&command_for(&adapter)), search_dirs(), "nothing chosen yet: the search path as it is");
+        remember_node_dir(&adapter, Some(&new));
+        assert_eq!(path_of(&command_for(&adapter)).first(), Some(&new));
+        assert_eq!(path_of(&command_for(&bin.join("codex-acp"))), search_dirs(), "chosen for one program only");
+        remember_node_dir(&adapter, None);
+        assert_eq!(path_of(&command_for(&adapter)), search_dirs(), "a later detection that found the PATH fine clears it");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Review of #2208: hanging `node`s can't hold detection up for long. Each is asked once, for
+    /// at most two seconds, and all of them together within the total.
+    #[test]
+    #[cfg(unix)]
+    fn hanging_nodes_are_probed_within_the_total_time() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("sc-agent-node-hang-{}", std::process::id()));
+        let mut dirs = Vec::new();
+        for i in 0..MAX_NODES {
+            let d = root.join(format!("n{i}"));
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("node"), "#!/bin/sh\nexec sleep 30\n").unwrap();
+            std::fs::set_permissions(d.join("node"), std::fs::Permissions::from_mode(0o755)).unwrap();
+            dirs.push(d);
+        }
+        let adapter = root.join("claude-agent-acp");
+        std::fs::write(&adapter, "#!/usr/bin/env node\n").unwrap();
+
+        let mut probe = NodeProbe::new(Duration::from_millis(600));
+        let t0 = Instant::now();
+        assert_eq!(node_dir_for(&adapter, &dirs, |n| probe.version(n)), None);
+        // A second adapter in the same detection asks none of them again.
+        assert_eq!(node_dir_for(&adapter, &dirs, |n| probe.version(n)), None);
+        let took = t0.elapsed();
+        assert!(took < Duration::from_secs(3), "16 hanging nodes took {took:?}");
+        assert_eq!(probe.seen.len(), MAX_NODES, "each node asked once");
         let _ = std::fs::remove_dir_all(root);
     }
 

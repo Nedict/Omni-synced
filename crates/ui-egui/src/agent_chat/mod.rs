@@ -1219,7 +1219,7 @@ pub fn status(app: &SolveApp) -> Value {
     #[cfg(not(target_arch = "wasm32"))]
     let detection = c.detection.as_ref().map(|d| {
         json!({
-            "found": d.found.iter().map(|f| json!({"id": f.id, "name": f.name, "argv": f.argv, "version": f.version, "login": f.login.id()})).collect::<Vec<_>>(),
+            "found": d.found.iter().map(|f| json!({"id": f.id, "name": f.name, "argv": f.argv, "version": f.version, "login": f.login.id(), "node_dir": f.node_dir})).collect::<Vec<_>>(),
             "missing": d.missing.iter().map(|m| json!({"id": m.id, "install": m.install})).collect::<Vec<_>>(),
             "ms": d.took_ms,
         })
