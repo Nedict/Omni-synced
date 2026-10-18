@@ -10,7 +10,7 @@ Help is welcome, whether that's a one-line fix or owning a whole area. This page
 build it, how the code is laid out, the few rules that aren't negotiable, and where help is
 needed most.
 
-Questions, ideas or want to say what you're working on? Join the [Discord](https://solidcraft.io/discord).
+Questions, ideas or want to say what you're working on? Join the [Discord](https://discord.gg/FtU4NQNVDH).
 
 ## Get it running (about 10 minutes on a fast machine)
 
@@ -110,9 +110,10 @@ The [README](README.md#architecture) has the layer table. The short version:
    `cargo xtask assets` enforces this.
 4. **Never crash.** People trust a CAD app with their work.
    - Non-test code never uses `unwrap`, `expect`, `panic!` or indexing on input-derived data.
-     There's no `unsafe` outside `apps/solidcraft/src/open_documents.rs` (macOS file-open events)
-     and `apps/solidcraft/src/native_crash.rs` (Windows native crash capture), and the compiler
-     denies it.
+     There's no `unsafe` outside `apps/solidcraft/src/open_documents.rs` (macOS file-open events),
+     `apps/solidcraft/src/native_crash.rs` (Windows native crash capture) and
+     `crates/threedx-client/src/macos.rs` (the 3Dconnexion driver's client API on macOS), and the
+     compiler denies it.
    - An unsupported case returns an error ("not supported yet: …"); it never panics.
    - Every call into truck goes through `solidcraft_kernel::guard`.
    - Every crash fix comes with a regression test.
@@ -180,7 +181,7 @@ Pull requests skip a few heavy tests (one to four minutes each), which run on ev
 `.config/nextest.toml` and the [testing page](docs/book/src/dev/testing.md):
 
 - `solidcraft-engine`: `tests::hostile_params_never_panic`, everything in `tests::robustness` and
-  `tests::robustness_goldens` (pull requests that touch `crates/kernel` run its `sample_*` part),
+  the seeds of `tests::robustness_goldens` (`seed_00` … `seed_95`; pull requests that touch `crates/kernel` run every 8th),
   `pattern_suppress_tests::enclosure_arc_extinction_keeps_a_real_sharp_inner_lip_after_resize_and_reopen`,
   `pattern_suppress_tests::enclosure_datums_follow_wall_height_and_board_depth_with_material_proofs`,
   `cmd::plastic::tests::enclosure_snap_fit_follows_resized_front_wall`, the `atomic_commands` contract tests
@@ -257,6 +258,9 @@ and a fresh CI run:
      open a **draft** PR titled `<summary> (#N)`, e.g. `Fillet: variable radius along a chain (#123)`.
    - **The lowest-numbered open PR for an issue wins.** If yours lost, close it (or offer to help
      on the other one).
+   - Then comment `/claim` on the issue so the bot records the claimant and adds the `in progress`
+     label. **Do both:** the draft PR establishes ownership and `/claim` marks the issue as taken.
+     Reference `#N` in the PR so the bot can find it; a comment alone does not replace the draft PR.
    - Push work in progress at least daily. A draft with no pushes for 72 hours may be taken over:
      comment on it first, then open your own claim.
    - Mark the PR ready for review when it is done.
@@ -266,10 +270,11 @@ and a fresh CI run:
 4. Reference the issue (`Fixes #12`). In the PR, say what you tested and how. For geometry work, include the measured numbers (and
    the expected ones).
 
-Comment `/claim` on an issue to take it: you are assigned, it gets the `in progress` label, and
-the bot replies with the deadline. Open a draft PR referencing the issue within 72 hours, or the
-claim lapses and the issue is freed again; a claim with a PR is freed after 14 days without
-pushes. `/unclaim` releases it early (only you or a maintainer can). Issues a maintainer has
+The `/claim` bot assigns you, adds the `in progress` label, and replies with its automatic cleanup
+deadline. It frees a claim with no linked PR after 72 hours, or a claim with a PR after 14 days
+without pushes. These automatic cleanup deadlines are separate from the daily progress and
+72-hour takeover policy above; follow the draft PR then `/claim` sequence before starting work.
+`/unclaim` releases the bot claim early (only you or a maintainer can). Issues a maintainer has
 taken are never freed automatically.
 
 Help reviewers see what the words mean. For observable CAD, UI or model behavior, please
@@ -300,7 +305,7 @@ long as the change meets the rules above.
 
 ## Where help is wanted most
 
-**Kernel speed (slow fillets, booleans, STEP):** please don't rewrite the current kernel code for speed; it is being replaced by [solidcore](https://github.com/bherbruck/solidcore) ([progress](https://bherbruck.github.io/solidcore/)). Report slow cases with a file under the `kernel-perf` label, and put kernel effort into solidcore instead. See [#1597](https://github.com/tangency-labs/solidcraft/issues/1597).
+**Kernel speed (slow fillets, booleans, STEP):** please don't rewrite the current kernel code for speed; it is being replaced by [solidcore](https://github.com/bherbruck/solidcore) ([progress](https://tangency-labs.github.io/solidcore/)). Report slow cases with a file under the `kernel-perf` label, and put kernel effort into solidcore instead. See [#1597](https://github.com/tangency-labs/solidcraft/issues/1597).
 
 See the [`help wanted`](https://github.com/tangency-labs/solidcraft/labels/help%20wanted) and
 [`good first issue`](https://github.com/tangency-labs/solidcraft/labels/good%20first%20issue) labels.

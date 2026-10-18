@@ -65,8 +65,11 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
   nothing from FreeCAD is linked, vendored or shipped.) The sketch solver and the blend
   operations are our own.
 - **Assets — absolutely essential.** SolidCraft contains **no iconography, images, fonts or
-  artwork from commercial CAD products — ever.** Every UI icon is drawn in collected code
-  (`assets/icons/ui/source/`, compiled through `crates/ui-egui/src/icons.rs`). Any file asset must be original or openly licensed and **must have a row in ATTRIBUTION.md**
+  artwork from commercial CAD products — ever.** Command icons are the original SVG masters in
+  `assets/icons/ui/design/svg/`, compiled through `crates/ui-egui/src/icon_svg.rs`.
+  **Before any icon, icon assignment or media edit, read `assets/AGENTS.md`,
+  `assets/icons/ui/AGENTS.md` and `assets/icons/ui/STYLE_GUIDE.md`.** Use the canonical
+  bases and named finished references there; never invent a parallel icon style. Any file asset must be original or openly licensed and **must have a row in ATTRIBUTION.md**
   (`cargo xtask assets` enforces it). Screenshots of commercial CAD software are never committed.
   Breaking this rule is the most serious mistake you can make in this repo.
 - **Everything is a command.** User-visible behaviour = a command in `crates/engine/src/cmd/*`
@@ -85,7 +88,9 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
   preview, future flat pattern or drawing pages) calls `navigation::handle` with its `NavCaps`
   (orbit off for flat 2D pages). New canvases must use `navigation::handle`; never hand-roll
   camera input (a test rejects it).
-- **Rust only.** Units are millimetres and radians internally; Z is up. The one exception is
+- **Application code is Rust only.** Units are millimetres and radians internally; Z is up.
+  Local asset authoring, lint and review tools use Python 3.11+ as documented in
+  `assets/AGENTS.md`; Python is not an application runtime dependency. The application exception is
   JavaScript the browser requires: the service worker `apps/solidcraft-web/sw.js` (browsers only
   run service workers as JavaScript) and the small inline scripts in `apps/solidcraft-web/index.html`.
   Keep them minimal; `cargo xtask web-offline-test` covers the service worker.
@@ -127,9 +132,13 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
 - Before working on issue #N, check nobody has it: `gh pr list -R bherbruck/solidcraft --state open --search "#N"`.
 - If none, branch from the latest `origin/main`, `git commit --allow-empty -m "claim: #N"`, push,
   and open a **draft** PR titled `<summary> (#N)` right away. **The lowest-numbered open PR for an
-  issue wins**; if yours lost, close it. Don't claim by commenting or by editing files.
+  issue wins**; if yours lost, close it. A comment or file edit alone does not replace the draft PR.
+- After opening the draft PR, comment `/claim` on the issue so the bot records the claimant and
+  adds the `in progress` label. **Do both:** the draft PR establishes ownership and `/claim` marks
+  the issue as taken. Reference `#N` in the PR so the bot can find it.
 - Push work in progress at least daily. A draft with no pushes for 72 hours may be taken over:
   comment on it first, then open your own claim (you may start from its branch).
+  This takeover policy is separate from the bot's automatic cleanup deadlines in CONTRIBUTING.md.
 - On a shared build machine, check the load before a big build (`cut -d' ' -f1 /proc/loadavg`)
   and wait while it is over 24; build with `nice`.
 

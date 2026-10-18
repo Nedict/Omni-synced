@@ -11,6 +11,7 @@
 use egui::{Modifiers, Pos2, RichText};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+pub use solidcraft_engine::doc::display_units::{format_length, length_number, length_precision, unit_scale};
 use solidcraft_engine::geom::Vec3;
 
 /// The key the apps keep the preferences under in eframe's storage.
@@ -273,8 +274,16 @@ pub struct Prefs {
     pub space_mouse_enabled: bool,
     /// Speed multiplier for 3D mouse navigation.
     pub space_mouse_speed: f32,
+    /// Per physical axis of the cap (push X, Y, Z, then tilt X, Y, Z), whether it moves the view
+    /// the other way.
+    pub space_mouse_reverse: [bool; 6],
+    /// Per physical axis of the cap, a multiplier on top of `space_mouse_speed`; 0 switches it off.
+    pub space_mouse_axis_speed: [f32; 6],
     /// Anti-aliasing samples (applies on restart).
     pub msaa: u32,
+    /// The grid turns to the upright origin plane facing a side view (#1470). Off by default: the
+    /// grid stays on the ground plane (XY) whatever the view.
+    pub grid_follows_view: bool,
     /// How finely the viewport tessellates curved faces and edges: `coarse`, `normal`, `fine` or
     /// `ultra` (#1287). Only the display plan the viewport draws; never the design or exports.
     pub display_quality: String,
@@ -312,6 +321,8 @@ pub struct Prefs {
     pub smooth_wheel_zoom: bool,
     /// Two-finger trackpad scroll pans (off: it zooms like the wheel); pinch always zooms.
     pub trackpad_pan: bool,
+    /// Horizontal trackpad and thumb-wheel scrolling pans the view the other way (#2007).
+    pub pan_reverse_x: bool,
     /// View changes (axis view, Look At, Home) animate; `look_at_speed` scales how fast.
     pub look_at_anim: bool,
     pub look_at_speed: f32,
@@ -402,7 +413,10 @@ impl Default for Prefs {
             orbit_cursor: false,
             space_mouse_enabled: true,
             space_mouse_speed: 1.0,
+            space_mouse_reverse: [false; 6],
+            space_mouse_axis_speed: [1.0; 6],
             msaa: 4,
+            grid_follows_view: false,
             display_quality: "normal".into(),
             supersampling: 1.0,
             supersampling_adaptive: true,
@@ -420,6 +434,7 @@ impl Default for Prefs {
             zoom_to_cursor: true,
             smooth_wheel_zoom: true,
             trackpad_pan: true,
+            pan_reverse_x: false,
             look_at_anim: true,
             look_at_speed: 1.0,
             up_axis: "z".into(),
@@ -614,10 +629,13 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.zoom_to_cursor = d.zoom_to_cursor;
             p.smooth_wheel_zoom = d.smooth_wheel_zoom;
             p.trackpad_pan = d.trackpad_pan;
+            p.pan_reverse_x = d.pan_reverse_x;
             p.orbit_around = d.orbit_around;
             p.orbit_cursor = d.orbit_cursor;
             p.space_mouse_enabled = d.space_mouse_enabled;
             p.space_mouse_speed = d.space_mouse_speed;
+            p.space_mouse_reverse = d.space_mouse_reverse;
+            p.space_mouse_axis_speed = d.space_mouse_axis_speed;
             p.look_at_anim = d.look_at_anim;
             p.look_at_speed = d.look_at_speed;
             p.middle_double_click = d.middle_double_click;
@@ -715,6 +733,11 @@ pub fn nav_mode(app: &SolveApp, button: NavButton, mods: Modifiers) -> Option<Na
     nav_preset(&app.preferences.nav).mode(button, mods)
 }
 
+/// +1, or −1 when horizontal scrolling pans the other way (#2007).
+pub fn pan_sign_x(app: &SolveApp) -> f32 {
+    if app.preferences.pan_reverse_x { -1.0 } else { 1.0 }
+}
+
 /// +1, or −1 when the wheel zooms the other way.
 pub fn zoom_sign(app: &SolveApp) -> f64 {
     if app.preferences.zoom_reverse { -1.0 } else { 1.0 }
@@ -733,32 +756,6 @@ pub(crate) fn pivot_under(app: &SolveApp, proj: &crate::viewport::Proj, at: Pos2
     }
     let b = crate::viewport::view_bounds(app);
     if b.is_empty() { app.cam.target } else { b.center() }
-}
-
-/// Units per millimetre and the unit's name.
-pub fn unit_scale(units: &str) -> (f64, &'static str) {
-    match units {
-        "cm" => (0.1, "cm"),
-        "m" => (0.001, "m"),
-        "in" => (1.0 / 25.4, "in"),
-        "ft" => (1.0 / 304.8, "ft"),
-        _ => (1.0, "mm"),
-    }
-}
-
-/// Inch labels retain a meaningful fourth digit without promoting floating-point noise.
-pub fn length_precision(value: f64, units: &str, decimals: u8) -> usize {
-    let base = usize::from(decimals.min(8));
-    if units != "in" {
-        return base;
-    }
-    let needs_four = ((value * 10_000.0).round() - (value * 1000.0).round() * 10.0).abs() >= 0.5;
-    base.max(if needs_four { 4 } else { 3 })
-}
-
-pub fn length_number(mm: f64, units: &str, decimals: u8) -> String {
-    let value = mm * unit_scale(units).0;
-    format!("{:.*}", length_precision(value, units, decimals), value)
 }
 
 /// A plain number typed into a field, with a decimal point or a decimal comma (#1347): "2.5"
@@ -793,12 +790,6 @@ pub fn parse_length_mm(text: &str, scale: f64) -> Option<f64> {
     let no_params = |n: &str| Err(solidcraft_engine::doc::DocError::Expr(format!("unknown parameter `{n}`")));
     let value = expr::eval_with_defaults(text.trim(), &no_params, defaults).ok()?.to_kind_in(expr::Kind::Length, defaults).ok()?;
     value.is_finite().then_some(value)
-}
-
-/// A length in millimetres in `units`, with `decimals` (for display).
-pub fn format_length(mm: f64, units: &str, decimals: u8) -> String {
-    let (_, u) = unit_scale(units);
-    format!("{} {u}", length_number(mm, units, decimals))
 }
 
 /// A length, area (`power` 2) or volume (3) given in millimetres, shown in the design's units
@@ -1139,7 +1130,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 note(ui, crate::i18n::tr("nav.touchpad.help"));
             } else {
                 let snap_help = if app.preferences.nav == OPENSCAD_NAV { "" } else { "; hold Shift during orbit to snap" };
-                let raw_help = format!("{}; Ctrl+left drag on empty space orbits{snap_help}; the wheel zooms", nav_preset(&app.preferences.nav).help);
+                let raw_help = format!("{}; Ctrl+left drag on empty space orbits{snap_help}; hold Space to pan; the wheel zooms", nav_preset(&app.preferences.nav).help);
                 note(ui, crate::i18n::tr_label(&raw_help));
             }
             ui.label(crate::i18n::tr_label("Context menu"));
@@ -1175,6 +1166,10 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             } else {
                 crate::i18n::tr_label("Trackpad gestures pan (off: they zoom like the wheel); mouse wheel zooms, thumb wheel pans sideways, pinch always zooms")
             });
+            ui.end_row();
+            ui.label(crate::i18n::tr_label("Reverse horizontal pan direction"));
+            ui.checkbox(&mut app.preferences.pan_reverse_x, "")
+                .on_hover_text(crate::i18n::tr_label("Horizontal two-finger scrolling and the thumb wheel pan the other way"));
             ui.end_row();
             ui.label(crate::i18n::tr_label("Orbit around"));
             // Wrapped: three choices, and German or Russian labels are long.
@@ -1214,6 +1209,20 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 egui::Slider::new(&mut app.preferences.space_mouse_speed, 0.25..=3.0).step_by(0.05).custom_formatter(|v, _| format!("{v:.2}×")),
             );
             ui.end_row();
+            for (axis, name) in SPACE_MOUSE_AXES.iter().enumerate() {
+                ui.label(crate::i18n::tr_label(name));
+                ui.horizontal(|ui| {
+                    ui.add_enabled_ui(app.preferences.space_mouse_enabled, |ui| {
+                        if let Some(reverse) = app.preferences.space_mouse_reverse.get_mut(axis) {
+                            ui.checkbox(reverse, crate::i18n::tr_label("Invert"));
+                        }
+                        if let Some(speed) = app.preferences.space_mouse_axis_speed.get_mut(axis) {
+                            ui.add(egui::Slider::new(speed, 0.0..=3.0).step_by(0.05).custom_formatter(|v, _| format!("{v:.2}×")));
+                        }
+                    });
+                });
+                ui.end_row();
+            }
             note(ui, crate::i18n::tr_label("Move and rotate the view together; sketches use pan and zoom only."));
         }
         PAGE_DESIGN => {
@@ -1241,6 +1250,10 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.end_row();
             ui.label(crate::i18n::tr_label("Grid"));
             ui.checkbox(&mut app.ui.show_grid, "");
+            ui.end_row();
+            ui.label(crate::i18n::tr_label("Grid follows the view"));
+            ui.add_enabled(app.ui.show_grid, egui::Checkbox::without_text(&mut app.preferences.grid_follows_view))
+                .on_hover_text(crate::i18n::tr_label("Side views show the grid on the upright plane facing them instead of the ground"));
             ui.end_row();
             ui.label(crate::i18n::tr_label("Ground shadow"));
             ui.checkbox(&mut app.ui.ground_shadow, "");
@@ -1415,8 +1428,9 @@ fn colour_vision_sample(ui: &mut egui::Ui, t: &Tokens) {
 }
 
 /// The control channel's `ui.prefs`: `open` (a page name) opens the dialog there, `button`
-/// presses OK, Cancel, Apply or Restore Defaults, `stand_up: true` answers the stand-up offer;
-/// any other keys set preferences. Returns them all, the open page and the offer.
+/// presses OK, Cancel, Apply or Restore Defaults, `stand_up: true` answers the stand-up offer
+/// (`false` leaves the file as it is, like "Leave it"); any other keys set preferences. Returns
+/// them all, the open page and the offer.
 pub fn control(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Value, String> {
     let mut rest = p.as_object().cloned().unwrap_or_default();
     if let Some(page) = rest.remove("open") {
@@ -1427,8 +1441,10 @@ pub fn control(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::
             app.prefs_window.snapshot = Some(Snapshot::take(app));
         }
     }
-    if rest.remove("stand_up").and_then(|v| v.as_bool()) == Some(true) {
-        crate::stand_up::stand_up(app)?;
+    match rest.remove("stand_up").and_then(|v| v.as_bool()) {
+        Some(true) => crate::stand_up::stand_up(app)?,
+        Some(false) => crate::stand_up::leave(app),
+        None => {}
     }
     let button = rest.remove("button");
     let mut out = set(app, &serde_json::Value::Object(rest))?;
@@ -1453,6 +1469,9 @@ pub fn control(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::
 
 /// Fold a setting an older release kept in its own field into the one this version reads.
 /// `orbit_cursor` (`true` = the point under the cursor) became `orbit_around`.
+/// The cap's physical axes, in the order of `Prefs::space_mouse_reverse`.
+const SPACE_MOUSE_AXES: [&str; 6] = ["Push left / right", "Push forward / back", "Lift / press", "Tilt forward / back", "Tilt left / right", "Twist"];
+
 pub fn migrate(mut p: Prefs) -> Prefs {
     if p.orbit_cursor {
         p.orbit_around = OrbitAround::Cursor;
@@ -1830,6 +1849,18 @@ mod tests {
         let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         other.load_prefs(&app.prefs());
         assert_eq!(other.preferences.nav, OPENSCAD_NAV);
+    }
+
+    #[test]
+    fn pan_reverse_x_defaults_off_persists_and_flips_the_sign() {
+        assert!(!serde_json::from_value::<Prefs>(json!({})).unwrap().pan_reverse_x);
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        assert_eq!(pan_sign_x(&app), 1.0);
+        set(&mut app, &json!({"pan_reverse_x": true})).unwrap();
+        assert_eq!(pan_sign_x(&app), -1.0);
+        let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        other.load_prefs(&app.prefs());
+        assert!(other.preferences.pan_reverse_x);
     }
 
     #[test]

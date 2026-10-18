@@ -19,9 +19,9 @@ positions refresh those queries; selection, visibility and locking are read live
 
 Hover picking pauses while the mouse moves the view and resumes when navigation stops.
 A 3D mouse moving the view leaves it on: the pointer hand is free, so preselection and
-clicks keep working while the other hand turns the view. Picking uses the cached body
-bounds directly in model order, so finding each body's bounds does not scan the assembly
-again.
+clicks keep working while the other hand turns the view. Picking uses the current camera
+and the cached body bounds directly in model order, so finding each body's bounds does not
+scan the assembly again.
 
 Hovering an assembly's Browser row retains its whole-body highlight buffers during
 rotation, panning and zoom; the GPU transforms those buffers with the camera. The
@@ -34,7 +34,7 @@ The contents of an imported assembly are **rigid by default**: rigid joints (a r
 
 Designs saved before imports made components keep their Import where it is (no component is made for it) and rebuild as they did.
 
-Read: manifold solid breps (with voids), faceted breps, shell-based surface models; planes, cylinders, cones, spheres, tori, B-spline and rational B-spline surfaces (with knots, Bézier, uniform, quasi-uniform), surfaces of revolution and linear extrusion, trimmed surfaces; lines, circles, ellipses, B-spline curves, polylines, trimmed/surface/seam curves; length and angle units (SI prefixes, conversion-based units such as inches); product names (body names come from the solid's name, else the product's; `names` below chooses); surface colours; assemblies (next-assembly-usage occurrences placed by item-defined transformations, and mapped items) — the product tree is kept in the feature and becomes the import's components (above). Files are untrusted: sizes, entity counts and nesting are capped and every kernel call is guarded. What cannot be read becomes a warning on the feature (a face left out gives an open body); not read yet: offset surfaces, pcurve-only edges.
+Read: manifold solid breps (with voids), faceted breps, shell-based surface models; planes, cylinders, cones, spheres, tori, B-spline and rational B-spline surfaces (with knots, Bézier, uniform, quasi-uniform), surfaces of revolution and linear extrusion, trimmed surfaces; lines, circles, ellipses, hyperbolas and parabolas (as exact rational curves, which export writes back as exact rational B-splines), B-spline curves, polylines, trimmed/surface/seam curves; length and angle units (SI prefixes, conversion-based units such as inches); product names (body names come from the solid's name, else the product's; `names` below chooses); surface colours; assemblies (next-assembly-usage occurrences placed by item-defined transformations, and mapped items) — the product tree is kept in the feature and becomes the import's components (above). Files are untrusted: sizes, entity counts and nesting are capped and every kernel call is guarded. What cannot be read becomes a warning on the feature (a face left out gives an open body); not read yet: offset surfaces, pcurve-only edges.
 
 ## Files from other CAD systems
 
