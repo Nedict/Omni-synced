@@ -328,7 +328,8 @@ struct Chamfer {
 /// or near a chamfer's edge, picks an edge as before.
 fn chamfer_at(mb: &ModelBody, mesh: &Mesh, p: Vec3, tol: f64, near: f64) -> Option<Chamfer> {
     let b = &mb.body;
-    let (d, f) = crate::appearance::nearest_face(mb, p)?;
+    let hit = mb.mesh().nearest_face(p)?;
+    let (d, f) = (hit.dist, hit.face as usize);
     if d <= near
         && let Some(c) = bend_cylinder(b, mesh, f, tol)
     {
@@ -686,7 +687,7 @@ pub fn convert_body(mb: &ModelBody, rule: &str, rv: &RuleValues, face: Vec3, ben
     }
     // Points closer than `tol` are one corner; a pick lies within `near` of what it picks.
     let (tol, near) = ((size * 1e-6).max(1e-6), (size * 2e-3).max(1e-3));
-    let Some((_, f0)) = crate::appearance::nearest_face(mb, face).filter(|(d, _)| *d <= near) else {
+    let Some(f0) = mb.mesh().nearest_face(face).filter(|h| h.dist <= near).map(|h| h.face as usize) else {
         return err(format!("no face of the body at the fixed face point {}", at(face)));
     };
     // The two faces along each bend edge, or on either side of each chamfer or bend cylinder

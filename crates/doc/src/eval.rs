@@ -4422,8 +4422,8 @@ fn face_at(st: &ModelState, p: Vec3) -> Option<(usize, usize)> {
         .enumerate()
         .filter(|(_, b)| !b.body.is_mesh())
         .filter_map(|(bi, b)| {
-            let (d, fi) = crate::appearance::nearest_face(b, p)?;
-            (d <= crate::appearance::pick_tolerance(b)).then_some((d, bi, fi))
+            let hit = b.mesh().nearest_face(p)?;
+            (hit.dist <= crate::appearance::pick_tolerance(b)).then_some((hit.dist, bi, hit.face as usize))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .map(|(_, bi, fi)| (bi, fi))
@@ -5553,8 +5553,8 @@ pub fn face_point_names(doc: &Document, st: &ModelState, kind: &FeatureKind, com
                 .iter()
                 .filter(|b| !b.body.is_mesh())
                 .filter_map(|b| {
-                    let (d, fi) = crate::appearance::nearest_face(b, *p)?;
-                    (d <= (b.body.size() * 1e-3).max(1e-3)).then_some((d, b, fi))
+                    let hit = b.mesh().nearest_face(*p)?;
+                    (hit.dist <= (b.body.size() * 1e-3).max(1e-3)).then_some((hit.dist, b, hit.face as usize))
                 })
                 .min_by(|a, b| a.0.total_cmp(&b.0))
                 .and_then(|(_, b, fi)| crate::naming::face_names(b).get(fi).cloned())

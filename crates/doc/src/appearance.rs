@@ -254,13 +254,8 @@ impl Document {
 
 /// The B-rep face of a body nearest a point (within 5% of the body's size).
 pub fn face_index_at(b: &crate::ModelBody, p: Vec3) -> Option<usize> {
-    let (d, f) = nearest_face(b, p)?;
-    (d <= pick_tolerance(b)).then_some(f)
-}
-
-/// The face of `b` nearest `p` and how far it is, however far.
-pub fn nearest_face(b: &crate::ModelBody, p: Vec3) -> Option<(f64, usize)> {
-    b.mesh().nearest_face(p).map(|h| (h.dist, h.face as usize))
+    let hit = b.mesh().nearest_face(p)?;
+    (hit.dist <= pick_tolerance(b)).then_some(hit.face as usize)
 }
 
 /// How far from a face of `b` a picked point may lie and still pick it (`face_index_at`).
