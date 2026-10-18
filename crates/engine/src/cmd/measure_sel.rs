@@ -110,7 +110,7 @@ fn edge_round(b: &solidcraft_doc::ModelBody, m: &Mesh, index: usize, whole: bool
         ends && on
     });
     let (center, axis, radius, angle) = match exact {
-        Some(c) => (c.center, c.axis, c.radius, if whole { std::f64::consts::TAU } else { c.angle }),
+        Some(c) => (c.center, *c.axis, c.radius, if whole { std::f64::consts::TAU } else { c.angle }),
         None => {
             let all: Vec<Vec3> =
                 if whole { m.circular_rim(index).iter().filter_map(|&i| m.edges.get(i)).flatten().copied().collect() } else { pts.clone() };
@@ -316,7 +316,7 @@ fn describe(s: &Session, sel: &Sel) -> Option<Item> {
                 Some(solidcraft_kernel::FaceSurface::Cylinder { origin, axis, radius }) => {
                     super::measure_shape::cylinder(origin, axis, radius, &verts).unwrap_or(Shape::Other)
                 }
-                Some(solidcraft_kernel::FaceSurface::Plane { normal, point }) if planar.is_some() => Shape::Plane { point, normal },
+                Some(solidcraft_kernel::FaceSurface::Plane { normal, point }) if planar.is_some() => Shape::Plane { point, normal: *normal },
                 None => match (planar, verts.first()) {
                     (Some(normal), Some(point)) => Shape::Plane { point: *point, normal },
                     _ => Shape::Other,

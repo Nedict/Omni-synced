@@ -2384,7 +2384,7 @@ fn faces_through(st: &ModelState, p: Vec3, reach: f64) -> Vec<(f64, Vec3, Option
         }
         for (f, (d, facet)) in near {
             let (exact, off) = match kernel::face_surface(&b.body, f as usize) {
-                Some(kernel::FaceSurface::Plane { normal, point }) => (Some(normal), Some((p - point).dot(normal).abs())),
+                Some(kernel::FaceSurface::Plane { normal, point }) => (Some(*normal), Some((p - point).dot(normal).abs())),
                 Some(kernel::FaceSurface::Cylinder { origin, axis, .. }) => {
                     let v = p - origin;
                     ((v - axis * v.dot(axis)).normalized(), None)

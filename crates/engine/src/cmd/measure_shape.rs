@@ -4,7 +4,7 @@
 //! round item measures from its centre or axis, with the closest and farthest distances too.
 
 use serde_json::{Value, json};
-use solidcraft_geom::Vec3;
+use solidcraft_geom::{UnitVec3, Vec3};
 
 use std::f64::consts::{PI, TAU};
 
@@ -70,8 +70,8 @@ pub(crate) fn add_round(v: &mut Value, shape: &Shape) {
 
 /// Cylinder `axis` through `origin` of radius `radius` over the points of its face: the
 /// round shape, centred level with the middle of the face, with its extent and coverage.
-pub(crate) fn cylinder(origin: Vec3, axis: Vec3, radius: f64, pts: &[Vec3]) -> Option<Shape> {
-    let axis = axis.normalized()?;
+pub(crate) fn cylinder(origin: Vec3, axis: UnitVec3, radius: f64, pts: &[Vec3]) -> Option<Shape> {
+    let axis = *axis;
     if pts.is_empty() || !(radius.is_finite() && radius > 0.0) {
         return None;
     }
@@ -127,8 +127,8 @@ fn line_line(p1: Vec3, d1: Vec3, p2: Vec3, d2: Vec3) -> (Vec3, Vec3) {
     (p1 + d1 * s, p2 + d2 * t)
 }
 
-fn parallel(a: Vec3, b: Vec3) -> bool {
-    a.cross(b).len() < 1e-6
+fn parallel(a: impl Into<Vec3>, b: impl Into<Vec3>) -> bool {
+    a.into().cross(b).len() < 1e-6
 }
 
 /// A measurement from a round item's centre or axis.
