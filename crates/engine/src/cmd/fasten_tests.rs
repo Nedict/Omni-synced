@@ -664,7 +664,9 @@ fn two_rivet_families() -> Library {
                "sizes": [{"size": "4.8", "d": 4.8, "head": {"d": 9.6, "h": 1.5, "style": "dome"},
                           "lengths": [{"length": 8, "grip": [1, 3.5]}, {"length": 10, "grip": [3.5, 5.5]}, {"length": 12, "grip": [5.5, 7.5]}]}]})
     };
-    Library::new(&json!({"format": "solidcraft-parts/1", "id": "example.rivets2", "name": "Example rivets", "families": [family("rivet_grip"), family("rivet_alt")]}))
+    Library::new(
+        &json!({"format": "solidcraft-parts/1", "id": "example.rivets2", "name": "Example rivets", "families": [family("rivet_grip"), family("rivet_alt")]}),
+    )
 }
 
 #[test]
