@@ -1602,3 +1602,28 @@ fn check_two_cone_outlines(body: &Brep) {
         assert_eq!(rulings, 2, "z {z0}..{z1}: {:?}", silhouette_pieces(&d));
     }
 }
+
+#[test]
+fn the_shadow_index_finds_each_nearby_box_once() {
+    // 40 000 boxes 1 mm wide every 20 mm: a query near one finds it and no far one.
+    let mut list = Vec::new();
+    for i in 0..200 {
+        for j in 0..200 {
+            let (x, y) = (20. * i as f64, 20. * j as f64);
+            list.push(Shadow { placement: 0, face: i * 200 + j, lo: [x, y], hi: [x + 1., y + 1.], near: 0. });
+        }
+    }
+    let index = ShadowIndex::new(list).unwrap();
+    let mut near = Vec::new();
+    index.query([400.5, 600.5], [400.6, 600.6], &mut near);
+    let faces: Vec<usize> = near
+        .iter()
+        .filter_map(|k| index.list.get(*k))
+        .filter(|sh| sh.lo[0] <= 400.6 && sh.hi[0] >= 400.5 && sh.lo[1] <= 600.6 && sh.hi[1] >= 600.5)
+        .map(|sh| sh.face)
+        .collect();
+    assert_eq!(faces, vec![20 * 200 + 30]);
+    assert!(near.len() <= 9, "{} candidates", near.len());
+    index.query([-50., -50.], [-40., -40.], &mut near);
+    assert!(near.is_empty());
+}

@@ -802,13 +802,28 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
     // Faces left out (freeform or with an unsupported trim) draw no silhouettes to cut at, so
     // the curves are cut where they cross each such face's screen box instead, and below a
     // piece inside a box and behind its nearest point is uncertain: it may be hidden.
-    let shadows = shadow_boxes(defs, scene, view, &unsupported);
-    for t in &mut tracks {
+    let shadows = ShadowIndex::new(shadow_boxes(defs, scene, view, &unsupported))?;
+    let mut near = Vec::new();
+    let mut checks = 0usize;
+    for (ti, t) in tracks.iter_mut().enumerate() {
+        if shadows.list.is_empty() {
+            break;
+        }
+        if ti % 64 == 0 && cancel() {
+            return Err(HlrError::Cancelled);
+        }
         let mut cuts = Vec::new();
         for (i, w) in t.samples.windows(2).enumerate() {
             let (Some(a), Some(b)) = (w.first(), w.get(1)) else { continue };
             let sag = t.sags.get(i).copied().unwrap_or(0.);
-            for sh in &shadows {
+            let lo = [a.1[0].min(b.1[0]) - sag, a.1[1].min(b.1[1]) - sag];
+            let hi = [a.1[0].max(b.1[0]) + sag, a.1[1].max(b.1[1]) + sag];
+            shadows.query(lo, hi, &mut near);
+            checks = checks.saturating_add(near.len());
+            if checks > 500_000_000 {
+                return Err(HlrError::Budget("shadow"));
+            }
+            for sh in near.iter().filter_map(|k| shadows.list.get(*k)) {
                 for (k, edge) in [(0usize, sh.lo[0]), (0, sh.hi[0]), (1, sh.lo[1]), (1, sh.hi[1])] {
                     let (u, v) = (a.1[k], b.1[k]);
                     if (u - edge) * (v - edge) < 0. {
@@ -943,11 +958,12 @@ fn shadow_boxes(defs: &[Prepared], scene: &[Placement], view: &View, left_out: &
 /// Whether the piece `r` of a track may lie behind a left-out face: one of its points within
 /// its chords' sag of the face's screen box and behind the face's nearest point (not counting
 /// the track's own faces).
-fn in_shadow(t: &Track, r: [f64; 2], scene: &[Placement], view: &View, shadows: &[Shadow]) -> bool {
+fn in_shadow(t: &Track, r: [f64; 2], scene: &[Placement], view: &View, shadows: &ShadowIndex) -> bool {
+    if shadows.list.is_empty() {
+        return false;
+    }
     let Some(p) = scene.get(t.placement) else { return false };
     let c = t.c3();
-    let inner = t.samples.iter().map(|q| q.0).filter(|x| *x > r[0] && *x < r[1]);
-    let pts: Vec<Vec3> = [r[0], 0.5 * (r[0] + r[1]), r[1]].into_iter().chain(inner).map(|x| p.apply(c.at(x))).collect();
     let sag = t
         .samples
         .windows(2)
@@ -956,18 +972,88 @@ fn in_shadow(t: &Track, r: [f64; 2], scene: &[Placement], view: &View, shadows: 
         .map(|(_, s)| *s)
         .fold(0., f64::max);
     // The piece is cut at the boxes' sides: it is in a box when its middle or one of its inner
-    // points is (its ends may lie on the side it was cut at). Then it is in the shadow when
+    // samples is (its ends may lie on the side it was cut at). Then it is in the shadow when
     // its depth can pass the face's nearest point anywhere along it: the bound comes from the
     // curve itself (its control points' hull, an arc's reach), not from samples, which a dip
     // in depth that the screen does not show could fall between.
-    let inside = |sh: &Shadow| {
-        pts.iter().enumerate().filter(|(i, _)| *i != 0 && *i != 2).any(|(_, w)| {
-            let s = view.screen(*w);
-            s[0] >= sh.lo[0] - sag && s[0] <= sh.hi[0] + sag && s[1] >= sh.lo[1] - sag && s[1] <= sh.hi[1] + sag
-        })
-    };
-    let deepest = depth_bound(c, r, p, view.d).max(pts.iter().map(|w| w.dot(view.d)).fold(f64::MIN, f64::max));
-    shadows.iter().any(|sh| !(sh.placement == t.placement && t.own.contains(&sh.face)) && inside(sh) && deepest > sh.near)
+    let mid = view.screen(p.apply(c.at(0.5 * (r[0] + r[1]))));
+    let pts: Vec<[f64; 2]> = std::iter::once(mid).chain(t.samples.iter().filter(|q| q.0 > r[0] && q.0 < r[1]).map(|q| q.1)).collect();
+    let lo = pts.iter().fold([f64::MAX; 2], |m, s| [m[0].min(s[0] - sag), m[1].min(s[1] - sag)]);
+    let hi = pts.iter().fold([f64::MIN; 2], |m, s| [m[0].max(s[0] + sag), m[1].max(s[1] + sag)]);
+    let mut near = Vec::new();
+    shadows.query(lo, hi, &mut near);
+    if near.is_empty() {
+        return false;
+    }
+    let deepest = depth_bound(c, r, p, view.d);
+    near.iter().filter_map(|k| shadows.list.get(*k)).any(|sh| {
+        !(sh.placement == t.placement && t.own.contains(&sh.face))
+            && deepest > sh.near
+            && pts.iter().any(|s| s[0] >= sh.lo[0] - sag && s[0] <= sh.hi[0] + sag && s[1] >= sh.lo[1] - sag && s[1] <= sh.hi[1] + sag)
+    })
+}
+
+/// Left-out faces' boxes on a uniform screen grid, so a curve meets only those near it.
+struct ShadowIndex {
+    list: Vec<Shadow>,
+    lo: [f64; 2],
+    hi: [f64; 2],
+    cell: [f64; 2],
+    n: usize,
+    buckets: Vec<Vec<usize>>,
+}
+
+impl ShadowIndex {
+    fn new(list: Vec<Shadow>) -> Result<ShadowIndex, HlrError> {
+        let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
+        for sh in &list {
+            lo = [lo[0].min(sh.lo[0]), lo[1].min(sh.lo[1])];
+            hi = [hi[0].max(sh.hi[0]), hi[1].max(sh.hi[1])];
+        }
+        let n = ((list.len() as f64).sqrt().ceil() as usize).clamp(1, 1024);
+        let cell = [((hi[0] - lo[0]) / n as f64).max(1e-12), ((hi[1] - lo[1]) / n as f64).max(1e-12)];
+        let mut index = ShadowIndex { list: Vec::new(), lo, hi, cell, n, buckets: vec![Vec::new(); n * n] };
+        let mut entries = 0usize;
+        for (k, sh) in list.iter().enumerate() {
+            let (a, b) = (index.cell_of(sh.lo), index.cell_of(sh.hi));
+            entries = entries.saturating_add((b[0] - a[0] + 1).saturating_mul(b[1] - a[1] + 1));
+            if entries > 50_000_000 {
+                return Err(HlrError::Budget("shadow grid"));
+            }
+            for y in a[1]..=b[1] {
+                for x in a[0]..=b[0] {
+                    if let Some(bucket) = index.buckets.get_mut(y * n + x) {
+                        bucket.push(k);
+                    }
+                }
+            }
+        }
+        index.list = list;
+        Ok(index)
+    }
+
+    fn cell_of(&self, p: [f64; 2]) -> [usize; 2] {
+        let f = |k: usize| (((p[k] - self.lo[k]) / self.cell[k]).floor().clamp(0., (self.n - 1) as f64)) as usize;
+        [f(0), f(1)]
+    }
+
+    /// The boxes in the cells the box `lo hi` touches, each once.
+    fn query(&self, lo: [f64; 2], hi: [f64; 2], out: &mut Vec<usize>) {
+        out.clear();
+        if self.list.is_empty() || hi[0] < self.lo[0] || hi[1] < self.lo[1] || lo[0] > self.hi[0] || lo[1] > self.hi[1] {
+            return;
+        }
+        let (a, b) = (self.cell_of(lo), self.cell_of(hi));
+        for y in a[1]..=b[1] {
+            for x in a[0]..=b[0] {
+                if let Some(bucket) = self.buckets.get(y * self.n + x) {
+                    out.extend_from_slice(bucket);
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+    }
 }
 
 /// An upper bound of the depth along `d` of the curve's part `r` placed by `p`: a line's ends,
