@@ -251,6 +251,10 @@ fn three_point_plane_size_round_trips() {
     run(&mut d, "construct.plane.three_points", TRI("{\"size\": \"default\"}"));
     assert!(!d.doc.to_json().contains("\"size\""), "default size must not be saved");
     assert!(s.execute("construct.plane.three_points", &TRI("{\"size\": \"huge\", \"name\": \"H\"}")).is_err());
+    for bad in ["true", "3"] {
+        let e = s.execute("construct.plane.three_points", &TRI(&format!("{{\"size\": {bad}, \"name\": \"N\"}}"))).unwrap_err();
+        assert!(e.to_string().contains("must be \"default\" or \"large\""), "{bad}: {e}");
+    }
 }
 
 #[test]

@@ -258,6 +258,9 @@ pub(crate) fn point(ctx: &Ctx, g: &GeoRef) -> Result<Vec3> {
             let ss = ctx.st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch}")))?;
             let curve = |id: &String| ss.sketch.curve_index(id).ok_or_else(|| DocError::Unknown(format!("curve `{id}`")));
             let (ia, ib) = (curve(a)?, curve(b)?);
+            if ia == ib {
+                return Err(bad("a crossing needs two different curves"));
+            }
             if !near.x.is_finite() || !near.y.is_finite() {
                 return Err(bad("the crossing's pick position is not a finite point"));
             }

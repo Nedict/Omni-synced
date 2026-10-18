@@ -248,9 +248,9 @@ fn plane_points(s: &mut Session, p: &Value) -> Result<Value> {
             pl = PlaneRef::Offset { base: Box::new(pl), distance: d };
         }
     }
-    let size = match str_(p, "size") {
-        None | Some("default") => PlaneSize::Default,
-        Some("large") => PlaneSize::Large,
+    let size = match p.get("size").filter(|v| !v.is_null()).map(|v| v.as_str()) {
+        None | Some(Some("default")) => PlaneSize::Default,
+        Some(Some("large")) => PlaneSize::Large,
         Some(_) => return Err(bad(cmd, "`size` must be \"default\" or \"large\"")),
     };
     add_feature(s, p, FeatureKind::ConstructionPlane { plane: pl, size })

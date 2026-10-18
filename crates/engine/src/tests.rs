@@ -884,6 +884,12 @@ fn hostile_crossing_refs_never_panic() {
             assert!(id.is_some_and(|id| s.model.result(id).is_some_and(|r| r.error.is_some())), "{r}: accepted without an error");
         }
         assert!(!matches!(res, Err(EngineError::Internal(..))), "{r}: {res:?}");
+        // The same curve twice is said plainly.
+        if res.is_ok() && r["a"] == r["b"] && r["type"] == "sketch_crossing" {
+            let id = s.doc.features.last().map(|f| f.id).unwrap_or_default();
+            let msg = format!("{:?}", s.model.result(id).and_then(|x| x.error.clone()));
+            assert!(msg.contains("two different curves"), "{msg}");
+        }
     }
     // A huge but finite pick is not an error: it resolves to the nearest crossing, without panicking.
     let mut s = Session::default();
