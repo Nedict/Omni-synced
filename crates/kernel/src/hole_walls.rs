@@ -4,7 +4,8 @@
 //! Faces are classified from the tessellation (as [`crate::merged_topology`] does), so a hole
 //! whose wall is a B-spline (a hole in a refolded sheet part) is found as well as an exact
 //! cylinder. The pieces of one cylinder (the kernel splits a full turn into two halves) are
-//! merged into one wall.
+//! merged into one wall. A wall reaches through the coaxial cones that open out from its ends
+//! (a countersink, a chamfered edge), so its extent runs from face to face of the body.
 
 use solidcraft_geom::{Mesh, Vec3};
 
@@ -25,7 +26,9 @@ pub struct HoleWall {
     /// Unit axis.
     pub axis: Vec3,
     pub radius: f64,
-    /// The wall's extent along `axis`, measured from `axis_point`.
+    /// The wall's extent along `axis`, measured from `axis_point`, including the coaxial cones
+    /// that open out from its ends (a countersink or chamfer): from one face of the body to
+    /// the other.
     pub start: f64,
     pub end: f64,
     /// How much of the turn the wall covers (radians, to 5°): 2π for a round hole, about π for
@@ -57,7 +60,86 @@ pub fn hole_walls(b: &Body, mesh: &Mesh) -> Vec<HoleWall> {
             None => groups.push((*s, vec![face])),
         }
     }
-    groups.iter().flat_map(|(s, faces)| along_apart(mesh, *s, faces, tol)).filter_map(|(s, faces)| wall(mesh, s, &faces)).collect()
+    let cones = cone_faces(mesh, &surfs);
+    groups
+        .iter()
+        .flat_map(|(s, faces)| along_apart(mesh, *s, faces, tol))
+        .filter_map(|(s, faces)| wall(mesh, s, &faces))
+        .map(|w| through_cones(w, mesh, &cones, tol))
+        .collect()
+}
+
+/// A cone face of the body: its axis, apex and the mesh vertices on it.
+struct ConeFace {
+    axis: Vec3,
+    apex: Vec3,
+    vertices: Vec<u32>,
+}
+
+/// The cone faces of `mesh` (as classified in `surfs`), each with its vertices.
+fn cone_faces(mesh: &Mesh, surfs: &[Surf]) -> Vec<ConeFace> {
+    let mut cones: Vec<(u32, ConeFace)> = surfs
+        .iter()
+        .enumerate()
+        .filter_map(|(f, s)| match s {
+            Surf::Cone { axis, apex, .. } => Some((u32::try_from(f).ok()?, ConeFace { axis: *axis, apex: *apex, vertices: Vec::new() })),
+            _ => None,
+        })
+        .collect();
+    if cones.is_empty() {
+        return Vec::new();
+    }
+    for (t, f) in mesh.triangles.iter().zip(&mesh.tri_face) {
+        if let Some((_, c)) = cones.iter_mut().find(|(g, _)| g == f) {
+            c.vertices.extend_from_slice(t);
+        }
+    }
+    cones
+        .into_iter()
+        .map(|(_, mut c)| {
+            c.vertices.sort_unstable();
+            c.vertices.dedup();
+            c
+        })
+        .collect()
+}
+
+/// `w` with its extent run on through the coaxial cones that open out from either end with the
+/// material outside them (a countersink, a chamfer on the hole's edge), so the wall reaches the
+/// body's faces. A cone counts when its narrow rim is the wall's own circle.
+fn through_cones(mut w: HoleWall, mesh: &Mesh, cones: &[ConeFace], tol: f64) -> HoleWall {
+    let near = tol * 10.0;
+    let rim = near.max(w.radius * 2e-3);
+    let mut spans: Vec<(f64, f64)> = Vec::new();
+    for c in cones {
+        let off = c.apex - w.axis_point;
+        if c.axis.dot(w.axis).abs() < 1.0 - 1e-5 || (off - w.axis * off.dot(w.axis)).len() > near {
+            continue;
+        }
+        let (mut lo, mut hi, mut r_min, mut inward) = (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, 0.0);
+        for k in &c.vertices {
+            let (Some(q), Some(n)) = (mesh.positions.get(*k as usize), mesh.normals.get(*k as usize)) else { continue };
+            let along = (*q - w.axis_point).dot(w.axis);
+            let radial = *q - w.axis_point - w.axis * along;
+            lo = lo.min(along);
+            hi = hi.max(along);
+            r_min = r_min.min(radial.len());
+            inward += n.dot(radial);
+        }
+        // Outward normals point toward the axis where the material is outside the cone.
+        if lo <= hi && inward < 0.0 && (r_min - w.radius).abs() <= rim {
+            spans.push((lo, hi));
+        }
+    }
+    // A cone at the wall's start or end, each joining the extent at most once.
+    for (lo, hi) in spans {
+        if (hi - w.start).abs() <= near && lo < w.start {
+            w.start = lo;
+        } else if (lo - w.end).abs() <= near && hi > w.end {
+            w.end = hi;
+        }
+    }
+    w
 }
 
 /// The faces of one cylinder in runs along its axis that do not overlap: two holes on one line
@@ -160,3 +242,7 @@ fn wall(mesh: &Mesh, s: Surf, faces: &[u32]) -> Option<HoleWall> {
     });
     Some(HoleWall { axis_point: p, axis, radius: r, start: lo, end: hi, sweep, opening })
 }
+
+#[cfg(test)]
+#[path = "hole_walls_tests.rs"]
+mod tests;

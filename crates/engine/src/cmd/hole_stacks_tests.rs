@@ -228,3 +228,48 @@ fn a_folded_part_drilled_through_both_flanges_makes_a_stack_at_each() {
     stacks.sort_by(|a, b| a.1.cmp(&b.1));
     assert_eq!(stacks, [(3.0, vec!["Channel".to_string(), "Left".to_string()]), (3.0, vec!["Channel".to_string(), "Right".to_string()])], "{r}");
 }
+
+/// A plate like [`plate`] whose through hole of Ø`d` at (x, y) has a 90° countersink of
+/// Ø`cs` on its top face.
+fn countersunk_plate(s: &mut Session, name: &str, z0: f64, t: f64, (x, y, d): (f64, f64, f64), cs: f64) {
+    run(s, "solid.box", json!({"length": 40, "width": 30, "height": t, "corner": [0, 0, z0], "operation": "new", "body_name": name}));
+    run(
+        s,
+        "solid.hole",
+        json!({"position": [x, y, z0 + t], "diameter": d, "depth": t, "type": "countersink", "cs_diameter": cs, "cs_angle": "90 deg"}),
+    );
+}
+
+#[test]
+fn a_countersunk_top_plate_counts_its_whole_thickness_in_the_grip() {
+    // 2 + 2 mm, Ø5 through both, a Ø8 x 90° countersink (1.5 mm deep) on top: the grip runs
+    // from the top plate's top face, not from where its cylinder starts.
+    let mut s = Session::default();
+    plate(&mut s, "Bottom", 0.0, 2.0, Some((20.0, 15.0, 5.0)));
+    countersunk_plate(&mut s, "Top", 2.0, 2.0, (20.0, 15.0, 5.0), 8.0);
+    let r = run(&mut s, "inspect.hole_stacks", json!({}));
+    assert_eq!((r["stacks"].as_array().map(Vec::len), r["lone"].clone()), (Some(1), json!([])), "{r}");
+    let st = &r["stacks"][0];
+    assert!(close(st["grip_mm"].as_f64().unwrap_or(0.0), 4.0), "{st}");
+    assert!(close(st["start"][2].as_f64().unwrap_or(0.0), 4.0), "{st}");
+    let top = &st["layers"][0];
+    assert_eq!(top["body"], "Top", "{st}");
+    assert!(close(top["t"][0].as_f64().unwrap_or(-1.0), 0.0) && close(top["t"][1].as_f64().unwrap_or(-1.0), 2.0), "{st}");
+    assert!(close(top["d_mm"].as_f64().unwrap_or(0.0), 5.0), "the narrowest opening, not the countersink: {st}");
+}
+
+#[test]
+fn a_countersink_on_a_mating_face_does_not_split_the_stack() {
+    // 2 / 3 / 2 mm, the middle hole countersunk on top (under the top plate): the countersink's
+    // cone closes the gap it would otherwise leave between the top and middle walls.
+    let mut s = Session::default();
+    plate(&mut s, "Bottom", 0.0, 2.0, Some((20.0, 15.0, 5.0)));
+    countersunk_plate(&mut s, "Middle", 2.0, 3.0, (20.0, 15.0, 5.0), 8.0);
+    plate(&mut s, "Top", 5.0, 2.0, Some((20.0, 15.0, 5.0)));
+    let r = run(&mut s, "inspect.hole_stacks", json!({}));
+    assert_eq!((r["stacks"].as_array().map(Vec::len), r["lone"].clone()), (Some(1), json!([])), "{r}");
+    let st = &r["stacks"][0];
+    assert!(close(st["grip_mm"].as_f64().unwrap_or(0.0), 7.0), "{st}");
+    let names: Vec<&str> = st["layers"].as_array().into_iter().flatten().filter_map(|l| l["body"].as_str()).collect();
+    assert_eq!(names, ["Top", "Middle", "Bottom"], "{st}");
+}
