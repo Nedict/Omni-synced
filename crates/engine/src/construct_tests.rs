@@ -426,3 +426,156 @@ fn ambiguity_error_names_the_other_origin_alias() {
         assert_eq!(inspected["plane"]["origin"], json!([0.0, 0.0, 0.0]));
     }
 }
+
+// ---- sketch crossings ----
+
+use solidcraft_geom::Vec2;
+
+fn curves(r: &Value) -> Vec<String> {
+    r["curves"].as_array().map(|a| a.iter().filter_map(|c| c.as_str().map(str::to_string)).collect()).unwrap_or_default()
+}
+
+/// A sketch on `plane` with the lines `lines` (l1, l2, ...); returns its id.
+fn cross_sketch(s: &mut Session, plane: Value, lines: &[[[f64; 2]; 2]]) -> u64 {
+    let id = run(s, "sketch.create", json!({"plane": plane}))["sketch"].as_u64().unwrap();
+    for l in lines {
+        run(s, "sketch.line", json!({"points": l}));
+    }
+    run(s, "sketch.finish", json!({}));
+    id
+}
+
+fn sketch_plane(s: &Session, id: u64) -> Plane {
+    s.world_state().sketch(id).unwrap().plane
+}
+
+fn crossing_plane(s: &mut Session, sk: u64, a: &str, b: &str, near: [f64; 2]) -> Result<Value, crate::EngineError> {
+    s.execute(
+        "construct.plane.three_points",
+        &json!({"a": {"sketch": sk, "crossing": [a, b], "near": near}, "b": {"point": [100, 0, 50]}, "c": {"point": [0, 100, 80]}, "name": "X"}),
+    )
+}
+
+fn plane_error(s: &Session) -> Option<String> {
+    let f = s.doc.features.last()?;
+    s.model.result(f.id).and_then(|r| r.error.clone())
+}
+
+#[test]
+fn crossing_ref_resolves_on_a_tilted_sketch() {
+    let mut s = Session::default();
+    let sk = cross_sketch(
+        &mut s,
+        json!({"origin": [0, 0, 5], "x_dir": [1, 0, 0], "y_dir": [0, 1, -1]}),
+        &[[[0.0, 0.0], [10.0, 10.0]], [[0.0, 10.0], [10.0, 0.0]]],
+    );
+    crossing_plane(&mut s, sk, "l1", "l2", [5.0, 5.0]).unwrap();
+    let at = sketch_plane(&s, sk).to_world(Vec2::new(5.0, 5.0));
+    assert!(on_plane(&plane(&s, "X"), at));
+    // The tagged JSON form is the same reference.
+    run(
+        &mut s,
+        "construct.plane.three_points",
+        json!({"a": {"type": "sketch_crossing", "sketch": sk, "a": "l1", "b": "l2", "near": [5, 5]}, "b": {"point": [100, 0, 50]}, "c": {"point": [0, 100, 80]}, "name": "Y"}),
+    );
+    assert!(on_plane(&plane(&s, "Y"), at));
+}
+
+#[test]
+fn crossing_ref_picks_the_nearest_of_two_crossings() {
+    let mut s = Session::default();
+    let sk = run(&mut s, "sketch.create", json!({"plane": "XY"}))["sketch"].as_u64().unwrap();
+    run(&mut s, "sketch.line", json!({"points": [[-20, 0], [20, 0]]}));
+    run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "radius": 10}));
+    run(&mut s, "sketch.finish", json!({}));
+    crossing_plane(&mut s, sk, "l1", "c1", [10.0, 0.0]).unwrap();
+    let p = plane(&s, "X");
+    let pl = sketch_plane(&s, sk);
+    assert!(on_plane(&p, pl.to_world(Vec2::new(10.0, 0.0))));
+    assert!(!on_plane(&p, pl.to_world(Vec2::new(-10.0, 0.0))));
+}
+
+#[test]
+fn crossing_ref_follows_a_spline() {
+    let mut s = Session::default();
+    let sk = run(&mut s, "sketch.create", json!({"plane": "XY"}))["sketch"].as_u64().unwrap();
+    let sp = curves(&run(&mut s, "sketch.spline.fit_point", json!({"points": [[0, 0], [4, 6], [8, -2], [12, 5]]})));
+    run(&mut s, "sketch.line", json!({"points": [[0, 2], [12, 2]]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let st = s.world_state();
+    let sketch = &st.sketch(sk).unwrap().sketch;
+    let (ia, ib) = (sketch.curve_index(&sp[0]).unwrap(), sketch.curve_index("l1").unwrap());
+    let found = solidcraft_sketch::crossings_of(sketch, ia, ib);
+    assert!(!found.is_empty());
+    let q = found[0];
+    crossing_plane(&mut s, sk, &sp[0], "l1", [q.x, q.y]).unwrap();
+    assert!(on_plane(&plane(&s, "X"), sketch_plane(&s, sk).to_world(q)));
+}
+
+#[test]
+fn crossing_ref_follows_the_sketch() {
+    let mut s = Session::default();
+    let sk = cross_sketch(&mut s, json!("XY"), &[[[0.0, 0.0], [10.0, 10.0]], [[0.0, 10.0], [10.0, 0.0]]]);
+    crossing_plane(&mut s, sk, "l1", "l2", [5.0, 5.0]).unwrap();
+    let before = plane(&s, "X");
+    run(&mut s, "sketch.edit", json!({"sketch": sk}));
+    run(&mut s, "sketch.move_point", json!({"point": "l2.start", "to": [0, 6]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let st = s.world_state();
+    let sketch = &st.sketch(sk).unwrap().sketch;
+    let q = solidcraft_sketch::crossings_of(sketch, sketch.curve_index("l1").unwrap(), sketch.curve_index("l2").unwrap())[0];
+    assert!((q - Vec2::new(5.0, 5.0)).len() > 0.5, "the crossing moved: {q:?}");
+    let at = sketch_plane(&s, sk).to_world(q);
+    assert!(on_plane(&plane(&s, "X"), at));
+    assert!(!on_plane(&before, at), "the plane followed the crossing");
+    assert_eq!(plane_error(&s), None);
+}
+
+#[test]
+fn crossing_ref_reports_lost_crossings() {
+    // (a) the other curve is deleted; (b) it is moved away.
+    for delete in [true, false] {
+        let mut s = Session::default();
+        let sk = cross_sketch(&mut s, json!("XY"), &[[[0.0, 0.0], [10.0, 10.0]], [[0.0, 10.0], [10.0, 0.0]]]);
+        crossing_plane(&mut s, sk, "l1", "l2", [5.0, 5.0]).unwrap();
+        assert_eq!(plane_error(&s), None);
+        run(&mut s, "sketch.edit", json!({"sketch": sk}));
+        if delete {
+            run(&mut s, "sketch.delete", json!({"entities": ["l2"]}));
+        } else {
+            run(&mut s, "sketch.move_point", json!({"point": "l2.start", "to": [20, 30]}));
+            run(&mut s, "sketch.move_point", json!({"point": "l2.end", "to": [30, 20]}));
+        }
+        run(&mut s, "sketch.finish", json!({}));
+        assert!(plane_error(&s).is_some(), "delete={delete}");
+    }
+}
+
+#[test]
+fn crossing_ref_survives_a_trim_that_keeps_the_id() {
+    let mut s = Session::default();
+    // l3 cuts l1 near its far end, so the end piece beyond it can be trimmed away.
+    let sk = cross_sketch(&mut s, json!("XY"), &[[[0.0, 0.0], [20.0, 20.0]], [[0.0, 20.0], [20.0, 0.0]], [[16.0, 10.0], [16.0, 30.0]]]);
+    crossing_plane(&mut s, sk, "l1", "l2", [10.0, 10.0]).unwrap();
+    let at = sketch_plane(&s, sk).to_world(Vec2::new(10.0, 10.0));
+    run(&mut s, "sketch.edit", json!({"sketch": sk}));
+    run(&mut s, "sketch.trim", json!({"curve": "l1", "at": [18, 18]}));
+    run(&mut s, "sketch.finish", json!({}));
+    assert_eq!(plane_error(&s), None);
+    assert!(on_plane(&plane(&s, "X"), at));
+}
+
+#[test]
+fn crossing_ref_after_a_break_at_the_crossing() {
+    let mut s = Session::default();
+    let sk = cross_sketch(&mut s, json!("XY"), &[[[0.0, 0.0], [10.0, 10.0]], [[0.0, 10.0], [10.0, 0.0]]]);
+    crossing_plane(&mut s, sk, "l1", "l2", [5.0, 5.0]).unwrap();
+    let at = sketch_plane(&s, sk).to_world(Vec2::new(5.0, 5.0));
+    run(&mut s, "sketch.edit", json!({"sketch": sk}));
+    run(&mut s, "sketch.break", json!({"curve": "l1", "points": [[5, 5]]}));
+    run(&mut s, "sketch.finish", json!({}));
+    // `split_at` keeps l1's id on the first piece, which now ends on l2 (a corner, which counts as a
+    // crossing): the plane still resolves at the same point.
+    assert_eq!(plane_error(&s), None);
+    assert!(on_plane(&plane(&s, "X"), at));
+}

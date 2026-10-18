@@ -89,7 +89,7 @@ fn remap_geo(
         return Err(crate::DocError::Invalid("clone plane reference depth exceeded".into()));
     }
     match g {
-        GeoRef::SketchPoint { sketch, .. } | GeoRef::SketchCurve { sketch, .. } => {
+        GeoRef::SketchPoint { sketch, .. } | GeoRef::SketchCurve { sketch, .. } | GeoRef::SketchCrossing { sketch, .. } => {
             if let Some(new) = ids.get(sketch) {
                 *sketch = *new;
             }

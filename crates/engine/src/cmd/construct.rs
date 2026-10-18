@@ -12,11 +12,10 @@ use solidcraft_doc::{FeatureKind, PlaneRef};
 
 use super::CommandSpec;
 use super::features::{add_feature, check_expr, plane_param, sketch_id};
-use crate::params::{bad, req_expr, str_, vec3};
+use crate::params::{bad, req_expr, str_, vec2, vec3};
 use crate::{Result, Session};
 
-const REF: &str =
-    "{face|edge|vertex|point: [x,y,z]} | {plane: XY|name|{origin, normal}} | {axis: X|Y|Z|name} | {construct_point: name} | {sketch, point|curve}";
+const REF: &str = "{face|edge|vertex|point: [x,y,z]} | {plane: XY|name|{origin, normal}} | {axis: X|Y|Z|name} | {construct_point: name} | {sketch, point|curve|crossing: [curve, curve], near: [x,y]}";
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("construct.axis.through_cylinder", "Axis Through Cylinder/Cone/Torus", axis_face)
@@ -102,6 +101,12 @@ fn geo(s: &Session, v: Option<&Value>, cmd: &str, what: &str) -> Result<GeoRef> 
         GeoRef::Vertex { at }
     } else if let Some(sk) = v.get("sketch") {
         let sketch = sketch_id(s, Some(sk), cmd, what)?;
+        if let Some(c) = v.get("crossing") {
+            let ids = c.as_array().filter(|a| a.len() == 2).and_then(|a| Some((a.first()?.as_str()?, a.get(1)?.as_str()?)));
+            let near = v.get("near").and_then(vec2).ok_or_else(|| bad(cmd, format!("`{what}`: a crossing needs `near`: [x, y]")))?;
+            let (a, b) = ids.ok_or_else(|| bad(cmd, format!("`{what}`: `crossing` is a list of two curve ids")))?;
+            return Ok(GeoRef::SketchCrossing { sketch, a: a.to_string(), b: b.to_string(), near });
+        }
         match (str_(v, "point"), str_(v, "curve")) {
             (Some(point), _) => GeoRef::SketchPoint { sketch, point: point.to_string() },
             (None, Some(curve)) => GeoRef::SketchCurve { sketch, curve: curve.to_string() },

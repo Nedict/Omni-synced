@@ -857,6 +857,32 @@ fn hostile_params_never_panic() {
     assert!(internal.is_empty(), "commands panicked:\n{}", internal.join("\n"));
 }
 
+/// A hostile sketch-crossing reference is an error or a feature error, never a panic (the key/value
+/// sweep above can't build a nested reference).
+#[test]
+fn hostile_crossing_refs_never_panic() {
+    let refs = [
+        json!({"type": "sketch_crossing", "sketch": 999999, "a": "l1", "b": "l2", "near": [1, 1]}),
+        json!({"type": "sketch_crossing", "sketch": 1, "a": "nope", "b": "l1", "near": [1, 1]}),
+        json!({"type": "sketch_crossing", "sketch": 1, "a": "l1", "b": "l1", "near": [1, 1]}),
+        json!({"type": "sketch_crossing", "sketch": 1, "a": "l1", "b": "l2", "near": [1e308, -1e308]}),
+        json!({"sketch": 1, "crossing": "l1", "near": [1, 1]}),
+        json!({"sketch": 1, "crossing": ["l1"], "near": [1, 1]}),
+        json!({"sketch": 1, "crossing": ["l1", "l2"]}),
+        json!({"sketch": 999999, "crossing": ["l1", "l2"], "near": [1, 1]}),
+    ];
+    for r in refs {
+        let mut s = Session::default();
+        let _ = s.execute("sketch.create", &json!({"plane": "XY"}));
+        let _ = s.execute("sketch.line", &json!({"points": [[0, 0], [10, 10]]}));
+        let _ = s.execute("sketch.line", &json!({"points": [[0, 10], [10, 0]]}));
+        let _ = s.execute("sketch.finish", &json!({}));
+        let p = json!({"a": r.clone(), "b": {"point": [100, 0, 0]}, "c": {"point": [0, 100, 0]}});
+        let res = s.execute("construct.plane.three_points", &p);
+        assert!(!matches!(res, Err(EngineError::Internal(..))), "{r}: {res:?}");
+    }
+}
+
 #[test]
 fn registry_is_consistent() {
     let specs = command_specs();
