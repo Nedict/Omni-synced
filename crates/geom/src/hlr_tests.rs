@@ -1135,6 +1135,19 @@ fn a_big_circle_passing_behind_a_thin_left_out_face_is_uncertain_there() {
 }
 
 #[test]
+fn a_torus_in_two_halves_keeps_whole_outlines_with_fine_trims() {
+    // Seen along (0, 1, -1) the traced outline's chords stand up to their deviation off the
+    // torus; with a finer trim (768 samples a span) the boundary tolerance is smaller than
+    // that, and the outline must still not break into gaps.
+    let def = |n: usize| prepare(&torus(20., 5.), &Options { trim_samples: n, ..Options::default() }).unwrap();
+    let view = View::new(Vec3::new(0., 1., -1.), Vec3::new(0., 0., 1.)).unwrap();
+    let count = |n: usize| {
+        hidden_lines(&[def(n)], &[identity(0, [0.; 3])], &view, &Options { trim_samples: n, ..Options::default() }, &never).unwrap().stats.silhouettes
+    };
+    assert_eq!(count(768), count(256));
+}
+
+#[test]
 fn narrow_torus_strips_keep_their_outline() {
     // Two strips of a torus R 20, r 10 between the meridian angles 0.3002, 0.3005 and 0.3008,
     // seen from the side: each side of the outline is a 0.006 mm piece of the circle traced on

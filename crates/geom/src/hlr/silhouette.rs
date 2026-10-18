@@ -36,7 +36,12 @@ fn extent(parts: &[(&S3, &Trim)], p: Vec3, a: Vec3) -> (f64, f64) {
 pub(crate) fn silhouettes(parts: &[(&S3, &Trim)], an: Analytic, d: Vec3, out: &mut Vec<Sil>) {
     let Some(&(s, trim)) = parts.first() else { return };
     let mut push = |curve: C3, acc: CurveAccuracy| {
-        let mut ranges: Vec<[f64; 2]> = parts.iter().flat_map(|(s, trim)| inside_ranges(&curve, s, trim)).collect();
+        // A traced curve's chords stand up to their deviation off the surface.
+        let slack = match acc {
+            CurveAccuracy::Sampled { max_sample_deviation_mm: dev } => dev,
+            _ => 0.,
+        };
+        let mut ranges: Vec<[f64; 2]> = parts.iter().flat_map(|(s, trim)| inside_ranges(&curve, s, trim, slack)).collect();
         ranges.sort_by(|a, b| a[0].total_cmp(&b[0]));
         let [t0, t1] = curve.domain();
         let mut merged: Vec<[f64; 2]> = Vec::with_capacity(ranges.len());
@@ -120,7 +125,8 @@ pub(crate) fn join_tol(trim: &Trim) -> f64 {
 }
 
 /// Parameter ranges of `c` whose points are inside the face, transitions found by bisection.
-pub(crate) fn inside_ranges(c: &C3, s: &S3, trim: &Trim) -> Vec<[f64; 2]> {
+/// `slack` is how far the curve itself may stand off the surface (a traced curve's chords).
+pub(crate) fn inside_ranges(c: &C3, s: &S3, trim: &Trim, slack: f64) -> Vec<[f64; 2]> {
     let [t0, t1] = c.domain();
     let n = 256;
     let mut hint = None;
@@ -128,7 +134,7 @@ pub(crate) fn inside_ranges(c: &C3, s: &S3, trim: &Trim) -> Vec<[f64; 2]> {
     // surface, which is not drawn as an edge) is inside. Off the patch is outside: the inversion
     // clamps to the chart's domain.
     let tol = 2. * trim.chord_error + 1e-9 * (1. + (trim.hi - trim.lo).len());
-    let on_patch = tol + 2. * join_tol(trim);
+    let on_patch = tol + 2. * join_tol(trim) + 2. * slack;
     let state = |t: f64, hint: &mut Option<[f64; 2]>| -> bool {
         let p = c.at(t);
         let uv = s.inverse(p, *hint);
