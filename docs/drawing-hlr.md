@@ -64,8 +64,9 @@ is at most 1e-7 of the scene size. A fitted edge record also carries its own bou
 the visibility work allows for it.
 
 Surfaces are recognised whether they are stored as analytic records, as revolutions of
-lines and circles or as spline patches (to 1e-9 relative); a recognised patch is trimmed
-and intersected in its own analytic chart. Faces that lie on one surface (a sphere
+lines and circles or as spline patches (to 1e-9 relative; a patch whose control points lie
+in one plane is that plane); a recognised patch is trimmed and intersected in its own
+analytic chart. Faces that lie on one surface (a sphere
 stored as two hemispheres, a cylinder split in two) share their silhouettes: the edges
 between them are seams and are not drawn, and a silhouette running along such a seam is
 one curve. A face joins such a set only when the first face's surface passes through its
@@ -124,16 +125,18 @@ and intervals:
 - a cylinder's silhouette rulings are exact lines, including one along the seam; a cone
   frustum seen from the front has exact rulings and draws each edge-on circle once;
 - a sphere's outline is exact conic arcs at its radius in three views;
-- a disc bounded by a rational circle with unevenly spaced knots is drawn as arcs turning
-  the full 360 degrees;
+- a disc bounded by a rational circle with unevenly spaced knots, with a knot span narrower
+  than rounding, or with a parameterisation that races through its first turn is drawn as
+  arcs turning the full 360 degrees; splines off their circle between evenly spaced samples
+  or inside such a narrow span are drawn as chords;
 - a torus stored as two halves, seen face on, is drawn at both equators, one silhouette
   each; an edge under it is hidden over exactly the intervals the tube covers; seen
   obliquely its outline spans R + r on both sides with a deviation under 1e-3 mm;
-- cone frusta and narrow cone sectors a hair off one axis, far from the origin, keep their
-  own outlines;
+- cone frusta and narrow cone sectors a hair off one axis or with axes 3e-7 rad apart, and
+  spherical caps through one circle with centres 5e-7 mm apart, keep their own outlines;
 - a cylinder 1e5 and 1e7 mm from the origin draws as at the origin;
 - a freeform patch is reported and makes the edges it covers uncertain, or hidden when
-  freeform faces are enabled;
+  freeform faces are enabled; a flat spline patch hides them for certain;
 - two touching boxes draw each shared edge once;
 - mirrored placements, bad body indices and bad views are refused; cancellation and
   budgets return errors;
