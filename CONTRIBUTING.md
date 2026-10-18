@@ -127,6 +127,10 @@ The [README](README.md#architecture) has the layer table. The short version:
    `navigation::handle`; never read drags, the wheel or pinch to move the camera yourself. The
    `hand_rolled_camera_input_is_rejected` test fails if a page does.
 
+Labels, parameter docs, messages and docs use the terms in the
+[glossary](https://docs.solidcraft.io/reference/glossary.html): one term for each idea. A change that adds a new
+idea adds its term there.
+
 [AGENTS.md](AGENTS.md) has the long form of these rules. It's written for AI agents, but it's
 the most complete description of the house style.
 
@@ -137,6 +141,10 @@ the most complete description of the house style.
 | Unit and engine tests | next to the code, or `*_tests.rs` files | `cargo xtask test` (or `cargo test --workspace --profile ci`) |
 | UI scenarios | `crates/ui-egui/tests/scenarios/*.json` | part of `cargo test` |
 | Reference tests | `cargo xtask oracle` | `tests/oracle/` (see below) |
+
+A geometry change that changes the robustness goldens re-records them in the same pull request:
+`ROBUSTNESS_GOLDENS_BLESS="why it changed" cargo test --profile ci -p solidcraft-engine --lib robustness_goldens::`
+(see [docs/robustness.md](docs/robustness.md)); CI runs every seed on pull requests that touch geometry.
 
 **UI scenarios** drive the real app headless: start a tool, click a plane or a sketch point,
 press keys, then assert on the result.
