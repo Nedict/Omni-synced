@@ -288,3 +288,26 @@ fn letting_go_on_a_snap_or_undoing_evaluates_once() {
     assert!(r["constraint"]["error"].is_string(), "{r}");
     assert!(!s.model.is_stale());
 }
+
+#[test]
+fn drag_end_adds_several_constraints_or_none() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY"}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [20, 20]]}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 20], [20, 0]]}));
+    run(&mut s, "sketch.line", json!({"points": [[40, 5], [50, 15]]}));
+    let on = |c: &str| json!({"command": "sketch.constraint.coincident", "params": {"a": "l3.start", "b": c}});
+    let count = |s: &Session| sketch_of(s).constraints.len();
+    let before = count(&s);
+    let bad = json!({"command": "sketch.constraint.coincident", "params": {"a": "l3.start", "b": "nope"}});
+    let r = run(&mut s, "sketch.drag_end", json!({"constraints": [on("l1"), bad]}));
+    assert!(r["constraints"][0]["error"].is_string(), "{r}");
+    assert_eq!(count(&s), before, "neither is kept");
+    let r = run(&mut s, "sketch.drag_end", json!({"constraints": [on("l1"), on("l2")]}));
+    assert_eq!(r["constraints"].as_array().map(Vec::len), Some(2), "{r}");
+    assert_eq!(count(&s), before + 2);
+    // Hostile input is an error, not a panic.
+    assert!(s.execute("sketch.drag_end", &json!({"constraints": [{"command": "sketch.finish"}]})).is_err());
+    assert!(s.execute("sketch.drag_end", &json!({"constraints": 3})).is_err());
+    assert!(s.execute("sketch.drag_end", &json!({"constraints": vec![on("l1"); 9]})).is_err());
+}

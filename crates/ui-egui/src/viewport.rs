@@ -2727,7 +2727,12 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             if let Some((_, depth, _)) = app.viewport.point_drag.clone() {
                 // Letting go on a point, midpoint or curve adds the matching constraint, then the
                 // whole model follows the drag, all in the drag's undo step.
-                let _ = app.session.execute("sketch.drag_end", &json!({ "constraint": crate::drag_snap::release() }));
+                let release = {
+                    let st = app.session.world_state();
+                    let sk = app.session.active_sketch.and_then(|s| st.sketch(s));
+                    sk.map_or_else(|| json!({}), |ss| crate::drag_snap::release(&ss.sketch))
+                };
+                let _ = app.session.execute("sketch.drag_end", &release);
                 app.session.undo.truncate(depth + 1);
             }
             crate::drag_snap::clear();
