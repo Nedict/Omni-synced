@@ -249,8 +249,8 @@ mod tests {
         ENGLISH.messages().values().map(String::as_str).collect()
     }
 
-    /// Catalogs delivered complete. English is the source catalog; Czech, Italian, Japanese, Malay and Chinese
-    /// are complete. German, Korean, Russian, French and Ukrainian
+    /// Catalogs delivered complete. English is the source catalog; Czech, Italian, Japanese and Chinese
+    /// are complete. German, Korean, Malay, Russian, French and Ukrainian
     /// are partial (German and Korean predate the coverage guards; Russian, French and Ukrainian
     /// are kept partial so a new label doesn't need more translations), so their gaps fall back
     /// to English and are reported by `cargo xtask i18n` without failing the build, while
