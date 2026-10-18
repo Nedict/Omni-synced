@@ -91,6 +91,18 @@ offers the face where you clicked. The corners of text outlines don't count, nor
 points while the sketch hides projected geometry. The hole keeps that place on the face; to have
 holes follow later edits of the sketch, place them with **Multiple**.
 
+The face itself offers snap points too: its middle, and the centre of each round edge on it (a
+boss standing on it, a rounded corner, a hole already in it). While the cursor is over the face
+they show as small marks; a pick near one, or on or beside one of those round edges, places the
+hole at that centre, and the mark it takes is named. Hold **Alt** or **Ctrl** to place the hole
+exactly where you click. Each placed hole has a handle at its centre: drag it to move the hole
+(it snaps the same way). A pick elsewhere on the same face also moves the hole there, and a pick
+on the hole takes it out. **Edit Feature** shows the handle as well, so a hole can be moved later.
+
+The Hole dialog draws a section through the hole as its options make it (type, extents, drill
+point, tapped) and puts each size in a field beside the dimension it sets; hovering a field, or
+typing in it, lights its dimension.
+
 Fillets and chamfers handle straight edges between planar faces, whole smooth loops, runs of
 neighbouring edges with mitred or spherical corners, and closed chains of curved edges (a rolling
 ball). See the roadmap's known limitations for the rest.
