@@ -2246,6 +2246,15 @@ fn seg_dist(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     p.distance(a + ab * t)
 }
 
+/// Whether both curves of a crossing end at it.
+fn corner(sk: &solidcraft_engine::sketch::Sketch, c: &solidcraft_engine::Crossing) -> bool {
+    let ends_at = |i: usize| {
+        let ends = sk.curves.get(i).and_then(|k| k.kind.ends());
+        ends.is_some_and(|(a, b)| [a, b].iter().any(|&p| sk.point(p).is_some_and(|q| q.dist(c.at) < 1e-6)))
+    };
+    ends_at(c.a) && ends_at(c.b)
+}
+
 /// Point on the active sketch plane under the cursor (sketch coordinates), snapped to sketch
 /// points within a few pixels and otherwise to a fine grid. Returns the snapped point and the
 /// id of the sketch point it snapped to.
@@ -2257,6 +2266,16 @@ pub fn sketch_point_at(app: &SolveApp, proj: &Proj, pos: Pos2) -> Option<(Vec2, 
         if let Hit::SketchPoint { sketch, id, at } = h
             && sketch == sid
         {
+            // A point sitting on a crossing is held on both curves, unless snapping is off.
+            if !crate::drag_snap::suppressed()
+                && let Some((a, b)) = proj.to_screen(ss.plane.to_world(at)).zip(proj.to_screen(ss.plane.to_world(at + Vec2::X)))
+                && let Some(c) = solidcraft_engine::crossing_near(&ss.sketch, at, 2.0 / (a.distance(b) as f64).max(1e-9))
+                // A corner (both curves end here) is already joined: keep the point.
+                && !corner(&ss.sketch, &c)
+                && let Some(arg) = crate::sketch_tools::crossing_arg(&ss.sketch, &c)
+            {
+                return Some((c.at, Some(arg)));
+            }
             return Some((at, Some(id)));
         }
     }
