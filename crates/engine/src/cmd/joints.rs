@@ -387,8 +387,8 @@ fn limits_param(s: &Session, p: &Value, kind: JointKind, cmd: &str) -> Result<Ve
     Ok(out)
 }
 
-fn next_joint_id(s: &Session) -> u64 {
-    s.doc.assembly.joints.iter().map(|j| j.id).max().unwrap_or(0) + 1
+fn next_joint_id(s: &Session, cmd: &str) -> Result<u64> {
+    super::next_free_id(cmd, s.doc.assembly.joints.iter().map(|j| j.id))
 }
 
 /// A joint origin as `joint.create` takes it (`{occurrence?, face | circle | point | frame}`),
@@ -406,7 +406,7 @@ pub(crate) fn add_rigid_unsolved(s: &mut Session, a: JointOrigin, b: JointOrigin
     if a.occurrence == b.occurrence {
         return Err(bad("joint.create", "a joint needs two different occurrences"));
     }
-    let id = next_joint_id(s);
+    let id = next_joint_id(s, "joint.create")?;
     let n = JointKind::Rigid.dofs().len();
     s.visibility.hidden_joints.retain(|h| *h != id);
     s.doc_mut().assembly.joints.push(Joint {
@@ -502,7 +502,7 @@ fn joint(s: &mut Session, p: &Value) -> Result<Value> {
     let kind = kind_param(p, cmd)?;
     let a = origin_param(s, p.get("a"), cmd)?;
     let b = origin_param(s, p.get("b"), cmd)?;
-    let id = next_joint_id(s);
+    let id = next_joint_id(s, cmd)?;
     let name = str_(p, "name").map(str::to_string).unwrap_or_else(|| format!("Joint{id}"));
     let offset = match p.get("offset") {
         Some(v) => value(s, v, false, cmd)?,
@@ -542,7 +542,7 @@ fn as_built(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let fa = s.doc.frame_in_occurrence(oa, &w).ok_or_else(|| bad(cmd, "occurrence transform"))?;
     let fb = s.doc.frame_in_occurrence(ob, &w).ok_or_else(|| bad(cmd, "occurrence transform"))?;
-    let id = next_joint_id(s);
+    let id = next_joint_id(s, cmd)?;
     let name = str_(p, "name").map(str::to_string).unwrap_or_else(|| format!("Joint{id}"));
     let n = kind.dofs().len();
     let j = Joint {
