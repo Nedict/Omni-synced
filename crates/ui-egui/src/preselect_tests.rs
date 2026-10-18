@@ -979,22 +979,35 @@ fn thread_face(app: &SolveApp, body: &str) -> Sel {
 
 #[test]
 fn thread_size_suggestion_matches_the_feature_for_shafts_and_holes() {
-    for (diameter, internal, expected, explicit) in [
-        (8.0, false, "M8", false),
-        (7.9, false, "M8", false),
-        (3.2, false, "M3", false),
-        (6.35, false, "M6", false),
-        (32.8, false, "M33x3.5", true),
-        (20.0, false, "M20", false),
-        (5.0, true, "M6", false),
-        (7.0, false, "M7x1", true),
-        (44.0, false, "M44x1.5", true),
-        (100.25, false, "M100x1.5", true),
-        (125.25, false, "M125.25x1.5", true),
+    for (diameter, internal, expected) in [
+        (8.0, false, "M8"),
+        (7.9, false, "M8"),
+        (3.2, false, "M3"),
+        (6.35, false, "M6"),
+        (32.8, false, "M33x3.5"),
+        (20.0, false, "M20"),
+        (12.9, false, "M12"),
+        (19.2, false, "M20"),
+        (5.5, false, "M5.5x0.5"),
+        (2.5, true, "M3"),
+        (3.3, true, "M4"),
+        (4.2, true, "M5"),
+        (5.0, true, "M6"),
+        (6.8, true, "M8"),
+        (8.5, true, "M10"),
+        (10.2, true, "M12"),
+        (12.9, true, "M14"),
+        (19.2, true, "M22"),
+        (44.0, true, "M48"),
+        (7.0, false, "M7x1"),
+        (44.0, false, "M45x4.5"),
+        (100.25, false, "M100x1.5"),
+        (125.25, false, "M125.25x1.5"),
     ] {
         let mut app = app_with(json!([]));
         if internal {
-            app.run("solid.box", json!({"corner":[-10,-10,0],"length":20,"width":20,"height":10})).unwrap();
+            let side = diameter + 10.0;
+            app.run("solid.box", json!({"corner":[-side / 2.0,-side / 2.0,0],"length":side,"width":side,"height":10})).unwrap();
         }
         app.run("solid.cylinder", json!({"radius":diameter / 2.0,"height":10,"body_name":"Cylinder"})).unwrap();
         if internal {
@@ -1006,7 +1019,16 @@ fn thread_size_suggestion_matches_the_feature_for_shafts_and_holes() {
         assert!(matches!(&d.kind, Kind::Thread { designation, .. } if designation == expected), "{:?}", d.kind);
         assert_eq!(app.session.doc.to_json(), saved, "suggesting a size is read-only");
         let (command, params) = apply_commands(&app, &d).unwrap().remove(0);
-        assert_eq!(params.get("designation").is_some(), explicit, "persist new defaults without changing historical automatic features");
+        assert!(params.get("designation").is_none(), "suggestions remain automatic");
+        assert_eq!(params["sizing"], "iso261");
+        let mut headless = Session::new(solidcraft_engine::doc::Document::from_json(&saved).unwrap());
+        let direct = headless.execute("solid.thread", &json!({"face": params["face"]})).unwrap();
+        assert_eq!(direct["thread"]["designation"], expected, "CLI/MCP and UI share the default");
+        if internal {
+            let mut legacy = Session::new(solidcraft_engine::doc::Document::from_json(&saved).unwrap());
+            let original = legacy.execute("solid.thread", &json!({"face": params["face"], "sizing": "legacy"})).unwrap();
+            assert_eq!(original["thread"]["designation"], expected, "core-hole sizing keeps the existing rule");
+        }
         let result = app.session.execute(&command, &params).unwrap();
         assert_eq!(result["thread"]["designation"], expected);
         assert_eq!(result["thread"]["internal"], internal);
@@ -1051,13 +1073,18 @@ fn thread_size_suggestion_follows_picks_without_overwriting_manual_sizes() {
 
 #[test]
 fn thread_size_suggestion_reopens_without_changing_saved_thread_parameters() {
-    for (diameter, designation, expected) in
-        [(8.0, None, "M8"), (8.0, Some("M8"), "M8"), (8.0, Some("M8x1"), "M8x1"), (44.0, None, "M42"), (44.0, Some("M44x1"), "M44x1")]
-    {
+    for (diameter, designation, sizing, expected) in [
+        (8.0, None, "legacy", "M8"),
+        (8.0, Some("M8"), "legacy", "M8"),
+        (8.0, Some("M8x1"), "iso261", "M8x1"),
+        (44.0, None, "legacy", "M42"),
+        (44.0, None, "iso261", "M45x4.5"),
+        (44.0, Some("M44x1"), "legacy", "M44x1"),
+    ] {
         let mut h = crate::scenario::Harness::new();
         h.app.run("solid.cylinder", json!({"radius":diameter / 2.0,"height":10})).unwrap();
         let Sel::Face { point, .. } = thread_face(&h.app, "Body1") else { panic!("a face") };
-        let mut params = json!({"face":point});
+        let mut params = json!({"face":point,"sizing":sizing});
         if let Some(size) = designation {
             params["designation"] = json!(size);
         }
@@ -1066,6 +1093,11 @@ fn thread_size_suggestion_reopens_without_changing_saved_thread_parameters() {
         h.app.session = Session::new(solidcraft_engine::doc::Document::from_json(&h.app.session.doc.to_json()).unwrap());
         h.app.edit_feature(id);
         h.frames(2);
+        if designation.is_none() {
+            type_thread_field(&mut h, "Pitch", "0.75");
+            h.step(&json!({"click":{"handle":"dialog:Automatic size"}})).unwrap();
+            h.frames(2);
+        }
         let d = h.app.dialog.as_ref().unwrap();
         assert!(matches!(&d.kind, Kind::Thread { designation: size, .. } if size == expected), "{d:?}");
         let (command, params) = apply_commands(&h.app, d).unwrap().remove(0);
@@ -1076,12 +1108,12 @@ fn thread_size_suggestion_reopens_without_changing_saved_thread_parameters() {
 
 #[test]
 fn automatic_thread_reopens_on_a_moved_component_without_resizing() {
-    for (diameter, expected) in [(8.0, "M8"), (44.0, "M42")] {
+    for (diameter, sizing, expected) in [(8.0, "legacy", "M8"), (44.0, "legacy", "M42"), (44.0, "iso261", "M45x4.5")] {
         let mut h = crate::scenario::Harness::new();
         let part = h.app.run("component.create", json!({"name":"Shaft"})).unwrap();
         h.app.run("solid.cylinder", json!({"radius":diameter / 2.0,"height":10})).unwrap();
         let Sel::Face { point, .. } = thread_face(&h.app, "Body1") else { panic!("a face") };
-        let id = h.app.run("solid.thread", json!({"face":point})).unwrap()["feature"].as_u64().unwrap();
+        let id = h.app.run("solid.thread", json!({"face":point,"sizing":sizing})).unwrap()["feature"].as_u64().unwrap();
         h.app.run("occurrence.move", json!({"occurrence":part["occurrence"],"translate":[100,20,0]})).unwrap();
         let before = h.app.session.doc.feature(id).unwrap().kind.clone();
         h.app.session = Session::new(solidcraft_engine::doc::Document::from_json(&h.app.session.doc.to_json()).unwrap());
@@ -1284,12 +1316,13 @@ fn thread_fields_size_a_44_mm_flange_hub_and_reopen() {
     h.step(&json!({"start":"solid.thread"})).unwrap();
     let saved = h.app.session.doc.to_json();
     let before = h.app.session.world_state().body("Flange").unwrap().mesh().measure().volume;
-    assert!(h.widget("44 mm").is_some(), "the selected 44 mm hub defaults to 44 mm without touching Size");
-    assert_eq!(apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap()[0].1["designation"], "M44x1.5");
+    assert!(h.widget("45 mm").is_some(), "the 44 mm hub suggests the nearest ISO diameter");
+    assert!(apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap()[0].1.get("designation").is_none());
     type_thread_field(&mut h, "Size", "42");
     h.step(&json!({"click":{"handle":"dialog:Automatic size"}})).unwrap();
-    assert!(h.widget("44 mm").is_some(), "automatic reset also uses the hub diameter");
-    assert_eq!(apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap()[0].1["designation"], "M44x1.5");
+    assert!(h.widget("45 mm").is_some(), "automatic reset uses the shared ISO default");
+    assert!(apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap()[0].1.get("designation").is_none());
+    type_thread_field(&mut h, "Size", "44");
     type_thread_field(&mut h, "Pitch", "1");
     h.step(&json!({"click":{"handle":"dialog:Full Length"}})).unwrap();
     type_thread_field(&mut h, "Length", "5 mm");

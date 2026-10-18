@@ -1,7 +1,7 @@
 //! Editable metric thread dimensions and optional presets write the existing designation
 //! parameter. Browsing choices does not edit the model or freeze an automatic feature.
 
-use solidcraft_engine::doc::{metric_thread_sizes, parse_metric_thread};
+use solidcraft_engine::doc::{metric_thread_coarse_presets, parse_metric_thread};
 
 use crate::dialogs::{FIELD_W, check, row_label};
 use crate::i18n::tr;
@@ -11,72 +11,17 @@ use crate::i18n::tr;
 const PITCHES: &[f64] =
     &[0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.7, 0.75, 0.8, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0];
 
-// Additional coarse diameter/pitch pairs from ISO 261:1998, table 2:
-// https://www.iso.org/standard/4165.html
-// Keep UI presets separate from the document's historical automatic sizing table:
-// expanding that table would change the geometry of existing automatic features.
-const EXTRA_COARSE: &[(f64, f64)] = &[
-    (1.0, 0.25),
-    (1.1, 0.25),
-    (1.2, 0.25),
-    (1.4, 0.3),
-    (1.8, 0.35),
-    (2.2, 0.45),
-    (3.5, 0.6),
-    (4.5, 0.75),
-    (7.0, 1.0),
-    (9.0, 1.25),
-    (11.0, 1.5),
-    (33.0, 3.5),
-    (39.0, 4.0),
-    (45.0, 4.5),
-    (52.0, 5.0),
-    (60.0, 5.5),
-    (64.0, 6.0),
-    (68.0, 6.0),
-];
-
 // Whole-millimetre convenience values avoid gaps left by a coarse-only catalogue.
 // This is a browsable range, never a limit or a list of standard diameter/pitch pairs.
 fn diameter_presets() -> Vec<f64> {
-    let mut diameters: Vec<f64> = (1..=100).map(f64::from).chain(metric_thread_sizes().iter().chain(EXTRA_COARSE).map(|(d, _)| *d)).collect();
+    let mut diameters: Vec<f64> = (1..=100).map(f64::from).chain(metric_thread_coarse_presets().map(|(d, _)| d)).collect();
     diameters.sort_by(f64::total_cmp);
     diameters.dedup();
     diameters
 }
 
 fn coarse_pitch(diameter: f64) -> Option<f64> {
-    metric_thread_sizes().iter().chain(EXTRA_COARSE).find(|(d, _)| *d == diameter).map(|(_, p)| *p)
-}
-
-/// New external threads snap to the nearest fitting preset. Persist a resolved pair
-/// when the historical document default differs, so preview, OK and reload agree.
-/// Internal faces retain tap-drill sizing: their measured diameter is not the major size.
-pub(crate) fn suggestion(s: &solidcraft_engine::Session, pick: &solidcraft_engine::Sel) -> Option<(String, bool)> {
-    let solidcraft_engine::Sel::Face { body, point, .. } = pick else { return None };
-    let state = s.world_state();
-    let legacy = solidcraft_engine::doc::suggested_thread(&state, *point).ok();
-    let cylinder = solidcraft_engine::kernel::cylinder_face_at(&state.body(body)?.body, *point)?;
-    if cylinder.internal {
-        return legacy.map(|size| (size, false));
-    }
-    // Remove sub-micron roundoff from analytic surfaces (e.g. 43.999999999999986).
-    let diameter = (cylinder.radius * 2.0 * 1e6).round() / 1e6;
-    let diameter = diameter_presets()
-        .into_iter()
-        .min_by(|a, b| (a - diameter).abs().total_cmp(&(b - diameter).abs()))
-        .filter(|d| (d - diameter).abs() <= 0.15 * diameter && (d - diameter).abs() < 0.15 * d)
-        .unwrap_or(diameter);
-    let pitch = coarse_pitch(diameter).unwrap_or(1.5_f64.min(diameter / 2.0));
-    let size = format!("M{diameter}x{pitch}");
-    let pair = parse_metric_thread(&size)?;
-    if let Some(legacy) = legacy
-        && parse_metric_thread(&legacy) == Some(pair)
-    {
-        Some((legacy, false))
-    } else {
-        Some((size, true))
-    }
+    metric_thread_coarse_presets().find(|(d, _)| *d == diameter).map(|(_, p)| p)
 }
 
 /// Keep incomplete input while typing. The feature still stores only its designation;
