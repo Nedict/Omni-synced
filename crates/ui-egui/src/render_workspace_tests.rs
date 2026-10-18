@@ -536,13 +536,13 @@ fn image_panel_frame(app: &mut SolveApp, ctx: &egui::Context) -> egui::FullOutpu
 fn completed_image_is_painted_once_available_and_upload_is_cached() {
     let mut h = Harness::new();
     let ctx = egui::Context::default();
-    image_panel_frame(&mut h.app, &ctx);
+    image_panel_frame(&mut h.app, &ctx).textures_delta.clear();
     assert!(h.app.render_workspace.image.is_none());
     let doc = h.app.session.doc.clone();
     let undo = h.app.session.undo.len();
     let job = completed_preview(&mut h, [20, 40, 60]);
     h.app.render_workspace.view.job = Some(job);
-    let output = image_panel_frame(&mut h.app, &ctx);
+    let mut output = image_panel_frame(&mut h.app, &ctx);
     let (cached_job, texture) = h.app.render_workspace.image.as_ref().unwrap();
     let texture = texture.as_ref().unwrap();
     let id = texture.id();
@@ -551,13 +551,17 @@ fn completed_image_is_painted_once_available_and_upload_is_cached() {
     let uploaded = &output.textures_delta.set.get(&id).unwrap().first().unwrap().image;
     let egui::ImageData::Color(pixels) = uploaded;
     assert!(pixels.pixels.iter().all(|p| *p == Color32::from_rgb(20, 40, 60)));
+    // egui requires frame texture deltas to be applied or cleared.
+    output.textures_delta.clear();
     assert!(
         ctx.tessellate(output.shapes, output.pixels_per_point)
             .iter()
             .any(|shape| { matches!(&shape.primitive, egui::epaint::Primitive::Mesh(mesh) if mesh.texture_id == id && !mesh.indices.is_empty()) })
     );
-    let output = image_panel_frame(&mut h.app, &ctx);
+    let mut output = image_panel_frame(&mut h.app, &ctx);
     assert!(!output.textures_delta.set.contains_key(&id), "repaint must reuse the texture");
+    // egui requires frame texture deltas to be applied or cleared.
+    output.textures_delta.clear();
     assert!(Arc::ptr_eq(&doc, &h.app.session.doc));
     assert_eq!(h.app.session.undo.len(), undo);
     let path = h.dir.join("displayed.png");
@@ -572,28 +576,30 @@ fn completed_image_keeps_last_export_during_work_and_updates_for_the_next_job() 
     let ctx = egui::Context::default();
     let first = completed_preview(&mut h, [20, 40, 60]);
     h.app.render_workspace.view.job = Some(first);
-    image_panel_frame(&mut h.app, &ctx);
+    image_panel_frame(&mut h.app, &ctx).textures_delta.clear();
     let old_texture = h.app.render_workspace.image.as_ref().unwrap().1.as_ref().unwrap().id();
     let reply = h.app.run("render.start", json!({"settings":{"width":16,"height":16}})).unwrap();
     let pending = serde_json::from_value(reply["job"].clone()).unwrap();
     h.app.render_workspace.view.job = Some(pending);
-    image_panel_frame(&mut h.app, &ctx);
+    image_panel_frame(&mut h.app, &ctx).textures_delta.clear();
     assert_eq!(h.app.render_workspace.image.as_ref().unwrap().0, first);
     h.app.run("render.cancel", json!({"job":pending})).unwrap();
-    image_panel_frame(&mut h.app, &ctx);
+    image_panel_frame(&mut h.app, &ctx).textures_delta.clear();
     assert_eq!(h.app.render_workspace.image.as_ref().unwrap().0, first);
     let second = completed_preview(&mut h, [80, 100, 120]);
     h.app.render_workspace.view.job = Some(second);
-    let output = image_panel_frame(&mut h.app, &ctx);
+    let mut output = image_panel_frame(&mut h.app, &ctx);
     let (cached_job, texture) = h.app.render_workspace.image.as_ref().unwrap();
     assert_eq!(*cached_job, second);
     assert_ne!(texture.as_ref().unwrap().id(), old_texture);
     assert!(output.textures_delta.free.contains(&old_texture));
+    // egui requires frame texture deltas to be applied or cleared.
+    output.textures_delta.clear();
     crate::documents::open_tab(&mut h.app, Session::default()).unwrap();
-    image_panel_frame(&mut h.app, &ctx);
+    image_panel_frame(&mut h.app, &ctx).textures_delta.clear();
     assert!(h.app.render_workspace.image.is_none(), "another document must not show this image");
     crate::documents::switch(&mut h.app, 0);
-    image_panel_frame(&mut h.app, &ctx);
+    image_panel_frame(&mut h.app, &ctx).textures_delta.clear();
     assert_eq!(h.app.render_workspace.image.as_ref().unwrap().0, second);
     reset_document(&mut h.app);
     assert!(h.app.render_workspace.image.is_none());
