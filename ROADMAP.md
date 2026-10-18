@@ -463,7 +463,9 @@ completed drawings publish atomically. The browser still exports synchronously.
   filleted boxes, bosses, domes, countersinks; corners where four or more planes meet, such as a
   floor falling to a drain, as long as the corner's edges are all convex or all concave); draft on convex planar bodies and on walls (planes, cylinders → cones) between caps; lofts through three or more sections are smooth (B-spline sides through every section), two
   sections ruled. Circular-meridian barrels retain curved inner walls through either axial
-  opening (#2421).
+  opening (#2421). Solid lofts preserve holes through sections with matching hole counts
+  (#2435), including inner walls and caps with openings; a hole cannot appear or disappear
+  between sections, and sections with holes cannot collapse to a point.
 
 - Sketch corner tools: fillet and all three chamfer modes pick a connected corner even when
   its endpoint overlaps the fixed origin or a loose point. Ordinary drawing still snaps to
