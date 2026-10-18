@@ -1001,10 +1001,16 @@ fn screen_box(c: &C3, r: [f64; 2], p: &Placement, view: &View) -> ([f64; 2], [f6
             let (u, v) = (lin(*x * rad[0]), lin(*y * rad[1]));
             for k in 0..2 {
                 let (Some(&uk), Some(&vk)) = (u.get(k), v.get(k)) else { continue };
-                let base = vk.atan2(uk);
-                for m in -6..=6 {
-                    let t = base + m as f64 * std::f64::consts::PI;
-                    if t > r[0] && t < r[1] {
+                // The peaks at base + k pi from the first one past the part's start, wherever
+                // its angles are counted from.
+                let (base, pi) = (vk.atan2(uk), std::f64::consts::PI);
+                let first = ((r[0] - base) / pi).ceil();
+                for k in 0..8 {
+                    let t = base + (first + k as f64) * pi;
+                    if t >= r[1] {
+                        break;
+                    }
+                    if t > r[0] {
                         pts.push(s(c.at(t)));
                     }
                 }

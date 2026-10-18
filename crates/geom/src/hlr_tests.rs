@@ -1152,9 +1152,16 @@ fn an_arc_folding_back_under_a_left_out_face_seen_edge_on_is_uncertain_there() {
     // An arc of radius 10000 in the XZ plane, seen from above: its projection lies on the X axis
     // and turns back at x = 10000 a quarter of the way into its first sample step, so the chord
     // between its first samples (x 9999.953 and 9999.577) has no sag and stops short of the
-    // turn. A tiny freeform patch above x = 10000 covers the turn.
+    // turn. A tiny freeform patch above x = 10000 covers the turn. The arc's angles are counted
+    // from 0 and from 8 pi.
+    for turns in [0., 4.] {
+        folding_arc_under_a_patch(turns * std::f64::consts::TAU);
+    }
+}
+
+fn folding_arc_under_a_patch(offset: f64) {
     let step = std::f64::consts::PI / 256.;
-    let ta = -step / 4.;
+    let ta = -step / 4. + offset;
     let frame = crate::brep::Frame { origin: [0.; 3], x_axis: [1., 0., 0.], y_axis: [0., 0., 1.] };
     let at = |t: f64| [10000. * t.cos(), 0., 10000. * t.sin()];
     let (start, end) = (at(ta), at(ta + std::f64::consts::PI / 8.));
@@ -1187,7 +1194,7 @@ fn an_arc_folding_back_under_a_left_out_face_seen_edge_on_is_uncertain_there() {
     assert_eq!(defs[0].report.freeform_faces, vec![0]);
     let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
     let d = hidden_lines(&defs, &[identity(0, [0.; 3]), identity(1, [0.; 3])], &view, &Options::default(), &never).unwrap();
-    let turn: Vec<&Piece> = edge_line(&d, 1, 0).pieces.iter().filter(|p| p.t[0] <= 0. && p.t[1] >= 0.).collect();
+    let turn: Vec<&Piece> = edge_line(&d, 1, 0).pieces.iter().filter(|p| p.t[0] <= offset && p.t[1] >= offset).collect();
     assert!(!turn.is_empty());
     assert!(turn.iter().all(|p| p.visibility != Visibility::Visible), "{turn:?}");
 }
