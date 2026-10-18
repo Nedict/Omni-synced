@@ -619,6 +619,13 @@ fn on_stack(st: &Stack, at: Vec3, out: Vec3) -> Option<bool> {
     ((d - st.axis * t).len() <= (narrowest / 2.0).max(0.25) && t >= -slack && t <= st.grip + slack).then_some(t > st.grip / 2.0)
 }
 
+/// How far a seat at `at` is from the nearer face of stack `st`: along the axis and across it.
+fn face_gap(st: &Stack, at: Vec3) -> f64 {
+    let d = at - st.start;
+    let t = d.dot(st.axis);
+    t.abs().min((t - st.grip).abs()) + (d - st.axis * t).len()
+}
+
 /// Whether two seated parts sit on one axis.
 fn same_line(a: (Vec3, Vec3), b: (Vec3, Vec3)) -> bool {
     let (Some(u), Some(v)) = (a.1.normalized(), b.1.normalized()) else { return false };
@@ -732,19 +739,24 @@ fn fill(s: &mut Session, p: &Value) -> Result<Value> {
     if f.refresh {
         let seats = seats(s);
         let ours = parts::family_name(s, &f.family).unwrap_or_else(|| f.family.clone());
-        let mut claimed = vec![false; seats.len()];
+        // Each seat counts for the stack it sits nearest a face of: stacks on one axis a little
+        // apart each reach the other's nut, and taking it for the wrong one replaced both.
+        let owner: Vec<Option<(usize, bool)>> = seats
+            .iter()
+            .map(|x| {
+                let (at, out) = x.at?;
+                wants
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(k, w)| Some((k, on_stack(&w.st, at, out)?, face_gap(&w.st, at))))
+                    .min_by(|a, b| a.2.total_cmp(&b.2))
+                    .map(|(k, end, _)| (k, end))
+            })
+            .collect();
+        let claimed: Vec<bool> = owner.iter().map(Option::is_some).collect();
         for (k, w) in wants.iter().enumerate() {
-            let group: Vec<(usize, bool)> = seats
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| !claimed.get(*i).copied().unwrap_or(true))
-                .filter_map(|(i, x)| x.at.and_then(|(at, out)| on_stack(&w.st, at, out)).map(|end| (i, end)))
-                .collect();
-            for (i, _) in &group {
-                if let Some(c) = claimed.get_mut(*i) {
-                    *c = true;
-                }
-            }
+            let group: Vec<(usize, bool)> =
+                owner.iter().enumerate().filter_map(|(i, o)| o.filter(|(ok, _)| *ok == k).map(|(_, end)| (i, end))).collect();
             if group.is_empty() {
                 continue;
             }
