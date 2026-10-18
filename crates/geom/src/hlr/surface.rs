@@ -1231,12 +1231,21 @@ impl Nurbs {
             let apex = c0.0 - dir * (c0.2 / dr.abs());
             return Analytic::Cone { apex, a: dir, half };
         }
-        // Sphere: every grid point equidistant from the best centre of four spread points.
+        // Sphere: every grid point equidistant from the centre of four spread points. Several
+        // spreads are tried: on a patch closed around (a full band) the corners meet at its seam.
         let g = self.g;
         let pick = |i: usize, j: usize| self.grid.get(j * (g + 1) + i).copied();
-        if let (Some(a), Some(b), Some(c), Some(d)) = (pick(0, 0), pick(g, 0), pick(g / 2, g / 2), pick(0, g))
-            && let Some(centre) = sphere_centre(a, b, c, d)
-        {
+        let spreads = [
+            [(0, 0), (g, 0), (g / 2, g / 2), (0, g)],
+            [(0, 0), (g / 2, 0), (g / 4, g), (3 * g / 4, g / 2)],
+            [(g / 3, 0), (0, g / 2), (2 * g / 3, g), (g, g / 3)],
+        ];
+        for q in spreads {
+            let (Some(a), Some(b), Some(c), Some(d)) = (pick(q[0].0, q[0].1), pick(q[1].0, q[1].1), pick(q[2].0, q[2].1), pick(q[3].0, q[3].1))
+            else {
+                continue;
+            };
+            let Some(centre) = sphere_centre(a, b, c, d) else { continue };
             let r = centre.dist(a);
             if r > 0. && self.grid.iter().all(|p| (p.dist(centre) - r).abs() <= tol * r) {
                 return Analytic::Sphere { c: centre, r };

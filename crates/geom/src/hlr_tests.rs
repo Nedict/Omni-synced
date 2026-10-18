@@ -1255,6 +1255,67 @@ fn a_plate_just_above_a_box_in_a_large_scene_is_not_looked_through() {
 }
 
 #[test]
+fn a_sphere_with_a_spline_band_between_record_caps_is_one_sphere() {
+    // A sphere of radius 10: a rational spline band all the way round between the latitudes
+    // -45 and 45 degrees, and two sphere records as caps, meeting at circles of radius 7.07.
+    // The band is recognised as the same sphere, so those circles are seams: seen along the
+    // axis only the outline of radius 10 is drawn.
+    let (r, q, s) = (10., std::f64::consts::FRAC_PI_4, std::f64::consts::FRAC_1_SQRT_2);
+    let ring = [
+        ([1., 0.], 1.),
+        ([1., 1.], s),
+        ([0., 1.], 1.),
+        ([-1., 1.], s),
+        ([-1., 0.], 1.),
+        ([-1., -1.], s),
+        ([0., -1.], 1.),
+        ([1., -1.], s),
+        ([1., 0.], 1.),
+    ];
+    let lat = [([r * q.cos(), -r * q.sin()], 1.), ([r / q.cos(), 0.], q.cos()), ([r * q.cos(), r * q.sin()], 1.)];
+    let homogeneous: Vec<Vec<[f64; 4]>> = ring
+        .iter()
+        .map(|(ci, wi)| lat.iter().map(|(pj, wj)| [pj[0] * ci[0] * wi * wj, pj[0] * ci[1] * wi * wj, pj[1] * wi * wj, wi * wj]).collect())
+        .collect();
+    let z = r * q.sin();
+    let rho = r * q.cos();
+    let tau = std::f64::consts::TAU;
+    let half = std::f64::consts::FRAC_PI_2;
+    let cap = |latitude: [f64; 2], e: u32, forward: bool| Face {
+        loops: vec![vec![uses(e, forward)]],
+        surface: Surface::Sphere { frame: frame_at([0.; 3]), radius: r, longitude: [0., tau], latitude },
+        forward: true,
+    };
+    let band = Face {
+        loops: vec![vec![uses(0, true)], vec![uses(1, false)]],
+        surface: Surface::RationalSpline {
+            u_knots: vec![0., 0., 0., 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1., 1., 1.],
+            v_knots: vec![0., 0., 0., 1., 1., 1.],
+            homogeneous,
+        },
+        forward: true,
+    };
+    let body = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![[rho, 0., -z], [rho, 0., z]],
+            edges: vec![circle([0., 0., -z], rho, 0), circle([0., 0., z], rho, 1)],
+            faces: vec![band, cap([q, half], 1, true), cap([-half, -q], 0, false)],
+        }],
+    };
+    let def = prepare(&body, &Options::default()).unwrap();
+    assert_eq!(def.report.surfaces.get("sphere"), Some(&3), "{:?}", def.report);
+    let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    for p in pieces(&d).filter(|p| p.visibility == Visibility::Visible && !p.covered) {
+        for g in &p.geometry {
+            let radius = g.point_at(0.5).len();
+            assert!((radius - 10.).abs() < 1e-6, "a line at radius {radius}");
+        }
+    }
+}
+
+#[test]
 fn narrow_torus_strips_keep_their_outline() {
     // Two strips of a torus R 20, r 10 between the meridian angles 0.3002, 0.3005 and 0.3008,
     // seen from the side: each side of the outline is a 0.006 mm piece of the circle traced on
