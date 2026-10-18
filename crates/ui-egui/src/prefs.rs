@@ -1241,7 +1241,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 egui::Slider::new(&mut app.preferences.space_mouse_speed, 0.25..=3.0).step_by(0.05).custom_formatter(|v, _| format!("{v:.2}×")),
             );
             ui.end_row();
-            let driven_by = app.tr("ui.space_mouse_driven_by").to_owned();
+            let (driven_by, driven_by_label) = (app.tr("ui.space_mouse_driven_by").to_owned(), app.tr("ui.space_mouse_driven_by_label").to_owned());
             for (axis, name) in SPACE_MOUSE_AXES.iter().enumerate() {
                 ui.label(crate::i18n::tr_label(name));
                 ui.horizontal(|ui| {
@@ -1252,7 +1252,8 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                         if let Some(speed) = app.preferences.space_mouse_axis_speed.get_mut(axis) {
                             ui.add(egui::Slider::new(speed, 0.0..=3.0).step_by(0.05).custom_formatter(|v, _| format!("{v:.2}×")));
                         }
-                        // Which motion of the cap drives this axis.
+                        // Which motion of the cap drives this axis, labelled in sight, not only on hover.
+                        ui.label(&driven_by_label);
                         let source = &mut app.preferences.space_mouse_axis_source;
                         let current = source.get(axis).copied().unwrap_or(axis);
                         let mut chosen = current;

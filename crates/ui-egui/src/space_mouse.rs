@@ -680,6 +680,16 @@ mod tests {
         frame(&mut swapped_inverted, &ctx, DriverMapping::default(), press, 0.02);
         assert_eq!(swapped_inverted.cam, inverted.cam);
         assert_ne!(swapped_inverted.cam, reference.cam);
+        // The same for the axis's speed.
+        let mut slowed = app();
+        slowed.preferences.space_mouse_axis_speed[1] = 0.5;
+        frame(&mut slowed, &ctx, DriverMapping::default(), PUSH, 0.02);
+        let mut swapped_slowed = app();
+        swapped_slowed.preferences.space_mouse_axis_source = [0, 2, 1, 3, 4, 5];
+        swapped_slowed.preferences.space_mouse_axis_speed[1] = 0.5;
+        frame(&mut swapped_slowed, &ctx, DriverMapping::default(), press, 0.02);
+        assert_eq!(swapped_slowed.cam, slowed.cam);
+        assert_ne!(swapped_slowed.cam, reference.cam);
     }
 
     #[test]
@@ -715,11 +725,46 @@ mod tests {
     }
 
     #[test]
+    fn calibrating_records_the_device_before_the_axis_choice() {
+        // With Y and Z swapped, a new calibration still learns the device's own channels.
+        // Recorded after the swap, it would bake the swap in, and the swap would then apply twice.
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.space_mouse.device = Some("hid 1234:5678".into());
+        app.preferences.space_mouse_axis_source = [0, 2, 1, 3, 4, 5];
+        crate::space_mouse_calibration::start(&mut app);
+        let feed = |app: &mut SolveApp, axes: Axes, seconds: f64| {
+            for _ in 0..(seconds / 0.02).round() as usize {
+                frame(app, &ctx, DriverMapping::default(), axes, 0.02);
+            }
+        };
+        feed(&mut app, Axes::default(), 1.6);
+        for step in solidcraft_space_mouse::STEPS {
+            let mut raw = [0_i16; 6];
+            raw[step.axis] = if step.positive { 300 } else { -300 };
+            feed(&mut app, raw.into(), 0.5);
+            feed(&mut app, Axes::default(), 0.1);
+        }
+        let (_, wizard) = app.space_mouse.calibrating.as_ref().unwrap();
+        let calibration = wizard.result().unwrap().unwrap();
+        assert!(calibration.axes.iter().enumerate().all(|(c, axis)| axis.source == c && !axis.reversed), "{calibration:?}");
+    }
+
+    #[test]
     fn a_saved_axis_assignment_that_doesnt_drive_each_axis_once_loads_as_the_default() {
         let mut saved = serde_json::to_value(crate::prefs::Prefs::default()).unwrap();
         saved["space_mouse_axis_source"] = serde_json::json!([0, 2, 1, 3, 4, 5]);
         assert_eq!(crate::prefs::lenient(&saved).space_mouse_axis_source, [0, 2, 1, 3, 4, 5]);
         saved["space_mouse_axis_source"] = serde_json::json!([1, 1, 2, 3, 4, 5]);
         assert_eq!(crate::prefs::lenient(&saved).space_mouse_axis_source, SAME_AXES);
+        // An older file without it, or one with the wrong length, loads with the default and
+        // keeps every other setting.
+        saved["space_mouse_speed"] = serde_json::json!(2.0);
+        saved.as_object_mut().unwrap().remove("space_mouse_axis_source");
+        let older = crate::prefs::lenient(&saved);
+        assert_eq!((older.space_mouse_axis_source, older.space_mouse_speed), (SAME_AXES, 2.0));
+        saved["space_mouse_axis_source"] = serde_json::json!([0, 1, 2, 3, 4]);
+        let short = crate::prefs::lenient(&saved);
+        assert_eq!((short.space_mouse_axis_source, short.space_mouse_speed), (SAME_AXES, 2.0));
     }
 }
