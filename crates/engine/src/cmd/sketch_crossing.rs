@@ -59,10 +59,10 @@ pub fn crossings_of(sk: &Sketch, a: usize, b: usize) -> Vec<Vec2> {
     let pts: Vec<Vec2> = match (sk.shape(a), sk.shape(b)) {
         (Some(sa), Some(sb)) => cut_pair(sk, &sa, infinite(sk, a), b, &sb, false).into_iter().map(|(_, q)| q).collect(),
         _ => {
-            // Free-form pair: cut the free-form one (infinite lines are drawn finite there).
+            // Free-form pair: cut the free-form one (an infinite line runs on forever).
             let (ci, oi) = if sk.shape(a).is_none() { (a, b) } else { (b, a) };
             let segs = pieces(sk, ci);
-            cuts_pair(sk, ci, &sk.polyline(ci), &segs, oi, false).into_iter().map(|(_, q)| q).collect()
+            cuts_pair(sk, ci, &sk.polyline(ci), &segs, oi, false, true).into_iter().map(|(_, q)| q).collect()
         }
     };
     pts.into_iter()
@@ -185,6 +185,16 @@ mod tests {
             let d = segs.iter().map(|g| g.point_at(g.closest_param(q)).dist(q)).fold(f64::INFINITY, f64::min);
             assert!(d < 1e-6, "off the spline by {d}");
         }
+    }
+
+    #[test]
+    fn infinite_line_crosses_a_spline_beyond_its_points() {
+        let mut sk = Sketch::new();
+        let s = spline(&mut sk, &[(0.0, 0.0), (5.0, 5.0), (10.0, 0.0)]);
+        let l = line(&mut sk, (-3.0, 2.0), (-2.0, 2.0));
+        sk.curves[l].infinite = true;
+        assert_eq!(crossings_of(&sk, s, l).len(), 2);
+        assert!(crossing_near(&sk, v(1.5, 2.0), 1.0).is_some());
     }
 
     #[test]

@@ -4,7 +4,7 @@
 
 use serde_json::{Value, json};
 use solidcraft_geom::{Seg2, Vec2};
-use solidcraft_sketch::{ConstraintKind, CurveKind, Sketch};
+use solidcraft_sketch::{ConstraintKind, CurveKind, Shape, Sketch};
 
 use super::sketch::add_c;
 use crate::Result;
@@ -55,10 +55,18 @@ fn seg_x(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> Option<Vec2> {
 
 /// Where curve `oi` meets curve `ci` (polyline crossings refined onto both exact curves; `ends`
 /// adds `oi`'s end points lying on `ci`): (position along `ci`, the point). `mine` is `ci`'s
-/// polyline and `segs` its exact pieces.
-pub(super) fn cuts_pair(sk: &Sketch, ci: usize, mine: &[Vec2], segs: &[Seg2], oi: usize, ends: bool) -> Vec<(f64, Vec2)> {
+/// polyline and `segs` its exact pieces. `unbounded` lets an infinite line `oi` (#1359) meet `ci`
+/// beyond its two points.
+pub(super) fn cuts_pair(sk: &Sketch, ci: usize, mine: &[Vec2], segs: &[Seg2], oi: usize, ends: bool, unbounded: bool) -> Vec<(f64, Vec2)> {
     let tol = 1e-6;
-    let other = sk.polyline(oi);
+    let mut other = sk.polyline(oi);
+    if unbounded
+        && sk.curves.get(oi).is_some_and(|c| c.infinite)
+        && let Some(Shape::Line { a, b }) = sk.shape(oi)
+        && let Some(d) = (b - a).normalized()
+    {
+        other = vec![a - d * 1e7, b + d * 1e7];
+    }
     let mut found: Vec<Vec2> = Vec::new();
     for w in mine.windows(2) {
         for v in other.windows(2) {
@@ -103,7 +111,7 @@ fn cuts(sk: &Sketch, ci: usize, segs: &[Seg2], only_freeform: bool) -> Vec<(f64,
         if oi == ci || (only_freeform && !curve.kind.is_freeform()) {
             continue;
         }
-        for (u, q) in cuts_pair(sk, ci, &mine, segs, oi, true) {
+        for (u, q) in cuts_pair(sk, ci, &mine, segs, oi, true, false) {
             if !out.iter().any(|(_, y, _)| y.dist(q) < 1e-5) {
                 out.push((u, q, oi));
             }
