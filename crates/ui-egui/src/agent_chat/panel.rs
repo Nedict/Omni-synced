@@ -18,6 +18,12 @@ fn panel_id(left: bool) -> Id {
     Id::new(if left { "sc_agent_chat_left" } else { "sc_agent_chat_right" })
 }
 
+/// The largest thumbnail of a message's picture, and its largest preview while hovered (points).
+#[cfg(not(target_arch = "wasm32"))]
+const THUMB_MAX: (f32, f32) = (150.0, 56.0);
+#[cfg(not(target_arch = "wasm32"))]
+const PREVIEW_MAX: (f32, f32) = (560.0, 380.0);
+
 /// Forget the panel's own idea of its width, so the preference applies on the next frame.
 pub fn forget_width(ctx: &egui::Context) {
     ctx.data_mut(|d| {
@@ -88,41 +94,93 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         .show(ui, |ui| body(app, ui, left));
     crate::scenario::publish_rect("agent_chat:panel", r.response.rect);
     app.agent_chat.panel_rect = Some(r.response.rect);
-    shot_window(app, &ctx);
+    #[cfg(not(target_arch = "wasm32"))]
+    gallery_window(app, &ctx);
     let w = r.response.rect.width();
     if w.is_finite() && (MIN_WIDTH..=MAX_WIDTH).contains(&w) {
         app.preferences.agent_chat_width = w;
     }
 }
 
-/// A message's kept picture as a texture, `None` when it can't be decoded.
+/// The pictures of a message as small thumbnails in a row. Hovering one shows it bigger for as long
+/// as the pointer stays; a click returns its place in the row, to open the viewer there.
 #[cfg(not(target_arch = "wasm32"))]
-fn decode_shot(ctx: &egui::Context, shot: &super::Shot) -> Option<egui::TextureHandle> {
-    let rgba = image::load_from_memory_with_format(&shot.0, image::ImageFormat::Png).ok()?.to_rgba8();
-    let size = [usize::try_from(rgba.width()).ok()?, usize::try_from(rgba.height()).ok()?];
-    Some(ctx.load_texture("sc_agent_chat_shot", egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw()), egui::TextureOptions::LINEAR))
+fn picture_strip(ui: &mut egui::Ui, n: usize, pictures: &[Picture]) -> Option<usize> {
+    let t = Tokens::get();
+    let mut clicked = None;
+    ui.horizontal_wrapped(|ui| {
+        for (i, picture) in pictures.iter().enumerate() {
+            let Some(texture) = picture.texture(ui.ctx()) else {
+                ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim).size(11.0));
+                continue;
+            };
+            let size = fit(texture.size_vec2(), vec2(THUMB_MAX.0, THUMB_MAX.1));
+            let thumb = ui.add(egui::Image::new((texture.id(), size)).corner_radius(4.0).sense(Sense::click()));
+            crate::scenario::publish_handle(&format!("agent_chat:picture:{n}:{i}"), thumb.rect.center());
+            let hover_max = (ui.ctx().content_rect().size() * 0.5).min(vec2(PREVIEW_MAX.0, PREVIEW_MAX.1));
+            let thumb = thumb.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_ui(|ui| {
+                ui.add(egui::Image::new((texture.id(), fit(texture.size_vec2(), hover_max))).corner_radius(4.0));
+                if !picture.note.is_empty() {
+                    ui.label(&picture.note);
+                }
+            });
+            if thumb.clicked() {
+                clicked = Some(i);
+            }
+        }
+    });
+    clicked
 }
 
-/// The picture a message went with, in a window of its own.
-fn shot_window(app: &mut SolveApp, ctx: &egui::Context) {
-    let Some(texture) = app.agent_chat.shot_view.clone() else { return };
-    let mut open = true;
-    let window = egui::Window::new(tr("ui.agent_chat_view_attached"))
-        .id(Id::new("sc_agent_chat_shot"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .default_width(480.0)
-        .show(ctx, |ui| {
-            let size = texture.size_vec2();
-            let width = ui.available_width().min(size.x).max(1.0);
-            ui.add(egui::Image::new((texture.id(), vec2(width, width * size.y / size.x.max(1.0)))));
+/// `size` scaled to fit in `max`, keeping its shape (never below one point).
+#[cfg(not(target_arch = "wasm32"))]
+fn fit(size: egui::Vec2, max: egui::Vec2) -> egui::Vec2 {
+    let scale = (max.x / size.x.max(1.0)).min(max.y / size.y.max(1.0)).min(2.0);
+    vec2((size.x * scale).max(1.0), (size.y * scale).max(1.0))
+}
+
+/// The viewer: a message's pictures over the app, one at a time with a counter, Previous and Next
+/// (also the arrow keys), closed with the button, Esc or a click outside.
+#[cfg(not(target_arch = "wasm32"))]
+fn gallery_window(app: &mut SolveApp, ctx: &egui::Context) {
+    let Some(mut gallery) = app.agent_chat.gallery.take() else { return };
+    let count = gallery.pictures.len();
+    gallery.at = gallery.at.min(count.saturating_sub(1));
+    let (left, right) =
+        ctx.input_mut(|i| (i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft), i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)));
+    let mut step: isize = if left { -1 } else { isize::from(right) };
+    let t = Tokens::get();
+    let max = ctx.content_rect().size() * vec2(0.8, 0.7);
+    let modal = egui::Modal::new(Id::new("sc_agent_chat_gallery")).show(ctx, |ui| {
+        ui.set_max_width(max.x);
+        ui.horizontal(|ui| {
+            let prev = ui.add_enabled(count > 1, egui::Button::new("‹"));
+            crate::scenario::publish_handle("agent_chat:gallery_prev", prev.rect.center());
+            let next = ui.add_enabled(count > 1, egui::Button::new("›"));
+            crate::scenario::publish_handle("agent_chat:gallery_next", next.rect.center());
+            if prev.clicked() {
+                step = -1;
+            }
+            if next.clicked() {
+                step = 1;
+            }
+            ui.label(RichText::new(format!("{} / {}", gallery.at + 1, count)).color(t.text_dim));
         });
-    if let Some(window) = window {
-        crate::scenario::publish_rect("agent_chat:view_attached_window", window.response.rect);
+        if let Some(picture) = gallery.pictures.get(gallery.at) {
+            if let Some(texture) = picture.texture(ui.ctx()) {
+                let resp = ui.add(egui::Image::new((texture.id(), fit(texture.size_vec2(), max))).corner_radius(4.0));
+                crate::scenario::publish_rect("agent_chat:gallery_picture", resp.rect);
+            }
+            if !picture.note.is_empty() {
+                ui.add(egui::Label::new(&picture.note).wrap());
+            }
+        }
+    });
+    if count > 0 && step != 0 {
+        gallery.at = (gallery.at as isize + step).rem_euclid(count as isize) as usize;
     }
-    if !open {
-        app.agent_chat.shot_view = None;
+    if !modal.should_close() {
+        app.agent_chat.gallery = Some(gallery);
     }
 }
 
@@ -671,30 +729,22 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
     // Allow (true), Deny (false), Always allow (None).
     let mut approval: Option<(u64, Option<bool>)> = None;
     let mut undo: Option<usize> = None;
-    let mut show_shot: Option<super::Shot> = None;
+    let mut open_gallery: Option<Gallery> = None;
     let current_doc = app.session.doc.clone();
     for (n, item) in app.agent_chat.items.iter().enumerate() {
         match item {
-            Item::User { text, image, shot } => {
+            Item::User { text, image, pictures } => {
                 ui.add_space(6.0);
                 egui::Frame::NONE.fill(t.accent_soft).corner_radius(6.0).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.add(egui::Label::new(RichText::new(text).color(t.text)).selectable(true).wrap());
-                    if *image {
-                        let caption = RichText::new(tr("ui.agent_chat_view_attached")).size(11.0);
-                        match shot {
-                            // The picture is kept once it is taken: the caption opens it.
-                            Some(shot) => {
-                                let link = ui.add(egui::Button::new(caption.color(t.accent).underline()).frame(false));
-                                crate::scenario::publish_handle(&format!("agent_chat:view_attached:{n}"), link.rect.center());
-                                if link.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                    show_shot = Some(shot.clone());
-                                }
-                            }
-                            None => {
-                                ui.label(caption.color(t.text_dim));
-                            }
+                    if !pictures.is_empty() {
+                        if let Some(at) = picture_strip(ui, n, pictures) {
+                            open_gallery = Some(Gallery { pictures: pictures.clone(), at });
                         }
+                    } else if *image {
+                        // Taken when the agent starts on the message: nothing to show yet.
+                        ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim).size(11.0));
                     }
                 });
             }
@@ -891,8 +941,8 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
     if send_queue_clicked {
         send_now(app, ui.ctx());
     }
-    if let Some(shot) = show_shot {
-        app.agent_chat.shot_view = decode_shot(ui.ctx(), &shot);
+    if open_gallery.is_some() {
+        app.agent_chat.gallery = open_gallery;
     }
     if let Some((n, o)) = answer {
         answer_permission(app, n, o.as_deref());
