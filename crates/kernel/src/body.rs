@@ -377,7 +377,7 @@ fn refined_with_cache(pm: &PolygonMesh, surf: &mt::Surface, tol: f64, memoize: b
 /// or 2π, which confuses the boolean's loop projection. Each revolved face's surface is turned
 /// (same geometry) so the face sits around angle π, well away from the wrap.
 fn rephase_revolved(solid: Solid) -> Solid {
-    use mt::{BoundedCurve, ParametricCurve, SearchNearestParameter};
+    use mt::{ParametricCurve, SearchNearestParameter};
     let r = guard("rephase", || {
         let mut changed = false;
         let mut shells = Vec::new();
@@ -395,9 +395,8 @@ fn rephase_revolved(solid: Solid) -> Solid {
                 for w in f.absolute_boundaries() {
                     for e in w.edge_iter() {
                         let c = e.oriented_curve();
-                        let (t0, t1) = c.range_tuple();
                         for k in 0..4 {
-                            acc += from_p3(c.subs(t0 + (t1 - t0) * k as f64 / 4.0));
+                            acc += from_p3(c.subs(c.range().step(k, 4)));
                             n += 1.0;
                         }
                     }
