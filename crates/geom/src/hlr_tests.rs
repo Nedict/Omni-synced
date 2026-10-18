@@ -1193,6 +1193,43 @@ fn an_arc_folding_back_under_a_left_out_face_seen_edge_on_is_uncertain_there() {
 }
 
 #[test]
+fn a_left_out_face_curling_over_its_own_edge_makes_it_uncertain() {
+    // A freeform patch X = 1000 u (u - 0.5), Y = 8000 v, Z = 0.01 u seen from above: at u = 0.5
+    // it passes back over its own edge u = 0, 0.005 mm above it, closer than the own-face
+    // margin of the ray test. The edge may be hidden.
+    let (a, b, c) = ([0., 0.], [-250., 0.005], [500., 0.01]);
+    let at = |q: [f64; 2], y: f64| [q[0], y, q[1]];
+    let edges = vec![
+        Edge { vertices: [0, 1], curve: Curve::Spline { knots: vec![0., 0., 0., 1., 1., 1.], points: vec![at(a, 0.), at(b, 0.), at(c, 0.)] } },
+        Edge { vertices: [1, 2], curve: Curve::Line { start: at(c, 0.), end: at(c, 8000.) } },
+        Edge {
+            vertices: [3, 2],
+            curve: Curve::Spline { knots: vec![0., 0., 0., 1., 1., 1.], points: vec![at(a, 8000.), at(b, 8000.), at(c, 8000.)] },
+        },
+        Edge { vertices: [0, 3], curve: Curve::Line { start: at(a, 0.), end: at(a, 8000.) } },
+    ];
+    let face = Face {
+        loops: vec![vec![uses(0, true), uses(1, true), uses(2, false), uses(3, false)]],
+        surface: Surface::Spline {
+            u_knots: vec![0., 0., 0., 1., 1., 1.],
+            v_knots: vec![0., 0., 1., 1.],
+            points: vec![vec![at(a, 0.), at(a, 8000.)], vec![at(b, 0.), at(b, 8000.)], vec![at(c, 0.), at(c, 8000.)]],
+        },
+        forward: true,
+    };
+    let sheet = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell { vertices: vec![at(a, 0.), at(c, 0.), at(c, 8000.), at(a, 8000.)], edges, faces: vec![face] }],
+    };
+    let def = prepare(&sheet, &Options::default()).unwrap();
+    assert_eq!(def.report.freeform_faces, vec![0]);
+    let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    let states: Vec<Visibility> = edge_line(&d, 0, 3).pieces.iter().map(|p| p.visibility).collect();
+    assert!(states.iter().all(|v| *v != Visibility::Visible), "{states:?}");
+}
+
+#[test]
 fn narrow_torus_strips_keep_their_outline() {
     // Two strips of a torus R 20, r 10 between the meridian angles 0.3002, 0.3005 and 0.3008,
     // seen from the side: each side of the outline is a 0.006 mm piece of the circle traced on
@@ -1655,7 +1692,7 @@ fn the_shadow_index_finds_each_nearby_box_once() {
     for i in 0..200 {
         for j in 0..200 {
             let (x, y) = (20. * i as f64, 20. * j as f64);
-            list.push(Shadow { placement: 0, face: i * 200 + j, lo: [x, y], hi: [x + 1., y + 1.], near: 0. });
+            list.push(Shadow { lo: [x, y], hi: [x + 1., y + 1.], near: 0. });
         }
     }
     let index = ShadowIndex::new(list).unwrap();
@@ -1663,9 +1700,8 @@ fn the_shadow_index_finds_each_nearby_box_once() {
     index.query([400.5, 600.5], [400.6, 600.6], &mut near);
     let faces: Vec<usize> = near
         .iter()
-        .filter_map(|k| index.list.get(*k))
-        .filter(|sh| sh.lo[0] <= 400.6 && sh.hi[0] >= 400.5 && sh.lo[1] <= 600.6 && sh.hi[1] >= 600.5)
-        .map(|sh| sh.face)
+        .copied()
+        .filter(|k| index.list.get(*k).is_some_and(|sh| sh.lo[0] <= 400.6 && sh.hi[0] >= 400.5 && sh.lo[1] <= 600.6 && sh.hi[1] >= 600.5))
         .collect();
     assert_eq!(faces, vec![20 * 200 + 30]);
     assert!(near.len() <= 9, "{} candidates", near.len());

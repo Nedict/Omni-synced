@@ -102,7 +102,8 @@ silhouettes are not drawn, and a piece whose ray meets one is `Uncertain`, never
 `Hidden`. Without its silhouettes nothing marks where such a face's outline crosses a curve,
 so curves are cut at the face's screen box and every piece inside the box that can reach
 behind its nearest point (bounded by the curve's control points, not by samples) is
-`Uncertain` too (faces left out for an unsupported trim likewise). With `Options::freeform` set their silhouettes are contoured and their ray
+`Uncertain` too, the face's own edges included (faces left out for an unsupported trim
+likewise). With `Options::freeform` set their silhouettes are contoured and their ray
 tests use seeded Newton iterations: slower, `Sampled`, and subject to the misses listed
 in the W05a findings.
 
@@ -154,7 +155,8 @@ and intervals:
 - a curve that swerves 2.9 mm off its circle where its weight is 1e-12, and a nearly straight
   cubic 0.002 mm off a circle of radius 1e7, are drawn as chords; an edge whose depth dips
   behind a freeform patch between its samples is uncertain there, and so is an arc seen
-  along its plane whose projection folds back under a freeform patch between two samples;
+  along its plane whose projection folds back under a freeform patch between two samples,
+  and the edge of a freeform sheet that curls back over it 0.005 mm above;
 - a torus patch stored as a rational spline is recognised and draws its outer equator as an
   exact arc, and one with a bump in a knot span 0.002 of its parameters wide is not taken for
   a torus; a big circle passing under a thin freeform tube in a coarse scene is uncertain

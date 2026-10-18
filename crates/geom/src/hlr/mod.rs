@@ -925,8 +925,6 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
 /// The centre of the placed bodies' boxes, after checking the placements.
 /// A left-out face's screen box and the depth of its nearest corner.
 struct Shadow {
-    placement: usize,
-    face: usize,
     lo: [f64; 2],
     hi: [f64; 2],
     near: f64,
@@ -950,14 +948,13 @@ fn shadow_boxes(defs: &[Prepared], scene: &[Placement], view: &View, left_out: &
             hi = [hi[0].max(s[0]), hi[1].max(s[1])];
             near = near.min(w.dot(view.d));
         }
-        out.push(Shadow { placement: u.placement, face: u.face, lo, hi, near });
+        out.push(Shadow { lo, hi, near });
     }
     out
 }
 
-/// Whether the piece `r` of a track may lie behind a left-out face: one of its points within
-/// its chords' sag of the face's screen box and behind the face's nearest point (not counting
-/// the track's own faces).
+/// Whether the piece `r` of a track may lie behind a left-out face, its own faces included (a
+/// curled face can hide its own edge closer than the own-face margin).
 fn in_shadow(t: &Track, r: [f64; 2], scene: &[Placement], view: &View, shadows: &ShadowIndex) -> bool {
     if shadows.list.is_empty() {
         return false;
@@ -981,10 +978,7 @@ fn in_shadow(t: &Track, r: [f64; 2], scene: &[Placement], view: &View, shadows: 
     let deepest = depth_bound(c, r, p, view.d);
     near.iter().filter_map(|k| shadows.list.get(*k)).any(|sh| {
         let within = |s: &[f64; 2]| s[0] >= sh.lo[0] && s[0] <= sh.hi[0] && s[1] >= sh.lo[1] && s[1] <= sh.hi[1];
-        !(sh.placement == t.placement && t.own.contains(&sh.face))
-            && deepest > sh.near
-            && overlaps(lo, hi, sh)
-            && (inner.is_empty() || within(&mid) || inner.iter().any(within))
+        deepest > sh.near && overlaps(lo, hi, sh) && (inner.is_empty() || within(&mid) || inner.iter().any(within))
     })
 }
 
