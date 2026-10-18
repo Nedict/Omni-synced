@@ -15,7 +15,7 @@
 use std::f64::consts::TAU;
 
 use serde::{Deserialize, Serialize};
-use solidcraft_geom::{Aabb3, Ring, Vec2, Vec3};
+use solidcraft_geom::{Aabb2, Aabb3, Ring, Vec2, Vec3};
 
 use super::{JointKind, JointOrigin, MotionLink, Size, component_bodies, component_of, flip_of, occurrence_world, size_of};
 use crate::{DocError, Document, IDENTITY, Mat, ModelState, Result, apply_point, apply_vector, mat_inverse, mat_mul};
@@ -502,12 +502,7 @@ fn extent<'a>(pts: impl Iterator<Item = &'a Vec3>) -> f64 {
 }
 
 fn bounds_2d(pts: &[Vec2]) -> f64 {
-    let (mut lo, mut hi) = (Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN));
-    for p in pts {
-        lo = Vec2::new(lo.x.min(p.x), lo.y.min(p.y));
-        hi = Vec2::new(hi.x.max(p.x), hi.y.max(p.y));
-    }
-    if lo.x <= hi.x { (hi - lo).len() } else { 0.0 }
+    pts.iter().copied().collect::<Aabb2>().diagonal()
 }
 
 /// The chord error a profile is sampled to: 0.1 µm per 100 mm of its size, at least 0.1 µm.

@@ -9,6 +9,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod aabb2;
 mod arcfit;
 pub mod blend;
 pub mod brep;
@@ -30,6 +31,7 @@ pub mod tess;
 pub mod tspline;
 mod vec;
 
+pub use aabb2::Aabb2;
 pub use arcfit::MAX_FIT_PIECES;
 pub use blend::hermite_bezier;
 pub use bvh::{Bvh, MeshIndex};

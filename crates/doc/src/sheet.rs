@@ -1916,11 +1916,7 @@ impl SheetBody {
             r.holes.iter().for_each(&mut add);
         }
         zones.iter().for_each(|z| add(&z.outer));
-        let (mut lo, mut hi) = (Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN));
-        for (a, _) in &segs {
-            lo = Vec2::new(lo.x.min(a.x), lo.y.min(a.y));
-            hi = Vec2::new(hi.x.max(a.x), hi.y.max(a.y));
-        }
+        let solidcraft_geom::Aabb2 { min: lo, max: hi } = segs.iter().map(|(a, _)| *a).collect();
         if !(lo.x <= hi.x) || !(p.pitch > 0.0) {
             return Ok(Vec::new());
         }

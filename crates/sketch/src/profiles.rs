@@ -423,12 +423,9 @@ struct Grid {
 }
 
 impl Grid {
-    fn new(boxes: &[(Vec2, Vec2)]) -> Grid {
-        let (mut lo, mut hi) = (Vec2::new(f64::INFINITY, f64::INFINITY), Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY));
-        for (a, b) in boxes {
-            lo = Vec2::new(lo.x.min(a.x), lo.y.min(a.y));
-            hi = Vec2::new(hi.x.max(b.x), hi.y.max(b.y));
-        }
+    fn new(boxes: &[solidcraft_geom::Aabb2]) -> Grid {
+        let all = boxes.iter().fold(solidcraft_geom::Aabb2::EMPTY, |a, b| a.union(b));
+        let (lo, hi) = (all.min, all.max);
         if !(lo.is_finite() && hi.is_finite()) {
             return Grid { lo: Vec2::ZERO, size: 1.0 };
         }
@@ -440,8 +437,8 @@ impl Grid {
         (((p.x - self.lo.x) / self.size).floor() as i64, ((p.y - self.lo.y) / self.size).floor() as i64)
     }
     /// Cells a box covers; None for boxes spanning too many (they are checked against all).
-    fn cells(&self, b: &(Vec2, Vec2)) -> Option<Vec<(i64, i64)>> {
-        let (c0, c1) = (self.cell(b.0), self.cell(b.1));
+    fn cells(&self, b: &solidcraft_geom::Aabb2) -> Option<Vec<(i64, i64)>> {
+        let (c0, c1) = (self.cell(b.min), self.cell(b.max));
         if (c1.0 - c0.0 + 1).saturating_mul(c1.1 - c0.1 + 1) > 2048 {
             return None;
         }
@@ -609,15 +606,19 @@ fn find_profiles_bounded(sk: &Sketch, max_edges: usize) -> Vec<Profile> {
         }
     }
     // Bounding boxes, and a uniform grid over them: only shapes sharing a cell can meet.
-    let boxes: Vec<(Vec2, Vec2)> = shapes
+    let boxes: Vec<solidcraft_geom::Aabb2> = shapes
         .iter()
         .map(|(_, sh)| match *sh {
-            Shape::Line { a, b } => (Vec2::new(a.x.min(b.x) - tol, a.y.min(b.y) - tol), Vec2::new(a.x.max(b.x) + tol, a.y.max(b.y) + tol)),
-            Shape::Round { c, r, .. } => (Vec2::new(c.x - r - tol, c.y - r - tol), Vec2::new(c.x + r + tol, c.y + r + tol)),
+            Shape::Line { a, b } => {
+                solidcraft_geom::Aabb2 { min: Vec2::new(a.x.min(b.x), a.y.min(b.y)), max: Vec2::new(a.x.max(b.x), a.y.max(b.y)) }.inflated(tol)
+            }
+            Shape::Round { c, r, .. } => {
+                solidcraft_geom::Aabb2 { min: Vec2::new(c.x - r - tol, c.y - r - tol), max: Vec2::new(c.x + r + tol, c.y + r + tol) }
+            }
         })
         .collect();
     let overlap = |i: usize, j: usize| match (boxes.get(i), boxes.get(j)) {
-        (Some((a0, a1)), Some((b0, b1))) => a0.x <= b1.x && b0.x <= a1.x && a0.y <= b1.y && b0.y <= a1.y,
+        (Some(a), Some(b)) => a.meets(b),
         _ => false,
     };
     let grid = Grid::new(&boxes);
