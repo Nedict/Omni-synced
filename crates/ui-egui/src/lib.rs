@@ -173,6 +173,7 @@ pub mod stand_up;
 #[cfg(test)]
 mod sweep_dialog_tests;
 pub mod theme;
+pub mod theme_files;
 #[cfg(test)]
 mod thin_extrude_tests;
 pub mod timeline;
