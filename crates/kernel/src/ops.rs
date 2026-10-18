@@ -286,7 +286,7 @@ fn under_surface(
     inside: bool,
     within: Option<&solidcraft_geom::Aabb3>,
 ) -> bool {
-    m.triangles.iter().filter_map(|t| m.tri(t)).any(|[p, q, r]| {
+    m.triangles.iter().filter_map(|t| m.tri(t)).any(|solidcraft_geom::Triangle([p, q, r])| {
         let Some(n) = (q - p).cross(r - p).normalized() else { return false };
         let c = (p + q + r) * (1.0 / 3.0) - n * depth;
         let near = within.is_none_or(|b| c.x >= b.min.x && c.x <= b.max.x && c.y >= b.min.y && c.y <= b.max.y && c.z >= b.min.z && c.z <= b.max.z);

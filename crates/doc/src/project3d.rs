@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use solidcraft_geom::{Mesh, Plane, Vec2, Vec3};
+use solidcraft_geom::{Mesh, Plane, Triangle, Vec2, Vec3};
 use solidcraft_sketch::LinkSource;
 
 use crate::eval::ModelState;
@@ -30,8 +30,8 @@ fn dist_to(m: &Mesh, p: Vec3) -> f64 {
     m.nearest_face(p).map_or(f64::INFINITY, |h| h.dist)
 }
 
-fn tris(m: &Mesh, face: Option<u32>) -> Vec<[Vec3; 3]> {
-    m.face_tris().filter(|(_, f)| face.is_none_or(|x| x == *f)).map(|(t, _)| t.0).collect()
+fn tris(m: &Mesh, face: Option<u32>) -> Vec<Triangle> {
+    m.face_tris().filter(|(_, f)| face.is_none_or(|x| x == *f)).map(|(t, _)| t).collect()
 }
 
 /// Ray–triangle hit parameter (Möller–Trumbore), any sign.
@@ -355,7 +355,7 @@ pub(crate) fn iso_curve(m: &Mesh, f: u32, p: Vec3, dir: &str) -> Vec<Vec<Vec3>> 
 /// polylines. Each family is the face cut by parallel planes spaced evenly over the face.
 pub fn iso_grid(m: &Mesh, f: u32, p: Vec3, count: usize) -> Vec<Vec<Vec3>> {
     let count = count.clamp(1, 100);
-    let verts: Vec<Vec3> = m.face_tris_of(f as usize).flat_map(|t| t.0).collect();
+    let verts: Vec<Vec3> = m.face_tris_of(f as usize).flatten().collect();
     if verts.is_empty() {
         return Vec::new();
     }

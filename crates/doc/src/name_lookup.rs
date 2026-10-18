@@ -103,7 +103,7 @@ fn nearest_on_face(m: &Mesh, face: usize, p: Vec3) -> Option<(f64, Vec3)> {
         if *f as usize != face {
             continue;
         }
-        let Some([a, b, c]) = m.tri(t) else { continue };
+        let Some(solidcraft_geom::Triangle([a, b, c])) = m.tri(t) else { continue };
         let q = solidcraft_geom::Triangle([a, b, c]).closest_point(p);
         let d = q.dist(p);
         // A non-finite candidate must never become the best: nothing compares less than NaN.
@@ -229,7 +229,7 @@ impl FaceHit {
             if *f as usize != self.face {
                 continue;
             }
-            let Some([a, bb, c]) = m.tri(t) else { continue };
+            let Some(solidcraft_geom::Triangle([a, bb, c])) = m.tri(t) else { continue };
             // A hair's width around each triangle, so a place on the seam of two is on the face.
             let centre = (a + bb + c) * (1.0 / 3.0);
             let grow = |v: Vec3| v + (v - centre).normalized().unwrap_or(Vec3::ZERO) * slack;
@@ -344,7 +344,7 @@ fn legacy_locate<'a>(bodies: impl Iterator<Item = (usize, &'a ModelBody)>, name:
             if !exact && strip_piece(n) != stem {
                 continue;
             }
-            let Some([a, bb, c]) = m.tri(t) else { continue };
+            let Some(solidcraft_geom::Triangle([a, bb, c])) = m.tri(t) else { continue };
             let q = solidcraft_geom::Triangle([a, bb, c]).closest_point(p);
             let d = q.dist(p) - if exact { 1e-9 } else { 0.0 };
             if d.is_finite() && best.is_none_or(|x| d < x.0) {

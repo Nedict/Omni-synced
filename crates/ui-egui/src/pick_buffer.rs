@@ -159,7 +159,7 @@ fn scene(app: &SolveApp, st: &Arc<ModelState>, key: u64) -> Option<Arc<Scene>> {
             return None;
         }
         for t in &m.triangles {
-            if let Some([a, b, c]) = m.tri(t) {
+            if let Some(solidcraft_engine::geom::Triangle([a, b, c])) = m.tri(t) {
                 scene.triangle([f(a), f(b), f(c)]);
             }
         }

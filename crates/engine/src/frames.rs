@@ -152,7 +152,12 @@ fn frame_at(s: &Session, f: &Frames, p: Vec3, body: Option<&str>) -> Option<Mat>
         {
             continue;
         }
-        let d = mesh.triangles.iter().filter_map(|t| mesh.tri(t)).map(|[a, b, c]| tri_dist(p, a, b, c)).fold(f64::INFINITY, f64::min);
+        let d = mesh
+            .triangles
+            .iter()
+            .filter_map(|t| mesh.tri(t))
+            .map(|solidcraft_geom::Triangle([a, b, c])| tri_dist(p, a, b, c))
+            .fold(f64::INFINITY, f64::min);
         if d <= tol && best.as_ref().is_none_or(|(bd, _)| d < *bd) {
             best = Some((d, *m));
         }

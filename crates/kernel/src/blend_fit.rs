@@ -254,7 +254,7 @@ fn overlap(a: &[Wedge], b: &[Wedge], eps: f64) -> bool {
 struct Selection {
     frames: Vec<Option<Frame>>,
     /// The body's triangles, with their face and whether that face is planar.
-    tris: Vec<([Vec3; 3], usize)>,
+    tris: Vec<(solidcraft_geom::Triangle, usize)>,
     planar: Vec<bool>,
     size: f64,
     chord: f64,
@@ -299,7 +299,7 @@ fn select_in(body: &Body, pts: &[Vec3]) -> Result<Selection> {
     }
     let m = mesh.measure();
     let coarse = (m.volume, m.area);
-    let tris = mesh.face_tris().map(|(t, f)| (t.0, f as usize)).collect();
+    let tris = mesh.face_tris().map(|(t, f)| (t, f as usize)).collect();
     Ok(Selection { frames, tris, planar, size, chord, coarse })
 }
 
@@ -383,7 +383,7 @@ fn first_clash(sel: &Selection, size: Size, strict: bool) -> Option<Clash> {
                 .filter(|(j, (fj, _))| *j != i && fj.as_ref().is_some_and(|fj| fj.allowed.contains(face)))
                 .filter_map(|(_, (_, wj))| wj.as_ref())
                 .collect();
-            reaches_inside_beyond(t, &w.planes, eps, &trimmed, out)
+            reaches_inside_beyond(t.as_slice(), &w.planes, eps, &trimmed, out)
         });
         if hit {
             return Some(Clash::Face);

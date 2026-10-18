@@ -16,6 +16,21 @@ impl Triangle {
     }
 }
 
+impl std::ops::Deref for Triangle {
+    type Target = [Vec3; 3];
+    fn deref(&self) -> &[Vec3; 3] {
+        &self.0
+    }
+}
+
+impl IntoIterator for Triangle {
+    type Item = Vec3;
+    type IntoIter = std::array::IntoIter<Vec3, 3>;
+    fn into_iter(self) -> std::array::IntoIter<Vec3, 3> {
+        self.0.into_iter()
+    }
+}
+
 impl From<[Vec3; 3]> for Triangle {
     fn from(corners: [Vec3; 3]) -> Triangle {
         Triangle(corners)

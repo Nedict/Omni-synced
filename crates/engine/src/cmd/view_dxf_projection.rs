@@ -242,7 +242,7 @@ fn edges(mesh: &Mesh, cam: &Camera, eps: f64) -> Vec<(Vec3, Vec3)> {
     }
     let mut adjacent: BTreeMap<_, (Vec3, Vec3, bool, bool, usize)> = BTreeMap::new();
     for indices in &mesh.triangles {
-        let Some([a, b, c]) = mesh.tri(indices) else { continue };
+        let Some(solidcraft_geom::Triangle([a, b, c])) = mesh.tri(indices) else { continue };
         let n = (b - a).cross(c - a);
         let toward = if cam.fov > 0.0 { cam.eye() - (a + b + c) / 3.0 } else { cam.basis().2 };
         let front = n.dot(toward) > 0.0;
@@ -292,7 +292,7 @@ fn reference_drawing(meshes: &[Mesh], cam: &Camera) -> Result<Vec<Line>, &'stati
     let mut segments = Vec::new();
     for m in meshes {
         for t in &m.triangles {
-            if let Some([a, b, c]) = m.tri(t) {
+            if let Some(solidcraft_geom::Triangle([a, b, c])) = m.tri(t) {
                 let p = [project(a)?, project(b)?, project(c)?];
                 triangles.push(Triangle { p, bounds: bounds(p) });
             }

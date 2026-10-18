@@ -1575,7 +1575,8 @@ impl Body {
                             t.get(k).and_then(|x| u32::try_from(x.pos).ok()).ok_or_else(|| KernelError::Failed("lumps: invalid mesh index".into()))
                         };
                         let indices = [idx(0)?, idx(1)?, idx(2)?];
-                        let [a, b, c] = m.tri(&indices).ok_or_else(|| KernelError::Failed("lumps: invalid mesh triangle".into()))?;
+                        let solidcraft_geom::Triangle([a, b, c]) =
+                            m.tri(&indices).ok_or_else(|| KernelError::Failed("lumps: invalid mesh triangle".into()))?;
                         // STEP sphere poles can produce zero-area duplicate triangles.
                         // They have no boundary area or volume and are not ray crossings.
                         if (b - a).cross(c - a) == Vec3::ZERO {
@@ -1590,7 +1591,7 @@ impl Body {
                         .iter()
                         .map(|t| {
                             m.tri(t)
-                                .map(|[a, b, c]| (a - origin).dot((b - origin).cross(c - origin)) / 6.0)
+                                .map(|solidcraft_geom::Triangle([a, b, c])| (a - origin).dot((b - origin).cross(c - origin)) / 6.0)
                                 .ok_or_else(|| KernelError::Failed("lumps: invalid mesh triangle".into()))
                         })
                         .collect::<Result<Vec<_>>>()?

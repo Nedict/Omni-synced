@@ -443,13 +443,13 @@ mod tests {
         assert!(m.normals.iter().all(|n| n.is_finite() && n.len() > 0.5), "a mesh normal is not finite");
         let tri = |t: &[u32; 3]| m.tri(t).unwrap();
         let total = m.triangles.iter().map(|t| {
-            let [a, b, c] = tri(t);
+            let solidcraft_geom::Triangle([a, b, c]) = tri(t);
             (b - a).cross(c - a)
         });
         let total = total.fold(Vec3::ZERO, |s, v| s + v);
         let n = total.normalized().unwrap();
         for t in &m.triangles {
-            let [a, b, c] = tri(t);
+            let solidcraft_geom::Triangle([a, b, c]) = tri(t);
             let v = (b - a).cross(c - a);
             if v.len() > 1e-12 {
                 assert!(v.dot(n) > 0.0, "a folded triangle");

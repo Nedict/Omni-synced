@@ -411,7 +411,7 @@ fn face_normal_near(m: &Mesh, f: u32, p: Vec3) -> Option<Vec3> {
         .filter(|(_, tf)| **tf == f)
         .filter_map(|(t, _)| m.tri(t))
         .min_by(|a, b| ((a[0] + a[1] + a[2]) / 3.0).dist(p).total_cmp(&((b[0] + b[1] + b[2]) / 3.0).dist(p)))
-        .and_then(|[a, b, c]| (b - a).cross(c - a).normalized())
+        .and_then(|solidcraft_engine::geom::Triangle([a, b, c])| (b - a).cross(c - a).normalized())
 }
 
 /// The snap a picked item stands for (world coordinates, as the viewport shows them).

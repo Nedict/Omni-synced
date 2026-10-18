@@ -592,7 +592,7 @@ fn flat_faces(s: &Session) -> Vec<(String, usize, Vec3, Vec3)> {
         let mesh = body.mesh();
         let mut inside: std::collections::BTreeMap<usize, (Vec3, f64)> = std::collections::BTreeMap::new();
         for (triangle, face) in mesh.triangles.iter().zip(&mesh.tri_face) {
-            if let Some([a, b, c]) = mesh.tri(triangle) {
+            if let Some(solidcraft_geom::Triangle([a, b, c])) = mesh.tri(triangle) {
                 let area = (b - a).cross(c - a).len();
                 let entry = inside.entry(*face as usize).or_insert(((a + b + c) * (1. / 3.), -1.));
                 if area > entry.1 {

@@ -48,11 +48,11 @@ fn the_tree_finds_the_nearest_point_as_a_search_of_every_triangle_does() {
             .triangles
             .iter()
             .filter_map(|t| m.tri(t))
-            .map(|[a, b, c]| crate::Triangle([a, b, c]).closest_point(p).dist(p))
+            .map(|crate::Triangle([a, b, c])| crate::Triangle([a, b, c]).closest_point(p).dist(p))
             .fold(f64::INFINITY, f64::min);
         let (d, i) = tree.nearest(p).unwrap();
         assert!((d - brute).abs() < 1e-12, "{d} vs {brute}");
-        let [a, b, c] = m.tri(&m.triangles[i as usize]).unwrap();
+        let crate::Triangle([a, b, c]) = m.tri(&m.triangles[i as usize]).unwrap();
         assert!((crate::Triangle([a, b, c]).closest_point(p).dist(p) - d).abs() < 1e-12);
     }
     assert!(TriangleTree::new(&Mesh::default()).nearest(Vec3::ZERO).is_none());

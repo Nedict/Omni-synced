@@ -50,7 +50,7 @@
 use std::collections::BTreeMap;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
-use solidcraft_geom::{Loop2, Mesh, Plane, Region2, Seg2, Vec2, Vec3};
+use solidcraft_geom::{Loop2, Mesh, Plane, Region2, Seg2, Triangle, Vec2, Vec3};
 use solidcraft_kernel::{Body, FaceSurface, face_surface};
 
 use super::{FlatWork, ReliefOverride, RuleValues, SheetBody, SheetFlange, base_flange, point_in, polys_cross, signed_area, snap};
@@ -293,7 +293,7 @@ fn behind(b: &Body, mesh: &Mesh, f: usize) -> Option<(usize, f64)> {
     // The face most of it looks through to, from points in its largest triangles: a few of them
     // may look at the floor of a label engraved in the other skin.
     let area = |t: &[Vec3; 3]| (t[1] - t[0]).cross(t[2] - t[0]).len();
-    let mut tris: Vec<[Vec3; 3]> = mesh.face_tris_of(f).map(|t| t.0).collect();
+    let mut tris: Vec<Triangle> = mesh.face_tris_of(f).collect();
     tris.sort_by(|x, y| area(y).total_cmp(&area(x)));
     let mut seen: Vec<(usize, f64)> = Vec::new();
     for tri in tris.iter().take(8) {

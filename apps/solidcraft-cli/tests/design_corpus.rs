@@ -192,8 +192,10 @@ fn flat_face_attachments() -> Vec<(String, String, usize, Option<(u32, bool)>, O
                     .zip(&mesh.tri_face)
                     .filter(|(_, f)| **f as usize == index)
                     .filter_map(|(t, _)| mesh.tri(t))
-                    .max_by(|[a, b, c], [d, e, f]| (*b - *a).cross(*c - *a).len().total_cmp(&(*e - *d).cross(*f - *d).len()))
-                    .map(|[a, b, c]| (a + b + c) * (1.0 / 3.0));
+                    .max_by(|solidcraft_engine::geom::Triangle([a, b, c]), solidcraft_engine::geom::Triangle([d, e, f])| {
+                        (*b - *a).cross(*c - *a).len().total_cmp(&(*e - *d).cross(*f - *d).len())
+                    })
+                    .map(|solidcraft_engine::geom::Triangle([a, b, c])| (a + b + c) * (1.0 / 3.0));
                 let Some(point) = point else { continue };
                 let point = apply_point(&frame, point);
                 let normal =

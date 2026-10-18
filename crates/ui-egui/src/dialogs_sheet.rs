@@ -819,7 +819,7 @@ pub fn arrow(app: &SolveApp, d: &Dialog) -> Option<Vec3> {
             .zip(&m.tri_face)
             .filter(|(_, tf)| **tf == f)
             .filter_map(|(t, _)| m.tri(t))
-            .map(|[a, b, c]| (b - a).cross(c - a).len() * 0.5)
+            .map(|solidcraft_engine::geom::Triangle([a, b, c])| (b - a).cross(c - a).len() * 0.5)
             .sum()
     };
     let f = faces.iter().copied().max_by(|a, b| area(*a).total_cmp(&area(*b)))?;
@@ -830,7 +830,7 @@ pub fn arrow(app: &SolveApp, d: &Dialog) -> Option<Vec3> {
         .filter(|(_, tf)| **tf == f)
         .filter_map(|(t, _)| m.tri(t))
         .min_by(|a, b| ((a[0] + a[1] + a[2]) / 3.0).dist(*point).total_cmp(&((b[0] + b[1] + b[2]) / 3.0).dist(*point)))
-        .and_then(|[a, b, c]| (b - a).cross(c - a).normalized())?;
+        .and_then(|solidcraft_engine::geom::Triangle([a, b, c])| (b - a).cross(c - a).normalized())?;
     Some(if flip { -n } else { n })
 }
 

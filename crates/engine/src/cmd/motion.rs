@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use solidcraft_doc::Mat;
 use solidcraft_doc::joints::{self, JointKind};
 use solidcraft_doc::motion::{ContactSet, ExplodedView, MotionStudy, StudyKey};
-use solidcraft_geom::Vec3;
+use solidcraft_geom::{Triangle, Vec3};
 use solidcraft_kernel::Body;
 
 use super::CommandSpec;
@@ -196,7 +196,7 @@ fn mesh_overlap(ma: &solidcraft_geom::Mesh, mb: &solidcraft_geom::Mesh, tol: f64
     (depth > tol).then_some(depth)
 }
 
-fn tris(m: &solidcraft_geom::Mesh) -> Vec<[Vec3; 3]> {
+fn tris(m: &solidcraft_geom::Mesh) -> Vec<Triangle> {
     m.triangles.iter().filter_map(|t| m.tri(t)).collect()
 }
 
@@ -205,7 +205,7 @@ fn deepest(a: &solidcraft_geom::Mesh, b: &solidcraft_geom::Mesh, tol: f64) -> f6
     let tb = tris(b);
     let bx = b.bounds();
     let mut pts: Vec<Vec3> = a.positions.clone();
-    for [p, q, r] in tris(a) {
+    for solidcraft_geom::Triangle([p, q, r]) in tris(a) {
         pts.extend([(p + q) * 0.5, (q + r) * 0.5, (r + p) * 0.5, (p + q + r) * (1.0 / 3.0)]);
     }
     let mut best = 0.0f64;
@@ -219,7 +219,10 @@ fn deepest(a: &solidcraft_geom::Mesh, b: &solidcraft_geom::Mesh, tol: f64) -> f6
         {
             continue;
         }
-        let d = tb.iter().map(|[a, b, c]| solidcraft_geom::Triangle([*a, *b, *c]).closest_point(p).dist(p)).fold(f64::MAX, f64::min);
+        let d = tb
+            .iter()
+            .map(|solidcraft_geom::Triangle([a, b, c])| solidcraft_geom::Triangle([*a, *b, *c]).closest_point(p).dist(p))
+            .fold(f64::MAX, f64::min);
         if d > tol.max(best) && inside(p, &tb) {
             best = d;
         }
@@ -228,12 +231,12 @@ fn deepest(a: &solidcraft_geom::Mesh, b: &solidcraft_geom::Mesh, tol: f64) -> f6
 }
 
 /// Ray parity along a skew direction (no axis-aligned edge hits).
-fn inside(p: Vec3, tris: &[[Vec3; 3]]) -> bool {
+fn inside(p: Vec3, tris: &[Triangle]) -> bool {
     // Fixed ray coordinates, not an approximation used to compute Euler's constant.
     #[allow(clippy::approx_constant)]
     let dir = Vec3::new(0.577_215_664_9, 0.327_118_441_9, 0.751_891_438_7);
     let mut n = 0;
-    for [a, b, c] in tris {
+    for solidcraft_geom::Triangle([a, b, c]) in tris {
         let (e1, e2) = (*b - *a, *c - *a);
         let h = dir.cross(e2);
         let det = e1.dot(h);

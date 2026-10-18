@@ -295,7 +295,7 @@ fn planar_polys(b: &Body, operand: usize) -> std::result::Result<Vec<Poly>, NotP
     let bad_mesh = || NotPlanar::Other("mesh is inconsistent".into());
     let mut out = Vec::new();
     for (t, fi) in mesh.triangles.iter().zip(&mesh.tri_face) {
-        let [a, bb, c] = mesh.tri(t).ok_or_else(bad_mesh)?;
+        let solidcraft_geom::Triangle([a, bb, c]) = mesh.tri(t).ok_or_else(bad_mesh)?;
         let plane = *planes.get(*fi as usize).ok_or_else(bad_mesh)?;
         // Snap the vertices onto the exact face plane.
         let snap = |p: Vec3| p - plane.n * (plane.n.dot(p) - plane.w);
@@ -316,7 +316,7 @@ fn faceted_polys(b: &Body, tol: f64, operand: usize) -> Option<Vec<Poly>> {
     let planes: Vec<Option<PlaneEq>> = faces.iter().map(|f| f.plane_normal.map(|n| PlaneEq { n, w: n.dot(f.centroid) })).collect();
     let mut out = Vec::new();
     for (t, fi) in mesh.triangles.iter().zip(&mesh.tri_face) {
-        let [a, bb, c] = mesh.tri(t)?;
+        let solidcraft_geom::Triangle([a, bb, c]) = mesh.tri(t)?;
         let plane = match planes.get(*fi as usize)? {
             Some(pl) => *pl,
             None => {
@@ -356,7 +356,7 @@ fn faceted_boolean_untimed(a: &Body, b: &Mesh, op: BoolOp, tol: f64) -> Result<O
     };
     let mut pb = Vec::with_capacity(b.triangles.len());
     for (face, t) in b.triangles.iter().enumerate() {
-        let Some([p, q, r]) = b.tri(t) else { continue };
+        let Some(solidcraft_geom::Triangle([p, q, r])) = b.tri(t) else { continue };
         let Some(n) = (q - p).cross(r - p).normalized() else { continue };
         pb.push(Poly { v: vec![p, q, r], plane: PlaneEq { n, w: n.dot(p) }, src: FaceOrigin::Face { operand: 1, face } });
     }

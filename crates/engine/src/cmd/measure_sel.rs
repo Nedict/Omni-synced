@@ -5,7 +5,7 @@
 //! have a direction (planar faces, straight edges), the angle.
 
 use serde_json::{Value, json};
-use solidcraft_geom::{Mesh, Vec3};
+use solidcraft_geom::{Mesh, Triangle, Vec3};
 
 use super::measure_shape::{Shape, Slot, add_round, centre};
 use crate::params::bad;
@@ -14,7 +14,7 @@ use crate::{Result, Sel, Session};
 /// Geometry of a picked item, as points or triangles.
 enum Geo {
     Points(Vec<Vec3>),
-    Tris(Vec<[Vec3; 3]>),
+    Tris(Vec<Triangle>),
 }
 
 /// Caps that keep a measurement interactive on big meshes.
@@ -50,8 +50,8 @@ fn edge_index(m: &Mesh, index: usize, point: Vec3) -> Option<usize> {
     m.edges.iter().enumerate().min_by(|(_, a), (_, b)| near(a).total_cmp(&near(b))).map(|(i, _)| i)
 }
 
-fn face_tris(m: &Mesh, f: usize) -> Vec<[Vec3; 3]> {
-    m.face_tris_of(f).map(|t| t.0).collect()
+fn face_tris(m: &Mesh, f: usize) -> Vec<Triangle> {
+    m.face_tris_of(f).collect()
 }
 
 /// A described item: its geometry, direction (planar face normal, straight edge direction),
@@ -290,8 +290,8 @@ fn describe(s: &Session, sel: &Sel) -> Option<Item> {
             let m = b.mesh();
             let patch = m.surface_patch(*index);
             let tris = patch.iter().flat_map(|f| face_tris(&m, *f)).collect::<Vec<_>>();
-            let area: f64 = tris.iter().map(|[a, b, c]| (*b - *a).cross(*c - *a).len() * 0.5).sum();
-            let normals: Vec<Vec3> = tris.iter().filter_map(|[a, b, c]| (*b - *a).cross(*c - *a).normalized()).collect();
+            let area: f64 = tris.iter().map(|solidcraft_geom::Triangle([a, b, c])| (*b - *a).cross(*c - *a).len() * 0.5).sum();
+            let normals: Vec<Vec3> = tris.iter().filter_map(|solidcraft_geom::Triangle([a, b, c])| (*b - *a).cross(*c - *a).normalized()).collect();
             let planar = normals.first().copied().filter(|n0| normals.iter().all(|n| n.dot(*n0) > 1.0 - 1e-6));
             let mut json = json!({"type": "face", "area_mm2": area, "planar": planar.is_some()});
             let verts: Vec<Vec3> = tris.iter().flat_map(|t| t.iter().copied()).collect();
@@ -315,7 +315,7 @@ fn describe(s: &Session, sel: &Sel) -> Option<Item> {
         }
         Sel::Body { name } => {
             let m = st.body(name)?.mesh();
-            let tris: Vec<[Vec3; 3]> = m.triangles.iter().filter_map(|t| m.tri(t)).collect();
+            let tris: Vec<Triangle> = m.triangles.iter().filter_map(|t| m.tri(t)).collect();
             let v = m.measure().volume;
             plain(Geo::Tris(tris), None, json!({"type": "body", "name": name, "volume_mm3": v}))
         }
@@ -353,12 +353,12 @@ fn sample<T: Copy>(v: &[T], max: usize) -> Vec<T> {
 
 /// Closest pair of points between two pieces of geometry.
 fn closest(a: &Geo, b: &Geo) -> Option<(Vec3, Vec3)> {
-    let pts_to_tris = |pts: &[Vec3], tris: &[[Vec3; 3]]| -> Option<(Vec3, Vec3)> {
+    let pts_to_tris = |pts: &[Vec3], tris: &[Triangle]| -> Option<(Vec3, Vec3)> {
         let pts = sample(pts, MAX_POINTS);
         let tris = sample(tris, MAX_TRIS);
         let mut best: Option<(f64, Vec3, Vec3)> = None;
         for p in &pts {
-            for [x, y, z] in &tris {
+            for solidcraft_geom::Triangle([x, y, z]) in &tris {
                 let q = solidcraft_geom::Triangle([*x, *y, *z]).closest_point(*p);
                 let d = p.dist(q);
                 if best.is_none_or(|(bd, _, _)| d < bd) {
@@ -368,7 +368,7 @@ fn closest(a: &Geo, b: &Geo) -> Option<(Vec3, Vec3)> {
         }
         best.map(|(_, p, q)| (p, q))
     };
-    let verts = |tris: &[[Vec3; 3]]| -> Vec<Vec3> { tris.iter().flat_map(|t| t.iter().copied()).collect() };
+    let verts = |tris: &[Triangle]| -> Vec<Vec3> { tris.iter().flat_map(|t| t.iter().copied()).collect() };
     match (a, b) {
         (Geo::Points(p), Geo::Points(q)) => {
             let (p, q) = (sample(p, MAX_POINTS), sample(q, MAX_POINTS));

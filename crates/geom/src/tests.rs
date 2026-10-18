@@ -438,7 +438,7 @@ mod close_pairs {
         for p in tri {
             bounds.add(p);
         }
-        (tri, bounds)
+        (Triangle(tri), bounds)
     }
 
     /// `count` small triangles scattered over a cube of side `spread` at `origin`. On the lattice their

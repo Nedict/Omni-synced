@@ -90,7 +90,7 @@ fn boxes_meet(a: &Aabb3, b: &Aabb3) -> bool {
 }
 
 /// A triangle with its bounding box, as [`find_close_pair`] takes them.
-pub type BoxedTriangle = ([Vec3; 3], Aabb3);
+pub type BoxedTriangle = (Triangle, Aabb3);
 
 /// Most grid cells one triangle is filed under; a larger one is tested against every triangle.
 const MAX_CELLS_PER_TRIANGLE: usize = 64;
@@ -289,7 +289,7 @@ impl Mesh {
         let xyz = |v: Vec3| [v.x, v.y, v.z];
         let (mut v6, mut first, mut second) = (0.0, Vec3::ZERO, [[0.0f64; 3]; 3]);
         for t in &self.triangles {
-            let [a, b, c] = self.tri(t)?;
+            let crate::Triangle([a, b, c]) = self.tri(t)?;
             let det = a.dot(b.cross(c));
             v6 += det;
             first += (a + b + c) * det;
@@ -452,14 +452,15 @@ impl Mesh {
         }
         chain
     }
-    pub fn tri(&self, t: &[u32; 3]) -> Option<[Vec3; 3]> {
-        Some([*self.positions.get(t[0] as usize)?, *self.positions.get(t[1] as usize)?, *self.positions.get(t[2] as usize)?])
+    /// The triangle with vertex indices `t`; `None` when one names no vertex.
+    pub fn tri(&self, t: &[u32; 3]) -> Option<Triangle> {
+        Some(Triangle([*self.positions.get(t[0] as usize)?, *self.positions.get(t[1] as usize)?, *self.positions.get(t[2] as usize)?]))
     }
 
     /// Each triangle's corners with the B-rep face it came from (a triangle naming a missing
     /// vertex is skipped).
     pub fn face_tris(&self) -> impl Iterator<Item = (Triangle, u32)> + '_ {
-        self.triangles.iter().zip(&self.tri_face).filter_map(|(t, f)| Some((Triangle(self.tri(t)?), *f)))
+        self.triangles.iter().zip(&self.tri_face).filter_map(|(t, f)| Some((self.tri(t)?, *f)))
     }
 
     /// The corners of the triangles that came from B-rep face `face`.
@@ -493,7 +494,7 @@ impl Mesh {
     pub fn measure(&self) -> MeshMeasure {
         let (mut v6, mut area, mut c) = (0.0, 0.0, Vec3::ZERO);
         for t in &self.triangles {
-            let Some([a, b, cc]) = self.tri(t) else { continue };
+            let Some(crate::Triangle([a, b, cc])) = self.tri(t) else { continue };
             let d = a.dot(b.cross(cc));
             v6 += d;
             c += (a + b + cc) * d;
@@ -518,7 +519,7 @@ impl Mesh {
     pub fn ray_crossings(&self, o: Vec3, dir: Vec3) -> usize {
         let mut n = 0;
         for t in &self.triangles {
-            let Some([a, b, c]) = self.tri(t) else { continue };
+            let Some(crate::Triangle([a, b, c])) = self.tri(t) else { continue };
             let (e1, e2) = (b - a, c - a);
             let p = dir.cross(e2);
             let det = e1.dot(p);
@@ -566,7 +567,7 @@ impl Mesh {
         if region.is_empty() {
             return false;
         }
-        let near = |m: &Mesh| -> Vec<([Vec3; 3], Aabb3)> {
+        let near = |m: &Mesh| -> Vec<BoxedTriangle> {
             m.triangles
                 .iter()
                 .filter_map(|t| {
@@ -653,7 +654,7 @@ impl RayFrame {
     }
 
     /// The distance along the ray to triangle `[pa, pb, pc]` (`None`: missed, or not in front).
-    pub(crate) fn hit(&self, [pa, pb, pc]: [Vec3; 3]) -> Option<f64> {
+    pub(crate) fn hit(&self, Triangle([pa, pb, pc]): Triangle) -> Option<f64> {
         let ((ax, ay, az), (bx, by, bz), (cx, cy, cz)) = (self.frame(pa), self.frame(pb), self.frame(pc));
         let u = cx * by - cy * bx;
         let v = ax * cy - ay * cx;
@@ -702,7 +703,7 @@ impl Mesh {
                     .triangles
                     .iter()
                     .map(|t| match self.tri(t) {
-                        Some([a, b, c]) => [(a.dot(u), a.dot(v)), (b.dot(u), b.dot(v)), (c.dot(u), c.dot(v))],
+                        Some(crate::Triangle([a, b, c])) => [(a.dot(u), a.dot(v)), (b.dot(u), b.dot(v)), (c.dot(u), c.dot(v))],
                         None => [(0.0, 0.0); 3],
                     })
                     .collect();
@@ -758,7 +759,7 @@ impl InsideIndex<'_> {
         let mut n = 0;
         for &i in list {
             let Some(t) = self.mesh.triangles.get(i as usize) else { continue };
-            let Some([a, b, c]) = self.mesh.tri(t) else { continue };
+            let Some(crate::Triangle([a, b, c])) = self.mesh.tri(t) else { continue };
             let (e1, e2) = (b - a, c - a);
             let p = dir.cross(e2);
             let det = e1.dot(p);

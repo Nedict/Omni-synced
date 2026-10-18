@@ -736,7 +736,7 @@ fn roomiest(m: &Mesh, only: Option<usize>) -> Vec<Option<(f64, Vec3)>> {
         if only.is_some_and(|i| i != f) {
             continue;
         }
-        let Some([a, b, c]) = m.tri(t) else { continue };
+        let Some(solidcraft_geom::Triangle([a, b, c])) = m.tri(t) else { continue };
         // The incentre weighs each corner by the side opposite it; the inradius is area / half the perimeter.
         let (la, lb, lc) = (b.dist(c), c.dist(a), a.dist(b));
         let perimeter = la + lb + lc;

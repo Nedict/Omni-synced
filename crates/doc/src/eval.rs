@@ -1962,9 +1962,10 @@ impl<'a> Surroundings<'a> {
     /// are drawn in, so that faces lying against them don't count).
     fn harmless(&self, plane: &Plane, pieces: &[[Vec2; 3]], margin: f64, lo: f64, hi: f64) -> bool {
         let n = plane.normal();
-        let faces: Vec<([Vec3; 3], f64)> = pieces.iter().map(|t| (t.map(|p| plane.to_world(p)), margin)).collect();
+        let faces: Vec<(solidcraft_geom::Triangle, f64)> =
+            pieces.iter().map(|t| (solidcraft_geom::Triangle(t.map(|p| plane.to_world(p))), margin)).collect();
         let mut space = solidcraft_geom::Aabb3::EMPTY;
-        for p in faces.iter().flat_map(|(t, _)| t) {
+        for p in faces.iter().flat_map(|(t, _)| t.iter()) {
             space.add(*p + n * lo);
             space.add(*p + n * hi);
         }
@@ -2186,7 +2187,7 @@ fn extend_for_coplanar(sur: &Surroundings, plane: &Plane, r: &Region2, lo: f64, 
         .map(|(_, m, _)| m)
         .flat_map(|m| {
             m.triangles.iter().filter_map(|t| {
-                let [a, b, c] = m.tri(t)?;
+                let solidcraft_geom::Triangle([a, b, c]) = m.tri(t)?;
                 let normal = (b - a).cross(c - a).normalized()?;
                 (normal.dot(n).abs() > 1.0 - 1e-9).then(|| (a - plane.origin).dot(n))
             })
@@ -2249,7 +2250,7 @@ fn trim_embedded_join_ends(sur: &Surroundings, plane: &Plane, r: &Region2, lo: f
         .iter()
         .flat_map(|(_, mesh, _)| {
             mesh.triangles.iter().filter_map(|t| {
-                let [a, b, c] = mesh.tri(t)?;
+                let solidcraft_geom::Triangle([a, b, c]) = mesh.tri(t)?;
                 let normal = (b - a).cross(c - a).normalized()?;
                 (normal.dot(n).abs() > 1.0 - 1e-9).then(|| (a - plane.origin).dot(n))
             })
@@ -2312,7 +2313,7 @@ fn face_level_at(st: &ModelState, plane: &Plane, h: f64, targets: &[String]) -> 
         let m = b.mesh();
         let tol = (b.body.size() * 1e-7).max(1e-9);
         m.triangles.iter().any(|t| {
-            m.tri(t).is_some_and(|[a, b, c]| {
+            m.tri(t).is_some_and(|solidcraft_geom::Triangle([a, b, c])| {
                 (b - a).cross(c - a).normalized().is_some_and(|normal| normal.dot(n).abs() > 1.0 - 1e-9)
                     && ((a - plane.origin).dot(n) - h).abs() < tol
             })
@@ -4496,7 +4497,7 @@ fn face_samples(b: &ModelBody) -> Vec<Vec3> {
         if out.len() <= f {
             out.resize(f + 1, None);
         }
-        if let (Some(slot @ None), Some([a, bb, c])) = (out.get_mut(f), m.tri(t)) {
+        if let (Some(slot @ None), Some(solidcraft_geom::Triangle([a, bb, c]))) = (out.get_mut(f), m.tri(t)) {
             *slot = Some((a + bb + c) * (1.0 / 3.0));
         }
     }
@@ -4652,7 +4653,7 @@ fn face_plane(st: &ModelState, picked: &Plane, at: Vec3, name: Option<&str>) -> 
                 .zip(&mesh.tri_face)
                 .filter(|(_, tf)| **tf as usize == f.index)
                 .filter_map(|(t, _)| mesh.tri(t))
-                .map(|[a, bb, c]| solidcraft_geom::Triangle([a, bb, c]).closest_point(at).dist(at))
+                .map(|solidcraft_geom::Triangle([a, bb, c])| solidcraft_geom::Triangle([a, bb, c]).closest_point(at).dist(at))
                 .fold(f64::INFINITY, f64::min);
             if best.is_none_or(|x| d < x.0) {
                 best = Some((d, f.centroid.dot(n)));

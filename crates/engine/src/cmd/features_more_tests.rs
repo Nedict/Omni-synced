@@ -299,7 +299,7 @@ fn cylinder_small_chord_pick_is_saved_on_the_exact_surface() {
         .triangles
         .iter()
         .filter_map(|tri| mesh.tri(tri))
-        .map(|[a, b, c]| (a + b + c) / 3.)
+        .map(|solidcraft_geom::Triangle([a, b, c])| (a + b + c) / 3.)
         .find(|p| p.y > 0.08 && p.z > 0.04 && p.z < 0.16)
         .unwrap();
     assert!(((pick.x * pick.x + pick.y * pick.y).sqrt() - 0.1).abs() > 1e-7);

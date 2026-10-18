@@ -98,7 +98,7 @@ fn on_face(mesh: &solidcraft_geom::Mesh, face: usize, p: Vec3, reach: f64) -> bo
         .zip(&mesh.tri_face)
         .filter(|(_, f)| **f as usize == face)
         .filter_map(|(t, _)| mesh.tri(t))
-        .any(|[a, b, c]| crate::boolean_guard::point_triangle_dist(p, a, b, c) <= reach)
+        .any(|solidcraft_geom::Triangle([a, b, c])| crate::boolean_guard::point_triangle_dist(p, a, b, c) <= reach)
 }
 
 /// Whether `p` lies on an edge of face `face` (within `margin`).

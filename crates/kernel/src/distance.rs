@@ -140,8 +140,8 @@ impl<'a> DistanceShape<'a> {
             let sides: Vec<Vec3> = tris
                 .iter()
                 .filter_map(|&k| self.set.triangle(k))
-                .filter(|[a, b, c]| solidcraft_geom::Triangle([*a, *b, *c]).closest_point(at).dist(at) <= reach)
-                .map(|[a, b, c]| across((a + b + c) / 3.0))
+                .filter(|solidcraft_geom::Triangle([a, b, c])| solidcraft_geom::Triangle([*a, *b, *c]).closest_point(at).dist(at) <= reach)
+                .map(|solidcraft_geom::Triangle([a, b, c])| across((a + b + c) / 3.0))
                 .filter(|w| w.len() > tiny)
                 .collect();
             let Some(inward) = sides.iter().copied().max_by(|x, y| x.len().total_cmp(&y.len())) else { continue };

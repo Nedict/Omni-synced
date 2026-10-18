@@ -207,7 +207,7 @@ fn regularized_shell_keeps_legacy_and_explicit_single_face_projections_closed() 
                 .iter()
                 .zip(&mesh.tri_face)
                 .find_map(|(tri, face)| (*face as usize == index).then(|| mesh.tri(tri)).flatten())
-                .map(|[a, b, c]| (a + b + c) / 3.)
+                .map(|solidcraft_geom::Triangle([a, b, c])| (a + b + c) / 3.)
                 .unwrap();
             let source = solidcraft_sketch::LinkSource::Face { body: "Case".into(), at: point };
             let (values, _) = doc.param_values();

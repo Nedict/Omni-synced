@@ -170,7 +170,7 @@ impl<'a> View<'a> {
     }
     fn triangle(&self, shared: &Shared, placed: &Placement, id: usize) -> Result<[Vec3; 3], &'static str> {
         let indices = shared.mesh.triangles.get(id).ok_or("invalid export triangle")?;
-        let [a, b, c] = shared.mesh.tri(indices).ok_or("invalid export triangle")?;
+        let solidcraft_geom::Triangle([a, b, c]) = shared.mesh.tri(indices).ok_or("invalid export triangle")?;
         Ok([
             self.project(apply_point(&placed.transform, a))?,
             self.project(apply_point(&placed.transform, b))?,

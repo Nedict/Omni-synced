@@ -1544,7 +1544,7 @@ fn plate_recesses(body: &Body, mesh: &Mesh, plane: &Plane, at: Vec3, n: Vec3, (l
     let level = |p: Vec3| (p - at).dot(n);
     let mut faces: BTreeMap<u32, Option<LevelFace>> = BTreeMap::new();
     for (tri, f) in mesh.triangles.iter().zip(&mesh.tri_face) {
-        let Some([a, b, c]) = mesh.tri(tri) else { continue };
+        let Some(solidcraft_geom::Triangle([a, b, c])) = mesh.tri(tri) else { continue };
         let cr = (b - a).cross(c - a);
         let len = cr.len();
         if !(len > 1e-12) {

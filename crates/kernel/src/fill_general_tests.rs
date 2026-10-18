@@ -174,7 +174,7 @@ fn check_face(name: &str, open: &Body, fill: &Body) -> f64 {
     let m = fill.tessellate(0.01).unwrap();
     assert!(!m.triangles.is_empty(), "{name}: the face meshes");
     for t in &m.triangles {
-        let [a, b, c] = m.tri(t).unwrap();
+        let solidcraft_geom::Triangle([a, b, c]) = m.tri(t).unwrap();
         let v = (b - a).cross(c - a);
         let n: Vec3 = t.iter().map(|&i| m.normals[i as usize]).fold(Vec3::ZERO, |s, x| s + x);
         if v.len() > 1e-10 {

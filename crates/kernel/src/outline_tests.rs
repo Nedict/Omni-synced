@@ -50,7 +50,7 @@ fn a_swept_lips_foot_is_a_plane() {
         .zip(&m.tri_face)
         .filter(|(_, f)| foot.contains(&(**f as usize)))
         .filter_map(|(t, _)| m.tri(t))
-        .map(|[a, b, c]| (b - a).cross(c - a).len() / 2.0)
+        .map(|solidcraft_geom::Triangle([a, b, c])| (b - a).cross(c - a).len() / 2.0)
         .sum();
     assert!((area - PI * (100.0 - 81.0) / 4.0).abs() < 1e-3, "{} faces, {area} mm²", foot.len());
 }

@@ -15,7 +15,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
-use crate::{Aabb3, Mesh, Vec3};
+use crate::{Aabb3, Mesh, Triangle, Vec3};
 
 /// Runs a job for every index below `n`: the jobs are independent, so any order and any number
 /// of threads will do. [`serial`] runs them one after another; a caller with threads passes one
@@ -167,7 +167,7 @@ const LEAF: usize = 4;
 /// the triangles a line can cross.
 pub struct TriangleTree {
     /// The mesh's triangles with finite corners, in tree order.
-    tris: Vec<[Vec3; 3]>,
+    tris: Vec<Triangle>,
     /// Each one's index in the mesh.
     ids: Vec<u32>,
     nodes: Vec<Node>,
@@ -265,7 +265,7 @@ impl TriangleTree {
             }
             if node.leaf {
                 for k in node.a..node.b {
-                    let Some([a, b, c]) = self.tris.get(k as usize).copied() else { continue };
+                    let Some(crate::Triangle([a, b, c])) = self.tris.get(k as usize).copied() else { continue };
                     let d2 = (crate::Triangle([a, b, c]).closest_point(p) - p).len2();
                     if d2 < best2 {
                         best2 = d2;
@@ -365,7 +365,7 @@ fn for_each_sample(t: &[Vec3; 3], h: f64, stack: &mut Vec<[Vec3; 3]>, mut f: imp
 /// The spacing at which `mesh` needs about `max` sample points (at least `want`; a mesh whose
 /// triangles alone need more gets one piece per triangle).
 fn spacing_for(mesh: &Mesh, want: f64, max: usize) -> f64 {
-    let tris: Vec<[Vec3; 3]> = mesh.triangles.iter().filter_map(|t| mesh.tri(t)).filter(|t| t.iter().all(|p| p.is_finite())).collect();
+    let tris: Vec<Triangle> = mesh.triangles.iter().filter_map(|t| mesh.tri(t)).filter(|t| t.iter().all(|p| p.is_finite())).collect();
     // Every piece is sampled at its centre and its corners, each corner once: a triangulated
     // surface has about half as many corners as triangles, so 1.5 samples a piece.
     let fewest = 1.5 * tris.len() as f64;

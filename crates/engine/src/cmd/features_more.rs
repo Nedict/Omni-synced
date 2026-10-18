@@ -179,7 +179,7 @@ fn emboss(s: &mut Session, p: &Value) -> Result<Value> {
                 .iter()
                 .zip(&mesh.tri_face)
                 .filter_map(|(tri, face)| {
-                    let [a, b, c] = mesh.tri(tri)?;
+                    let solidcraft_geom::Triangle([a, b, c]) = mesh.tri(tri)?;
                     let n = (b - a).cross(c - a).normalized()?;
                     let q = at - n * (at - a).dot(n);
                     let inside = [(a, b), (b, c), (c, a)].iter().all(|(u, v)| (*v - *u).cross(q - *u).dot(n) >= -1e-9);

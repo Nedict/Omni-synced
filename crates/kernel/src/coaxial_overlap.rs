@@ -229,7 +229,7 @@ fn walls(b: &Body, cylinders: Vec<Wall>, same: f64) -> Option<Vec<Wall>> {
             if *f as usize != face {
                 continue;
             }
-            let Some([p, q, r]) = mesh.tri(t) else { continue };
+            let Some(solidcraft_geom::Triangle([p, q, r])) = mesh.tri(t) else { continue };
             let c = (p + q + r) / 3.0;
             let radial = (c - origin) - axis * (c - origin).dot(axis);
             facing += (q - p).cross(r - p).dot(radial);

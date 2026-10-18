@@ -1487,7 +1487,7 @@ fn feature_geometry(app: &SolveApp, id: u64) -> Vec<Sel> {
                 if *f as usize != index {
                     return None;
                 }
-                m.tri(t).map(|[a, b, c]| (a + b + c) / 3.0)
+                m.tri(t).map(|solidcraft_engine::geom::Triangle([a, b, c])| (a + b + c) / 3.0)
             }) {
                 out.push(Sel::Face { body: b.name.clone(), index, point });
             }
@@ -2892,7 +2892,7 @@ pub(crate) fn grouped_selection(s: &solidcraft_engine::Session, sel: &Sel) -> Ve
                             if *f as usize != i {
                                 return None;
                             }
-                            let [a, b, c] = m.tri(t)?;
+                            let solidcraft_engine::geom::Triangle([a, b, c]) = m.tri(t)?;
                             Some(Sel::Face { body: body.clone(), index: i, point: (a + b + c) / 3.0 })
                         })
                     })
@@ -3026,7 +3026,7 @@ fn box_select(app: &mut SolveApp, proj: &Proj, bx: BoxSel, add: bool) {
                         .zip(&m.tri_face)
                         .find(|(_, tf)| **tf as usize == f)
                         .and_then(|(t, _)| m.tri(t))
-                        .map(|[a, bb, c]| (a + bb + c) / 3.0);
+                        .map(|solidcraft_engine::geom::Triangle([a, bb, c])| (a + bb + c) / 3.0);
                     let takes = bx.takes(&to2(&pts))
                         && (bx.crossing
                             || m.surface_patch(f).iter().all(|&face| {
@@ -5257,7 +5257,7 @@ mod tests {
         for &f in faces {
             let index = f as usize;
             let t = m.triangles.iter().zip(&m.tri_face).find(|(_, tf)| **tf == f).unwrap().0;
-            let [a, c, d] = m.tri(t).unwrap();
+            let solidcraft_engine::geom::Triangle([a, c, d]) = m.tri(t).unwrap();
             let point = (a + c + d) / 3.0;
             app.viewport.hover = Some(Hit::Face { body: b.name.clone(), index, point });
             assert_eq!(build_highlight(&app).merged().tris.len(), triangle_count * 3 * crate::gpu::TRI_SIZE);
