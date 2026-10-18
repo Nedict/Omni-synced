@@ -324,6 +324,13 @@ fn far_wire(swept: &mt::Shell, start: &mt::Wire, map: &dyn Fn(Vec3) -> Vec3) -> 
 /// split to the same number of segments (longest first) and each turned to run the way the one
 /// before it does. Walls only, no caps; the history has no operands: every face is new.
 pub fn loft_sheet(sections: &[(Plane, Vec<Seg2>)]) -> Result<Body> {
+    loft_sheet_with_rails(sections, &[], crate::RailFit::Scale)
+}
+
+/// [`loft_sheet`] following one or two guide rails (polylines from the first section to the last,
+/// through every section's curve; see [`crate::loft_rails`]), `fit` saying how they reshape the
+/// sections between. Without rails, the plain sheet loft.
+pub fn loft_sheet_with_rails(sections: &[(Plane, Vec<Seg2>)], rails: &[Vec<Vec3>], fit: crate::RailFit) -> Result<Body> {
     if sections.len() < 2 || sections.len() > 50 {
         return Err(KernelError::Invalid("a loft needs 2…50 sections".into()));
     }
@@ -345,10 +352,10 @@ pub fn loft_sheet(sections: &[(Plane, Vec<Seg2>)]) -> Result<Body> {
         }
         crate::build::chain_wire(plane, chain)?;
     }
-    let (wires, sources) = if all_closed {
+    let (wires, sources, reversed) = if all_closed {
         let loops: Vec<(Plane, solidcraft_geom::Loop2)> = sections.iter().map(|(p, c)| (*p, solidcraft_geom::Loop2 { segs: c.clone() })).collect();
-        let (wires, sources, _) = crate::build::loft_wires(&loops)?;
-        (wires, sources)
+        let (wires, sources, reversed) = crate::build::loft_wires(&loops)?;
+        (wires, sources, reversed)
     } else {
         let n = sections.iter().map(|(_, c)| c.len()).max().unwrap_or(0);
         let mut wires = Vec::with_capacity(sections.len());
@@ -378,8 +385,19 @@ pub fn loft_sheet(sections: &[(Plane, Vec<Seg2>)]) -> Result<Body> {
             wires.push(crate::build::uniform_chain_wire(plane, &pieces, false)?);
             sources.push(segs.iter().map(|(_, k)| vec![*k]).collect::<Vec<_>>());
         }
-        (wires, sources)
+        (wires, sources, false)
     };
+    if !rails.is_empty() {
+        let mut planes: Vec<Plane> = sections.iter().map(|(p, _)| *p).collect();
+        if reversed {
+            planes.reverse();
+        }
+        let faces = guard("surface loft", || {
+            let all = crate::loft_rails::railed_wires(&planes, &wires, all_closed, rails, fit)?;
+            crate::build::smooth_loft_faces(&all, &sources, all_closed)
+        })?;
+        return sheet_body(faces);
+    }
     let faces = guard("surface loft", || {
         let smooth = if wires.len() >= 3 { crate::build::smooth_loft_faces(&wires, &sources, all_closed).ok() } else { None };
         match smooth {

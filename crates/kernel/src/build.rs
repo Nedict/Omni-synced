@@ -8,6 +8,7 @@ use crate::body::{Body, Solid, from_p3, p3, v3};
 use crate::history::FaceProv;
 use crate::numbered::{self, NumberedLoop, NumberedRegion};
 use crate::record::{self, Side};
+use crate::sweep_path::RailFit;
 use crate::{KernelError, Result, guard};
 
 const MAX_SEGS: usize = 20_000;
@@ -1797,7 +1798,26 @@ pub(crate) fn close_sweep(sides: Vec<Side>) -> Result<Body> {
 /// Ruled loft through two or more planar sections (outer loops only). The sections and the
 /// same sections in reverse order give the same body.
 pub fn loft(sections: &[(Plane, Loop2)]) -> Result<Body> {
+    loft_with_rails(sections, &[], RailFit::Scale)
+}
+
+/// [`loft`] following one or two guide rails (polylines from the first section to the last,
+/// through every section's curve; see [`crate::loft_rails`]), `fit` saying how they reshape the
+/// sections between. Without rails, the plain loft.
+pub fn loft_with_rails(sections: &[(Plane, Loop2)], rails: &[Vec<Vec3>], fit: RailFit) -> Result<Body> {
     let (wires, edge_sources, reversed) = loft_wires(sections)?;
+    if !rails.is_empty() {
+        let mut planes: Vec<Plane> = sections.iter().map(|(p, _)| *p).collect();
+        if reversed {
+            planes.reverse();
+        }
+        return guard("loft", || {
+            let all = crate::loft_rails::railed_wires(&planes, &wires, true, rails, fit)?;
+            let faces = smooth_loft_faces(&all, &edge_sources, true)?;
+            let (Some(w0), Some(w1)) = (wires.first(), wires.last()) else { return Err(KernelError::Failed("loft: sections".into())) };
+            cap_and_close(faces, std::slice::from_ref(w0), std::slice::from_ref(w1), reversed)
+        });
+    }
     // The wires run from the first section given, or (turned round) the last.
     // Three sections or more: one smooth surface through them all for each segment.
     if wires.len() >= 3
@@ -2039,7 +2059,7 @@ pub(crate) fn ruled_loft_faces(wires: &[mt::Wire], edge_sources: &[Vec<Vec<usize
 /// Points across the sections (one per section, in order) as a smooth B-spline through them at the
 /// parameters `u` (rising from 0 to 1, one per section): cubic through four or more, quadratic
 /// through three.
-fn across(pts: &[Vec3], u: &[f64]) -> Option<mt::BSplineCurve<mt::Point3>> {
+pub(crate) fn across(pts: &[Vec3], u: &[f64]) -> Option<mt::BSplineCurve<mt::Point3>> {
     match pts {
         [a, b, c] => {
             // The quadratic Bezier through `b` at t = u[1].
@@ -2059,7 +2079,7 @@ fn across(pts: &[Vec3], u: &[f64]) -> Option<mt::BSplineCurve<mt::Point3>> {
 /// them. At a uniform parameter a section close to its neighbour makes the surface overshoot
 /// between the others (by several times the section's size when the spacing differs tenfold).
 /// Evenly spaced sections give the uniform parameters.
-fn section_parameters(edges: &[Vec<mt::Edge>]) -> Vec<f64> {
+pub(crate) fn section_parameters(edges: &[Vec<mt::Edge>]) -> Vec<f64> {
     let m = edges.len();
     let uniform = || (0..m).map(|i| i as f64 / (m.max(2) - 1) as f64).collect::<Vec<f64>>();
     let corners: Vec<Vec<Vec3>> = edges.iter().map(|es| es.iter().map(|e| from_p3(e.front().point())).collect()).collect();

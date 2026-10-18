@@ -152,7 +152,7 @@ impl Station {
     }
 }
 
-fn clean(path: &[Vec3]) -> Result<Vec<Vec3>> {
+pub(crate) fn clean(path: &[Vec3]) -> Result<Vec<Vec3>> {
     if path.len() < 2 || path.len() > MAX_PATH_POINTS {
         return Err(KernelError::Invalid("a sweep path needs 2…100000 points".into()));
     }
@@ -365,7 +365,7 @@ fn controlled_stations(plane: &Plane, pts: &[Vec3], tangents: &[Vec3], mitre: &[
 /// after `from` (segment index and fraction along it), with the position it was found at, so a
 /// walk along the path finds each rail point after the last. Within `tol` of the plane a rail's
 /// first and last points count as on it (a rail drawn to end where the path ends).
-fn rail_crossing(rail: &[Vec3], p: Vec3, t: Vec3, from: (usize, f64), tol: f64) -> Option<(Vec3, (usize, f64))> {
+pub(crate) fn rail_crossing(rail: &[Vec3], p: Vec3, t: Vec3, from: (usize, f64), tol: f64) -> Option<(Vec3, (usize, f64))> {
     let f = |q: Vec3| (q - p).dot(t);
     let (k0, u0) = from;
     if k0 == 0 && u0 == 0.0 && rail.first().is_some_and(|q| f(*q).abs() <= tol) {
