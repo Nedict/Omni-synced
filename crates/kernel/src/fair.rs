@@ -382,20 +382,22 @@ impl Net {
         band.factorised()
     }
 
-    /// Fair `ctrl` (u fastest) with checked `opts`: see the module docs. The result is the input
-    /// with the interior control points moved; the held ones are bit-identical.
-    fn fair<const N: usize>(&self, ctrl: &[[f64; N]], opts: &FairOptions) -> Result<(Vec<[f64; N]>, FairReport)> {
-        if ctrl.len() != self.total {
-            return Err(KernelError::Invalid(format!("{} control points, expected {}", ctrl.len(), self.total)));
+    /// Fair `net` with checked `opts`: see the module docs. The result is the input with the
+    /// interior control points moved; the held ones are bit-identical.
+    fn fair<const N: usize>(&self, net: &Grid<[f64; N]>, opts: &FairOptions) -> Result<(Grid<[f64; N]>, FairReport)> {
+        if net.count() != self.count {
+            let [cu, cv] = net.count();
+            return Err(KernelError::Invalid(format!("a {cu} × {cv} net, expected {} × {}", self.count[0], self.count[1])));
         }
+        let ctrl = net.cells();
         if ctrl.iter().flatten().any(|x| !x.is_finite()) {
             return Err(KernelError::Invalid("a control point is not a finite number".into()));
         }
         let interior = Interior::new(self, if opts.keep_edges { 2 } else { 1 })?;
         let system = self.system(&interior)?;
-        let mut current: Vec<[f64; N]> = ctrl.to_vec();
+        let mut current = net.clone();
         let mut grad = vec![[0.0; N]; self.total];
-        let energy_before = self.energy_gradient(&current, &mut grad);
+        let energy_before = self.energy_gradient(ctrl, &mut grad);
         if !energy_before.is_finite() {
             return Err(KernelError::Invalid("the fairness energy of this net is not a finite number".into()));
         }
@@ -408,7 +410,7 @@ impl Net {
         let mut b = vec![0.0; interior.points.len()];
         let mut report = FairReport { energy_before, energy_after: energy_before, steps: 0, movement: 0.0, energy_trace: Vec::new() };
         for _ in 0..opts.iterations {
-            let e_now = self.energy_gradient(&current, &mut grad);
+            let e_now = self.energy_gradient(current.cells(), &mut grad);
             if !e_now.is_finite() {
                 break;
             }
@@ -430,7 +432,7 @@ impl Net {
             }
             // The largest fraction of the step that keeps every control point within the
             // tolerance of where the design put it, and never more than the whole step.
-            let mut s = opts.strength.min(interior.limit(ctrl, &current, &step, opts.tolerance));
+            let mut s = opts.strength.min(interior.limit(ctrl, current.cells(), &step, opts.tolerance));
             if !(s > 0.0) {
                 break;
             }
@@ -443,7 +445,7 @@ impl Net {
             let mut taken = false;
             for _ in 0..MAX_HALVINGS {
                 let candidate = interior.apply(&current, &step, s);
-                let e = self.energy_gradient(&candidate, &mut grad);
+                let e = self.energy_gradient(candidate.cells(), &mut grad);
                 if e < e_now {
                     current = candidate;
                     report.steps += 1;
@@ -463,7 +465,7 @@ impl Net {
             }
         }
         report.energy_after = report.energy_trace.last().copied().unwrap_or(energy_before);
-        report.movement = interior.movement(ctrl, &current);
+        report.movement = interior.movement(ctrl, current.cells());
         Ok((current, report))
     }
 }
@@ -508,10 +510,10 @@ impl Interior {
 
     /// `current` with `s` times the step `d` added to the interior control points; the held ones
     /// are copied as they are, bit for bit.
-    fn apply<const N: usize>(&self, current: &[[f64; N]], d: &[[f64; N]], s: f64) -> Vec<[f64; N]> {
-        let mut out = current.to_vec();
+    fn apply<const N: usize>(&self, current: &Grid<[f64; N]>, d: &[[f64; N]], s: f64) -> Grid<[f64; N]> {
+        let mut out = current.clone();
         for (slot, &at) in self.points.iter().enumerate() {
-            let (Some(p), Some(v)) = (out.get_mut(at), d.get(slot)) else { continue };
+            let (Some(p), Some(v)) = (out.cells_mut().get_mut(at), d.get(slot)) else { continue };
             for (x, dx) in p.iter_mut().zip(v) {
                 *x += s * dx;
             }
@@ -697,8 +699,8 @@ impl Band {
 pub fn fair_curve<const N: usize>(degree: usize, knots: &[f64], ctrl: &[[f64; N]], opts: &FairOptions) -> Result<FairCurve<N>> {
     let opts = opts.checked()?;
     let net = Net::new([degree, 0], [knots.to_vec(), TRIVIAL_KNOTS.to_vec()], [ctrl.len(), 1], &CURVE_ENERGY)?;
-    let (faired, report) = net.fair(ctrl, &opts)?;
-    Ok(FairCurve { degree, knots: knots.to_vec(), ctrl: faired, report })
+    let (faired, report) = net.fair(&Grid::row(ctrl.to_vec()), &opts)?;
+    Ok(FairCurve { degree, knots: knots.to_vec(), ctrl: faired.into_cells(), report })
 }
 
 /// Fair the interior of a B-spline control net with the thin-plate energy
@@ -709,8 +711,7 @@ pub fn fair_curve<const N: usize>(degree: usize, knots: &[f64], ctrl: &[[f64; N]
 pub fn fair_net<const N: usize>(degree: [usize; 2], knots: [&[f64]; 2], ctrl: &Grid<[f64; N]>, opts: &FairOptions) -> Result<FairNet<N>> {
     let opts = opts.checked()?;
     let net = Net::new(degree, [knots[0].to_vec(), knots[1].to_vec()], ctrl.count(), &SURFACE_ENERGY)?;
-    let (faired, report) = net.fair(ctrl.cells(), &opts)?;
-    let faired = Grid::new(ctrl.count(), faired).ok_or_else(|| KernelError::Failed("fairing changed the net's size".into()))?;
+    let (faired, report) = net.fair(ctrl, &opts)?;
     Ok(FairNet { degree, knots: [knots[0].to_vec(), knots[1].to_vec()], ctrl: faired, report })
 }
 

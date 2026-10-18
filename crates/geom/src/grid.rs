@@ -15,6 +15,12 @@ impl<T> Grid<T> {
         (count[0].checked_mul(count[1]) == Some(cells.len())).then_some(Grid { count, cells })
     }
 
+    /// One row of values along u: `count` is `[cells.len(), 1]` (a curve's control points seen
+    /// as a net).
+    pub fn row(cells: Vec<T>) -> Grid<T> {
+        Grid { count: [cells.len(), 1], cells }
+    }
+
     /// A grid whose caller already holds `count[0]·count[1]` cells (a checked surface's net).
     pub(crate) fn checked(count: [usize; 2], cells: Vec<T>) -> Grid<T> {
         Grid { count, cells }
@@ -37,6 +43,11 @@ impl<T> Grid<T> {
     /// The values, u fastest.
     pub fn cells(&self) -> &[T] {
         &self.cells
+    }
+
+    /// The values to change in place; the grid keeps its shape.
+    pub fn cells_mut(&mut self) -> &mut [T] {
+        &mut self.cells
     }
 
     pub fn into_cells(self) -> Vec<T> {
@@ -97,6 +108,7 @@ mod tests {
         assert_eq!(g.get(1, 2), Some(&(1, 2)));
         assert_eq!(g.get(2, 0), None);
         assert_eq!(g.into_rows(), rows);
+        assert_eq!(Grid::row(vec![1, 2, 3]).count(), [3, 1]);
     }
 
     #[test]
