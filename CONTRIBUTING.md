@@ -138,6 +138,10 @@ the most complete description of the house style.
 | UI scenarios | `crates/ui-egui/tests/scenarios/*.json` | part of `cargo test` |
 | Reference tests | `cargo xtask oracle` | `tests/oracle/` (see below) |
 
+A geometry change that changes the robustness goldens re-records them in the same pull request:
+`ROBUSTNESS_GOLDENS_BLESS="why it changed" cargo test --profile ci -p solidcraft-engine --lib robustness_goldens::`
+(see [docs/robustness.md](docs/robustness.md)); CI runs every seed on pull requests that touch geometry.
+
 **UI scenarios** drive the real app headless: start a tool, click a plane or a sketch point,
 press keys, then assert on the result.
 
@@ -317,6 +321,12 @@ correct them freely and it won't put them back.
   a priority, an issue carries `needs-triage`; setting a priority removes it.
 - **Maintainers** comment `/triage area:kernel P1` (any existing label; `P0`–`P3` for a
   priority, which replaces the old one; `-label` removes one) to sort an issue or PR.
+- **Short bug reports without steps to reproduce** get `needs-info` and one comment asking for
+  the steps (and the version, when it's missing). An app report that arrived empty is asked to
+  paste the report the app copied to the clipboard. The reporter's reply, or an edit that adds the
+  steps, removes the label; an issue that stays in `needs-info` for 14 days is closed, and can be
+  reopened any time. Feature requests, app reports with their details, and maintainers' issues
+  are never asked.
 - `needs-triage` is the queue: [open issues with it](https://github.com/tangency-labs/solidcraft/issues?q=is%3Aopen+label%3Aneeds-triage).
 
 ## Where help is wanted most
