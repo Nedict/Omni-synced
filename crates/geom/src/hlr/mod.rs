@@ -599,7 +599,10 @@ fn context<'a>(defs: &'a [Prepared], scene: &'a [Placement], view: &View, opts: 
         scene,
         view: *view,
         eps_own: 1e-6 * scale,
-        eps_other: 1e-9 * scale,
+        // Hits on other bodies closer than rounding are ignored, the rest up to eps_own are
+        // uncertain: the work is done in a frame at the scene's centre, so rounding is about
+        // 1e-16 of the coordinates, far below 1e-12 of the scene.
+        eps_other: 1e-12 * scale,
         scale,
         boxes,
         rays: std::cell::Cell::new(0),

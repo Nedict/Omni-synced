@@ -1237,6 +1237,24 @@ fn a_left_out_face_curling_over_its_own_edge_makes_it_uncertain() {
 }
 
 #[test]
+fn a_plate_just_above_a_box_in_a_large_scene_is_not_looked_through() {
+    // A box with its top at z = 0, a larger plate 0.005 mm above it and a cube 1e7 mm away:
+    // the box's top edges are under the plate and must not come out visible.
+    let defs = [
+        prepare(&cuboid([0., 0., -10.], [10., 10., 0.]), &Options::default()).unwrap(),
+        prepare(&cuboid([-5., -5., 0.005], [15., 15., 0.007]), &Options::default()).unwrap(),
+        prepare(&cuboid([1e7, 0., 0.], [1e7 + 1., 1., 1.]), &Options::default()).unwrap(),
+    ];
+    let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&defs, &[identity(0, [0.; 3]), identity(1, [0.; 3]), identity(2, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    // Edges 2, 3, 6 and 7 of the box run along its top face.
+    for e in [2, 3, 6, 7] {
+        let states: Vec<Visibility> = edge_line(&d, 0, e).pieces.iter().map(|p| p.visibility).collect();
+        assert!(states.iter().all(|v| *v != Visibility::Visible), "edge {e}: {states:?}");
+    }
+}
+
+#[test]
 fn narrow_torus_strips_keep_their_outline() {
     // Two strips of a torus R 20, r 10 between the meridian angles 0.3002, 0.3005 and 0.3008,
     // seen from the side: each side of the outline is a 0.006 mm piece of the circle traced on
