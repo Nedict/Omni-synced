@@ -281,9 +281,9 @@ fn off_plane(plane: &Plane, pts: &[Vec3]) -> bool {
     pts.iter().any(|p| plane.height(*p).abs() > size * 1e-7)
 }
 
-/// What a body edge (its points) gives a sketch: its section with the sketch plane, itself as a
-/// 3D curve (into `wires`) when it is included and leaves the plane, else its projection.
-/// An edge (its `exact` curve when read, and its polyline `pts`) projected for a link of `kind`.
+/// What a body edge (its `exact` curve when read, and its polyline `pts`) gives a sketch: its
+/// section with the sketch plane, itself as a 3D curve (into `wires`) when it is included and
+/// leaves the plane, else its projection (the exact curve, or the polyline fitted).
 fn edge_geom(plane: &Plane, kind: LinkKind, exact: Option<Vec<LinkGeom>>, pts: Vec<Vec3>, wires: &mut Vec<Vec<Vec3>>) -> Vec<LinkGeom> {
     match kind {
         LinkKind::Intersect => section_of_polyline(plane, &pts),

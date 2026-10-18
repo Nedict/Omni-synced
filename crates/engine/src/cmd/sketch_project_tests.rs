@@ -654,3 +654,26 @@ fn a_face_engraved_with_text_projects_its_letters_exactly_and_extrudes() {
         sketch.curves.iter().filter(|c| c.link.is_some() && matches!(c.kind, solidcraft_sketch::CurveKind::Spline { control: true, .. })).count();
     assert!(pieces > 100, "{pieces}");
 }
+
+/// A design saved before free-form edges came in exactly, by the build before it: an "S" cut
+/// 1 mm into a 30 × 20 × 10 block, then a sketch on that face (its edges projected, the letter's
+/// fitted to the mesh as 71 lines, arcs and one spline) with a circle cut 3 mm. On reopening, the
+/// face's link is laid out again with the letter's exact pieces, and the part builds the same.
+#[test]
+fn a_face_sketch_saved_with_fitted_letters_reopens_and_builds_the_same() {
+    let text = include_str!("../../../../tests/projection/before-1508/engraved_face_sketched.json");
+    let mut s = Session::new(solidcraft_doc::Document::from_json(text).unwrap());
+    let volume = run(&mut s, "inspect.measure", json!({}))["total"]["volume_mm3"].as_f64().unwrap();
+    for name in ["Extrude2", "Sketch3", "Extrude3"] {
+        let id = s.doc.find_feature(name).unwrap().id;
+        let r = s.model.result(id).unwrap();
+        assert!(r.error.is_none(), "{name}: {:?}", r.error);
+    }
+    // The build that saved it measured 5916.018831 mm³.
+    assert!((volume - 5916.018830904924).abs() < 1e-3, "{volume}");
+    let st = s.model.state();
+    let sketch = &st.sketches.last().unwrap().sketch;
+    let pieces =
+        sketch.curves.iter().filter(|c| c.link.is_some() && matches!(c.kind, solidcraft_sketch::CurveKind::Spline { control: true, .. })).count();
+    assert!(pieces > 0, "{pieces}");
+}
