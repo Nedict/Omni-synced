@@ -337,6 +337,27 @@ fn a_line_end_already_on_one_curve_gets_only_the_missing_constraint() {
 }
 
 #[test]
+fn a_point_already_held_at_the_crossing_gets_nothing_added() {
+    // The centre of a centre rectangle sits at its diagonals' crossing, held there by a
+    // midpoint on one and by the geometry on the other.
+    let mut s = new_sketch();
+    run(&mut s, "sketch.rectangle.center", json!({"center": [5, 3], "corner": [15, 9]}));
+    let diag: Vec<String> = sketch(&s).curves.iter().filter(|c| c.construction).map(|c| c.id.clone()).collect();
+    let (d1, d2) = (&diag[0], &diag[1]);
+    let (np, nc) = (sketch(&s).points.len(), sketch(&s).constraints.len());
+    run(&mut s, "sketch.circle.center", json!({"center": xsnap(d1, d2, "5,3"), "radius": 2}));
+    let sk = sketch(&s);
+    assert_eq!((sk.points.len(), sk.constraints.len()), (np, nc), "the centre is reused, nothing added");
+    // A T-junction started from a line's midpoint.
+    let mut s = new_sketch();
+    let l1 = ids(&run(&mut s, "sketch.line", json!({"points": [[0, 0], [20, 0]]}))["curves"])[0].clone();
+    let t = ids(&run(&mut s, "sketch.line", json!({"points": [format!("mid:{l1}"), [10, 10]]}))["curves"])[0].clone();
+    let nc = sketch(&s).constraints.len();
+    run(&mut s, "sketch.line", json!({"points": [xsnap(&l1, &t, "10,0"), [30, 5]]}));
+    assert_eq!(sketch(&s).constraints.len(), nc, "the midpoint is on both already");
+}
+
+#[test]
 fn undo_removes_the_crossing_point_and_constraints() {
     let mut s = new_sketch();
     let (l1, l2) = two_lines(&mut s);

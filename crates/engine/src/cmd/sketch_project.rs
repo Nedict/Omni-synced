@@ -421,20 +421,6 @@ fn auto_project(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"auto_project": s.auto_project}))
 }
 
-/// Whether point `p` is already held on curve `c`: an end of it, `PointOnCurve`, or coincident
-/// with one of those.
-fn held_on(sk: &Sketch, p: usize, c: usize) -> bool {
-    let direct = |q: usize| {
-        sk.curves.get(c).and_then(|k| k.kind.ends()).is_some_and(|(a, b)| q == a || q == b)
-            || sk.constraints.iter().any(|k| matches!(k.kind, ConstraintKind::PointOnCurve { p: x, c: y } if x == q && y == c))
-    };
-    direct(p)
-        || sk.constraints.iter().any(|k| match k.kind {
-            ConstraintKind::Coincident { p: a, q: b } => (a == p && direct(b)) || (b == p && direct(a)),
-            _ => false,
-        })
-}
-
 /// Resolve `["<c1>","<c2>"]:x,y` to the id of a point on both curves at their crossing nearest
 /// x,y: an existing point there is reused, and only the missing `PointOnCurve`s are added.
 fn crossing_point(sk: &mut Sketch, t: &str) -> std::result::Result<String, String> {
@@ -465,9 +451,14 @@ fn crossing_point(sk: &mut Sketch, t: &str) -> std::result::Result<String, Strin
         Some(i) => i,
         None => sk.add_point(at, None).map_err(|e| e.to_string())?,
     };
+    // Only what removes a degree of freedom: a point already held on a curve (its end, a
+    // midpoint, coincident, or by the geometry itself) gets nothing redundant (as `redundancy`).
     for c in [a, b] {
-        if !held_on(sk, pi, c) {
-            sk.add_constraint(ConstraintKind::PointOnCurve { p: pi, c }, None).map_err(|e| e.to_string())?;
+        let before = super::sketch::dof_now(sk);
+        let mut trial = sk.clone();
+        trial.add_constraint(ConstraintKind::PointOnCurve { p: pi, c }, None).map_err(|e| e.to_string())?;
+        if super::sketch::dof_now(&trial) < before {
+            *sk = trial;
         }
     }
     sk.points.get(pi).map(|q| q.id.clone()).ok_or_else(|| "no such point".into())
