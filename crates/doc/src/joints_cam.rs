@@ -855,10 +855,9 @@ mod tests {
         }
         // Followed on from where it touches, it stays on the part of the profile it rides: a C
         // whose two arms both cross the tip's circle, the tip resting on the second arm.
-        let c: Ring<Vec2> = [(-10.0, 20.0), (30.0, 20.0), (30.0, 14.0), (-4.0, 14.0), (-4.0, -14.0), (30.0, -14.0), (30.0, -20.0), (-10.0, -20.0)]
-            .into_iter()
-            .map(|(x, y)| Vec2::new(x, y))
-            .collect();
+        let c = Ring::from(
+            [[-10.0, 20.0], [30.0, 20.0], [30.0, 14.0], [-4.0, 14.0], [-4.0, -14.0], [30.0, -14.0], [30.0, -20.0], [-10.0, -20.0]].map(Vec2::from),
+        );
         let (pv, l) = (Vec2::new(40.0, 0.0), 22.0);
         let touches = touches_turning(&c, pv, l, 0.0, 0.0, 1.0);
         let on = |t: f64| (pv + Vec2::from_angle(t) * l).y;
@@ -868,7 +867,7 @@ mod tests {
         let stay = next_contact_turning(&c, pv, l, 0.0, (0.0, 1.0), second, 1e-9).unwrap_or(f64::NAN);
         assert!((stay - second).abs() < 1e-12, "{stay} vs {second}");
         // A knife on an edge touches it, it doesn't overlap it; just inside, it does.
-        let square: Ring<Vec2> = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)].into_iter().map(|(x, y)| Vec2::new(x, y)).collect();
+        let square = Ring::from([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]].map(Vec2::from));
         let (pv, l) = (Vec2::new(0.0, -4.0), 3.0);
         let up = std::f64::consts::FRAC_PI_2;
         assert!(!overlaps_turning(&square, pv, l, 0.0, (up, 1.0), 0.0, 1e-9));
