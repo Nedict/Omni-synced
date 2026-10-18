@@ -2135,16 +2135,21 @@ pub(crate) struct NetFit {
 /// [`NetFit`] through `samples`; `None` with fewer than four samples across either direction.
 pub(crate) fn interpolate_net(samples: &Grid<Vec3>) -> Option<NetFit> {
     let across_v: Vec<mt::BSplineCurve<mt::Point3>> = samples.transposed().lines().map(interpolate_cubic).collect::<Option<_>>()?;
-    let cps: Vec<&[mt::Point3]> = across_v.iter().map(|c| c.control_points().as_slice()).collect();
     let across_u: Vec<mt::BSplineCurve<mt::Point3>> =
-        Grid::from_rows(&cps)?.lines().map(|run| interpolate_cubic(&run.iter().map(|p| from_p3(**p)).collect::<Vec<_>>())).collect::<Option<_>>()?;
-    let cps: Vec<&[mt::Point3]> = across_u.iter().map(|c| c.control_points().as_slice()).collect();
-    let net = Grid::from_rows(&cps)?.transposed().map(|p| *p).into_rows();
+        control_net(&across_v)?.lines().map(|run| interpolate_cubic(&run.iter().map(|&p| from_p3(p)).collect::<Vec<_>>())).collect::<Option<_>>()?;
+    let net = control_net(&across_u)?.transposed().into_u_rows();
     let knots = (across_u.first()?.knot_vec().clone(), across_v.first()?.knot_vec().clone());
     let surface = mt::BSplineSurface::try_new(knots, net).ok()?;
     let u_ends = [across_v.first()?.clone(), across_v.last()?.clone()];
     let v_ends = [across_u.first()?.clone(), across_u.last()?.clone()];
     Some(NetFit { surface, u_ends, v_ends })
+}
+
+/// The control points of `curves` as a grid: value `(i, j)` is control point `j` of curve `i`.
+/// `None` unless every curve has as many control points.
+fn control_net(curves: &[mt::BSplineCurve<mt::Point3>]) -> Option<Grid<mt::Point3>> {
+    let rows: Vec<&[mt::Point3]> = curves.iter().map(|c| c.control_points().as_slice()).collect();
+    Grid::from_u_rows(&rows)
 }
 
 /// [`interpolate_cubic`] by chord length: the parameters (0 to 1) in proportion to the distance

@@ -760,7 +760,7 @@ pub fn fair_bspline_surface(surface: &mt::BSplineSurface<mt::Point3>, opts: &Fai
         let (ku, kv) = surface.knot_vecs();
         let (pu, pv) = surface.degrees();
         let faired = fair_net([pu, pv], [ku, kv], &net.map(|p| [p.x, p.y, p.z]), opts)?;
-        let net = faired.ctrl.map(|[x, y, z]| mt::Point3::new(x, y, z)).into_rows();
+        let net = faired.ctrl.map(|[x, y, z]| mt::Point3::new(x, y, z)).into_u_rows();
         let surface = mt::BSplineSurface::try_new((ku.clone(), kv.clone()), net).map_err(|e| KernelError::Failed(format!("fair: {e}")))?;
         Ok((surface, faired.report))
     })
@@ -768,28 +768,29 @@ pub fn fair_bspline_surface(surface: &mt::BSplineSurface<mt::Point3>, opts: &Fai
 
 /// A truck surface's control net (`rows[i][j]`, i along u) as a grid: refused when it is empty
 /// or not rectangular.
-fn truck_net<P>(rows: &[Vec<P>]) -> Result<Grid<&P>> {
-    let net = Grid::from_rows(rows).ok_or_else(|| KernelError::Invalid("the surface's control net is not rectangular".into()))?;
+fn truck_net<P: Clone>(rows: &[Vec<P>]) -> Result<Grid<P>> {
+    let net = Grid::from_u_rows(rows).ok_or_else(|| KernelError::Invalid("the surface's control net is not rectangular".into()))?;
     if net.is_empty() {
         return Err(KernelError::Invalid("the surface has no control points".into()));
     }
     Ok(net)
 }
 
-/// A homogeneous control net split into Cartesian points and weights; refused when a weight is
-/// zero (the point has no position).
-fn split_weights(net: Grid<HPoint>) -> Result<(Grid<[f64; 3]>, Grid<f64>)> {
-    let weights = net.clone().map(|h| h.w);
-    let points = net.try_map(|h| {
+/// A homogeneous control net's Cartesian points; refused when a weight is zero (the point has no
+/// position).
+fn positions(net: &Grid<HPoint>) -> Result<Grid<[f64; 3]>> {
+    net.clone().try_map(|h| {
         let p = h.project().ok_or_else(|| KernelError::Invalid("a control point has no position: its weight is zero".into()))?;
         Ok([p.x, p.y, p.z])
-    })?;
-    Ok((points, weights))
+    })
 }
 
-/// Faired points with the weights they had.
-fn with_weights(points: Grid<[f64; 3]>, weights: Grid<f64>) -> Result<Grid<([f64; 3], f64)>> {
-    points.zip(weights).ok_or_else(|| KernelError::Failed("fairing changed the net's size".into()))
+/// `net` moved to the faired `points`, each keeping its weight.
+fn reweighted(mut net: Grid<HPoint>, points: &Grid<[f64; 3]>) -> Grid<HPoint> {
+    for (h, &[x, y, z]) in net.cells_mut().iter_mut().zip(points.cells()) {
+        *h = HPoint::weighted(Vec3::new(x, y, z), h.w);
+    }
+    net
 }
 
 /// Fair a geom NURBS surface's control net: [`fair_net`] on its Cartesian control points, with
@@ -797,11 +798,11 @@ fn with_weights(points: Grid<[f64; 3]>, weights: Grid<f64>) -> Result<Grid<([f64
 /// A rational surface's geometry then stays within the tolerance too, by the same convex-hull
 /// bound as the non-rational case.
 pub fn fair_surface(surface: &NurbsSurface, opts: &FairOptions) -> Result<(NurbsSurface, FairReport)> {
-    let (points, weights) = split_weights(surface.net())?;
+    let net = surface.net();
     let [ku, kv] = surface.knots();
     let degree = surface.degree();
-    let faired = fair_net(degree, [ku, kv], &points, opts)?;
-    let net = with_weights(faired.ctrl, weights)?.map(|([x, y, z], w)| HPoint::weighted(Vec3::new(x, y, z), w));
+    let faired = fair_net(degree, [ku, kv], &positions(&net)?, opts)?;
+    let net = reweighted(net, &faired.ctrl);
     let out =
         NurbsSurface::from_homogeneous(degree, surface.knots().clone(), net.into_cells()).map_err(|e| spline_error("fairing the surface", e))?;
     Ok((out, faired.report))
@@ -814,11 +815,10 @@ pub fn fair_nurbs_surface(surface: &mt::NurbsSurface<mt::Vector4>, opts: &FairOp
     guard("fair a NURBS surface", || {
         let bsp = surface.non_rationalized();
         let net = truck_net(bsp.control_points())?.map(|h| HPoint { x: h.x, y: h.y, z: h.z, w: h.w });
-        let (points, weights) = split_weights(net)?;
         let (ku, kv) = bsp.knot_vecs();
         let (pu, pv) = bsp.degrees();
-        let faired = fair_net([pu, pv], [ku, kv], &points, opts)?;
-        let net = with_weights(faired.ctrl, weights)?.map(|([x, y, z], w)| mt::Vector4::new(x * w, y * w, z * w, w)).into_rows();
+        let faired = fair_net([pu, pv], [ku, kv], &positions(&net)?, opts)?;
+        let net = reweighted(net, &faired.ctrl).map(|h| mt::Vector4::new(h.x, h.y, h.z, h.w)).into_u_rows();
         let bsp = mt::BSplineSurface::try_new((ku.clone(), kv.clone()), net).map_err(|e| KernelError::Failed(format!("fair: {e}")))?;
         Ok((mt::NurbsSurface::new(bsp), faired.report))
     })
@@ -1123,7 +1123,7 @@ mod tests {
             rough[j * cu + i][2] += d;
         }
         let opts = FairOptions::new(1.0, 6, false, 100.0).unwrap();
-        let faired = fair_net(degree, [&ku, &kv], &Grid::new([cu, cv], rough.to_vec()).unwrap(), &opts).unwrap();
+        let faired = fair_net(degree, [&ku, &kv], &Grid::from_fn([cu, cv], |i, j| rough[j * cu + i]).unwrap(), &opts).unwrap();
         for j in 0..cv {
             for i in [0, cu - 1] {
                 assert_eq!(faired.ctrl.cells()[j * cu + i], rough[j * cu + i], "column {i}, row {j} moved");
@@ -1147,7 +1147,7 @@ mod tests {
             inner[j * cu + i][2] += d;
         }
         let kept = FairOptions::new(1.0, 6, true, 100.0).unwrap();
-        let faired = fair_net(degree, [&ku, &kv], &Grid::new([cu, cv], inner.to_vec()).unwrap(), &kept).unwrap();
+        let faired = fair_net(degree, [&ku, &kv], &Grid::from_fn([cu, cv], |i, j| inner[j * cu + i]).unwrap(), &kept).unwrap();
         let shell = |i: usize, j: usize| i < 2 || i + 2 >= cu || j < 2 || j + 2 >= cv;
         for j in 0..cv {
             for i in 0..cu {
@@ -1332,10 +1332,13 @@ mod tests {
         let flat = [0.0, 0.0, 1.0, 2.0, 2.0];
         let grid = [[0.0, 0.0, 0.0]; 9];
         let kept = FairOptions::new(1.0, 4, true, 1.0).unwrap();
-        assert!(fair_net([1, 1], [&flat, &flat], &Grid::new([3, 3], grid.to_vec()).unwrap(), &kept).is_err(), "keep_edges on a 3 × 3 net");
+        assert!(
+            fair_net([1, 1], [&flat, &flat], &Grid::from_fn([3, 3], |i, j| grid[j * 3 + i]).unwrap(), &kept).is_err(),
+            "keep_edges on a 3 × 3 net"
+        );
         // A net too large to fair, refused before anything is allocated for it.
         let line = [0.0, 0.0, 1.0, 1.0];
-        assert!(fair_net([1, 1], [&line, &line], &Grid::new([65, 65], vec![[0.0; 3]; 65 * 65]).unwrap(), &ok).is_err(), "4225 control points");
+        assert!(fair_net([1, 1], [&line, &line], &Grid::from_fn([65, 65], |_, _| [0.0; 3]).unwrap(), &ok).is_err(), "4225 control points");
         // A singular system: a cubic whose last control points lie past the end of its domain
         // (0.5), where they do not move the curve at all, so the interior equations have no
         // unique solution and the run must refuse rather than move anything.
@@ -1361,8 +1364,13 @@ mod tests {
         for &(i, j, d) in &[(1usize, 2usize, 2.5), (2, 2, -1.5), (3, 3, 3.0), (2, 1, -2.0)] {
             rough[j * cu + i][2] += d;
         }
-        let faired =
-            fair_net(degree, [&ku, &kv], &Grid::new([cu, cv], rough.to_vec()).unwrap(), &FairOptions::new(1.0, 8, false, 100.0).unwrap()).unwrap();
+        let faired = fair_net(
+            degree,
+            [&ku, &kv],
+            &Grid::from_fn([cu, cv], |i, j| rough[j * cu + i]).unwrap(),
+            &FairOptions::new(1.0, 8, false, 100.0).unwrap(),
+        )
+        .unwrap();
         let near = (0..cu * cv).map(|k| dist(&faired.ctrl.cells()[k], &smooth[k])).fold(0.0, f64::max);
         eprintln!("5 × 5 quadratic net: faired to {near:e} mm, energy {:e} → {:e}", faired.report.energy_before, faired.report.energy_after);
         assert!(near < 1e-6 && faired.report.energy_after < 1e-9 * faired.report.energy_before);

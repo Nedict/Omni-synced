@@ -1,5 +1,6 @@
 //! A rectangular net of values: a surface's control points, a sample grid. Rectangular by
-//! construction, so code that walks it never meets a missing cell.
+//! construction, so code that walks it never meets a missing cell: a grid is made from a
+//! function of `(i, j)`, from one row, or from rows checked once ([`Grid::from_u_rows`]).
 
 /// `count[0]` values along u by `count[1]` along v; value `(i, j)` (i along u) is stored at
 /// `j·count[0] + i`, u fastest.
@@ -10,11 +11,6 @@ pub struct Grid<T> {
 }
 
 impl<T> Grid<T> {
-    /// A grid from its cells, u fastest; `None` unless there are `count[0]·count[1]` of them.
-    pub fn new(count: [usize; 2], cells: Vec<T>) -> Option<Grid<T>> {
-        (count[0].checked_mul(count[1]) == Some(cells.len())).then_some(Grid { count, cells })
-    }
-
     /// A grid of `f(i, j)` for every cell; `None` when `count[0]·count[1]` overflows.
     pub fn from_fn(count: [usize; 2], mut f: impl FnMut(usize, usize) -> T) -> Option<Grid<T>> {
         let total = count[0].checked_mul(count[1])?;
@@ -85,13 +81,8 @@ impl<T> Grid<T> {
         Ok(Grid { count: self.count, cells: self.cells.into_iter().map(f).collect::<Result<_, _>>()? })
     }
 
-    /// Each value with the one in the same place of `other`; `None` unless their counts match.
-    pub fn zip<U>(self, other: Grid<U>) -> Option<Grid<(T, U)>> {
-        (self.count == other.count).then(|| Grid { count: self.count, cells: self.cells.into_iter().zip(other.cells).collect() })
-    }
-
-    /// The rows along v, one per u index: `rows[i][j]` is value `(i, j)` (truck's layout).
-    pub fn into_rows(self) -> Vec<Vec<T>> {
+    /// The grid as rows, one per u index: `rows[i][j]` is value `(i, j)` (truck's layout).
+    pub fn into_u_rows(self) -> Vec<Vec<T>> {
         let cu = self.count[0];
         let mut rows: Vec<Vec<T>> = (0..cu).map(|_| Vec::with_capacity(self.count[1])).collect();
         for (k, v) in self.cells.into_iter().enumerate() {
@@ -103,16 +94,16 @@ impl<T> Grid<T> {
     }
 }
 
-impl<'a, T> Grid<&'a T> {
-    /// A grid over rows along v, one per u index (`rows[i][j]` is value `(i, j)`, truck's
-    /// layout); `None` when the rows differ in length.
-    pub fn from_rows<R: AsRef<[T]>>(rows: &'a [R]) -> Option<Grid<&'a T>> {
+impl<T: Clone> Grid<T> {
+    /// A grid from rows, one per u index: `rows[i][j]` is value `(i, j)` (truck's layout).
+    /// `None` when the rows differ in length, the one check rows from elsewhere need.
+    pub fn from_u_rows<R: AsRef<[T]>>(rows: &[R]) -> Option<Grid<T>> {
         let cv = rows.first().map_or(0, |r| r.as_ref().len());
         if rows.iter().any(|r| r.as_ref().len() != cv) {
             return None;
         }
-        let cells = (0..cv).flat_map(|j| rows.iter().filter_map(move |r| r.as_ref().get(j))).collect();
-        Grid::new([rows.len(), cv], cells)
+        let cells = (0..cv).flat_map(|j| rows.iter().filter_map(move |r| r.as_ref().get(j).cloned())).collect();
+        Some(Grid { count: [rows.len(), cv], cells })
     }
 }
 
@@ -124,12 +115,12 @@ mod tests {
     fn rows_go_in_and_come_back_out() {
         // rows[i][j]: two along u, three along v.
         let rows = vec![vec![(0, 0), (0, 1), (0, 2)], vec![(1, 0), (1, 1), (1, 2)]];
-        let g = Grid::from_rows(&rows).unwrap().map(|&v| v);
+        let g = Grid::from_u_rows(&rows).unwrap();
         assert_eq!(g.count(), [2, 3]);
         assert_eq!(g.cells(), &[(0, 0), (1, 0), (0, 1), (1, 1), (0, 2), (1, 2)]);
         assert_eq!(g.get(1, 2), Some(&(1, 2)));
         assert_eq!(g.get(2, 0), None);
-        assert_eq!(g.into_rows(), rows);
+        assert_eq!(g.into_u_rows(), rows);
         assert_eq!(Grid::row(vec![1, 2, 3]).count(), [3, 1]);
         let g = Grid::from_fn([3, 2], |i, j| (i, j)).unwrap();
         assert_eq!(g.lines().collect::<Vec<_>>(), vec![&[(0, 0), (1, 0), (2, 0)][..], &[(0, 1), (1, 1), (2, 1)][..]]);
@@ -141,18 +132,13 @@ mod tests {
 
     #[test]
     fn only_rectangles_are_grids() {
-        assert!(Grid::from_rows(&[vec![1, 2], vec![3]]).is_none());
-        assert!(Grid::new([2, 2], vec![1, 2, 3]).is_none());
-        assert!(Grid::new([usize::MAX, 2], Vec::<u8>::new()).is_none());
+        assert!(Grid::from_u_rows(&[vec![1, 2], vec![3]]).is_none());
         let empty: [Vec<u8>; 0] = [];
-        assert!(Grid::from_rows(&empty).is_some_and(|g| g.is_empty()));
+        assert!(Grid::from_u_rows(&empty).is_some_and(|g| g.is_empty()));
     }
 
     #[test]
-    fn zip_needs_the_same_counts() {
-        let a = Grid::new([2, 1], vec![1, 2]).unwrap();
-        assert!(a.clone().zip(Grid::new([1, 2], vec![3, 4]).unwrap()).is_none());
-        assert_eq!(a.zip(Grid::new([2, 1], vec!['a', 'b']).unwrap()).unwrap().cells(), &[(1, 'a'), (2, 'b')]);
-        assert_eq!(Grid::new([1, 2], vec![1, -1]).unwrap().try_map(|x| if x > 0 { Ok(x) } else { Err(x) }), Err(-1));
+    fn try_map_stops_at_the_first_failure() {
+        assert_eq!(Grid::row(vec![1, -1, -2]).try_map(|x| if x > 0 { Ok(x) } else { Err(x) }), Err(-1));
     }
 }
