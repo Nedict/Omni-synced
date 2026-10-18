@@ -559,7 +559,7 @@ mod tests {
         let ms = Locale::for_language("ms");
         assert!(is_supported("ms"));
         assert_eq!(ms.name(), "Bahasa Melayu");
-        assert_eq!(ms.text("ui.preferences"), "Keutamaan");
+        assert_eq!(ms.text("ui.preferences"), "Tetapan");
         assert_eq!(ms.label("Extrude"), "Semperit");
         assert_eq!(ms.label("CREATE SKETCH"), "CIPTA LAKARAN");
         assert_eq!(ms.format("document.save_changes", &[("name", "My {design}")]), "Simpan perubahan pada My {design}?");
@@ -568,7 +568,7 @@ mod tests {
         assert_eq!(ms.dynamic("Body2"), "Jasad2");
         assert_eq!(ms.dynamic("Component12"), "Komponen12");
         assert_eq!(ms.dynamic("Units: mm"), "Unit: mm");
-        assert_eq!(ms.dynamic("Precision: 3"), "Kepersisan: 3");
+        assert_eq!(ms.dynamic("Precision: 3"), "Ketepatan: 3");
         assert_eq!(ms.dynamic("Parameters (5)"), "Parameter (5)");
         assert_eq!(ms.dynamic("4 degrees of freedom"), "4 darjah kebebasan");
         assert_eq!(ms.given_name("Sketch of bracket"), "Sketch of bracket");
