@@ -142,7 +142,10 @@ and intervals:
   tip 1 mm below the apex hides nothing above it;
 - a freeform patch is reported and makes the edges it covers uncertain, or hidden when
   freeform faces are enabled; a flat spline patch hides them for certain; a long edge behind
-  a freeform tube is uncertain where the tube may cover it and visible elsewhere;
+  a freeform tube is uncertain where the tube may cover it and visible elsewhere, and so is
+  a sloping edge that only dips behind a freeform patch near its end;
+- a torus patch stored as a rational spline is recognised and draws its outer equator as an
+  exact arc;
 - two strips of a torus 0.0003 rad wide keep their 0.006 mm of outline;
 - two touching boxes draw each shared edge once;
 - mirrored placements, bad body indices and bad views are refused; cancellation and

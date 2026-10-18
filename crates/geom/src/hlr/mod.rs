@@ -840,8 +840,7 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
         for w in cuts.windows(2) {
             let (Some(&a), Some(&b)) = (w.first(), w.get(1)) else { continue };
             for (r, vis) in classify_range(t, a, b, &ctx)? {
-                let vis =
-                    if vis == Visibility::Visible && in_shadow(t, 0.5 * (r[0] + r[1]), scene, view, &shadows) { Visibility::Uncertain } else { vis };
+                let vis = if vis == Visibility::Visible && in_shadow(t, r, scene, view, &shadows) { Visibility::Uncertain } else { vis };
                 match pieces.last_mut() {
                     Some(last) if last.visibility == vis && (last.t[1] - r[0]).abs() <= 1e-12 * span.max(1e-300) => last.t[1] = r[1],
                     _ => pieces.push(Piece {
@@ -933,19 +932,22 @@ fn shadow_boxes(defs: &[Prepared], scene: &[Placement], view: &View, left_out: &
     out
 }
 
-/// Whether the point at `x` on a track lies inside a left-out face's screen box and behind its
-/// nearest point (not counting the track's own faces).
-fn in_shadow(t: &Track, x: f64, scene: &[Placement], view: &View, shadows: &[Shadow]) -> bool {
+/// Whether the piece `r` of a track lies inside a left-out face's screen box (it is cut at the
+/// boxes' edges, so its middle tells) with any of its points behind the face's nearest point
+/// (not counting the track's own faces).
+fn in_shadow(t: &Track, r: [f64; 2], scene: &[Placement], view: &View, shadows: &[Shadow]) -> bool {
     let Some(p) = scene.get(t.placement) else { return false };
-    let w = p.apply(t.c3().at(x));
-    let (s, depth) = (view.screen(w), w.dot(view.d));
+    let c = t.c3();
+    let s = view.screen(p.apply(c.at(0.5 * (r[0] + r[1]))));
+    let inner = t.samples.iter().map(|q| q.0).filter(|x| *x > r[0] && *x < r[1]);
+    let deepest = [r[0], 0.5 * (r[0] + r[1]), r[1]].into_iter().chain(inner).map(|x| p.apply(c.at(x)).dot(view.d)).fold(f64::MIN, f64::max);
     shadows.iter().any(|sh| {
         !(sh.placement == t.placement && t.own.contains(&sh.face))
             && s[0] >= sh.lo[0]
             && s[0] <= sh.hi[0]
             && s[1] >= sh.lo[1]
             && s[1] <= sh.hi[1]
-            && depth > sh.near
+            && deepest > sh.near
     })
 }
 

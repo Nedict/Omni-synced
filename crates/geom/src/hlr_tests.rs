@@ -803,6 +803,89 @@ fn an_edge_behind_a_left_out_freeform_face_is_uncertain_there() {
 }
 
 #[test]
+fn a_sloping_edge_that_runs_behind_a_left_out_face_is_uncertain() {
+    // Over the twisted patch (z = 0.5 along y = 0), seen from above, a sloping strip's edge runs
+    // from (-4, 0, 2) down to (4, 0, 0.4): in front of the patch at its middle, behind it past
+    // x = 3.5. All of it lies in the patch's screen box, so nothing cuts it there.
+    let patch = prepare(&twisted_patch(), &Options::default()).unwrap();
+    let c = [[-4., 0., 2.], [4., 0., 0.4], [4., 0.2, 0.4], [-4., 0.2, 2.]];
+    let edges =
+        (0..4).map(|i| Edge { vertices: [i as u32, ((i + 1) % 4) as u32], curve: Curve::Line { start: c[i], end: c[(i + 1) % 4] } }).collect();
+    let face = Face {
+        loops: vec![(0..4).map(|e| uses(e, true)).collect()],
+        surface: Surface::Plane { origin: c[0], u_axis: [8., 0., -1.6], v_axis: [0., 0.2, 0.] },
+        forward: true,
+    };
+    let strip =
+        prepare(&Brep { version: crate::brep::VERSION, shells: vec![Shell { vertices: c.to_vec(), edges, faces: vec![face] }] }, &Options::default())
+            .unwrap();
+    let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&[patch, strip], &[identity(0, [0.; 3]), identity(1, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    for p in &edge_line(&d, 1, 0).pieces {
+        if 8. * p.t[1] - 4. > 3.6 {
+            assert_ne!(p.visibility, Visibility::Visible, "{p:?}");
+        }
+    }
+}
+
+#[test]
+fn a_torus_stored_as_a_rational_spline_patch_is_recognised() {
+    // The patch of a torus R 20, r 5 with longitude and meridian both from -pi/4 to pi/4, as a
+    // degree (2, 2) rational spline, seen along the axis: a torus, not a freeform face, and the
+    // outer equator inside it is an exact silhouette arc of radius 25.
+    let (big, small) = (20., 5.);
+    let q = std::f64::consts::FRAC_PI_4;
+    let s2 = std::f64::consts::SQRT_2;
+    // The unit arc from -45 to 45 degrees: its control points and weights.
+    let arc = [([q.cos(), -q.sin()], 1.), ([s2, 0.], q.cos()), ([q.cos(), q.sin()], 1.)];
+    let homogeneous: Vec<Vec<[f64; 4]>> = arc
+        .iter()
+        .map(|(ci, wi)| {
+            arc.iter()
+                .map(|(mj, wj)| {
+                    let (rho, h, w) = (big + small * mj[0], small * mj[1], wi * wj);
+                    [rho * ci[0] * w, rho * ci[1] * w, h * w, w]
+                })
+                .collect()
+        })
+        .collect();
+    let at = |t: f64, f: f64| [(big + small * f.cos()) * t.cos(), (big + small * f.cos()) * t.sin(), small * f.sin()];
+    let parallel = |f: f64| crate::brep::Frame { origin: [0., 0., small * f.sin()], x_axis: [1., 0., 0.], y_axis: [0., 1., 0.] };
+    let meridian = |t: f64| crate::brep::Frame { origin: [big * t.cos(), big * t.sin(), 0.], x_axis: [t.cos(), t.sin(), 0.], y_axis: [0., 0., 1.] };
+    let edges = vec![
+        Edge { vertices: [0, 1], curve: Curve::CircleArc { frame: parallel(-q), radius: big + small * q.cos(), angle: [-q, q] } },
+        Edge { vertices: [1, 2], curve: Curve::CircleArc { frame: meridian(q), radius: small, angle: [-q, q] } },
+        Edge { vertices: [3, 2], curve: Curve::CircleArc { frame: parallel(q), radius: big + small * q.cos(), angle: [-q, q] } },
+        Edge { vertices: [0, 3], curve: Curve::CircleArc { frame: meridian(-q), radius: small, angle: [-q, q] } },
+    ];
+    let face = Face {
+        loops: vec![vec![uses(0, true), uses(1, true), uses(2, false), uses(3, false)]],
+        surface: Surface::RationalSpline { u_knots: vec![0., 0., 0., 1., 1., 1.], v_knots: vec![0., 0., 0., 1., 1., 1.], homogeneous },
+        forward: true,
+    };
+    let patch = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell { vertices: vec![at(-q, -q), at(q, -q), at(q, q), at(-q, q)], edges, faces: vec![face] }],
+    };
+    let def = prepare(&patch, &Options::default()).unwrap();
+    assert!(def.report.freeform_faces.is_empty(), "{:?}", def.report);
+    let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    assert!(d.unsupported.is_empty());
+    let mut length = 0.;
+    for p in silhouette_pieces(&d) {
+        assert_eq!(p.accuracy, CurveAccuracy::Analytic);
+        for g in &p.geometry {
+            for k in 0..=8 {
+                assert!((g.point_at(k as f64 / 8.).len() - 25.).abs() < 1e-6, "{g:?}");
+            }
+            length += (0..16).map(|k| g.point_at(k as f64 / 16.).dist(g.point_at((k + 1) as f64 / 16.))).sum::<f64>();
+        }
+    }
+    assert!((length - 25. * std::f64::consts::FRAC_PI_2).abs() < 0.01, "{length} mm of outline");
+}
+
+#[test]
 fn narrow_torus_strips_keep_their_outline() {
     // Two strips of a torus R 20, r 10 between the meridian angles 0.3002, 0.3005 and 0.3008,
     // seen from the side: each side of the outline is a 0.006 mm piece of the circle traced on

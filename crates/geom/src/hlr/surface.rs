@@ -1156,6 +1156,26 @@ impl Nurbs {
                 return Analytic::Sphere { c: centre, r };
             }
         }
+        // Torus: circles both ways, a meridian giving the tube's centre and radius and a
+        // parallel the axis; then every grid point on that torus.
+        let mid = |k: usize| self.dom.get(k).map_or(0., |d| 0.5 * (d[0] + d[1]));
+        for (meridian, parallel) in [(0usize, 1usize), (1, 0)] {
+            let (Some(m), Some(p)) = (circle_of(meridian, mid(parallel)), circle_of(parallel, mid(meridian))) else { continue };
+            let (a, minor) = (p.1, m.2);
+            let c = p.0 + a * (m.0 - p.0).dot(a);
+            let major = m.0.dist(c);
+            if !(major > 0. && minor > 0.) {
+                continue;
+            }
+            let on = self.grid.iter().all(|q| {
+                let w = *q - c;
+                let h = w.dot(a);
+                (((w - a * h).len() - major).hypot(h) - minor).abs() <= tol * (major + minor)
+            });
+            if on {
+                return Analytic::Torus { c, a, major, minor };
+            }
+        }
         Analytic::Other
     }
 }
