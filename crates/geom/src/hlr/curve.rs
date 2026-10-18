@@ -167,7 +167,99 @@ fn bezier_pieces(p: usize, knots: &[f64], points: &[[f64; 4]]) -> Vec<([f64; 2],
     out
 }
 
+/// The Bernstein coefficients of the product of two polynomials given by theirs.
+fn bernstein_product(a: &[f64], b: &[f64]) -> Vec<f64> {
+    use crate::bspline::binomial;
+    let (m, n) = (a.len().saturating_sub(1), b.len().saturating_sub(1));
+    (0..=m + n)
+        .map(|k| {
+            let terms = (k.saturating_sub(n)..=k.min(m))
+                .map(|i| binomial(m, i) * binomial(n, k - i) * a.get(i).copied().unwrap_or(0.) * b.get(k - i).copied().unwrap_or(0.));
+            terms.sum::<f64>() / binomial(m + n, k)
+        })
+        .collect()
+}
+
+/// The sign a polynomial in Bernstein form keeps over its interval: +1, -1, 0 when it is zero
+/// (to rounding) all along, `None` when that cannot be certified. All coefficients of one sign
+/// mean the polynomial has it (their hull holds its graph); otherwise the interval is halved.
+fn definite_sign(c: &[f64], depth: u32) -> Option<f64> {
+    let scale = c.iter().fold(0f64, |m, x| m.max(x.abs()));
+    let eps = 1e-12 * scale;
+    if c.iter().all(|x| x.abs() <= eps) {
+        return Some(0.);
+    }
+    if c.iter().all(|x| *x >= -eps) {
+        return Some(1.);
+    }
+    if c.iter().all(|x| *x <= eps) {
+        return Some(-1.);
+    }
+    if depth >= 16 {
+        return None;
+    }
+    // de Casteljau at the middle.
+    let (mut left, mut right, mut pts) = (Vec::with_capacity(c.len()), Vec::with_capacity(c.len()), c.to_vec());
+    while let (Some(&f), Some(&l)) = (pts.first(), pts.last()) {
+        left.push(f);
+        right.push(l);
+        pts = pts.windows(2).map(|w| 0.5 * (w.first().copied().unwrap_or(0.) + w.get(1).copied().unwrap_or(0.))).collect();
+    }
+    right.reverse();
+    match (definite_sign(&left, depth + 1)?, definite_sign(&right, depth + 1)?) {
+        (a, b) if a == b || b == 0. => Some(a),
+        (0., b) => Some(b),
+        _ => None,
+    }
+}
+
 impl C3 {
+    /// The way a spline's part `r` turns about the centre `o` in the plane of `u` and `v`:
+    /// +1 or -1 when its angular speed keeps that sign all along (certified on each Bézier piece
+    /// from the Bernstein coefficients of `X Y' - Y X'`, which has the speed's sign as the
+    /// weights are positive), 0 when it does not turn, `None` when it turns back or this cannot
+    /// be certified.
+    pub fn turn_sign(&self, r: [f64; 2], o: Vec3, u: Vec3, v: Vec3) -> Option<f64> {
+        use crate::bspline::{HPoint, bezier_segment};
+        let C3::Spline { pieces, .. } = self else { return None };
+        let mut sign = 0f64;
+        for (span, ctrl) in pieces {
+            let (a, b) = (r[0].max(span[0]), r[1].min(span[1]));
+            let len = span[1] - span[0];
+            if !(b > a && len > 0.) {
+                continue;
+            }
+            let (fa, fb) = (((a - span[0]) / len).clamp(0., 1.), ((b - span[0]) / len).clamp(0., 1.));
+            if !(fb > fa) {
+                continue;
+            }
+            let h: Vec<HPoint> = ctrl.iter().map(|q| HPoint { x: q[0], y: q[1], z: q[2], w: q[3] }).collect();
+            let seg = bezier_segment(&h, fa, fb).ok()?;
+            if seg.iter().any(|q| !(q.w > 0.)) {
+                return None;
+            }
+            let rel = |q: &HPoint| Vec3::new(q.x, q.y, q.z) - o * q.w;
+            let x: Vec<f64> = seg.iter().map(|q| rel(q).dot(u)).collect();
+            let y: Vec<f64> = seg.iter().map(|q| rel(q).dot(v)).collect();
+            let p = x.len().saturating_sub(1);
+            if p == 0 {
+                return None;
+            }
+            let d = |c: &[f64]| {
+                c.windows(2).map(|w| p as f64 * (w.get(1).copied().unwrap_or(0.) - w.first().copied().unwrap_or(0.))).collect::<Vec<f64>>()
+            };
+            let n: Vec<f64> = bernstein_product(&x, &d(&y)).iter().zip(bernstein_product(&y, &d(&x))).map(|(a, b)| a - b).collect();
+            let s = definite_sign(&n, 0)?;
+            if s != 0. {
+                if sign != 0. && s != sign {
+                    return None;
+                }
+                sign = s;
+            }
+        }
+        Some(sign)
+    }
+
     /// Points whose hull holds the spline's part `r`: the projected control points of its
     /// Bézier pieces cut to `r` (de Casteljau). They close in on the curve as `r` shrinks.
     /// `None` for other curves, or when a weight is not positive.

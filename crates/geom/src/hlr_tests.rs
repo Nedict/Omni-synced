@@ -651,8 +651,8 @@ fn quartic_arc(a0: f64, a1: f64) -> Vec<[f64; 4]> {
 #[test]
 fn an_arc_whose_whole_domain_is_8_roundings_wide_is_not_guessed() {
     // An exact arc of radius 10 turning +3.75 rad over the parameters 0.25 to 0.25 + 2^-51
-    // (8 roundings), closed by a chord: there is no room to tell its direction, so it is drawn
-    // as chords rather than as the short arc the other way round, through (0, -10).
+    // (8 roundings), closed by a chord: drawn as the right arc or as chords, never as the short
+    // arc the other way round, through (0, -10).
     let k = 0.25 + 2f64.powi(-51);
     let end = [10. * 3.75f64.cos(), 10. * 3.75f64.sin(), 0.];
     let shape = Brep {
@@ -676,8 +676,10 @@ fn an_arc_whose_whole_domain_is_8_roundings_wide_is_not_guessed() {
     let def = prepare(&shape, &Options::default()).unwrap();
     let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
     let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    if let Some(sweep) = turn_or_chords(edge_line(&d, 0, 0).pieces.iter()) {
+        assert!((sweep - 3.75).abs() < 1e-9, "the arcs turn {sweep} rad");
+    }
     for p in &edge_line(&d, 0, 0).pieces {
-        assert!(matches!(p.accuracy, CurveAccuracy::Sampled { .. }), "{p:?}");
         for g in &p.geometry {
             for s in [0., 0.25, 0.5, 0.75, 1.] {
                 assert!(g.point_at(s).dist(Vec2::new(0., -10.)) > 1., "{g:?} passes the wrong side");
@@ -861,6 +863,42 @@ fn an_edge_dipping_behind_a_left_out_face_between_samples_is_uncertain() {
     let dip: Vec<&Piece> = edge_line(&d, 1, 0).pieces.iter().filter(|p| p.t[0] < 0.02 && p.t[1] > 0.01).collect();
     assert!(!dip.is_empty());
     assert!(dip.iter().all(|p| p.visibility != Visibility::Visible), "{dip:?}");
+}
+
+#[test]
+fn an_arc_that_turns_back_is_drawn_as_chords() {
+    // (10 (1 - u^2), 20 u) / (1 + u^2) with u = 10 (t^3 / 3 - t^2 / 4 + 0.04 t): on the circle
+    // of radius 10, but u falls between t = 0.1 and 0.4, so the edge goes back down to
+    // y = -0.533 before it turns on to 1.78 rad. No single arc draws that: chords, which reach
+    // down there.
+    let u3 = [0., 0.4 / 3., 0.8 / 3. - 2.5 / 3., 0.4 - 2.5 + 10. / 3.];
+    let u = bernstein_product(&u3, &[1.; 4]);
+    let uu = bernstein_product(&u3, &u3);
+    let homogeneous: Vec<[f64; 4]> = (0..7).map(|k| [10. * (1. - uu[k]), 20. * u[k], 0., 1. + uu[k]]).collect();
+    let th = 2. * u3[3].atan();
+    let end = [10. * th.cos(), 10. * th.sin(), 0.];
+    let shape = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![[10., 0., 0.], end],
+            edges: vec![
+                Edge { vertices: [0, 1], curve: Curve::RationalSpline { knots: [[0.; 7], [1.; 7]].concat(), homogeneous } },
+                Edge { vertices: [1, 0], curve: Curve::Line { start: end, end: [10., 0., 0.] } },
+            ],
+            faces: vec![Face {
+                loops: vec![vec![uses(0, true), uses(1, true)]],
+                surface: Surface::Plane { origin: [0.; 3], u_axis: [1., 0., 0.], v_axis: [0., 1., 0.] },
+                forward: true,
+            }],
+        }],
+    };
+    let def = prepare(&shape, &Options::default()).unwrap();
+    let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    let line = edge_line(&d, 0, 0);
+    assert!(line.pieces.iter().all(|p| matches!(p.accuracy, CurveAccuracy::Sampled { .. })), "{:?}", line.pieces);
+    let low = line.pieces.iter().flat_map(|p| p.geometry.iter()).map(|g| g.point_at(0.).y.min(g.point_at(1.).y)).fold(f64::MAX, f64::min);
+    assert!(low < -0.5, "the chords reach down to y = {low}");
 }
 
 #[test]

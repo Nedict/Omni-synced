@@ -1242,10 +1242,10 @@ fn piece_geometry(t: &Track, piece: &Piece, p: &Placement, view: &View) -> (Vec<
                 let w = c.at(x) - o;
                 w.dot(v).atan2(w.dot(u))
             };
-            // The angle turned from the piece's start to its end. An edge does not turn back, so
-            // it turns one way all along: the sign of its angular speed (at its ends and samples;
-            // both signs mean it turns back, drawn as chords) and its end angles fix the turn,
-            // however unevenly it is parameterised. A whole closed edge turns a full circle.
+            // The angle turned from the piece's start to its end: the way it turns, certified
+            // all along it (C3::turn_sign; a piece that turns back, or one that cannot be
+            // certified, is drawn as chords), and its end angles fix the turn, however unevenly
+            // it is parameterised. A whole closed edge turns a full circle.
             let (a0, a1) = if param_is_angle {
                 (piece.t[0], piece.t[1])
             } else {
@@ -1253,37 +1253,14 @@ fn piece_geometry(t: &Track, piece: &Piece, p: &Placement, view: &View) -> (Vec<
                 let wrap = |d: f64| (d + std::f64::consts::PI).rem_euclid(tau) - std::f64::consts::PI;
                 let (t0, t1) = (piece.t[0], piece.t[1]);
                 let span = (t.range[1] - t.range[0]).abs();
-                // Measured inside each knot span the piece crosses, over a step small next to that
-                // part (a span can be a tiny part of the range and still turn far), yet a few
-                // roundings of the parameter.
-                let (mut fwd, mut back, mut unknown) = (false, false, false);
-                for w in c.breaks().windows(2) {
-                    let (Some(&b0), Some(&b1)) = (w.first(), w.get(1)) else { continue };
-                    let (lo, hi) = (b0.max(t0), b1.min(t1));
-                    if hi <= lo {
-                        continue;
-                    }
-                    let h = (1e-7 * (hi - lo)).max(8. * f64::EPSILON * lo.abs().max(hi.abs()));
-                    if 8. * h > hi - lo {
-                        // Too few representable parameters in this part to measure in: unknown,
-                        // unless it barely turns.
-                        unknown |= wrap(angle(hi) - angle(lo)).abs() > 1e-9;
-                        continue;
-                    }
-                    for x in [lo, 0.5 * (lo + hi), hi] {
-                        let sp = wrap(angle((x + h).min(hi)) - angle((x - h).max(lo)));
-                        fwd |= sp > 1e-12;
-                        back |= sp < -1e-12;
-                    }
-                }
                 let a0 = angle(t0);
                 let ends = angle(t1) - a0;
-                // Turning both ways, or a part that turns but cannot be measured, or no
-                // measurable way while its ends differ: not guessed.
-                if (fwd && back) || unknown || (!fwd && !back && wrap(ends).abs() > 1e-9) {
-                    return chords();
-                }
-                let dir = if fwd || (!back && wrap(ends) >= 0.) { 1. } else { -1. };
+                let dir = match c.turn_sign([t0, t1], o, u, v) {
+                    Some(d) if d != 0. => d,
+                    // It does not turn at all: a point-like piece, unless its ends differ.
+                    Some(_) if wrap(ends).abs() <= 1e-9 => 1.,
+                    _ => return chords(),
+                };
                 let mut turn = (dir * ends).rem_euclid(tau);
                 let whole =
                     t0 <= t.range[0] + 1e-12 * span && t1 >= t.range[1] - 1e-12 * span && c.at(t.range[0]).dist(c.at(t.range[1])) <= 1e-9 * u.len();
