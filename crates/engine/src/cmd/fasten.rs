@@ -503,15 +503,18 @@ impl Built {
 }
 
 fn fasten(s: &mut Session, p: &Value) -> Result<Value> {
-    // The commands it runs push their own undo steps: drop them, so the whole fill (or a
-    // failed one, which leaves the design as it was) is the one step `Session::execute` keeps.
-    let depth = s.undo.len();
+    // The commands it runs push their own undo steps: set the user's history aside while they
+    // run and put it back after, so the whole fill (or a failed one, which leaves the design as
+    // it was) is the one step `Session::execute` keeps, and the nested steps never push the
+    // user's oldest steps out past the undo limit.
+    let (undo, redo) = (std::mem::take(&mut s.undo), std::mem::take(&mut s.redo));
     // The parts it builds would solve every joint of the design on each of their commands:
     // the joints are solved once, at the end.
     let deferred = std::mem::replace(&mut s.defer_joints, true);
     let r = fill(s, p);
     s.defer_joints = deferred;
-    s.undo.truncate(depth);
+    s.undo = undo;
+    s.redo = redo;
     r
 }
 

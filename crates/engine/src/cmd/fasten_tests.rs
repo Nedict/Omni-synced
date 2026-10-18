@@ -448,3 +448,36 @@ fn a_hole_in_a_body_placed_by_an_offset_is_seated_on() {
     assert!(near(hi.z, 7.0 + 3.5) && near(lo.z, 7.0 - 14.0), "{lo:?} {hi:?}");
     assert!(near((lo.x + hi.x) / 2.0, 20.0) && near((lo.y + hi.y) / 2.0, 15.0), "{lo:?} {hi:?}");
 }
+
+#[test]
+fn a_fill_after_a_full_undo_history_is_one_step_and_keeps_the_history() {
+    let lib = Library::bolts();
+    let mut s = Session::default();
+    run(&mut s, "parts.library.load", json!({"path": lib.path()}));
+    plate(&mut s, "Lower", json!(0), json!(3), json!(3), 5.5);
+    plate(&mut s, "Upper", json!(3), json!(4), json!(7), 5.5);
+    // Fill the undo history to its limit (200 steps).
+    for i in 0..200 {
+        run(&mut s, "parameters.add", json!({"name": format!("p{i}"), "expression": "1 mm"}));
+    }
+    let depth = s.undo.len();
+    let second = s.undo.get(1).map(|x| x.doc.clone());
+    let occurrences = s.doc.occurrences.len();
+    let r = run(&mut s, "parts.fasten", json!({"family": "hex_bolt_grip"}));
+    assert_eq!(r["placed"].as_array().map(Vec::len), Some(1), "{r}");
+    // One step for the whole fill; the nested steps pushed none of the user's steps out.
+    assert_eq!(s.undo.len(), depth);
+    let first = s.undo.first().map(|x| x.doc.clone());
+    assert!(first.zip(second).is_some_and(|(a, b)| std::sync::Arc::ptr_eq(&a, &b)), "only the oldest step makes room for the fill");
+    // Undo once: the fill is gone at once, nothing half built left.
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.doc.parts.is_empty() && s.doc.occurrences.len() == occurrences, "{:?}", s.doc.occurrences.len());
+    assert!(s.doc.param("p199").is_some());
+    // Undo again: the user's own last step.
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.doc.param("p199").is_none() && s.doc.param("p198").is_some());
+    // Redo twice brings the fill back.
+    run(&mut s, "edit.redo", json!({}));
+    run(&mut s, "edit.redo", json!({}));
+    assert_eq!(s.doc.parts.len(), 1);
+}

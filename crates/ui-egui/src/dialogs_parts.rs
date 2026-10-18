@@ -162,24 +162,8 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
         k.length = None;
     }
     let Some(f) = lib.get(k.family) else { return false };
-    let sizes: Vec<&str> = f.sizes.iter().map(|s| s.0.as_str()).collect();
-    row_label(ui, "Size");
-    let before = k.size;
-    combo(ui, "pt_size", &sizes, &mut k.size);
-    ui.end_row();
-    if k.size != before && f.sizes.get(before).is_some_and(|(_, row)| row.get("lengths").is_some()) {
-        k.length = None;
-    }
-    if let Some(ls) = &f.lengths_of(k.size) {
-        let mut labels = vec!["Default".to_string()];
-        labels.extend(ls.iter().map(|l| crate::prefs::show_mm(app, *l, 1)));
-        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
-        let mut i = k.length.map_or(0, |x| x + 1);
-        row_label(ui, "Length");
-        combo(ui, "pt_len", &refs, &mut i);
-        k.length = i.checked_sub(1);
-        ui.end_row();
-    }
+    // Filling picks each stack's size and length from its holes and grip, so the Size and
+    // Length rows (which it would not use) are left out while it is ticked.
     row_label(ui, "Fill hole stacks");
     crate::dialogs::check(ui, &mut k.fill);
     ui.end_row();
@@ -188,6 +172,8 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
         ui.label(RichText::new(crate::i18n::tr_label("one in every hole stack, sized to its holes and grip")).color(t.text_dim));
         ui.end_row();
     } else {
+        let sizes: Vec<&str> = f.sizes.iter().map(|s| s.0.as_str()).collect();
+        size_rows(app, ui, f, k, &sizes);
         row_label(ui, "Name");
         ui.add(egui::TextEdit::singleline(&mut k.name).hint_text("automatic"));
         ui.end_row();
@@ -218,7 +204,8 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
         }
     }
     ui.end_row();
-    if let Some((_, row)) = f.sizes.get(k.size)
+    if !k.fill
+        && let Some((_, row)) = f.sizes.get(k.size)
         && let Some(o) = row.as_object()
     {
         // A library size's lengths are the Length row's choices already.
@@ -234,6 +221,27 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
         ui.end_row();
     }
     false
+}
+
+/// The Size row, and the Length row where the family lists lengths.
+fn size_rows(app: &SolveApp, ui: &mut egui::Ui, f: &Family, k: &mut Pt, sizes: &[&str]) {
+    row_label(ui, "Size");
+    let before = k.size;
+    combo(ui, "pt_size", sizes, &mut k.size);
+    ui.end_row();
+    if k.size != before && f.sizes.get(before).is_some_and(|(_, row)| row.get("lengths").is_some()) {
+        k.length = None;
+    }
+    if let Some(ls) = &f.lengths_of(k.size) {
+        let mut labels = vec!["Default".to_string()];
+        labels.extend(ls.iter().map(|l| crate::prefs::show_mm(app, *l, 1)));
+        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let mut i = k.length.map_or(0, |x| x + 1);
+        row_label(ui, "Length");
+        combo(ui, "pt_len", &refs, &mut i);
+        k.length = i.checked_sub(1);
+        ui.end_row();
+    }
 }
 
 /// The commands OK runs.
