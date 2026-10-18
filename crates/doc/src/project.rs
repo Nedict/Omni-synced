@@ -10,11 +10,11 @@
 use std::collections::BTreeMap;
 
 use solidcraft_geom::{Mesh, Plane, Vec2, Vec3};
-use solidcraft_sketch::{CurveKind, LinkGeom, LinkKind, LinkSource, Sketch};
+use solidcraft_sketch::{CurveKind, LinkGeom, LinkKind, LinkPlacement, LinkSource, Sketch};
 
 use crate::eval::ModelState;
 use crate::expr::Value;
-use crate::{DocError, Document, PlaneRef, Result};
+use crate::{DocError, Document, Mat, PlaneRef, Result};
 
 /// Half length of the line an axis or plane projects to.
 const AXIS_HALF: f64 = 100.0;
@@ -453,17 +453,6 @@ pub fn resolve_face_indices(st: &ModelState, plane: &Plane, kind: LinkKind, body
     })
 }
 
-pub fn refresh_face_anchor_links(
-    doc: &Document,
-    vals: &BTreeMap<String, Value>,
-    st: &ModelState,
-    plane: &Plane,
-    sk: &mut Sketch,
-    anchor: &crate::FaceAnchor,
-) -> Vec<String> {
-    refresh_links_in(doc, vals, st, plane, sk, Some(anchor))
-}
-
 /// Remove degree-two straight stations introduced by coplanar face subdivision.
 /// The walk uses endpoint incidence; geometric sorting does not imply adjacency.
 fn merge_family_lines(geom: Vec<LinkGeom>) -> Result<Vec<LinkGeom>> {
@@ -533,13 +522,258 @@ fn merge_family_lines(geom: Vec<LinkGeom>) -> Result<Vec<LinkGeom>> {
     Ok(result)
 }
 
+/// Re-resolve the links of a sketch in a design without placed components: `st` is both the
+/// model before the sketch and its component's view of it.
 pub fn refresh_links(doc: &Document, vals: &BTreeMap<String, Value>, st: &ModelState, plane: &Plane, sk: &mut Sketch) -> Vec<String> {
-    refresh_links_in(doc, vals, st, plane, sk, None)
+    refresh_sketch_links(doc, vals, Placed { raw: st, component: 0 }, st, plane, sk, None)
 }
 
-fn refresh_links_in(
+/// What links to an exact placement of another component are resolved with: the model before
+/// the sketch in each component's own frame (`raw`, as evaluation builds it) and the sketch's
+/// component. Other links read the model as that component sees it.
+#[derive(Clone, Copy)]
+pub struct Placed<'a> {
+    pub raw: &'a ModelState,
+    pub component: u64,
+}
+
+/// "A:2/B:1": the names of a placement path's occurrences (an unknown id as `#id`).
+pub fn path_label(doc: &Document, path: &[u64]) -> String {
+    if path.is_empty() {
+        return "the design".into();
+    }
+    path.iter()
+        .take(solidcraft_sketch::MAX_PLACEMENT_PATH + 1)
+        .map(|id| doc.occurrences.iter().find(|o| o.id == *id).map(|o| o.name.clone()).unwrap_or_else(|| format!("#{id}")))
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// World transform of placement `path` of `component` (empty: the root). An error names the
+/// placement when it no longer exists or no longer places that component.
+fn placement_frame(doc: &Document, component: u64, path: &[u64], what: &str) -> Result<Mat> {
+    if path.len() > solidcraft_sketch::MAX_PLACEMENT_PATH || doc.occurrences.len() > crate::MAX_PLACEMENTS {
+        return Err(DocError::Invalid(format!("{what} placement path exceeds work limits")));
+    }
+    let mut frame = crate::IDENTITY;
+    let mut at = 0;
+    for id in path {
+        let o = doc
+            .occurrences
+            .iter()
+            .find(|o| o.id == *id && o.parent == at)
+            .ok_or_else(|| DocError::Unknown(format!("{what} placement {} no longer exists", path_label(doc, path))))?;
+        frame = crate::mat_mul(&frame, &o.transform);
+        at = o.component;
+    }
+    if at != component {
+        return Err(DocError::Invalid(format!("{what} placement {} no longer holds its geometry", path_label(doc, path))));
+    }
+    if frame.iter().flatten().any(|x| !x.is_finite()) {
+        return Err(DocError::Invalid(format!("{what} placement {} is not finite", path_label(doc, path))));
+    }
+    Ok(frame)
+}
+
+/// Is `m` a rotation (or a reflection) and a translation, as a placement is?
+fn is_rigid(m: &Mat) -> bool {
+    let col = |c: &[f64; 4]| Vec3::new(c[0], c[1], c[2]);
+    let [x, y, z, t] = m;
+    let unit = |v: Vec3| (v.len() - 1.0).abs() < 1e-6;
+    let affine = [x, y, z].iter().all(|c| c[3].abs() < 1e-12) && (t[3] - 1.0).abs() < 1e-12;
+    let (x, y, z) = (col(x), col(y), col(z));
+    m.iter().flatten().all(|v| v.is_finite())
+        && affine
+        && unit(x)
+        && unit(y)
+        && unit(z)
+        && x.dot(y).abs() < 1e-6
+        && y.dot(z).abs() < 1e-6
+        && z.dot(x).abs() < 1e-6
+}
+
+/// The transform from the source's own frame (its body's frame, or its sketch's component
+/// frame) into the frame of the sketch's component `author`: `inverse(author placement) ·
+/// source placement · body offset`.
+pub fn placement_relative(doc: &Document, author: u64, placement: &LinkPlacement, source_component: u64, offset: Option<&Mat>) -> Result<Mat> {
+    placement.validate()?;
+    if author != 0 && placement.author.is_empty() {
+        return Err(DocError::Invalid("the link does not record the placement of its sketch".into()));
+    }
+    let author_frame = placement_frame(doc, author, &placement.author, "sketch")?;
+    let mut source = placement_frame(doc, source_component, &placement.source, "source")?;
+    if let Some(offset) = offset {
+        source = crate::mat_mul(&source, offset);
+    }
+    let inverse = crate::mat_inverse(&author_frame).ok_or_else(|| DocError::Invalid("the sketch's placement is singular".into()))?;
+    let relative = crate::mat_mul(&inverse, &source);
+    if !is_rigid(&relative) {
+        return Err(DocError::Invalid("the placements between the source and the sketch are not rigid".into()));
+    }
+    Ok(relative)
+}
+
+/// The source of a placed link as it is now (a named edge followed into another body of its
+/// component), and the transform from its frame into the sketch's ([`placement_relative`]).
+/// Never another placement or another component's body: a source that is not found is lost.
+pub fn placed_source(
+    doc: &Document,
+    placed: Placed,
+    source: &LinkSource,
+    edge_name: Option<&str>,
+    placement: &LinkPlacement,
+) -> Result<(LinkSource, Mat)> {
+    placement.validate()?;
+    let mut source = source.clone();
+    let (component, offset) = match &mut source {
+        LinkSource::Edge { body, at } | LinkSource::Face { body, at } | LinkSource::Vertex { body, at } => {
+            let found = match placed.raw.body(body) {
+                Some(b) => Some(b),
+                // A named edge whose body was joined into another body of the same component is
+                // that edge of the joined body; nothing outside the placement's component is searched.
+                None => {
+                    let leaf = placement.source.last().and_then(|id| doc.occurrences.iter().find(|o| o.id == *id)).map(|o| o.component);
+                    edge_name.and_then(|name| {
+                        placed
+                            .raw
+                            .bodies
+                            .iter()
+                            .filter(|b| !b.body.is_mesh() && Some(doc.model_body_component(b)) == leaf)
+                            .filter_map(|b| crate::naming::locate_edge(b, name, *at).ok().map(|hit| (b, hit.point.dist(*at))))
+                            .min_by(|a, b| a.1.total_cmp(&b.1))
+                            .map(|(b, _)| b)
+                    })
+                }
+            };
+            let b = found.ok_or_else(|| lost(&format!("body {body}")))?;
+            *body = b.name.clone();
+            (doc.model_body_component(b), doc.model_body_offset(b).copied())
+        }
+        LinkSource::Body { body } => {
+            let b = placed.raw.body(body).ok_or_else(|| lost(&format!("body {body}")))?;
+            (doc.model_body_component(b), doc.model_body_offset(b).copied())
+        }
+        LinkSource::SketchCurve { sketch, .. } | LinkSource::SketchPoint { sketch, .. } => {
+            placed.raw.sketch(*sketch).ok_or_else(|| lost(&format!("sketch {sketch}")))?;
+            (doc.feature(*sketch).map(|f| f.component).ok_or_else(|| lost(&format!("sketch {sketch}")))?, None)
+        }
+        other => return Err(DocError::Invalid(format!("not supported yet: the {} from another component's placement", other.describe()))),
+    };
+    let relative = placement_relative(doc, placed.component, placement, component, offset.as_ref())?;
+    Ok((source, relative))
+}
+
+/// `plane` (in the sketch's component frame) seen from the source's frame, given the transform
+/// from the source's frame into the sketch's. Projecting the source onto it gives the same
+/// sketch coordinates as projecting the placed source onto `plane`, without moving the source.
+fn plane_in_source(relative: &Mat, plane: &Plane) -> Result<Plane> {
+    let inverse = crate::mat_inverse(relative).ok_or_else(|| DocError::Invalid("singular placement".into()))?;
+    Plane::new(crate::apply_point(&inverse, plane.origin), crate::apply_vector(&inverse, plane.x), crate::apply_vector(&inverse, plane.y))
+        .ok_or_else(|| DocError::Invalid("the sketch plane is degenerate in the source's frame".into()))
+}
+
+/// Resolve a new link to an exact placement of another component's geometry: its geometry in
+/// the sketch, its 3D curves in the sketch's component frame and its source (points in the
+/// source's own frame).
+pub fn resolve_placed(
     doc: &Document,
     vals: &BTreeMap<String, Value>,
+    placed: Placed,
+    plane: &Plane,
+    kind: LinkKind,
+    source: &LinkSource,
+    placement: &LinkPlacement,
+) -> Result<(Resolved, Mat)> {
+    let (source, relative) = placed_source(doc, placed, source, None, placement)?;
+    let mut r = resolve(doc, vals, placed.raw, &plane_in_source(&relative, plane)?, kind, &source)?;
+    map_wires(&mut r.wires, &relative);
+    Ok((r, relative))
+}
+
+/// A rigid motion of sketch coordinates: `p -> a·p + b` (`a` a rotation).
+#[derive(Clone, Copy, Debug)]
+struct Motion2 {
+    a: [[f64; 2]; 2],
+    b: Vec2,
+}
+
+impl Motion2 {
+    fn point(&self, p: Vec2) -> Vec2 {
+        Vec2::new(self.a[0][0] * p.x + self.a[0][1] * p.y, self.a[1][0] * p.x + self.a[1][1] * p.y) + self.b
+    }
+
+    /// The motion back (`a` is orthonormal, so its inverse is its transpose).
+    fn inverse(&self) -> Motion2 {
+        let a = [[self.a[0][0], self.a[1][0]], [self.a[0][1], self.a[1][1]]];
+        let turned = Motion2 { a, b: Vec2::ZERO }.point(self.b);
+        Motion2 { a, b: Vec2::ZERO - turned }
+    }
+
+    fn geom(&self, g: &LinkGeom) -> LinkGeom {
+        let f = |p: &Vec2| self.point(*p);
+        match g {
+            LinkGeom::Point(p) => LinkGeom::Point(f(p)),
+            LinkGeom::Line(a, b) => LinkGeom::Line(f(a), f(b)),
+            LinkGeom::Circle(c, r) => LinkGeom::Circle(f(c), *r),
+            LinkGeom::Arc { c, a, b } => LinkGeom::Arc { c: f(c), a: f(a), b: f(b) },
+            LinkGeom::Conic { a, apex, b, rho } => LinkGeom::Conic { a: f(a), apex: f(apex), b: f(b), rho: *rho },
+            LinkGeom::Ellipse { c, major, minor } => LinkGeom::Ellipse { c: f(c), major: f(major), minor: *minor },
+            LinkGeom::Spline { pts, control, degree, periodic } => {
+                LinkGeom::Spline { pts: pts.iter().map(f).collect(), control: *control, degree: *degree, periodic: *periodic }
+            }
+        }
+    }
+}
+
+/// How a source read with transform `seen` and now with `now` (each from its frame into the
+/// sketch's component frame) has moved in sketch coordinates, when that is a rigid motion of
+/// the sketch plane: a turn about the plane's normal and any shift. `None` when it has not
+/// moved, or when it tilts against the plane (its projection then changes shape).
+fn in_plane_motion(seen: &Mat, now: &Mat, plane: &Plane) -> Option<Motion2> {
+    let moved = crate::mat_mul(now, &crate::mat_inverse(seen)?);
+    if crate::is_identity(&moved) {
+        return None;
+    }
+    let n = plane.normal();
+    if crate::apply_vector(&moved, n).dist(n) > 1e-9 {
+        return None;
+    }
+    let (rx, ry) = (crate::apply_vector(&moved, plane.x), crate::apply_vector(&moved, plane.y));
+    let shift = crate::apply_point(&moved, plane.origin) - plane.origin;
+    let a = [[rx.dot(plane.x), ry.dot(plane.x)], [rx.dot(plane.y), ry.dot(plane.y)]];
+    let det = a[0][0] * a[1][1] - a[0][1] * a[1][0];
+    ((det - 1.0).abs() < 1e-9).then_some(Motion2 { a, b: Vec2::new(shift.dot(plane.x), shift.dot(plane.y)) })
+}
+
+/// The sketch plane in the frame a link's source is read in (where [`solidcraft_sketch::Link::omit`]
+/// keeps its points): the source's own frame for a placed link, else `plane` itself.
+pub fn link_source_plane(doc: &Document, placed: Placed, plane: &Plane, link: &solidcraft_sketch::Link) -> Result<Plane> {
+    match &link.placement {
+        None => Ok(*plane),
+        Some(placement) => {
+            let (_, relative) = placed_source(doc, placed, &link.source, link.edge_name.as_deref(), placement)?;
+            plane_in_source(&relative, plane)
+        }
+    }
+}
+
+fn map_wires(wires: &mut [Vec<Vec3>], m: &Mat) {
+    if crate::is_identity(m) {
+        return;
+    }
+    for p in wires.iter_mut().flatten() {
+        *p = crate::apply_point(m, *p);
+    }
+}
+
+/// Re-resolve every link of a sketch (in place): `st` is the model before it as its component
+/// sees it, `placed` what links to an exact placement read, `anchor` the face the sketch is
+/// attached to. Returns warnings for lost, moved or rebuilt links; lost links keep their last
+/// geometry, and frozen ones are left as they are.
+pub fn refresh_sketch_links(
+    doc: &Document,
+    vals: &BTreeMap<String, Value>,
+    placed: Placed,
     st: &ModelState,
     plane: &Plane,
     sk: &mut Sketch,
@@ -547,8 +781,25 @@ fn refresh_links_in(
 ) -> Vec<String> {
     let mut warn = Vec::new();
     let links = sk.links.clone();
+    let sketch_plane = plane;
     for l in &links {
-        let mut source = l.source.clone();
+        if l.frozen {
+            continue;
+        }
+        let (st, plane, relative, mut source) = match &l.placement {
+            None => (st, *sketch_plane, None, l.source.clone()),
+            Some(placement) => match placed_source(doc, placed, &l.source, l.edge_name.as_deref(), placement)
+                .and_then(|(source, relative)| Ok((plane_in_source(&relative, sketch_plane)?, relative, source)))
+            {
+                Ok((plane, relative, source)) => (placed.raw, plane, Some(relative), source),
+                Err(e) => {
+                    sk.set_link_lost(&l.id, true);
+                    warn.push(format!("projected reference lost: {e}; last geometry retained"));
+                    continue;
+                }
+            },
+        };
+        let plane = &plane;
         let mut named_face = None;
         if !l.auto_face
             && let (Some(name), LinkSource::Face { body, at }) = (&l.face_name, &mut source)
@@ -616,7 +867,10 @@ fn refresh_links_in(
             resolve(doc, vals, st, plane, l.kind, &source)
         };
         match resolved {
-            Ok(r) => {
+            Ok(mut r) => {
+                if let Some(relative) = &relative {
+                    map_wires(&mut r.wires, relative);
+                }
                 // An edge link saved without a name takes the name of the edge it was found
                 // on. A sketch that is edited stores it; evaluation leaves the design as it is.
                 if l.edge_name.is_none()
@@ -627,10 +881,39 @@ fn refresh_links_in(
                 }
                 sk.set_link_source(&l.id, r.source);
                 let _ = sk.set_link_wires(&l.id, &r.wires);
-                match sk.update_link(&l.id, &r.geom) {
-                    Ok(true) => warn.push(format!("projected {} changed shape and was rebuilt", l.source.describe())),
-                    Ok(false) if r.moved => warn.push(format!("projected {} was re-found on the nearest geometry", l.source.describe())),
-                    Ok(false) => {}
+                // Members deleted from the link stay deleted.
+                let omit: Vec<Vec2> = l.omit.iter().map(|p| plane.to_local(*p)).collect();
+                let mut geom = solidcraft_sketch::omit_members(&r.geom, &omit);
+                // A source that turned or moved within the sketch plane since the link was read
+                // is matched where it was, then moved: its curves keep their ids.
+                let motion = relative.as_ref().and_then(|now| {
+                    let seen = l.placement.as_ref()?.seen.filter(is_rigid)?;
+                    in_plane_motion(&seen, now, sketch_plane)
+                });
+                if let Some(m) = &motion {
+                    let back = m.inverse();
+                    geom = geom.iter().map(|g| back.geom(g)).collect();
+                }
+                match sk.update_link(&l.id, &geom) {
+                    Ok(rebuilt) => {
+                        if let Some(m) = &motion {
+                            for i in sk.link_points(&l.id) {
+                                if let Some(p) = sk.points.get_mut(i) {
+                                    p.pos = m.point(p.pos);
+                                }
+                            }
+                        }
+                        if let (Some(now), Some(link)) = (relative, sk.links.iter_mut().find(|link| link.id == l.id))
+                            && let Some(placement) = link.placement.as_mut()
+                        {
+                            placement.seen = Some(now);
+                        }
+                        if rebuilt {
+                            warn.push(format!("projected {} changed shape and was rebuilt", l.source.describe()));
+                        } else if r.moved {
+                            warn.push(format!("projected {} was re-found on the nearest geometry", l.source.describe()));
+                        }
+                    }
                     Err(e) => {
                         sk.set_link_lost(&l.id, true);
                         warn.push(format!("projected {}: {e}", l.source.describe()));
