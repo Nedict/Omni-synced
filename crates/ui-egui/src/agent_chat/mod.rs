@@ -23,6 +23,7 @@ pub mod agents;
 #[cfg(not(target_arch = "wasm32"))]
 mod api_client;
 pub mod backend;
+pub mod context;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod discover;
 pub mod gate;
@@ -37,6 +38,8 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 
 use serde_json::{Value, json};
+
+use context::Context;
 
 use crate::i18n::{format as trf, tr};
 use crate::{ControlRequest, SolveApp};
@@ -95,6 +98,8 @@ pub enum Item {
     User {
         text: String,
         image: bool,
+        /// What was selected in the model when it was sent ("Attach selection").
+        context: Context,
     },
     Agent {
         thought: bool,
@@ -152,6 +157,7 @@ struct Turn {
 pub struct Pending {
     pub text: String,
     pub image: bool,
+    pub context: Context,
 }
 
 /// A request held for Allow or Deny.
@@ -176,6 +182,8 @@ pub struct AgentChat {
     images: bool,
     /// Send a picture of the view with the next message.
     pub attach_view: bool,
+    /// Send what is selected in the model with the next message.
+    pub attach_selection: bool,
     auth: Vec<acp::AuthMethod>,
     auth_status: Option<String>,
     /// A message typed before the agent was ready.
@@ -576,28 +584,32 @@ pub fn send(app: &mut SolveApp, ctx: &egui::Context, text: String) {
         return;
     }
     let image = app.agent_chat.attach_view && app.agent_chat.images;
+    // The selection is read now, when the user sends, not when a queued message finally goes.
+    let context = if app.agent_chat.attach_selection { context::describe_selection(&mut app.session) } else { Context::default() };
     if app.agent_chat.state() == State::Busy {
         let chat = &mut app.agent_chat;
         if chat.pending.len() >= MAX_PENDING {
             chat.notice(tr("ui.agent_chat_queue_full"), false);
         } else {
-            chat.pending.push(Pending { text, image });
+            chat.pending.push(Pending { text, image, context });
         }
         return;
     }
     // Messages left waiting by Stop go first, in one prompt with this one.
     if !app.agent_chat.pending.is_empty() {
-        app.agent_chat.pending.push(Pending { text, image });
+        app.agent_chat.pending.push(Pending { text, image, context });
         send_queue(app, ctx, false);
         return;
     }
-    submit(app, ctx, text, image, false);
+    submit(app, ctx, text, image, context, false);
 }
 
 /// Put `text` in the conversation and send it (`interrupted`: the agent is told it cut in on its
 /// previous step).
-fn submit(app: &mut SolveApp, ctx: &egui::Context, text: String, image: bool, interrupted: bool) {
-    app.agent_chat.push(Item::User { text: text.clone(), image });
+fn submit(app: &mut SolveApp, ctx: &egui::Context, text: String, image: bool, context: Context, interrupted: bool) {
+    app.agent_chat.push(Item::User { text: text.clone(), image, context: context.clone() });
+    // The agent gets the selection as text after the message; the conversation shows chips.
+    let text = context::with_context(&text, &context);
     match app.agent_chat.state() {
         State::Ready => start_turn_with(app, text, image, interrupted.then_some(INTERRUPT_NOTE)),
         s => {
@@ -621,9 +633,14 @@ fn send_queue(app: &mut SolveApp, ctx: &egui::Context, interrupted: bool) {
     }
     let all = std::mem::take(&mut chat.pending);
     let image = all.iter().any(|p| p.image);
-    let text = all.into_iter().map(|p| p.text).collect::<Vec<_>>().join("\n\n");
-    let text: String = text.chars().take(MAX_PROMPT).collect();
-    submit(app, ctx, text, image, interrupted);
+    let mut context = Context::default();
+    let mut texts = Vec::new();
+    for p in all {
+        texts.push(p.text);
+        context.merge(p.context);
+    }
+    let text: String = texts.join("\n\n").chars().take(MAX_PROMPT).collect();
+    submit(app, ctx, text, image, context, interrupted);
 }
 
 /// Send now: stop the running step and send the queue as the next prompt once the agent has said
@@ -1053,7 +1070,7 @@ pub fn set_mode(app: &mut SolveApp, mode: &str) {
 }
 
 /// `ui.agent_chat` on the control channel (tests and screenshots): `enabled`, `command`, `open`,
-/// `side`, `minimized`, `width`, `refresh`, `connect`, `stop`, `send`, `attach_view`,
+/// `side`, `minimized`, `width`, `refresh`, `connect`, `stop`, `send`, `attach_view`, `attach_selection`,
 /// `permission` (an option id, or `"cancel"`), `approve` (`true`/`false`, the oldest held
 /// request), `cancel` (Stop), `send_now` (steer: stop, then send the queue), `remove_pending` (index), `undo` (the newest message's changes); returns the panel's state.
 pub fn control(app: &mut SolveApp, ctx: &egui::Context, p: &Value) -> Result<Value, String> {
@@ -1138,6 +1155,9 @@ pub fn control(app: &mut SolveApp, ctx: &egui::Context, p: &Value) -> Result<Val
     if let Some(a) = p.get("attach_view").and_then(Value::as_bool) {
         app.agent_chat.attach_view = a;
     }
+    if let Some(a) = p.get("attach_selection").and_then(Value::as_bool) {
+        app.agent_chat.attach_selection = a;
+    }
     if let Some(pick) = p.get("picker").and_then(Value::as_bool) {
         app.agent_chat.picking = Some(pick);
     }
@@ -1195,7 +1215,7 @@ pub fn status(app: &SolveApp) -> Value {
         .items
         .iter()
         .map(|i| match i {
-            Item::User { text, image } => json!({"user": text, "image": image}),
+            Item::User { text, image, context } => json!({"user": text, "image": image, "context": context.items.iter().map(|i| json!({"label": i.label, "detail": i.detail})).collect::<Vec<_>>(), "context_omitted": context.omitted}),
             Item::Agent { thought, text } => json!({"agent": text, "thought": thought}),
             Item::Tool { id, title, kind, status, output } => {
                 json!({"tool": id, "title": title, "kind": kind, "status": status.map(|s| format!("{s:?}")), "output": output})
@@ -1242,7 +1262,7 @@ pub fn status(app: &SolveApp) -> Value {
         "toolsPort": c.tools_port,
         "pid": pid,
         "waiting": c.waiting(),
-        "pending": c.pending.iter().map(|p| json!({"text": p.text, "image": p.image})).collect::<Vec<_>>(),
+        "pending": c.pending.iter().map(|p| json!({"text": p.text, "image": p.image, "context": p.context.total()})).collect::<Vec<_>>(),
         "stopped": c.stopped,
         "turn": c.turn.as_ref().map(|t| json!({"changes": t.changes, "requests": t.requests})),
         "detection": detection,

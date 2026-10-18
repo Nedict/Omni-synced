@@ -37,7 +37,7 @@ fn a_sign_in_request_keeps_the_question_for_after_the_login() {
 #[test]
 fn a_plan_update_replaces_the_turns_plan() {
     let mut c = chat();
-    c.push(Item::User { text: "go".into(), image: false });
+    c.push(Item::User { text: "go".into(), image: false, context: Context::default() });
     c.on_event(Event::Plan(vec![("a".into(), "pending".into())]));
     c.on_event(Event::Text { thought: false, text: "working".into() });
     c.on_event(Event::Plan(vec![("a".into(), "completed".into())]));
@@ -774,4 +774,120 @@ fn an_agents_markdown_is_drawn_as_blocks() {
     // A hostile reply draws too (no panic, bounded work).
     h.app.agent_chat.items.push(Item::Agent { thought: false, text: "*".repeat(50_000) + &"[".repeat(5_000) + &"`a".repeat(5_000) });
     h.frames(3);
+}
+
+// ---- Attach selection (#2286) ----
+
+/// A 40 x 30 x 20 block, its first face and first edge as the selection would hold them, its body
+/// and its feature.
+fn box_selection(app: &mut SolveApp) -> Vec<solidcraft_engine::Sel> {
+    use solidcraft_engine::Sel;
+    app.run("solid.box", json!({"length": 40, "width": 30, "height": 20})).expect("a box");
+    let face = app.session.execute("model.faces", &json!({"body": "Body1"})).expect("faces")["faces"][0].clone();
+    let edge = app.session.execute("model.edges", &json!({"body": "Body1"})).expect("edges")["edges"][0].clone();
+    let at = |v: &Value| solidcraft_engine::geom::Vec3::new(v[0].as_f64().unwrap_or(0.0), v[1].as_f64().unwrap_or(0.0), v[2].as_f64().unwrap_or(0.0));
+    vec![
+        Sel::Face { body: "Body1".into(), index: face["index"].as_u64().unwrap_or(0) as usize, point: at(&face["point"]) },
+        Sel::Edge { body: "Body1".into(), index: edge["index"].as_u64().unwrap_or(0) as usize, point: at(&edge["mid"]) },
+        Sel::Feature { id: app.session.doc.features.first().map(|f| f.id).expect("a feature") },
+        Sel::Body { name: "Body1".into() },
+    ]
+}
+
+/// With Attach selection on, the message goes with what is selected: the agent gets it as text
+/// after the message, the conversation shows the message as typed with the items as chips.
+#[test]
+fn an_attached_selection_goes_as_text_for_the_agent_and_as_chips_in_the_conversation() {
+    let (mut app, script, ctx) = app_with_script();
+    app.session.selection = box_selection(&mut app);
+    // Off: the message is just the message.
+    send(&mut app, &ctx, "plain".into());
+    assert_eq!(script.calls(), ["prompt: plain"]);
+    ended(&script, "");
+    poll(&mut app, &ctx);
+
+    app.agent_chat.attach_selection = true;
+    send(&mut app, &ctx, "round this".into());
+    let prompt = script.calls().pop().expect("a prompt");
+    assert!(prompt.starts_with("prompt: round this\n\n[Selected in SolidCraft"), "{prompt}");
+    for want in ["Elements:", "- Flat face ", "planar", "area ", "- Edge ", "length ", "name ", "Features:", "feature id", "Bodies:", "- Body1"] {
+        assert!(prompt.contains(want), "{want:?} missing from {prompt}");
+    }
+    let Some(Item::User { text, context, .. }) = app.agent_chat.items.last() else { panic!("a sent message") };
+    assert_eq!(text, "round this", "the conversation shows what was typed");
+    assert_eq!(context.items.len(), 4);
+    let kinds: Vec<_> = context.items.iter().map(|i| i.kind).collect();
+    assert_eq!(kinds, [context::Kind::Element, context::Kind::Element, context::Kind::Feature, context::Kind::Body]);
+    // Nothing selected: nothing is added, and the box stays ticked.
+    ended(&script, "");
+    poll(&mut app, &ctx);
+    app.session.selection.clear();
+    send(&mut app, &ctx, "nothing".into());
+    assert_eq!(script.calls().pop().as_deref(), Some("prompt: nothing"));
+}
+
+/// A queued message keeps the selection of the moment it was typed; queued messages go as one
+/// prompt with all their items.
+#[test]
+fn queued_messages_keep_the_selection_they_were_typed_with() {
+    use solidcraft_engine::Sel;
+    let (mut app, script, ctx) = app_with_script();
+    app.agent_chat.attach_selection = true;
+    send(&mut app, &ctx, "first".into());
+    app.session.selection = vec![Sel::Body { name: "Alpha".into() }];
+    send(&mut app, &ctx, "second".into());
+    app.session.selection = vec![Sel::Body { name: "Beta".into() }];
+    send(&mut app, &ctx, "third".into());
+    assert_eq!(app.agent_chat.pending.iter().map(|p| p.context.total()).collect::<Vec<_>>(), [1, 1]);
+    ended(&script, "");
+    poll(&mut app, &ctx);
+    let prompt = script.calls().pop().expect("the queue went");
+    assert!(prompt.starts_with("prompt: second\n\nthird\n\n[Selected"), "{prompt}");
+    assert!(prompt.contains("- Alpha") && prompt.contains("- Beta"), "{prompt}");
+    let Some(Item::User { context, .. }) = app.agent_chat.items.last() else { panic!("a sent message") };
+    assert_eq!(context.items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["Alpha", "Beta"]);
+}
+
+/// A large selection is capped and says how much is left out; nothing in it can break the prompt.
+#[test]
+fn a_huge_selection_is_counted_not_dropped_silently() {
+    use solidcraft_engine::Sel;
+    let mut session = solidcraft_engine::Session::default();
+    let selection: Vec<Sel> = (0..100).map(|i| Sel::Body { name: format!("Body{i}") }).collect();
+    let context = context::describe(&mut session, &selection);
+    assert_eq!((context.items.len(), context.omitted, context.total()), (context::MAX_ITEMS, 100 - context::MAX_ITEMS, 100));
+    assert!(context.prompt_block().contains("and 36 more, not listed"));
+    // Two such messages together stay capped.
+    let mut both = context.clone();
+    both.merge(context);
+    assert_eq!((both.items.len(), both.total()), (context::MAX_ITEMS, 200));
+    // Unknown bodies, faces and features are described by what is known, without panicking.
+    let odd = [
+        Sel::Face { body: "Nope".into(), index: usize::MAX, point: solidcraft_engine::geom::Vec3::new(f64::NAN, f64::INFINITY, 0.0) },
+        Sel::Edge { body: "Nope".into(), index: 7, point: solidcraft_engine::geom::Vec3::new(0.0, 0.0, 0.0) },
+        Sel::Feature { id: u64::MAX },
+        Sel::Plane { name: "XY".into() },
+        Sel::SketchCurve { id: "c1".into() },
+    ];
+    let described = context::describe(&mut session, &odd);
+    assert_eq!(described.items.len(), 5);
+    assert!(described.prompt_block().contains("Other:"));
+}
+
+/// The checkbox shows the number selected, and the chips of a sent message are drawn grouped.
+#[test]
+fn the_selection_checkbox_and_the_chips_are_drawn() {
+    let mut h = crate::scenario::Harness::new();
+    h.call("ui.agent_chat", json!({"open": true}));
+    h.frames(3);
+    assert!(h.widget("Attach selection").is_some(), "the checkbox is there, with nothing selected");
+    h.app.session.selection = box_selection(&mut h.app);
+    h.frames(3);
+    assert!(h.widget("Attach selection (4)").is_some(), "it counts what is selected");
+    let context = context::describe_selection(&mut h.app.session);
+    h.app.agent_chat.items.push(Item::User { text: "look".into(), image: false, context });
+    h.frames(3);
+    for heading in ["Elements 2", "Features 1", "Bodies 1"] {
+        assert!(h.widget(heading).is_some(), "{heading} is drawn");
+    }
 }

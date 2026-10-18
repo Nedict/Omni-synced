@@ -94,6 +94,103 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
 }
 
+/// The most chips one group shows before "+N more".
+const MAX_CHIPS: usize = 6;
+/// A chip's longest label (characters), and what its frame adds to the text's width.
+const CHIP_CHARS: usize = 26;
+const CHIP_PAD: f32 = 13.0;
+
+/// One thing in a group's rows: its heading, a chip for an item, or the "+N more" note.
+#[cfg(not(target_arch = "wasm32"))]
+enum ChipPart<'a> {
+    Heading(String),
+    Chip(&'a context::Entry),
+    More(String),
+}
+
+/// What was selected when a message was sent, grouped (elements, features, bodies) with a count
+/// each and a chip per item; hovering a chip tells what is known about it. The rows are filled by
+/// hand: egui wraps plain widgets, not framed ones, and one row wider than the chat would widen
+/// the whole panel.
+#[cfg(not(target_arch = "wasm32"))]
+fn context_chips(ui: &mut egui::Ui, context: &Context) {
+    if context.is_empty() {
+        return;
+    }
+    let t = Tokens::get();
+    let font = egui::FontId::proportional(11.0);
+    let (avail, gap) = (ui.available_width(), ui.spacing().item_spacing.x);
+    let text_width = |ui: &egui::Ui, text: &str| ui.painter().layout_no_wrap(text.to_string(), font.clone(), t.text).size().x;
+    let more = |n: usize| trf("ui.agent_chat_ctx_more", &[("n", &n.to_string())]);
+    for kind in context::Kind::ALL {
+        let items: Vec<&context::Entry> = context.items.iter().filter(|i| i.kind == kind).collect();
+        if items.is_empty() {
+            continue;
+        }
+        let mut parts = vec![ChipPart::Heading(format!("{} {}", tr(kind.heading()), items.len()))];
+        parts.extend(items.iter().take(MAX_CHIPS).map(|i| ChipPart::Chip(i)));
+        if items.len() > MAX_CHIPS {
+            parts.push(ChipPart::More(more(items.len() - MAX_CHIPS)));
+        }
+        let widths: Vec<f32> = parts
+            .iter()
+            .map(|p| match p {
+                ChipPart::Heading(s) | ChipPart::More(s) => text_width(ui, s),
+                ChipPart::Chip(i) => text_width(ui, &shorten(&i.label, CHIP_CHARS)) + CHIP_PAD,
+            })
+            .collect();
+        let mut rows: Vec<Vec<usize>> = vec![Vec::new()];
+        let mut used = 0.0_f32;
+        for (n, w) in widths.iter().enumerate() {
+            let fits = used + if used > 0.0 { gap } else { 0.0 } + w <= avail;
+            if !fits && used > 0.0 {
+                rows.push(Vec::new());
+                used = 0.0;
+            }
+            used += if used > 0.0 { gap } else { 0.0 } + w;
+            if let Some(row) = rows.last_mut() {
+                row.push(n);
+            }
+        }
+        for row in rows {
+            ui.horizontal(|ui| {
+                for n in row {
+                    match &parts[n] {
+                        ChipPart::Heading(s) | ChipPart::More(s) => {
+                            ui.label(RichText::new(s).color(t.text_dim).size(11.0));
+                        }
+                        ChipPart::Chip(item) => {
+                            let chip = egui::Frame::NONE
+                                .stroke(Stroke::new(1.0, t.text_dim.gamma_multiply(0.5)))
+                                .corner_radius(8.0)
+                                .inner_margin(egui::Margin::symmetric(5, 1))
+                                .show(ui, |ui| {
+                                    ui.add(
+                                        egui::Label::new(RichText::new(shorten(&item.label, CHIP_CHARS)).color(t.text).size(11.0))
+                                            .wrap_mode(egui::TextWrapMode::Extend),
+                                    )
+                                })
+                                .response;
+                            if !item.detail.is_empty() {
+                                chip.on_hover_text(&item.detail);
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+    if context.omitted > 0 {
+        ui.label(RichText::new(more(context.omitted)).color(t.text_dim).size(11.0));
+    }
+}
+
+/// `s` cut to `max` characters, with an ellipsis.
+#[cfg(not(target_arch = "wasm32"))]
+fn shorten(s: &str, max: usize) -> String {
+    if s.chars().count() <= max { s.to_string() } else { format!("{}…", s.chars().take(max.saturating_sub(1)).collect::<String>()) }
+}
+
 /// New chat (when the chat has focus).
 pub const NEW_CHAT_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT), egui::Key::L);
@@ -349,7 +446,7 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
     if esc {
         cancel(app);
     }
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         let send_b = ui.button(tr(if busy { "ui.agent_chat_queue" } else { "ui.agent_chat_send" }));
         crate::scenario::publish_handle("agent_chat:send", send_b.rect.center());
         if (send_b.clicked() || enter || steer) && !app.agent_chat.input.trim().is_empty() {
@@ -372,6 +469,16 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
             .on_hover_text(tr("ui.agent_chat_attach_view_tip"))
             .on_disabled_hover_text(tr("ui.agent_chat_no_images"));
         crate::scenario::publish_handle("agent_chat:attach", attach.rect.center());
+        // What is selected in the model goes with the message: text for the agent, chips in the
+        // conversation.
+        let selected = app.session.selection.len();
+        let label = if selected > 0 {
+            format!("{} ({selected})", tr("ui.agent_chat_attach_selection"))
+        } else {
+            tr("ui.agent_chat_attach_selection").to_string()
+        };
+        let pick = ui.add(egui::Checkbox::new(&mut app.agent_chat.attach_selection, label)).on_hover_text(tr("ui.agent_chat_attach_selection_tip"));
+        crate::scenario::publish_handle("agent_chat:attach_selection", pick.rect.center());
     });
 }
 
@@ -628,7 +735,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
     let current_doc = app.session.doc.clone();
     for (n, item) in app.agent_chat.items.iter().enumerate() {
         match item {
-            Item::User { text, image } => {
+            Item::User { text, image, context } => {
                 ui.add_space(6.0);
                 egui::Frame::NONE.fill(t.accent_soft).corner_radius(6.0).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
@@ -636,6 +743,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
                     if *image {
                         ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim).size(11.0));
                     }
+                    context_chips(ui, context);
                 });
             }
             Item::Agent { thought, text } => {
@@ -788,6 +896,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
                     if p.image {
                         ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim).size(11.0));
                     }
+                    context_chips(ui, &p.context);
                 }
             }
         });
