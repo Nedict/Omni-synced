@@ -100,7 +100,8 @@ pub fn find_close_pair(
     test: impl FnMut(&BoxedTriangle, &BoxedTriangle) -> bool,
 ) -> Option<bool> {
     let work = std::cell::Cell::new(*budget);
-    let found = find_close_pair_within(a, b, gap, &work, test);
+    let mut test = test;
+    let found = find_close_pair_within(a, b, gap, &work, |(_, t), (_, u)| test(t, u));
     *budget = work.get();
     found
 }
@@ -110,7 +111,7 @@ fn find_close_pair_within(
     b: &[BoxedTriangle],
     gap: f64,
     work: &std::cell::Cell<usize>,
-    mut test: impl FnMut(&BoxedTriangle, &BoxedTriangle) -> bool,
+    mut test: impl FnMut((usize, &BoxedTriangle), (usize, &BoxedTriangle)) -> bool,
 ) -> Option<bool> {
     let spend = |n: usize| -> Option<()> {
         work.set(work.get().checked_sub(n)?);
@@ -125,7 +126,7 @@ fn find_close_pair_within(
             && x.min.z <= y.max.z + gap
             && y.min.z <= x.max.z + gap
     };
-    let mut call = |t: &BoxedTriangle, u: &BoxedTriangle| -> Option<bool> {
+    let mut call = |t: (usize, &BoxedTriangle), u: (usize, &BoxedTriangle)| -> Option<bool> {
         spend(1)?;
         Some(test(t, u))
     };
@@ -179,7 +180,7 @@ fn find_close_pair_within(
         for &j in &big {
             if let Some(u) = b.get(j).filter(|u| close(&t.1, &u.1)) {
                 seen[j] = i + 1;
-                if call(t, u)? {
+                if call((i, t), (j, u))? {
                     return Some(true);
                 }
             }
@@ -187,7 +188,7 @@ fn find_close_pair_within(
         let Some([x, y, z]) = span(&t.1, 0.0) else {
             // A large triangle of `a`: against all of `b`.
             for (j, u) in b.iter().enumerate() {
-                if seen[j] != i + 1 && close(&t.1, &u.1) && call(t, u)? {
+                if seen[j] != i + 1 && close(&t.1, &u.1) && call((i, t), (j, u))? {
                     return Some(true);
                 }
             }
@@ -203,7 +204,7 @@ fn find_close_pair_within(
                             continue;
                         }
                         *mark = i + 1;
-                        if close(&t.1, &u.1) && call(t, u)? {
+                        if close(&t.1, &u.1) && call((i, t), (j as usize, u))? {
                             return Some(true);
                         }
                     }
@@ -532,13 +533,14 @@ impl Mesh {
     /// can still overlap without crossing: one inside the other, or sharing a slab between
     /// faces that are parallel or in one plane.
     pub fn crosses(&self, o: &Mesh, tol: f64) -> bool {
-        self.crosses_except(o, tol, |_| false)
+        self.crosses_except(o, tol, |_, _, _| false)
     }
 
-    /// [`Mesh::crosses`], leaving out the places where `ignored` holds for the middle of the
-    /// stretch two triangles share: where the meshes stand for one surface of both bodies, and
-    /// their facets cross by the facetings' error alone.
-    pub fn crosses_except(&self, o: &Mesh, tol: f64, ignored: impl Fn(Vec3) -> bool) -> bool {
+    /// [`Mesh::crosses`], leaving out the crossings for which `ignored` holds, asked with the
+    /// middle of the stretch the two triangles share and the faces of this mesh's and `o`'s
+    /// triangle (`u32::MAX` where a mesh has no face for it): where both meshes stand for one
+    /// surface of both bodies, and their facets cross by the facetings' error alone.
+    pub fn crosses_except(&self, o: &Mesh, tol: f64, ignored: impl Fn(Vec3, u32, u32) -> bool) -> bool {
         if !tol.is_finite() {
             return false;
         }
@@ -548,23 +550,29 @@ impl Mesh {
         if region.is_empty() {
             return false;
         }
-        let near = |m: &Mesh| -> Vec<([Vec3; 3], Aabb3)> {
+        // The triangles near the other mesh, with their faces.
+        let near = |m: &Mesh| -> (Vec<BoxedTriangle>, Vec<u32>) {
             m.triangles
                 .iter()
-                .filter_map(|t| {
+                .enumerate()
+                .filter_map(|(i, t)| {
                     let t = m.tri(t)?;
                     let mut bx = Aabb3::EMPTY;
                     t.iter().for_each(|p| bx.add(*p));
-                    (!bx.is_empty() && boxes_meet(&bx, &region)).then_some((t, bx))
+                    (!bx.is_empty() && boxes_meet(&bx, &region)).then(|| ((t, bx), m.tri_face.get(i).copied().unwrap_or(u32::MAX)))
                 })
-                .collect()
+                .unzip()
         };
-        let (ta, tb) = (near(self), near(o));
+        let ((ta, fa), (tb, fb)) = (near(self), near(o));
         if ta.is_empty() || tb.is_empty() {
             return false;
         }
-        let mut unlimited = usize::MAX;
-        find_close_pair(&ta, &tb, 0.0, &mut unlimited, |(t, _), (u, _)| triangles_cross(t, u, tol).is_some_and(|at| !ignored(at))).unwrap_or(false)
+        let work = std::cell::Cell::new(usize::MAX);
+        let face = |faces: &[u32], i: usize| faces.get(i).copied().unwrap_or(u32::MAX);
+        find_close_pair_within(&ta, &tb, 0.0, &work, |(i, (t, _)), (j, (u, _))| {
+            triangles_cross(t, u, tol).is_some_and(|at| !ignored(at, face(&fa, i), face(&fb, j)))
+        })
+        .unwrap_or(false)
     }
 
     /// Closest intersection of a ray with the mesh: (distance along `dir`, triangle index).
