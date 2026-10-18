@@ -53,7 +53,7 @@ use std::f64::consts::{FRAC_PI_2, PI, TAU};
 use solidcraft_geom::{Loop2, Mesh, Plane, Region2, Ring, Seg2, Vec2, Vec3};
 use solidcraft_kernel::{Body, FaceSurface, face_surface};
 
-use super::{FlatWork, ReliefOverride, RuleValues, SheetBody, SheetFlange, base_flange, point_in, polys_cross, signed_area, snap};
+use super::{FlatWork, ReliefOverride, RuleValues, SheetBody, SheetFlange, base_flange, polys_cross, signed_area, snap};
 use crate::{DocError, ModelBody, Result, apply_point, mat_inverse};
 
 const MAX_BENDS: usize = 1000;
@@ -901,7 +901,7 @@ pub fn convert_body(mb: &ModelBody, rule: &str, rv: &RuleValues, face: Vec3, ben
                 }
                 let cut = sh.region_to_flat(fl, &face.plane, &Region2 { outer: h.clone(), holes: Vec::new() })?;
                 let ring = cut.outer.polyline(1e-3);
-                if !ring.iter().all(|q| point_in(&bound, *q)) || polys_cross(&bound, &ring) {
+                if !ring.iter().all(|q| bound.contains(*q)) || polys_cross(&bound, &ring) {
                     let kind = if through { "hole" } else { "pocket" };
                     return err(format!("not supported yet: the {kind} at {} reaches into a bend (cut it after converting)", at(p)));
                 }

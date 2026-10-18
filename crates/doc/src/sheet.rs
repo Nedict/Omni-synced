@@ -593,7 +593,9 @@ fn bezier_at(c: &[Vec3], t: f64) -> Vec3 {
     w.first().copied().unwrap_or(Vec3::ZERO)
 }
 
-fn dedup(p: &[Vec2]) -> Vec<Vec2> {
+/// `p` without repeated points: a point on the one before it goes, and so does a last point back
+/// on the first.
+fn dedup(p: &Ring<Vec2>) -> Ring<Vec2> {
     let mut v: Vec<Vec2> = Vec::new();
     for q in p {
         if v.last().is_none_or(|l| l.dist(*q) > 1e-9) {
@@ -603,7 +605,7 @@ fn dedup(p: &[Vec2]) -> Vec<Vec2> {
     if v.len() > 1 && v.first().zip(v.last()).is_some_and(|(a, b)| a.dist(*b) < 1e-9) {
         v.pop();
     }
-    v
+    Ring::new(v)
 }
 
 /// How a flat edge of a bend zone folds: along the bend to a line, across it to an arc, or
@@ -747,7 +749,7 @@ struct Corner {
 
 /// The corners of a straight-edged region (counter-clockwise).
 fn corners_of(r: &Region2) -> Vec<Vec2> {
-    dedup(&r.outer.ccw().polyline(1e-3))
+    dedup(&r.outer.ccw().polyline(1e-3)).into_vec()
 }
 
 /// The area two convex counter-clockwise polygons share.
@@ -1789,7 +1791,7 @@ impl SheetBody {
         let (mut open, mut islands) = (Vec::new(), Vec::new());
         for (i, piece) in after.iter().enumerate() {
             let p = piece.interior_point();
-            let inside = |(pts, lo, hi): &(Ring<Vec2>, Vec2, Vec2)| (lo.x..=hi.x).contains(&p.x) && (lo.y..=hi.y).contains(&p.y) && point_in(pts, p);
+            let inside = |(pts, lo, hi): &(Ring<Vec2>, Vec2, Vec2)| (lo.x..=hi.x).contains(&p.x) && (lo.y..=hi.y).contains(&p.y) && pts.contains(p);
             if outlines.iter().enumerate().any(|(j, o)| j != i && inside(o)) {
                 islands.push(piece);
             } else {
@@ -1839,11 +1841,11 @@ impl SheetBody {
         if self.flanges.len().saturating_mul(2).saturating_add(1) > MAX_FLAT_PIECES {
             return Err(flat_budget_error());
         }
-        let mut polys: Vec<Vec<Vec2>> = vec![dedup(&flat_polyline(&self.base.outer.ccw())?)];
+        let mut polys: Vec<Vec<Vec2>> = vec![dedup(&flat_polyline(&self.base.outer.ccw())?).into_vec()];
         for f in &self.flanges {
-            polys.push(dedup(&flat_polyline(&self.zone(f).outer.ccw())?));
+            polys.push(dedup(&flat_polyline(&self.zone(f).outer.ccw())?).into_vec());
             if f.leg > 1e-9 {
-                polys.push(dedup(&flat_polyline(&self.panel(f).outer.ccw())?));
+                polys.push(dedup(&flat_polyline(&self.panel(f).outer.ccw())?).into_vec());
             }
             flat_points(&polys)?;
         }
@@ -2036,7 +2038,7 @@ impl SheetBody {
             }
             let q2 = Vec2::new(q.x, q.y);
             let pts = dedup(&r.outer.ccw().polyline(1e-3));
-            if !point_in(&pts, q2) && !near_outline(&pts, q2, TOL) {
+            if !pts.contains(q2) && !near_outline(&pts, q2, TOL) {
                 continue;
             }
             // Panels `before` did not have yet came out of their parent's (bounded walk).
@@ -3158,7 +3160,7 @@ impl SheetBody {
             }
             let pts = dedup(&r.outer.ccw().polyline(1e-3));
             let (a2, b2) = (Vec2::new(fa.x, fa.y), Vec2::new(fb.x, fb.y));
-            if point_in(&pts, (a2 + b2) * 0.5) || polys_cross(&pts, &[a2, b2, (a2 + b2) * 0.5]) {
+            if pts.contains((a2 + b2) * 0.5) || polys_cross(&pts, &[a2, b2, (a2 + b2) * 0.5]) {
                 found = Some((pi, inv, a2, b2, pts));
                 break;
             }
@@ -3187,20 +3189,10 @@ impl SheetBody {
                 let q2 = Vec2::new(q.x, q.y);
                 // A point in the panel's slab must be on material: inside the outline and
                 // outside every cut-out (a side face of either counts as material).
-                let near = |poly: &[Vec2]| {
-                    let m = poly.len();
-                    (0..m).any(|i| match (poly.get(i), poly.get((i + 1) % m)) {
-                        (Some(&a), Some(&b)) => {
-                            let d = b - a;
-                            let t = if d.len2() > 1e-18 { ((q2 - a).dot(d) / d.len2()).clamp(0.0, 1.0) } else { 0.0 };
-                            (a + d * t).dist(q2) < 1e-3
-                        }
-                        _ => false,
-                    })
-                };
+                let near = |poly: &Ring<Vec2>| near_outline(poly, q2, 1e-3);
                 let in_slab = q.z > -1e-4 && q.z < self.t + 1e-4;
                 let in_hole = self.holes.iter().any(|h| h.contains(q2) && !near(&h.outer.ccw().polyline(1e-3)));
-                if in_slab && ((!point_in(&pts, q2) && !near(&pts)) || in_hole) {
+                if in_slab && ((!pts.contains(q2) && !near(&pts)) || in_hole) {
                     *warning =
                         Some(format!("{FOLD_FIXED_OFF_SHEET} at ({:.3}, {:.3}, {:.3}); the side of the fold line it lies on stays", p.x, p.y, p.z));
                 }
@@ -3586,9 +3578,7 @@ impl SheetBody {
         let mut out = Vec::new();
         for (pi, region) in self.panels() {
             let pts = dedup(&region.outer.ccw().polyline(1e-3));
-            let m = pts.len();
-            for i in 0..m {
-                let (Some(&a), Some(&b)) = (pts.get(i), pts.get((i + 1) % m)) else { continue };
+            for (i, (&a, &b)) in pts.edges().enumerate() {
                 if a.dist(b) < 1e-9 {
                     continue;
                 }
@@ -3823,18 +3813,6 @@ impl SheetBody {
     }
 }
 
-fn point_in(poly: &[Vec2], p: Vec2) -> bool {
-    let mut inside = false;
-    let m = poly.len();
-    for i in 0..m {
-        let (Some(&a), Some(&b)) = (poly.get(i), poly.get((i + m - 1) % m)) else { continue };
-        if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
-            inside = !inside;
-        }
-    }
-    inside
-}
-
 /// The boundary of a union of counter-clockwise polygons that meet edge to edge: edges are
 /// split where corners touch them, edges running both ways cancel, the rest chain into loops
 /// (outer loops counter-clockwise, holes clockwise; straight runs merged).
@@ -3918,15 +3896,11 @@ fn merge_loops(polys: &[Vec<Vec2>], work: &mut FlatWork) -> Result<Vec<Vec<Vec2>
 }
 
 /// Whether `q` lies within `tol` of the closed polygon `poly`'s outline.
-fn near_outline(poly: &[Vec2], q: Vec2, tol: f64) -> bool {
-    let m = poly.len();
-    (0..m).any(|i| match (poly.get(i), poly.get((i + 1) % m)) {
-        (Some(&a), Some(&b)) => {
-            let d = b - a;
-            let t = if d.len2() > 1e-18 { ((q - a).dot(d) / d.len2()).clamp(0.0, 1.0) } else { 0.0 };
-            (a + d * t).dist(q) < tol
-        }
-        _ => false,
+fn near_outline(poly: &Ring<Vec2>, q: Vec2, tol: f64) -> bool {
+    poly.edges().any(|(&a, &b)| {
+        let d = b - a;
+        let t = if d.len2() > 1e-18 { ((q - a).dot(d) / d.len2()).clamp(0.0, 1.0) } else { 0.0 };
+        (a + d * t).dist(q) < tol
     })
 }
 
