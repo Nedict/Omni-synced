@@ -258,6 +258,9 @@ and a fresh CI run:
      open a **draft** PR titled `<summary> (#N)`, e.g. `Fillet: variable radius along a chain (#123)`.
    - **The lowest-numbered open PR for an issue wins.** If yours lost, close it (or offer to help
      on the other one).
+   - Then comment `/claim` on the issue so the bot records the claimant and adds the `in progress`
+     label. **Do both:** the draft PR establishes ownership and `/claim` marks the issue as taken.
+     Reference `#N` in the PR so the bot can find it; a comment alone does not replace the draft PR.
    - Push work in progress at least daily. A draft with no pushes for 72 hours may be taken over:
      comment on it first, then open your own claim.
    - Mark the PR ready for review when it is done.
@@ -267,10 +270,11 @@ and a fresh CI run:
 4. Reference the issue (`Fixes #12`). In the PR, say what you tested and how. For geometry work, include the measured numbers (and
    the expected ones).
 
-Comment `/claim` on an issue to take it: you are assigned, it gets the `in progress` label, and
-the bot replies with the deadline. Open a draft PR referencing the issue within 72 hours, or the
-claim lapses and the issue is freed again; a claim with a PR is freed after 14 days without
-pushes. `/unclaim` releases it early (only you or a maintainer can). Issues a maintainer has
+The `/claim` bot assigns you, adds the `in progress` label, and replies with its automatic cleanup
+deadline. It frees a claim with no linked PR after 72 hours, or a claim with a PR after 14 days
+without pushes. These automatic cleanup deadlines are separate from the daily progress and
+72-hour takeover policy above; follow the draft PR then `/claim` sequence before starting work.
+`/unclaim` releases the bot claim early (only you or a maintainer can). Issues a maintainer has
 taken are never freed automatically.
 
 Help reviewers see what the words mean. For observable CAD, UI or model behavior, please
