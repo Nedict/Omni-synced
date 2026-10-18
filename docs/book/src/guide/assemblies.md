@@ -258,7 +258,9 @@ and the direction of its length. Holes in no stack are listed under `lone` with 
 body, diameter, entry point `at`, axis and `depth_mm`.
 
 Round holes count whether their wall is an exact cylinder or a B-spline (holes in refolded or
-imported parts). Holes are on one axis when their axes are at most `axis_tolerance` apart
+imported parts). A layer reaches from face to face of its body: a countersink or chamfer that
+opens out from a hole counts in its extent, so it adds to the grip and closes the gap it would
+leave against the next layer, while `d_mm` stays the narrowest opening. Holes are on one axis when their axes are at most `axis_tolerance` apart
 (default 0.1 mm), either way round; a round hole lines up with a slot when its axis passes
 through the slot's centre line. Slots that no round hole passes through line up when they
 share a centre line, and their stack's axis runs through the middle of the length they share.

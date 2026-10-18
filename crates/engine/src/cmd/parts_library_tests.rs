@@ -213,3 +213,76 @@ fn library_bolts_nuts_and_washers_are_built_from_their_tables() {
     assert!((hi.x - lo.x - 10.0).abs() < 1e-3 && (hi.z - lo.z - 1.0).abs() < 1e-6, "{lo:?} {hi:?}");
     assert!(s.execute("parts.insert", &json!({"family": "hex_bolt", "size": "M5", "grip": 4})).is_err(), "built-ins list no grips");
 }
+
+/// Every object under `v` that has a `definition` (a standard part's family copy).
+fn definitions(v: &mut Value) -> Vec<&mut Value> {
+    let mut out = Vec::new();
+    match v {
+        Value::Object(m) => {
+            if m.get("definition").is_some_and(Value::is_object) {
+                if let Some(d) = m.get_mut("definition") {
+                    out.push(d);
+                }
+            } else {
+                for x in m.values_mut() {
+                    out.extend(definitions(x));
+                }
+            }
+        }
+        Value::Array(a) => {
+            for x in a {
+                out.extend(definitions(x));
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+#[test]
+fn a_design_whose_family_copy_is_bad_is_refused_where_the_copy_is_used() {
+    let lib = Folder::new(&rivets());
+    let mut s = Session::default();
+    run(&mut s, "parts.library.load", json!({"path": lib.dir()}));
+    let r = run(&mut s, "parts.insert", json!({"family": "rivet_dome", "size": "4.8", "grip": 6.5, "point": [0, 0, 0]}));
+    let comp = r["component"].as_u64().unwrap_or(0);
+    // A design file is hostile input: its copy says a negative diameter and far too many sizes.
+    let mut saved: Value = serde_json::from_str(&s.doc.to_json()).unwrap_or_else(|e| panic!("{e}"));
+    let defs = definitions(&mut saved);
+    assert_eq!(defs.len(), 1, "{saved}");
+    for def in defs {
+        def["sizes"][1]["d"] = json!(-4.8);
+        let extra = def["sizes"][0].clone();
+        if let Some(sizes) = def["sizes"].as_array_mut() {
+            for i in 0..300 {
+                let mut z = extra.clone();
+                z["size"] = json!(format!("x{i}"));
+                sizes.push(z);
+            }
+        }
+    }
+    let doc = solidcraft_doc::Document::from_json(&saved.to_string()).unwrap_or_else(|e| panic!("{e}"));
+    let mut reopened = Session::new(doc);
+    let err = reopened.execute("parts.resize", &json!({"component": comp, "grip": 9})).unwrap_err().to_string();
+    assert!(err.contains("not valid") && err.contains("definition.sizes"), "{err}");
+    // The part keeps its size and shape.
+    assert_eq!(reopened.doc.parts.get(&comp).map(|p| (p.size.clone(), p.length)), Some(("4.8".to_string(), Some(12.0))));
+    // Nor is the bad copy offered as a family to insert or list.
+    let err = reopened.execute("parts.insert", &json!({"family": "rivet_dome", "size": "4.0"})).unwrap_err().to_string();
+    assert!(err.contains("unknown part family"), "{err}");
+    let all = run(&mut reopened, "parts.library", json!({}));
+    assert!(all["families"].as_array().into_iter().flatten().all(|f| f["family"] != "rivet_dome"), "{all}");
+    assert!(reopened.execute("parts.library", &json!({"family": "rivet_dome", "check": true})).is_err());
+}
+
+#[test]
+fn check_finds_a_size_listed_twice_in_another_case() {
+    let mut lib = rivets();
+    lib["families"][0]["sizes"][0]["size"] = json!("m5");
+    lib["families"][0]["sizes"][1]["size"] = json!("M5");
+    let f = Folder::new(&lib);
+    let mut s = Session::default();
+    let c = run(&mut s, "parts.library", json!({"path": f.file(), "check": true}));
+    let paths: Vec<&str> = c["problems"].as_array().into_iter().flatten().filter_map(|p| p["path"].as_str()).collect();
+    assert_eq!(paths, ["families[0].sizes[1].size"], "{c}");
+}

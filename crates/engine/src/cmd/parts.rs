@@ -385,14 +385,28 @@ fn file_family(s: &Session, name: &str) -> Option<(FastenerFamily, String)> {
     if lib.is_some() {
         return None;
     }
-    s.doc.parts.values().filter_map(|p| p.definition.as_ref()).find(|f| f.name == fam).map(|f| (f.clone(), "design".to_string()))
+    design_families(s).find(|f| f.name == fam).map(|f| (f.clone(), "design".to_string()))
+}
+
+/// A family copy a design keeps, checked as a library file's family is: a design file is
+/// hostile input, and its copy reaches the geometry. The first problem is the error.
+fn design_copy(f: &FastenerFamily) -> std::result::Result<&FastenerFamily, String> {
+    match f.validate("definition").into_iter().next() {
+        None => Ok(f),
+        Some(p) => Err(format!("the design's copy of part family `{}` is not valid: {}: {}", f.name, p.path, p.message)),
+    }
+}
+
+/// The valid family copies of the design's parts (see [`design_copy`]).
+fn design_families(s: &Session) -> impl Iterator<Item = &FastenerFamily> {
+    s.doc.parts.values().filter_map(|p| p.definition.as_ref()).filter(|f| design_copy(f).is_ok())
 }
 
 /// Every library family: the open libraries' and, after them, those only the design has.
 fn file_families(s: &Session) -> Vec<(FastenerFamily, String)> {
     let mut out: Vec<(FastenerFamily, String)> =
         s.part_libraries.iter().flat_map(|l| l.library.families.iter().map(|f| (f.clone(), l.library.id.clone()))).collect();
-    for f in s.doc.parts.values().filter_map(|p| p.definition.as_ref()) {
+    for f in design_families(s) {
         if !out.iter().any(|(o, _)| o.name == f.name) {
             out.push((f.clone(), "design".into()));
         }
@@ -945,6 +959,7 @@ fn resize(s: &mut Session, p: &Value) -> Result<Value> {
     // A library part rebuilds from the copy of its family it keeps.
     let r = match &part.definition {
         Some(def) => {
+            let def = design_copy(def).map_err(|e| bad(cmd, e))?;
             let (shape, listed) = file_shape(def, &size, length, grip).map_err(|e| bad(cmd, e))?;
             Resolved { shape, label: family_label(def), definition: Some(def.clone()), listed }
         }
