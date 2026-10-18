@@ -69,6 +69,8 @@ fn pleat_built_at_the_far_end_joins_the_finished_case() {
     s.execute("parameters.change", &json!({"name": "wall", "expression": "3 mm"})).unwrap();
     let errors = feature_errors(&s);
     assert!(errors.is_empty(), "{errors:?}");
+    // The case with the mirrored pleat, which the direct build must match.
+    let mirrored = volume(&s, "Case");
     s.execute("timeline.suppress", &json!({"feature": "PleatFar", "suppressed": true})).unwrap();
     let before = volume(&s, "Case");
     // Mirrored about y = -99: y' = -198 - y.
@@ -134,7 +136,9 @@ fn pleat_built_at_the_far_end_joins_the_finished_case() {
     }
     let errors = feature_errors(&s);
     assert!(errors.is_empty(), "{errors:?}");
-    // The far pleat is there: its window and the loft change the case.
+    // The far pleat is the mirror's exact image, so the case comes out as with the mirror (and
+    // larger than without it: the loft outweighs its window).
     let after = volume(&s, "Case");
-    assert!((after - before).abs() > 1000.0, "{after} after the far pleat, {before} before");
+    assert!(after > before, "{after} after the far pleat, {before} before");
+    assert!((after - mirrored).abs() < 1e-6 * mirrored, "{after} built directly, {mirrored} mirrored");
 }
