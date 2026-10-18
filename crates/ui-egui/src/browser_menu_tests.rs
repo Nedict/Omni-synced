@@ -15,6 +15,15 @@ fn harness() -> Harness {
     h
 }
 
+/// What a menu is about, without the browser's scope of a folder.
+fn kind(t: &Target) -> String {
+    match t {
+        Target::Folder { folder, .. } => format!("folder:{folder}"),
+        Target::Body { name } => format!("body:{name}"),
+        other => format!("{other:?}"),
+    }
+}
+
 fn right(at: Pos2, pressed: bool) -> Event {
     Event::PointerButton { pos: at, button: PointerButton::Secondary, pressed, modifiers: Modifiers::NONE }
 }
@@ -33,12 +42,7 @@ fn right_click(h: &mut Harness, at: Pos2, one_frame: bool) {
 #[test]
 fn a_right_click_on_a_row_opens_its_menu_however_its_events_arrive() {
     let mut h = harness();
-    let rows = [
-        ("row:Origin", Target::Origin),
-        ("row:Bodies", Target::Folder { component: 0, folder: "bodies".into() }),
-        ("row:Plate", Target::Body { name: "Plate".into() }),
-        ("row:Sketches", Target::Folder { component: 0, folder: "sketches".into() }),
-    ];
+    let rows = [("row:Origin", "Origin"), ("row:Bodies", "folder:bodies"), ("row:Plate", "body:Plate"), ("row:Sketches", "folder:sketches")];
     for (row, target) in rows {
         let Some(centre) = crate::scenario::handle_at(row) else { panic!("{row} is not drawn: {:?}", crate::scenario::handles("row:")) };
         // Pointers sit between whole points (trackpads, HiDPI screens).
@@ -49,7 +53,7 @@ fn a_right_click_on_a_row_opens_its_menu_however_its_events_arrive() {
                 right_click(&mut h, centre + offset, one_frame);
                 let how = if one_frame { "in one frame" } else { "in two frames" };
                 assert!(h.app.viewport.context_menu.is_some(), "{row} at {offset:?}, press and release {how}: the menu did not stay open");
-                assert_eq!(h.app.menu.target, target, "{row}");
+                assert_eq!(kind(&h.app.menu.target), target, "{row}");
             }
         }
     }
