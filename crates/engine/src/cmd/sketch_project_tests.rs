@@ -657,7 +657,7 @@ fn a_face_engraved_with_text_projects_its_letters_exactly_and_extrudes() {
 
 /// A design saved before free-form edges came in exactly, by the build before it: an "S" cut
 /// 1 mm into a 30 × 20 × 10 block, then a sketch on that face (its edges projected, the letter's
-/// fitted to the mesh as 71 lines, arcs and one spline) with a circle cut 3 mm. On reopening, the
+/// fitted to the mesh as 72 lines, 9 arcs and 2 splines) with a circle cut 3 mm. On reopening, the
 /// face's link is laid out again with the letter's exact pieces, and the part builds the same.
 #[test]
 fn a_face_sketch_saved_with_fitted_letters_reopens_and_builds_the_same() {
