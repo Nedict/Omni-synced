@@ -8,6 +8,8 @@
 
 use std::collections::HashMap;
 
+use solidcraft_geom::Ring;
+
 /// Where a cut segment ends.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum End {
@@ -33,8 +35,8 @@ pub(crate) struct Segment {
 /// by the cut nodes, counter-clockwise (holes clockwise) in (u, v).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Piece {
-    pub ring: Vec<u32>,
-    pub holes: Vec<Vec<u32>>,
+    pub ring: Ring<u32>,
+    pub holes: Vec<Ring<u32>>,
 }
 
 /// Cut the face bounded by `loops` (ranges of `boundary`) along `segments`, measured in the
@@ -233,7 +235,7 @@ pub(crate) fn cut(
         before.map(|(_, e)| *e).or_else(|| list.iter().find(|(_, e)| half.get(*e).is_some_and(|x| x.1 == u)).map(|(_, e)| *e))
     };
     let mut seen = vec![false; half.len()];
-    let mut rings: Vec<Vec<u32>> = Vec::new();
+    let mut rings: Vec<Ring<u32>> = Vec::new();
     for h0 in 0..half.len() {
         if *seen.get(h0)? {
             continue;
@@ -251,18 +253,18 @@ pub(crate) fn cut(
                 return None;
             }
         }
-        rings.push(ring);
+        rings.push(Ring::new(ring));
     }
-    let area = |ring: &[u32]| -> Option<f64> {
+    let area = |ring: &Ring<u32>| -> Option<f64> {
         let mut s = 0.0;
-        for (&a, &b) in solidcraft_geom::ring_edges(ring) {
+        for (&a, &b) in ring.edges() {
             let (a, b) = (pos(a)?, pos(b)?);
             s += a[0] * b[1] - b[0] * a[1];
         }
         Some(0.5 * s)
     };
     let mut pieces: Vec<Piece> = Vec::new();
-    let mut holes: Vec<Vec<u32>> = Vec::new();
+    let mut holes: Vec<Ring<u32>> = Vec::new();
     for r in rings {
         if area(&r)? > 0.0 {
             pieces.push(Piece { ring: r, holes: Vec::new() });
@@ -273,9 +275,9 @@ pub(crate) fn cut(
     // A loop no cut reached is a hole of the patch around it.
     for h in holes {
         let p = pos(*h.first()?)?;
-        let contains = |ring: &[u32]| {
+        let contains = |ring: &Ring<u32>| {
             let mut odd = false;
-            for (&a, &b) in solidcraft_geom::ring_edges(ring) {
+            for (&a, &b) in ring.edges() {
                 let (Some(a), Some(b)) = (pos(a), pos(b)) else { continue };
                 if (a[1] > p[1]) != (b[1] > p[1]) && p[0] < a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]) {
                     odd = !odd;
@@ -296,10 +298,10 @@ pub(crate) fn cut(
 mod tests {
     use super::*;
 
-    fn area(all: &[[f64; 2]], ring: &[u32]) -> f64 {
-        (0..ring.len())
-            .map(|k| {
-                let (a, b) = (all[ring[k] as usize], all[ring[(k + 1) % ring.len()] as usize]);
+    fn area(all: &[[f64; 2]], ring: &Ring<u32>) -> f64 {
+        ring.edges()
+            .map(|(&a, &b)| {
+                let (a, b) = (all[a as usize], all[b as usize]);
                 0.5 * (a[0] * b[1] - b[0] * a[1])
             })
             .sum()

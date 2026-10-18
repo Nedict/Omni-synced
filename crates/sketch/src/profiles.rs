@@ -10,7 +10,7 @@
 use std::f64::consts::TAU;
 
 use serde::{Deserialize, Serialize};
-use solidcraft_geom::{Loop2, Region2, Seg2, Vec2};
+use solidcraft_geom::{Loop2, Region2, Ring, Seg2, Vec2};
 
 use crate::model::{CurveKind, Sketch};
 use crate::shape::{Shape, intersections_within};
@@ -497,7 +497,7 @@ pub fn without_text_counters(sk: &Sketch, profiles: Vec<Profile>) -> Vec<Profile
         return profiles;
     }
     // Outer polylines and their boxes, once.
-    let polys: Vec<Vec<Vec2>> = profiles.iter().map(|p| p.region.outer.polyline(1e-3)).collect();
+    let polys: Vec<Ring<Vec2>> = profiles.iter().map(|p| p.region.outer.polyline(1e-3)).collect();
     let boxes: Vec<(Vec2, Vec2)> = polys
         .iter()
         .map(|pl| {
@@ -507,17 +507,6 @@ pub fn without_text_counters(sk: &Sketch, profiles: Vec<Profile>) -> Vec<Profile
         })
         .collect();
     let areas: Vec<f64> = profiles.iter().map(|p| p.region.outer.signed_area().abs()).collect();
-    let inside = |pl: &[Vec2], p: Vec2| {
-        let n = pl.len();
-        let mut odd = false;
-        for i in 0..n {
-            let (Some(a), Some(b)) = (pl.get(i), pl.get((i + 1) % n)) else { continue };
-            if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x) {
-                odd = !odd;
-            }
-        }
-        odd
-    };
     let keep: Vec<bool> = (0..profiles.len())
         .map(|i| {
             if !text_only.get(i).copied().unwrap_or(false) {
@@ -531,7 +520,7 @@ pub fn without_text_counters(sk: &Sketch, profiles: Vec<Profile>) -> Vec<Profile
                         && text_only.get(j).copied().unwrap_or(false)
                         && areas.get(j).copied().unwrap_or(0.0) > ai
                         && boxes.get(j).is_some_and(|(lo, hi)| probe.x >= lo.x && probe.x <= hi.x && probe.y >= lo.y && probe.y <= hi.y)
-                        && polys.get(j).is_some_and(|pl| inside(pl, probe))
+                        && polys.get(j).is_some_and(|pl| pl.contains(probe))
                 })
                 .count();
             depth % 2 == 0

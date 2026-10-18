@@ -10,7 +10,7 @@
 //! together; the flat solid is the outline extruded through the thickness.
 
 use serde::{Deserialize, Serialize};
-use solidcraft_geom::{LINEAR_TOL, Loop2, Plane, Region2, Seg2, Vec2, Vec3};
+use solidcraft_geom::{LINEAR_TOL, Loop2, Plane, Region2, Ring, Seg2, Vec2, Vec3};
 use solidcraft_kernel::{self as kernel, Body, EdgeSpec, FaceSpec, SurfSpec};
 
 use crate::expr::{self, Kind, Value};
@@ -1785,7 +1785,7 @@ impl SheetBody {
             Ok(common.iter().map(Region2::area).sum::<f64>() > TOUCH_AREA)
         };
         // The cheap test first: a piece inside another's outline is an island, whatever it holds.
-        let outlines: Vec<(Vec<Vec2>, Vec2, Vec2)> = after
+        let outlines: Vec<(Ring<Vec2>, Vec2, Vec2)> = after
             .iter()
             .map(|r| {
                 let pts = r.outer.polyline(1e-3);
@@ -1797,7 +1797,7 @@ impl SheetBody {
         let (mut open, mut islands) = (Vec::new(), Vec::new());
         for (i, piece) in after.iter().enumerate() {
             let p = piece.interior_point();
-            let inside = |(pts, lo, hi): &(Vec<Vec2>, Vec2, Vec2)| (lo.x..=hi.x).contains(&p.x) && (lo.y..=hi.y).contains(&p.y) && point_in(pts, p);
+            let inside = |(pts, lo, hi): &(Ring<Vec2>, Vec2, Vec2)| (lo.x..=hi.x).contains(&p.x) && (lo.y..=hi.y).contains(&p.y) && point_in(pts, p);
             if outlines.iter().enumerate().any(|(j, o)| j != i && inside(o)) {
                 islands.push(piece);
             } else {
@@ -1913,7 +1913,7 @@ impl SheetBody {
         let mut segs: Vec<(Vec2, Vec2)> = Vec::new();
         let mut add = |l: &Loop2| {
             let pts = l.polyline(1e-3);
-            for (&a, &b) in solidcraft_geom::ring_edges(&pts) {
+            for (&a, &b) in pts.edges() {
                 segs.push((a, b));
             }
         };
@@ -2010,7 +2010,7 @@ impl SheetBody {
 
     /// Bounding size of the flat pattern (x, y in the flat frame).
     pub fn flat_size(&self) -> Result<(f64, f64)> {
-        let loops: Vec<Vec<Vec2>> = self.flat_regions()?.iter().map(|r| r.outer.polyline(1e-3)).collect();
+        let loops: Vec<Ring<Vec2>> = self.flat_regions()?.iter().map(|r| r.outer.polyline(1e-3)).collect();
         let (mut lo, mut hi) = (Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN));
         for p in loops.iter().flatten() {
             lo = Vec2::new(lo.x.min(p.x), lo.y.min(p.y));

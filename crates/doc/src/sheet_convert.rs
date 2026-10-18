@@ -50,7 +50,7 @@
 use std::collections::BTreeMap;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
-use solidcraft_geom::{Loop2, Mesh, Plane, Region2, Seg2, Vec2, Vec3};
+use solidcraft_geom::{Loop2, Mesh, Plane, Region2, Ring, Seg2, Vec2, Vec3};
 use solidcraft_kernel::{Body, FaceSurface, face_surface};
 
 use super::{FlatWork, ReliefOverride, RuleValues, SheetBody, SheetFlange, base_flange, point_in, polys_cross, signed_area, snap};
@@ -788,7 +788,8 @@ pub fn convert_body(mb: &ModelBody, rule: &str, rv: &RuleValues, face: Vec3, ben
     }
     // The flat frame: on the fixed face, x along its longest edge, z into the material.
     let Some(base) = panels.get(&f0) else { return err("fixed face") };
-    let corners = solidcraft_geom::ring_edges(&base.face.pts);
+    let base_ring = Ring::from(base.face.pts.clone());
+    let corners = base_ring.edges();
     let straight = corners.zip(&base.face.round).filter(|(_, r)| r.is_none()).map(|(c, _)| c);
     let longest = straight.max_by(|x, y| x.0.dist(*x.1).total_cmp(&y.0.dist(*y.1)));
     let frame = longest
@@ -889,7 +890,7 @@ pub fn convert_body(mb: &ModelBody, rule: &str, rv: &RuleValues, face: Vec3, ben
         };
         let back = skin_behind.get(&pf).and_then(|g| outline(b, &mesh, *g, tol).ok());
         let skins: Vec<(&Face, bool)> = std::iter::once((&panel.face, true)).chain(back.as_ref().map(|f| (f, false))).collect();
-        let bound = if skins.iter().all(|(f, _)| f.holes.is_empty()) { Vec::new() } else { region.outer.ccw().polyline(1e-3) };
+        let bound = if skins.iter().all(|(f, _)| f.holes.is_empty()) { Ring::default() } else { region.outer.ccw().polyline(1e-3) };
         for (face, front) in skins {
             for (h, walls) in &face.holes {
                 let p = face.plane.to_world(h.centroid());
