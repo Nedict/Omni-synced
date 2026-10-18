@@ -91,3 +91,40 @@ pub fn png(w: usize, h: usize, rgba: Vec<u8>) -> Option<Vec<u8>> {
     img.write_to(&mut buf, image::ImageFormat::Png).ok()?;
     Some(buf.into_inner())
 }
+
+#[cfg(test)]
+mod contribution_tests {
+    use super::*;
+    #[test]
+    fn contribution_quarter_section_removes_one_quadrant_for_every_flip() {
+        for sx in [-1.0, 1.0] {
+            for sy in [-1.0, 1.0] {
+                let a = Some((Vec3::X * sx, 0.0));
+                let b = Some((Vec3::Y * sy, 0.0));
+                let mut removed = 0;
+                for x in [-1.0, 1.0] {
+                    for y in [-1.0, 1.0] {
+                        let p = Vec3::new(x, y, 0.0);
+                        assert_eq!(section_clipped(p, a, b), x * sx > 0.0 && y * sy > 0.0);
+                        removed += usize::from(section_clipped(p, a, b));
+                    }
+                }
+                assert_eq!(removed, 1);
+            }
+        }
+    }
+    #[test]
+    fn contribution_quarter_section_line_can_keep_two_separate_pieces() {
+        let (p, q) = (Vec3::new(-2.0, 3.0, 0.0), Vec3::new(3.0, -2.0, 0.0));
+        let a = Some((Vec3::X, 0.0));
+        let b = Some((Vec3::Y, 0.0));
+        let lines = section_segments(p, q, a, b);
+        assert_eq!(lines.len(), 2);
+        assert!((lines[0].0 - p).len() < 1e-9);
+        assert!((lines[0].1 - Vec3::new(0.0, 1.0, 0.0)).len() < 1e-9);
+        assert!((lines[1].0 - Vec3::new(1.0, 0.0, 0.0)).len() < 1e-9);
+        assert!((lines[1].1 - q).len() < 1e-9);
+        assert_eq!(section_segments(p, q, None, None), vec![(p, q)]);
+        assert_eq!(section_segments(p, q, a, None).len(), 1);
+    }
+}

@@ -106,3 +106,45 @@ fn axis_component(v: Vec3, i: usize) -> f64 {
         _ => v.z,
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod contribution_tests {
+    use super::*;
+    #[test]
+    fn contribution_quarter_section_is_view_only_and_clear_resets_both_planes() {
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length":10,"width":10,"height":10})).unwrap();
+        let doc = s.doc.clone();
+        let undo = s.undo.len();
+        s.execute("inspect.section", &json!({"plane":"YZ","at":4,"flip":true,"second":{"plane":"XZ","at":6}})).unwrap();
+        assert_eq!(s.section.unwrap().0.x, 4.0);
+        assert_eq!(s.section_second.unwrap().0.y, 6.0);
+        assert!(std::sync::Arc::ptr_eq(&doc, &s.doc));
+        assert_eq!(s.undo.len(), undo);
+        s.execute("inspect.section", &json!({"plane":"XY","at":3})).unwrap();
+        assert!(s.section_second.is_none(), "a half section replaces the quarter section");
+        s.execute("inspect.section", &json!({"plane":"YZ","second":{"plane":"XZ"}})).unwrap();
+        s.execute("inspect.section", &json!({"clear":true})).unwrap();
+        assert!(s.section.is_none() && s.section_second.is_none());
+        assert!(std::sync::Arc::ptr_eq(&doc, &s.doc));
+        assert_eq!(s.undo.len(), undo);
+    }
+    #[test]
+    fn contribution_invalid_quarter_section_keeps_the_previous_cut() {
+        let mut s = Session::default();
+        s.execute("inspect.section", &json!({"plane":"YZ","at":4,"second":{"plane":"XZ","at":6}})).unwrap();
+        let cut = (s.section, s.section_second);
+        for p in [
+            json!({"plane":"XY","second":{"plane":"XY"}}),
+            json!({"plane":"XY","second":{"plane":{"normal":[0,0,0]}}}),
+            json!({"plane":"XY","second":{"plane":"XZ","second":{"plane":"YZ"}}}),
+            json!({"plane":"XY","second":{"clear":true}}),
+            json!({"plane":"XY","second":7}),
+            json!({"plane":"XY","second":{"plane":"XZ","offset":"1e999 mm"}}),
+        ] {
+            assert!(s.execute("inspect.section", &p).is_err(), "{p}");
+            assert_eq!((s.section, s.section_second), cut, "{p}");
+        }
+    }
+}

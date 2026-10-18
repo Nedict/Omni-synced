@@ -1027,6 +1027,7 @@ fn analysis_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &mut
     if app.session.section.is_some() {
         // A section made (or remade) while an older one was hidden replaces it, shown.
         app.tree.hidden_section = None;
+        app.tree.hidden_section_second = None;
         app.tree.analysis_hidden = false;
         app.tree.section_hidden = false;
     }
@@ -1101,6 +1102,7 @@ pub fn set_section_visible(app: &mut SolveApp, visible: bool) {
             }
             if app.run("inspect.section", params).is_ok() {
                 app.tree.hidden_section = None;
+                app.tree.hidden_section_second = None;
             }
         }
     } else if let Some(section) = app.session.section {
