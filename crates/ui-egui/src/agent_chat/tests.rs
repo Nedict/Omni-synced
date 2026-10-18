@@ -990,3 +990,100 @@ fn the_picture_goes_to_the_newest_message_that_wanted_one() {
     chat.keep_picture(vec![0; super::MAX_PICTURE_BYTES + 1]);
     assert!(matches!(chat.items.last(), Some(Item::User { pictures, .. }) if pictures.len() == 1), "an oversized picture is not kept");
 }
+
+// ---- Pick context (#2286) ----
+
+/// Put `sels` into the open picker's inputs the way clicks would: each in the input that takes it.
+fn pick_into_dialog(app: &mut SolveApp, sels: &[solidcraft_engine::Sel]) {
+    use solidcraft_engine::Sel;
+    let mut d = app.dialog.take().expect("the picker is open");
+    for sel in sels {
+        d.active = match sel {
+            Sel::Face { .. } | Sel::Edge { .. } | Sel::Vertex { .. } => 0,
+            Sel::Feature { .. } => 1,
+            _ => 2,
+        };
+        d.pick(&app.session, sel.clone());
+    }
+    app.dialog = Some(d);
+}
+
+/// Pick context opens the picker with Elements, Features and Bodies; OK puts what was picked in the
+/// tray above the message box, as chips with an ×; × takes one out; Cancel keeps what was there.
+#[test]
+fn the_picker_fills_a_tray_of_chips_that_can_be_trimmed() {
+    let mut h = crate::scenario::Harness::new();
+    h.call("ui.agent_chat", json!({"open": true}));
+    let sels = box_selection(&mut h.app);
+    h.frames(3);
+    let [x, y] = h.widget("Pick context").expect("the button is there");
+    h.call("ui.click", json!({"x": x, "y": y}));
+    h.frames(3);
+    assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(crate::dialogs::Kind::ChatContext)), "the picker opened");
+    assert_eq!(h.app.dialog.as_ref().map(|d| d.inputs.iter().map(|i| i.label).collect::<Vec<_>>()), Some(vec!["Elements", "Features", "Bodies"]));
+    pick_into_dialog(&mut h.app, &sels);
+    h.frames(3);
+    let [x, y] = h.widget("OK").expect("OK is offered");
+    h.call("ui.click", json!({"x": x, "y": y}));
+    h.frames(4);
+    assert!(h.app.dialog.is_none(), "OK closed the picker");
+    assert_eq!(h.app.agent_chat.picked.len(), 4);
+    assert_eq!(h.app.agent_chat.picked_context.items.len(), 4);
+    for heading in ["Elements 2", "Features 1", "Bodies 1"] {
+        assert!(h.widget(heading).is_some(), "{heading} is drawn in the tray");
+    }
+    // × takes the body out: the tray and the picks stay in step.
+    let cross = crate::scenario::handle_at("agent_chat:picked_remove:3").expect("every chip has an ×");
+    h.call("ui.click", json!({"x": cross.x, "y": cross.y}));
+    h.frames(4);
+    assert_eq!(h.app.agent_chat.picked.len(), 3);
+    assert!(h.app.agent_chat.picked_context.items.iter().all(|i| i.kind != context::Kind::Body));
+    // Reopened, the picker holds what is in the tray; Cancel leaves it alone.
+    start_pick(&mut h.app);
+    assert_eq!(h.app.dialog.as_ref().map(|d| d.inputs.iter().map(|i| i.items.len()).collect::<Vec<_>>()), Some(vec![2, 1, 0]));
+    pick_into_dialog(&mut h.app, &[solidcraft_engine::Sel::Body { name: "Body1".into() }]);
+    crate::dialogs::cancel(&mut h.app);
+    assert!(h.app.dialog.is_none());
+    assert_eq!(h.app.agent_chat.picked.len(), 3, "Cancel keeps what was picked before");
+    // The control channel opens it too and reports what is picked.
+    let reply = h.call("ui.agent_chat", json!({"pick": true}));
+    assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(crate::dialogs::Kind::ChatContext)));
+    assert_eq!(reply["result"]["picked"].as_array().map(Vec::len), Some(3));
+    crate::dialogs::cancel(&mut h.app);
+    // While another dialog is open, the button does nothing.
+    h.app.start("solid.box");
+    let before = h.app.dialog.is_some();
+    start_pick(&mut h.app);
+    assert!(before && !matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(crate::dialogs::Kind::ChatContext)));
+}
+
+/// What was picked goes with the next message, once, together with an attached selection that does
+/// not repeat it.
+#[test]
+fn the_picks_go_with_the_next_message_once() {
+    let (mut app, script, ctx) = app_with_script();
+    let sels = box_selection(&mut app);
+    start_pick(&mut app);
+    pick_into_dialog(&mut app, &sels[2..]); // the feature and the body
+    let d = app.dialog.take().expect("the picker");
+    pick_done(&mut app, &d).expect("OK");
+    assert_eq!(app.agent_chat.picked_context.items.len(), 2);
+
+    // The same body is also selected and Attach selection is on: it is listed once.
+    app.session.selection = vec![sels[3].clone(), sels[0].clone()];
+    app.agent_chat.attach_selection = true;
+    send(&mut app, &ctx, "look at these".into());
+    let prompt = script.calls().pop().expect("a prompt");
+    assert!(prompt.starts_with("prompt: look at these\n\n[Selected in SolidCraft"), "{prompt}");
+    assert!(prompt.contains("3 item(s)"), "two picked and one more selected: {prompt}");
+    assert_eq!(prompt.matches("- Body1").count(), 1, "{prompt}");
+    let Some(Item::User { context, .. }) = app.agent_chat.items.last() else { panic!("a sent message") };
+    assert_eq!(context.items.len(), 3);
+    assert!(app.agent_chat.picked.is_empty() && app.agent_chat.picked_context.is_empty(), "the tray is empty again");
+    // The next message carries nothing of it.
+    ended(&script, "");
+    poll(&mut app, &ctx);
+    app.agent_chat.attach_selection = false;
+    send(&mut app, &ctx, "and now?".into());
+    assert_eq!(script.calls().pop().as_deref(), Some("prompt: and now?"));
+}
