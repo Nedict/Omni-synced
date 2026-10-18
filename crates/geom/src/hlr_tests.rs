@@ -687,6 +687,47 @@ fn nearly_coincident_cone_sectors_both_draw_their_outline() {
     }
 }
 
+/// A spherical cap of radius `r` about `c`: the latitudes from `lat` up to the pole, bounded by
+/// one circle through the vertex `v` at longitude 0.
+fn cap(c: [f64; 3], r: f64, lat: f64, edge: Curve, v: [f64; 3]) -> Shell {
+    let (tau, half) = (std::f64::consts::TAU, std::f64::consts::FRAC_PI_2);
+    let face = Face {
+        loops: vec![vec![uses(0, true)]],
+        surface: Surface::Sphere { frame: frame_at(c), radius: r, longitude: [0., tau], latitude: [lat, half] },
+        forward: true,
+    };
+    Shell { vertices: vec![v], edges: vec![Edge { vertices: [0, 0], curve: edge }], faces: vec![face] }
+}
+
+#[test]
+fn spherical_caps_through_one_circle_keep_their_own_outlines() {
+    // Two caps of radius 1000 whose centres are 5e-7 mm apart along the axis, both bounded by
+    // the same circle: recognition takes them for one sphere, the boundary lies on both, but
+    // inside they differ, so each draws its own outline.
+    let (r, z): (f64, f64) = (1000., 600.);
+    let ring = (r * r - z * z).sqrt();
+    let edge = || Curve::CircleArc { frame: frame_at([0., 0., z]), radius: ring, angle: [0., std::f64::consts::TAU] };
+    let dz = 5e-7;
+    let lat = |zc: f64| ((z - zc) / r).asin();
+    let shells = vec![
+        cap([0.; 3], r, lat(0.), edge(), [ring, 0., z]),
+        cap([0., 0., dz], (ring * ring + (z - dz).powi(2)).sqrt(), lat(dz), edge(), [ring, 0., z]),
+    ];
+    let def = prepare(&Brep { version: crate::brep::VERSION, shells }, &Options::default()).unwrap();
+    let view = View::new(Vec3::new(0., 1., 0.), Vec3::new(0., 0., 1.)).unwrap();
+    let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    // Above the ring the outline is a half circle of about pi * 1000 * 0.41 mm on each side.
+    let drawn: f64 = silhouette_pieces(&d)
+        .iter()
+        .filter(|p| p.visibility == Visibility::Visible && !p.covered)
+        .flat_map(|p| p.geometry.iter())
+        .map(|g| (0..32).map(|k| g.point_at(k as f64 / 32.).dist(g.point_at((k + 1) as f64 / 32.))).sum::<f64>())
+        .sum();
+    let arc = 2. * r * (std::f64::consts::FRAC_PI_2 - (z / r).asin());
+    assert!(drawn > 0.99 * arc, "{drawn} mm of outline drawn of about {arc}");
+    assert_eq!(d.stats.uncertain_uncovered, 0, "{:?}", d.stats);
+}
+
 fn check_two_cone_outlines(body: &Brep) {
     let def = prepare(body, &Options::default()).unwrap();
     let view = View::new(Vec3::new(0., 1., 0.), Vec3::new(0., 0., 1.)).unwrap();

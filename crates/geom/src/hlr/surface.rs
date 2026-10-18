@@ -71,32 +71,6 @@ pub(crate) enum Analytic {
     Other,
 }
 
-impl Analytic {
-    /// Distance from `q` to the whole surface (a cone's nappe near `q`); infinite for planes
-    /// and other surfaces, which are never compared this way.
-    pub fn distance(&self, q: Vec3) -> f64 {
-        // (radial, axial) coordinates about an axis through `o`.
-        let rh = |o: Vec3, a: Vec3| {
-            let w = q - o;
-            let h = w.dot(a);
-            ((w - a * h).len(), h)
-        };
-        match *self {
-            Analytic::Cylinder { p, a, r } => (rh(p, a).0 - r).abs(),
-            Analytic::Cone { apex, a, half } => {
-                let (rho, h) = rh(apex, a);
-                (rho * half.cos() - h * half.sin()).abs()
-            }
-            Analytic::Sphere { c, r } => (q.dist(c) - r).abs(),
-            Analytic::Torus { c, a, major, minor } => {
-                let (rho, h) = rh(c, a);
-                ((rho - major).hypot(h) - minor).abs()
-            }
-            Analytic::Plane | Analytic::Other => f64::INFINITY,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Hit {
     pub lam: f64,

@@ -111,10 +111,10 @@ pub(crate) fn silhouettes(parts: &[(&S3, &Trim)], an: Analytic, d: Vec3, out: &m
 }
 
 /// How far a face's surface may lie from the surface its silhouette set is traced on: rounding,
-/// 1e-13 of the face's boundary size plus its coordinates. Only then does a ray along the set's
-/// silhouette leave the face within the own-face margin (1e-6 of the size): a surface `e` away
-/// is crossed about `sqrt(2 R e)` along the ray. Recognition groups surfaces more loosely (1e-9),
-/// and faces outside this keep silhouettes of their own.
+/// 1e-13 of the face's boundary size plus its coordinates (faces join a set when their
+/// recognised surfaces agree to 1e-13). Only that close does a ray along the set's silhouette
+/// leave the face within the own-face margin (1e-6 of the size): a surface `e` away is crossed
+/// about `sqrt(2 R e)` along the ray.
 pub(crate) fn join_tol(trim: &Trim) -> f64 {
     1e-13 * (1. + (trim.hi - trim.lo).len()) + 1e-15 * trim.lo.len().max(trim.hi.len())
 }

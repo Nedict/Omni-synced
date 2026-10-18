@@ -672,17 +672,11 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
                 continue;
             }
             // The set's silhouette is traced on its first face's surface, so a face joins only
-            // when that surface passes through its own points within `join_tol`.
+            // when its recognised surface is that one to rounding (1e-13); recognition groups
+            // surfaces more loosely (1e-9), and two surfaces that close can still differ inside
+            // the faces (two spherical caps through one circle).
             let first = f.group.iter().copied().filter(|j| def.faces.get(*j).is_some_and(supported)).min().unwrap_or(fi);
-            let tol = silhouette::join_tol(&f.trim);
-            let fits = def.faces.get(first).is_some_and(|l| {
-                f.trim
-                    .chords
-                    .iter()
-                    .step_by(7)
-                    .chain(f.trim.chords.last())
-                    .all(|(q, _)| f.surface.inverse(*q, None).is_some_and(|uv| l.analytic.distance(f.surface.point(uv)) <= tol))
-            });
+            let fits = def.faces.get(first).is_some_and(|l| same_analytic(&l.analytic, &f.analytic, 1e-13));
             sets.entry(if fits { first } else { fi }).or_default().push(fi);
         }
         for (fi, members) in sets {

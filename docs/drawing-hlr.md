@@ -105,6 +105,11 @@ in the W05a findings.
   caps on crossing candidates; exceeding one returns `HlrError::Budget`.
 - `Options::tangent_edges` (default on) draws edges between tangent faces, flagged
   `tangent: true`; drafting policy for them is W17.
+- Tolerances are relative to the faces and the scene. They are meant for faces up to
+  about 10 m across and features down to about 1e-3 mm. Distinct surfaces that
+  recognition takes for one (closer than 1e-9 of their size or position, a nearly flat
+  cone's far apex included) share the own-face margin of 1e-6 of the face's size when a
+  ray leaves one of them.
 - Not in this slice: parallel per-curve work and the shared work limits of
   `geom::section`, the kernel adapter (after W02), perspective, section regions (W03),
   views and commands (W07), and mirrored placements.
