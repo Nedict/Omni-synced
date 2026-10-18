@@ -1,0 +1,86 @@
+name: Rebased golden verification (temporary)
+
+# Temporary harness for the port/arm64-rebased branch: run the exact review
+# command for the robustness goldens (`cargo test -p solidcraft-engine
+# robustness_goldens`) on Linux x86_64 and Linux aarch64 and upload the logs,
+# which are committed under docs/ports/rebased-*.txt. It also prints, for
+# observation only, the records seeds 13 and 67 actually build. This file does
+# not touch ci.yml, production code or tests/robustness/goldens.json, and it is
+# removed in the follow-up commit that adds docs/ports/rebase-verification.md.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [port/arm64-rebased]
+    paths:
+      - ".github/workflows/rebased-verify.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  goldens:
+    name: robustness_goldens (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: rebased-verify-${{ matrix.arch }}
+          save-if: false
+      - name: Machine and commit
+        run: |
+          uname -m
+          nproc
+          rustc --version
+          cargo --version
+          git rev-parse HEAD
+      - name: The exact test names (--list, before the run)
+        run: |
+          cargo test -p solidcraft-engine --lib -- --list | grep robustness_goldens \
+            | tee rebased-test-names-${{ matrix.arch }}.txt
+          echo "selected: $(wc -l < rebased-test-names-${{ matrix.arch }}.txt)"
+      - name: cargo test -p solidcraft-engine robustness_goldens
+        run: cargo test -p solidcraft-engine robustness_goldens 2>&1 | tee rebased-${{ matrix.arch }}.txt
+      # Only after a failure of the run above: the same command under the
+      # profile CI records these goldens with (debug assertions off), to tell a
+      # truck debug assertion from a real golden mismatch.
+      - name: Same, profile ci (only after a failure)
+        if: failure()
+        run: cargo test -p solidcraft-engine --profile ci robustness_goldens 2>&1 | tee rebased-${{ matrix.arch }}-ci-profile.txt
+      # Observation only, no pass/fail meaning: replace the expected records of
+      # seeds 13 and 67 in this disposable checkout so the assertion reports the
+      # record the code actually builds. The repository file is not changed
+      # anywhere that matters; the log is committed with its header.
+      - name: Observed records for seeds 13 and 67 (observation only)
+        if: always()
+        run: |
+          sed -i 's/^  "13": .*/  "13": {"faces": 0},/; s/^  "67": .*/  "67": {"faces": 0},/' tests/robustness/goldens.json
+          {
+            echo "# Observation run (not a pass/fail check): the expected records for seeds 13 and 67"
+            echo "# were replaced in this disposable checkout so the assertion reports the observed values."
+            echo "# commit $(git rev-parse HEAD), $(uname -m)"
+            cargo test -p solidcraft-engine --lib "tests::robustness_goldens::seed_13" -- --nocapture 2>&1
+            cargo test -p solidcraft-engine --lib "tests::robustness_goldens::seed_67" -- --nocapture 2>&1
+          } | tee observed-seed-records-${{ matrix.arch }}.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: rebased-${{ matrix.arch }}
+          path: |
+            rebased-${{ matrix.arch }}.txt
+            rebased-${{ matrix.arch }}-ci-profile.txt
+            rebased-test-names-${{ matrix.arch }}.txt
+            observed-seed-records-${{ matrix.arch }}.txt
+          if-no-files-found: warn
+          retention-days: 7
