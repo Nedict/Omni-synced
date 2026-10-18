@@ -1,7 +1,7 @@
 //! Building bodies: extrude and revolve planar regions, primitives.
 
 use mt::builder;
-use solidcraft_geom::{Loop2, Plane, Region2, Seg2, Vec2, Vec3};
+use solidcraft_geom::{Grid, Loop2, Plane, Region2, Seg2, Vec2, Vec3};
 use truck_modeling as mt;
 
 use crate::body::{Body, Solid, from_p3, p3, v3};
@@ -2120,6 +2120,31 @@ pub(crate) fn interpolate_cubic(pts: &[Vec3]) -> Option<mt::BSplineCurve<mt::Poi
     let m = pts.len();
     let u: Vec<f64> = (0..m).map(|i| i as f64 / (m.max(2) - 1) as f64).collect();
     interpolate_cubic_at(pts, &u)
+}
+
+/// A cubic B-spline surface through a grid of samples at uniform parameters: cubics across v
+/// through each u index's samples, then cubics across u through their control points.
+pub(crate) struct NetFit {
+    pub surface: mt::BSplineSurface<mt::Point3>,
+    /// The surface's edges at the first and the last u (curves across v).
+    pub u_ends: [mt::BSplineCurve<mt::Point3>; 2],
+    /// The surface's edges at the first and the last v (curves across u).
+    pub v_ends: [mt::BSplineCurve<mt::Point3>; 2],
+}
+
+/// [`NetFit`] through `samples`; `None` with fewer than four samples across either direction.
+pub(crate) fn interpolate_net(samples: &Grid<Vec3>) -> Option<NetFit> {
+    let across_v: Vec<mt::BSplineCurve<mt::Point3>> = samples.transposed().lines().map(interpolate_cubic).collect::<Option<_>>()?;
+    let cps: Vec<&[mt::Point3]> = across_v.iter().map(|c| c.control_points().as_slice()).collect();
+    let across_u: Vec<mt::BSplineCurve<mt::Point3>> =
+        Grid::from_rows(&cps)?.lines().map(|run| interpolate_cubic(&run.iter().map(|p| from_p3(**p)).collect::<Vec<_>>())).collect::<Option<_>>()?;
+    let cps: Vec<&[mt::Point3]> = across_u.iter().map(|c| c.control_points().as_slice()).collect();
+    let net = Grid::from_rows(&cps)?.transposed().map(|p| *p).into_rows();
+    let knots = (across_u.first()?.knot_vec().clone(), across_v.first()?.knot_vec().clone());
+    let surface = mt::BSplineSurface::try_new(knots, net).ok()?;
+    let u_ends = [across_v.first()?.clone(), across_v.last()?.clone()];
+    let v_ends = [across_u.first()?.clone(), across_u.last()?.clone()];
+    Some(NetFit { surface, u_ends, v_ends })
 }
 
 /// [`interpolate_cubic`] by chord length: the parameters (0 to 1) in proportion to the distance

@@ -15,6 +15,13 @@ impl<T> Grid<T> {
         (count[0].checked_mul(count[1]) == Some(cells.len())).then_some(Grid { count, cells })
     }
 
+    /// A grid of `f(i, j)` for every cell; `None` when `count[0]·count[1]` overflows.
+    pub fn from_fn(count: [usize; 2], mut f: impl FnMut(usize, usize) -> T) -> Option<Grid<T>> {
+        let total = count[0].checked_mul(count[1])?;
+        let cu = count[0].max(1);
+        Some(Grid { count, cells: (0..total).map(|k| f(k % cu, k / cu)).collect() })
+    }
+
     /// One row of values along u: `count` is `[cells.len(), 1]` (a curve's control points seen
     /// as a net).
     pub fn row(cells: Vec<T>) -> Grid<T> {
@@ -43,6 +50,21 @@ impl<T> Grid<T> {
     /// The values, u fastest.
     pub fn cells(&self) -> &[T] {
         &self.cells
+    }
+
+    /// The runs along u, one per v index: run `j` holds values `(0, j)`, `(1, j)`, ….
+    pub fn lines(&self) -> std::slice::Chunks<'_, T> {
+        self.cells.chunks(self.count[0].max(1))
+    }
+
+    /// The grid with u and v swapped: value `(i, j)` becomes value `(j, i)`.
+    pub fn transposed(&self) -> Grid<T>
+    where
+        T: Clone,
+    {
+        let [cu, cv] = self.count;
+        let cells = (0..self.cells.len()).filter_map(|k| self.get(k / cv.max(1), k % cv.max(1)).cloned()).collect();
+        Grid { count: [cv, cu], cells }
     }
 
     /// The values to change in place; the grid keeps its shape.
@@ -109,6 +131,12 @@ mod tests {
         assert_eq!(g.get(2, 0), None);
         assert_eq!(g.into_rows(), rows);
         assert_eq!(Grid::row(vec![1, 2, 3]).count(), [3, 1]);
+        let g = Grid::from_fn([3, 2], |i, j| (i, j)).unwrap();
+        assert_eq!(g.lines().collect::<Vec<_>>(), vec![&[(0, 0), (1, 0), (2, 0)][..], &[(0, 1), (1, 1), (2, 1)][..]]);
+        let t = g.transposed();
+        assert_eq!(t.count(), [2, 3]);
+        assert!((0..3).all(|i| (0..2).all(|j| t.get(j, i) == g.get(i, j))));
+        assert!(Grid::from_fn([usize::MAX, 2], |_, _| 0).is_none());
     }
 
     #[test]
