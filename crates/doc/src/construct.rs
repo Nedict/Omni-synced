@@ -304,7 +304,7 @@ pub(crate) fn plane(ctx: &Ctx, g: &GeoRef) -> Result<Plane> {
             match kernel::face_surface(&b.body, fi) {
                 Some(FaceSurface::Plane { normal, point }) => {
                     let o = q - normal * (q - point).dot(normal);
-                    Plane::from_normal(o, *normal).ok_or_else(|| bad("degenerate face"))
+                    Plane::from_normal(o, normal).ok_or_else(|| bad("degenerate face"))
                 }
                 _ => Err(bad("the face is not planar")),
             }

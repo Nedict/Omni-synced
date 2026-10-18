@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vec3;
 
-/// A unit vector. Made only from a vector with a length ([`UnitVec3::new`], [`Vec3::unit`]), so a
-/// function taking one need not normalise it or handle a zero vector again. It reads as the
-/// [`Vec3`] it holds (`d.dot(v)`, `*d`), and [`Vec3::dot`] and [`Vec3::cross`] take one.
+/// A unit vector: length 1 up to rounding. Made only from a vector with a length
+/// ([`UnitVec3::new`], [`Vec3::unit`]), so a function taking one need not normalise it or
+/// handle a zero vector again. It reads as the [`Vec3`] it holds (`d.dot(v)`, `*d`), and
+/// [`Vec3::dot`] and [`Vec3::cross`] take one.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(into = "Vec3", try_from = "Vec3")]
 pub struct UnitVec3(Vec3);
