@@ -406,7 +406,7 @@ pub(crate) fn add_rigid_unsolved(s: &mut Session, a: JointOrigin, b: JointOrigin
     if a.occurrence == b.occurrence {
         return Err(bad("joint.create", "a joint needs two different occurrences"));
     }
-    let id = next_joint_id(s);
+    let id = next_joint_id(s, "joint.create")?;
     let n = JointKind::Rigid.dofs().len();
     s.visibility.hidden_joints.retain(|h| *h != id);
     s.doc_mut().assembly.joints.push(Joint {
