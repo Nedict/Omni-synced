@@ -179,7 +179,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params("entities: [curve, point or constraint ids]"),
     CommandSpec::new("sketch.move_point", "Drag Sketch Point", move_point).icon("sketch_move").enabled(in_sketch).params("point: ref, to: [x,y]"),
     CommandSpec::new("sketch.drag", "Drag Sketch Geometry", drag).icon("sketch_move").enabled(in_sketch).live(drag_live).params(
-        "entity: point or curve, from: [x,y] where it was grabbed, to: [x,y], live?: bool: a point goes to `to`, a line (spline, conic) slides by to - from, a circle or arc grabbed on its edge takes the radius to `to`; the rest moves as little as it can and keeps its solution branch (a long move is followed in short steps, each solved with the entity held; a step that cannot be solved that way is approached as far as it can be and the next ones tried; when none past it solves, the last one is left to the sketch's ordinary solve, which may pull it back or leave the sketch unsolved; a step that would sweep an arc through its start is undone and the drag ends there). Returns `reached`: how much of the way from `from` to `to` the geometry followed (0..1), and `at`: where the grabbed spot went (`from` moved as the dragged points did), the `from` of the next move. `live: true` (each frame of an interactive drag) solves the sketch once and leaves the features after it as they were (stale) until `sketch.drag_end` or any command that reads the model; `dof` is then the one from before the drag",
+        "entity: point or curve, from: [x,y] where it was grabbed, to: [x,y], live?: bool: a point goes to `to`, a line (spline, conic) slides by to - from, a circle or arc grabbed on its edge takes the radius to `to`; with?: [point or curve ids]: the rest of a selection dragged by `entity`, which all slides by to - from as one (circles keep their radii); the rest moves as little as it can and keeps its solution branch (a long move is followed in short steps, each solved with the entity held; a step that cannot be solved that way is approached as far as it can be and the next ones tried; when none past it solves, the last one is left to the sketch's ordinary solve, which may pull it back or leave the sketch unsolved; a step that would sweep an arc through its start is undone and the drag ends there). Returns `reached`: how much of the way from `from` to `to` the geometry followed (0..1), and `at`: where the grabbed spot went (`from` moved as the dragged points did), the `from` of the next move. `live: true` (each frame of an interactive drag) solves the sketch once and leaves the features after it as they were (stale) until `sketch.drag_end` or any command that reads the model; `dof` is then the one from before the drag",
     ),
     CommandSpec::new("sketch.drag_end", "End Sketch Drag", drag_end).icon("sketch_move").enabled(in_sketch).doc_only().params(
         "constraint?: {command: a sketch.constraint.* id, params}: ends a drag made of `sketch.drag` `live: true` frames: adds the constraint it let go on (not kept if it over-constrains the sketch), then evaluates the whole model once; returns the constraint's result and the sketch's solved state and degrees of freedom",
@@ -2360,7 +2360,7 @@ fn move_point(s: &mut Session, p: &Value) -> Result<Value> {
     let id = target_sketch(s, p, cmd)?;
     let (_, rep) = edit_solved(s, id, false, |sk, _| {
         let q = point_ref(sk, p.get("point"), cmd, "point")?;
-        Ok(((), drag_entity(sk, Ent::Point(q), to, to, false).1.solve_again()))
+        Ok(((), drag_entity(sk, Ent::Point(q), &[], to, to, false).1.solve_again()))
     })?;
     Ok(json!({"sketch": rep.as_ref().map(report_json)}))
 }
@@ -2387,6 +2387,21 @@ fn drag_frame(s: &mut Session, p: &Value, live: bool) -> Result<(Value, Option<c
     let (d, rep) = edit_solved(s, id, false, |sk, doc| {
         let r = p.get("entity").and_then(Value::as_str).ok_or_else(|| bad(cmd, "`entity` must be a sketch point or curve"))?;
         let e = ent(sk, r).ok_or_else(|| bad(cmd, format!("unknown sketch entity `{r}`")))?;
+        let with = match p.get("with") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(v) => {
+                let ids = v.as_array().ok_or_else(|| bad(cmd, "`with` must be a list of sketch point or curve ids"))?;
+                if ids.len() > sk.points.len() + sk.curves.len() {
+                    return Err(bad(cmd, "`with` lists more entities than the sketch has"));
+                }
+                ids.iter()
+                    .map(|v| {
+                        let r = v.as_str().ok_or_else(|| bad(cmd, "`with` must be a list of sketch point or curve ids"))?;
+                        ent(sk, r).ok_or_else(|| bad(cmd, format!("unknown sketch entity `{r}`")))
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            }
+        };
         if let Some(link) = super::sketch_create::text_link(sk, r).map(str::to_owned) {
             let moving = sk.link_points(&link).into_iter().filter_map(|i| sk.point(i).map(|p| (i, p))).collect();
             super::sketch_create::move_text(sk, &link, to - from, 0.0, Vec2::ZERO, false)?;
@@ -2394,7 +2409,7 @@ fn drag_frame(s: &mut Session, p: &Value, live: bool) -> Result<(Value, Option<c
         }
         // The held solves work on the dimensions' current values (a solved step applies them).
         doc.apply_dimension_values(&doc.param_values().0, sk)?;
-        let (d, left) = drag_entity(sk, e, from, to, live);
+        let (d, left) = drag_entity(sk, e, &with, from, to, live);
         // A live frame's held solve is its only one; otherwise the sketch's own solve reports
         // its degrees of freedom.
         Ok((d, if live && last.is_some() { left } else { left.solve_again() }))
