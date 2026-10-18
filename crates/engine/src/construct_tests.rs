@@ -314,6 +314,38 @@ fn plane_perpendicular_to_a_plane_through_a_line() {
     assert!(s.execute("construct.plane.perpendicular", &json!({"plane": "XY", "line": {"axis": "Z"}})).is_err());
 }
 
+/// A Plane at Angle hinged on a model edge stays on that edge when the model changes, and after
+/// a reopen (#2229).
+#[test]
+fn plane_at_angle_about_a_model_edge_follows_it() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name": "h", "expression": "20 mm"}));
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": "h", "body_name": "Box"}));
+    run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": "h", "name": "Lid"}));
+    // Hinged on the top back edge (along X at y = 30), tilted 45°.
+    run(&mut s, "construct.plane.at_angle", json!({"base": "Lid", "axis": {"edge": [20, 30, 20]}, "angle": "45 deg", "name": "Tilt"}));
+    let hinged = |pl: &Plane, z: f64| {
+        on_plane(pl, Vec3::new(0.0, 30.0, z))
+            && on_plane(pl, Vec3::new(40.0, 30.0, z))
+            && (parallel(pl.normal(), Vec3::new(0.0, 1.0, 1.0)) || parallel(pl.normal(), Vec3::new(0.0, -1.0, 1.0)))
+    };
+    let tilt = plane(&s, "Tilt");
+    assert!(hinged(&tilt, 20.0), "{tilt:?}");
+    // Taller box: the edge and the base plane both move up; the plane stays on the edge.
+    run(&mut s, "parameters.change", json!({"name": "h", "expression": "50 mm"}));
+    let tilt = plane(&s, "Tilt");
+    assert!(hinged(&tilt, 50.0), "{tilt:?}");
+    // Saved and opened again, the edge reference is kept.
+    let reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    let tilt = plane(&reopened, "Tilt");
+    assert!(hinged(&tilt, 50.0), "{tilt:?}");
+    // A reference that is not a line is refused and leaves the design as it was.
+    let before = s.doc.to_json();
+    assert!(s.execute("construct.plane.at_angle", &json!({"base": "Lid", "axis": {"edge": "back"}, "angle": 10})).is_err());
+    assert!(s.execute("construct.plane.at_angle", &json!({"base": "Lid", "axis": {"face": [20, 15, 50]}, "angle": 10})).is_err());
+    assert_eq!(s.doc.to_json(), before);
+}
+
 #[test]
 fn ambiguous_plane_aliases_refuse_without_document_or_history_changes() {
     for alias in ["Top", "Front", "Right", "XY", "XZ", "YZ"] {

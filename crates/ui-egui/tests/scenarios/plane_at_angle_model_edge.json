@@ -1,0 +1,23 @@
+[
+  {"note": "#2229: Plane at Angle takes a straight model edge as its axis, and the plane follows the edge when the model changes."},
+  {"call": "engine.execute", "params": {"command": "parameters.add", "params": {"name": "h", "expression": "20 mm"}}},
+  {"call": "engine.execute", "params": {"command": "solid.box", "params": {"length": 40, "width": 30, "height": "h", "body_name": "Block"}}},
+  {"call": "engine.execute", "params": {"command": "construct.plane.offset", "params": {"base": "XY", "offset": "h", "name": "Lid"}}},
+  {"call": "ui.view", "params": {"view": "iso"}},
+  {"start": "construct.plane.at_angle"},
+  {"expect": {"dialog": "AnglePlane"}},
+  {"click": {"browser": "Lid"}},
+  {"note": "Axis: the box's front top edge (along X at y = 0, z = h)."},
+  {"click": {"world": [20, 0, 20]}},
+  {"widget": "OK"},
+  {"expect": {"dialog": null, "errors": 0, "features": 3}},
+  {"call": "engine.execute", "params": {"command": "parameters.change", "params": {"name": "h", "expression": "50 mm"}}},
+  {"expect": {"errors": 0}},
+  {"note": "Edited and confirmed unchanged, the plane keeps the edge."},
+  {"call": "ui.editFeature", "params": {"feature": "Plane1"}},
+  {"expect": {"dialog": "AnglePlane"}},
+  {"key": "Enter"},
+  {"expect": {"dialog": null, "errors": 0}},
+  {"call": "engine.execute", "params": {"command": "parameters.change", "params": {"name": "h", "expression": "30 mm"}}},
+  {"expect": {"errors": 0}}
+]

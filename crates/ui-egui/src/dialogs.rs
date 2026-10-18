@@ -534,7 +534,7 @@ impl Dialog {
             }
             "construct.plane.at_angle" => Dialog::new(
                 Kind::AnglePlane { angle: "45 deg".into() },
-                vec![SelInput::new("Plane", PLANES, false), SelInput::new("Axis", AXES, false)],
+                vec![SelInput::new("Plane", PLANES, false), SelInput::new("Axis", AXES | EDGES, false)],
             ),
             "solid.split_body" => Dialog::new(
                 Kind::Split,
@@ -941,6 +941,9 @@ impl Dialog {
 
     /// A pick in the viewport (already accepted by the active input).
     pub fn pick(&mut self, s: &Session, sel: Sel) {
+        if matches!(self.kind, Kind::AnglePlane { .. }) && self.active == 1 {
+            self.extra.remove("axis");
+        }
         if let Some(key) = feature_pattern_reference_key(self, self.active) {
             self.extra.remove(key);
         }
@@ -992,6 +995,9 @@ impl Dialog {
 
     /// Box selection result: replace (or add to) the active input.
     pub fn take_box(&mut self, s: &Session, sels: Vec<Sel>, add: bool) {
+        if matches!(self.kind, Kind::AnglePlane { .. }) && self.active == 1 {
+            self.extra.remove("axis");
+        }
         if let Kind::PathPlane { sketch, .. } = &mut self.kind {
             *sketch = None;
             self.extra.remove("path");
@@ -4005,8 +4011,10 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             };
             let axis = match sels(d, 1).first() {
                 Some(Sel::Axis { name }) => json!(name),
+                // A model edge is kept by reference, so the plane follows it (#2229).
+                Some(Sel::Edge { point, .. }) => d.extra.get("axis").cloned().unwrap_or_else(|| json!({"edge": pt(*point)})),
                 Some(x) => {
-                    let (o, dir) = axis_of(app, x).ok_or("the axis must be an origin axis or a sketch line")?;
+                    let (o, dir) = axis_of(app, x).ok_or("the axis must be an origin axis, a sketch line or a model edge")?;
                     json!({"origin": pt(o), "dir": pt(dir)})
                 }
                 None => d.extra.get("axis").cloned().ok_or("pick an axis")?,
@@ -5130,11 +5138,21 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             }
             d
         }
-        FeatureKind::ConstructionPlane { plane: PlaneRef::AtAngle { base, axis_origin, axis_dir, angle } } => {
+        FeatureKind::ConstructionPlane { plane: PlaneRef::AtAngle { base, axis_origin, axis_dir, angle, axis } } => {
             let mut d = start("construct.plane.at_angle")?;
             d.kind = Kind::AnglePlane { angle: angle.to_string() };
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = plane_sel(s, base).into_iter().collect();
+            }
+            if let Some(axis) = axis {
+                // Preserve the saved reference (with its persistent name) until a replacement is picked.
+                d.extra.insert("axis".into(), serde_json::to_value(axis.as_ref()).ok()?);
+                if let solidcraft_engine::doc::construct::GeoRef::Edge { at, .. } = axis.as_ref()
+                    && let Some(inp) = d.inputs.get_mut(1)
+                {
+                    inp.items = vec![Sel::Edge { body: String::new(), index: 0, point: *at }];
+                }
+                return Some(d);
             }
             match world_axis(*axis_dir).filter(|_| axis_origin.len() < 1e-9) {
                 Some(name) => {

@@ -96,7 +96,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("construct.plane.at_angle", "Plane at Angle", plane_angle)
         .at("SOLID", "CONSTRUCT")
         .icon("plane_angle")
-        .params("base: XY|XZ|YZ|plane name; axis: X|Y|Z|{origin, dir}; angle: expr; name?"),
+        .params("base: XY|XZ|YZ|plane name; axis: X|Y|Z|{origin, dir}|{edge: [x,y,z]} (a model edge; the plane follows it)|{sketch, curve}; angle: expr; name?"),
     CommandSpec::new("solid.split_face", "Split Face", split_face)
         .at("SOLID", "MODIFY")
         .icon("split_face")
@@ -1532,13 +1532,24 @@ fn plane_offset(s: &mut Session, p: &Value) -> Result<Value> {
 fn plane_angle(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "construct.plane.at_angle";
     let base = plane_param(s, p.get("base"), cmd)?;
-    let (axis_origin, axis_dir) = axis_line(p, cmd)?;
+    // A model edge (or sketch line) is kept as a reference, so the plane follows it (#2229).
+    let (axis_origin, axis_dir, axis) = match p.get("axis") {
+        Some(a @ Value::Object(o)) if !o.contains_key("dir") && !o.contains_key("origin") => {
+            let g = super::construct::geo(s, Some(a), cmd, "axis")?;
+            let (o, d) = solidcraft_doc::construct::resolve_line(&s.doc, &s.model.state(), &g).map_err(|e| bad(cmd, format!("axis: {e}")))?;
+            (o, d, Some(Box::new(g)))
+        }
+        _ => {
+            let (o, d) = axis_line(p, cmd)?;
+            (o, d, None)
+        }
+    };
     let angle = req_expr(cmd, p, "angle")?;
     check_expr(s, &angle, Kind::Angle, cmd, "angle")?;
     add_feature(
         s,
         p,
-        FeatureKind::ConstructionPlane { plane: solidcraft_doc::PlaneRef::AtAngle { base: Box::new(base), axis_origin, axis_dir, angle } },
+        FeatureKind::ConstructionPlane { plane: solidcraft_doc::PlaneRef::AtAngle { base: Box::new(base), axis_origin, axis_dir, angle, axis } },
     )
 }
 
