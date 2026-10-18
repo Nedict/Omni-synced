@@ -11,6 +11,7 @@
 use egui::{Modifiers, Pos2, RichText};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+pub use solidcraft_engine::doc::display_units::{format_length, length_number, length_precision, unit_scale};
 use solidcraft_engine::geom::Vec3;
 
 /// The key the apps keep the preferences under in eframe's storage.
@@ -320,6 +321,8 @@ pub struct Prefs {
     pub smooth_wheel_zoom: bool,
     /// Two-finger trackpad scroll pans (off: it zooms like the wheel); pinch always zooms.
     pub trackpad_pan: bool,
+    /// Horizontal trackpad and thumb-wheel scrolling pans the view the other way (#2007).
+    pub pan_reverse_x: bool,
     /// View changes (axis view, Look At, Home) animate; `look_at_speed` scales how fast.
     pub look_at_anim: bool,
     pub look_at_speed: f32,
@@ -431,6 +434,7 @@ impl Default for Prefs {
             zoom_to_cursor: true,
             smooth_wheel_zoom: true,
             trackpad_pan: true,
+            pan_reverse_x: false,
             look_at_anim: true,
             look_at_speed: 1.0,
             up_axis: "z".into(),
@@ -625,6 +629,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.zoom_to_cursor = d.zoom_to_cursor;
             p.smooth_wheel_zoom = d.smooth_wheel_zoom;
             p.trackpad_pan = d.trackpad_pan;
+            p.pan_reverse_x = d.pan_reverse_x;
             p.orbit_around = d.orbit_around;
             p.orbit_cursor = d.orbit_cursor;
             p.space_mouse_enabled = d.space_mouse_enabled;
@@ -728,6 +733,11 @@ pub fn nav_mode(app: &SolveApp, button: NavButton, mods: Modifiers) -> Option<Na
     nav_preset(&app.preferences.nav).mode(button, mods)
 }
 
+/// +1, or −1 when horizontal scrolling pans the other way (#2007).
+pub fn pan_sign_x(app: &SolveApp) -> f32 {
+    if app.preferences.pan_reverse_x { -1.0 } else { 1.0 }
+}
+
 /// +1, or −1 when the wheel zooms the other way.
 pub fn zoom_sign(app: &SolveApp) -> f64 {
     if app.preferences.zoom_reverse { -1.0 } else { 1.0 }
@@ -746,32 +756,6 @@ pub(crate) fn pivot_under(app: &SolveApp, proj: &crate::viewport::Proj, at: Pos2
     }
     let b = crate::viewport::view_bounds(app);
     if b.is_empty() { app.cam.target } else { b.center() }
-}
-
-/// Units per millimetre and the unit's name.
-pub fn unit_scale(units: &str) -> (f64, &'static str) {
-    match units {
-        "cm" => (0.1, "cm"),
-        "m" => (0.001, "m"),
-        "in" => (1.0 / 25.4, "in"),
-        "ft" => (1.0 / 304.8, "ft"),
-        _ => (1.0, "mm"),
-    }
-}
-
-/// Inch labels retain a meaningful fourth digit without promoting floating-point noise.
-pub fn length_precision(value: f64, units: &str, decimals: u8) -> usize {
-    let base = usize::from(decimals.min(8));
-    if units != "in" {
-        return base;
-    }
-    let needs_four = ((value * 10_000.0).round() - (value * 1000.0).round() * 10.0).abs() >= 0.5;
-    base.max(if needs_four { 4 } else { 3 })
-}
-
-pub fn length_number(mm: f64, units: &str, decimals: u8) -> String {
-    let value = mm * unit_scale(units).0;
-    format!("{:.*}", length_precision(value, units, decimals), value)
 }
 
 /// A plain number typed into a field, with a decimal point or a decimal comma (#1347): "2.5"
@@ -806,12 +790,6 @@ pub fn parse_length_mm(text: &str, scale: f64) -> Option<f64> {
     let no_params = |n: &str| Err(solidcraft_engine::doc::DocError::Expr(format!("unknown parameter `{n}`")));
     let value = expr::eval_with_defaults(text.trim(), &no_params, defaults).ok()?.to_kind_in(expr::Kind::Length, defaults).ok()?;
     value.is_finite().then_some(value)
-}
-
-/// A length in millimetres in `units`, with `decimals` (for display).
-pub fn format_length(mm: f64, units: &str, decimals: u8) -> String {
-    let (_, u) = unit_scale(units);
-    format!("{} {u}", length_number(mm, units, decimals))
 }
 
 /// A length, area (`power` 2) or volume (3) given in millimetres, shown in the design's units
@@ -1188,6 +1166,10 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             } else {
                 crate::i18n::tr_label("Trackpad gestures pan (off: they zoom like the wheel); mouse wheel zooms, thumb wheel pans sideways, pinch always zooms")
             });
+            ui.end_row();
+            ui.label(crate::i18n::tr_label("Reverse horizontal pan direction"));
+            ui.checkbox(&mut app.preferences.pan_reverse_x, "")
+                .on_hover_text(crate::i18n::tr_label("Horizontal two-finger scrolling and the thumb wheel pan the other way"));
             ui.end_row();
             ui.label(crate::i18n::tr_label("Orbit around"));
             // Wrapped: three choices, and German or Russian labels are long.
@@ -1867,6 +1849,18 @@ mod tests {
         let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         other.load_prefs(&app.prefs());
         assert_eq!(other.preferences.nav, OPENSCAD_NAV);
+    }
+
+    #[test]
+    fn pan_reverse_x_defaults_off_persists_and_flips_the_sign() {
+        assert!(!serde_json::from_value::<Prefs>(json!({})).unwrap().pan_reverse_x);
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        assert_eq!(pan_sign_x(&app), 1.0);
+        set(&mut app, &json!({"pan_reverse_x": true})).unwrap();
+        assert_eq!(pan_sign_x(&app), -1.0);
+        let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        other.load_prefs(&app.prefs());
+        assert!(other.preferences.pan_reverse_x);
     }
 
     #[test]
