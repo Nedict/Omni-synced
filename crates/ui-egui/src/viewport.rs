@@ -276,7 +276,7 @@ pub fn projection(app: &SolveApp, rect: Rect) -> Proj {
 }
 
 /// Sketches drawn in the viewport: the active one, and finished ones not yet used by a feature.
-fn visible_sketches(app: &SolveApp) -> Vec<u64> {
+pub(crate) fn visible_sketches(app: &SolveApp) -> Vec<u64> {
     let st = app.session.world_state();
     st.sketches.iter().filter(|s| solidcraft_engine::view::sketch_drawn(&app.session, s.feature, app.ui.show_sketches)).map(|s| s.feature).collect()
 }

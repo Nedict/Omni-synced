@@ -1778,6 +1778,10 @@ pub struct SketchPoints {
     /// Drill the other way: away from the side the holes would go into by themselves.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub flip: bool,
+    /// A Single hole snapped to this one point (#2110): drilled at the point as it moves, along
+    /// the hole's `direction` (into the face it was placed on) rather than across the sketch.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub single: bool,
 }
 
 /// A component: a node of the design tree that owns sketches, features and bodies. The root
