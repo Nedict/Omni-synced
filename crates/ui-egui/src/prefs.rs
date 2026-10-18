@@ -1248,7 +1248,8 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             let rows: Vec<(String, bool)> = (0..6)
                 .map(|row| {
                     let label = crate::space_mouse::row_label(mapping, row);
-                    (app.tr(label).to_owned(), label == "ui.space_mouse_view_off")
+                    let text = crate::i18n::Locale::for_language(&app.preferences.language).format(label, &[("n", &(row + 1).to_string())]);
+                    (text, label == "ui.space_mouse_view_off")
                 })
                 .collect();
             let off_tip = app.tr("ui.space_mouse_view_off_tip").to_owned();

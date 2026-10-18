@@ -199,14 +199,14 @@ const VIEW_AXES: [&str; 6] = [
 
 /// The label of axis row `row`: what it does to the view through `mapping`, the mapping
 /// navigation really uses, or "off" when that mapping leaves it out. Without a mapping (a build
-/// with no 3D mouse reader, since the apps run navigation every frame before drawing), the
-/// default mapping's: never a motion name, so a row and its dropdown don't say the same thing.
+/// with no 3D mouse reader, since the apps run navigation every frame before drawing), a plain
+/// "Axis {n}": neither a guess at the view nor a motion name, which the dropdown already uses.
 /// Two rows a driver profile sends to the same output both get its label; that's what they do.
 pub fn row_label(mapping: Option<DriverMapping>, row: usize) -> &'static str {
     match mapping.and_then(|mapping| mapping.axes.get(row).copied()) {
         Some(rule) if rule.enabled => VIEW_AXES.get(rule.output).copied().unwrap_or("ui.space_mouse_view_off"),
         Some(_) => "ui.space_mouse_view_off",
-        None => VIEW_AXES.get(row).copied().unwrap_or("ui.space_mouse_view_off"),
+        None => "ui.space_mouse_view_unmapped",
     }
 }
 
@@ -731,6 +731,30 @@ mod tests {
     }
 
     #[test]
+    fn a_motion_swapped_into_a_row_the_driver_turns_off_moves_nothing_until_swapped_back() {
+        let ctx = egui::Context::default();
+        let mut pan_up_down_off = DriverMapping::default();
+        pan_up_down_off.axes[2].enabled = false;
+        let mut slowed = app();
+        slowed.preferences.space_mouse_axis_speed[1] = 0.5;
+        frame(&mut slowed, &ctx, pan_up_down_off, PUSH, 0.02);
+        // Picking the push motion in the off row swaps the off row's motion into row 1.
+        let mut app = app();
+        app.preferences.space_mouse_axis_speed[1] = 0.5;
+        reassign(&mut app.preferences.space_mouse_axis_source, 2, 1);
+        assert_eq!(app.preferences.space_mouse_axis_source, [0, 2, 1, 3, 4, 5]);
+        let still = app.cam;
+        assert_ne!(slowed.cam, still);
+        frame(&mut app, &ctx, pan_up_down_off, PUSH, 0.02);
+        assert_eq!(app.cam, still);
+        // Picking it back in row 1 recovers it, at the speed row 1 kept.
+        reassign(&mut app.preferences.space_mouse_axis_source, 1, 1);
+        assert_eq!(app.preferences.space_mouse_axis_source, SAME_AXES);
+        frame(&mut app, &ctx, pan_up_down_off, PUSH, 0.02);
+        assert_eq!(app.cam, slowed.cam);
+    }
+
+    #[test]
     fn the_choice_is_between_calibrated_motions_on_a_device_whose_calibration_shuffles_its_channels() {
         // `homemade()` reads Y from raw channel 4, reversed, and Ry from raw 1. With Y and Z
         // swapped, the choices are calibrated motions: pressing the cap (calibrated Z, raw 2)
@@ -774,8 +798,8 @@ mod tests {
         let mut off = DriverMapping::default();
         off.axes[2].enabled = false;
         assert_eq!(row_label(Some(off), 2), "ui.space_mouse_view_off");
-        // Without a mapping, rows still name a view axis, never one of the dropdown's motions.
-        assert_eq!(labels(None), VIEW_AXES);
+        // Without a mapping, rows claim no view effect and name none of the dropdown's motions.
+        assert_eq!(labels(None), ["ui.space_mouse_view_unmapped"; 6]);
     }
 
     #[test]
