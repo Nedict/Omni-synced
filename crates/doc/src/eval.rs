@@ -4378,6 +4378,8 @@ fn replay(
 
 #[path = "eval_more.rs"]
 mod more;
+#[path = "eval_rename.rs"]
+mod rename;
 #[path = "eval_surface.rs"]
 mod surface;
 
