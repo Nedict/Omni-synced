@@ -42,7 +42,7 @@ pub static COMMANDS: &[CommandSpec] = &[
          or joints?: [joint id or name] (their glyphs; they still constrain and move parts); \
          or folder?: bodies|sketches|construction|origin|joints (all of it); or paths?: [[occurrence ids]] (exact placements and descendants), isolate?: bool (requires paths and visible:true). Saved with the design; not an undo step",
     ),
-    CommandSpec::new("browser.find", "Search the Browser", find).noundo().params(
+    CommandSpec::new("browser.find", "Search the Browser", find).icon("filter").noundo().params(
         "text?: what the names hold, ignoring case (with * for any text or ? for any one character it must match the whole name: *:1 ends in :1; at most 256 characters);          kinds?: [component|body|sketch|construction|joint] (default every kind; give text, kinds or both)          → {found: [{kind, name, key, path, item?}], total, incomplete}: every placement of a component is its own match, path is the placement it is in,          item is what select.set takes (a joint has none; its key is its id); at most 10000 listed, total counts them all",
     ),
 ];
