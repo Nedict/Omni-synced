@@ -1179,7 +1179,8 @@ fn fillet_the_rim_of_a_capped_sphere() {
     run(&mut s, "solid.box", json!({"length":6,"width":6,"height":3,"corner":[-3,-3,1],"operation":"cut","targets":["Ball"]}));
     run(&mut s, "solid.fillet", json!({"edges":[[3.0f64.sqrt(),0,1]],"radius":1}));
     assert_eq!(s.model.state().bodies.len(), 1);
-    let body = &s.model.state().body("Ball").unwrap().body;
+    let state = s.model.state();
+    let body = &state.body("Ball").unwrap().body;
     assert!(body.validity().is_empty(), "{:?}", body.validity());
     let pi = std::f64::consts::PI;
     let want = 7.0 * pi + pi * pi / 2.0;
