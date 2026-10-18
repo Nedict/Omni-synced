@@ -354,8 +354,7 @@ pub fn loft_sheet_with_rails(sections: &[(Plane, Vec<Seg2>)], rails: &[Vec<Vec3>
     }
     let (wires, sources, reversed) = if all_closed {
         let loops: Vec<(Plane, solidcraft_geom::Loop2)> = sections.iter().map(|(p, c)| (*p, solidcraft_geom::Loop2 { segs: c.clone() })).collect();
-        let (wires, sources, reversed) = crate::build::loft_wires(&loops)?;
-        (wires, sources, reversed)
+        crate::build::loft_wires(&loops)?
     } else {
         let n = sections.iter().map(|(_, c)| c.len()).max().unwrap_or(0);
         let mut wires = Vec::with_capacity(sections.len());
@@ -387,22 +386,19 @@ pub fn loft_sheet_with_rails(sections: &[(Plane, Vec<Seg2>)], rails: &[Vec<Vec3>
         }
         (wires, sources, false)
     };
-    if !rails.is_empty() {
-        let mut planes: Vec<Plane> = sections.iter().map(|(p, _)| *p).collect();
-        if reversed {
-            planes.reverse();
-        }
-        let faces = guard("surface loft", || {
-            let all = crate::loft_rails::railed_wires(&planes, &wires, all_closed, rails, fit)?;
-            crate::build::smooth_loft_faces(&all, &sources, all_closed)
-        })?;
-        return sheet_body(faces);
+    let mut planes: Vec<Plane> = sections.iter().map(|(p, _)| *p).collect();
+    if reversed {
+        planes.reverse();
     }
     let faces = guard("surface loft", || {
-        let smooth = if wires.len() >= 3 { crate::build::smooth_loft_faces(&wires, &sources, all_closed).ok() } else { None };
+        let all = crate::loft_rails::railed_wires(&planes, &wires, all_closed, rails, fit)?;
+        // A plain loft falls back to ruled faces where the smooth one fails; a railed one has to
+        // follow its rails.
+        let smooth = if all.len() >= 3 { Some(crate::build::smooth_loft_faces(&all, &sources, all_closed)) } else { None };
         match smooth {
-            Some(f) => Ok(f),
-            None => crate::build::ruled_loft_faces(&wires, &sources),
+            Some(Ok(f)) => Ok(f),
+            Some(Err(e)) if !rails.is_empty() => Err(e),
+            _ => crate::build::ruled_loft_faces(&wires, &sources),
         }
     })?;
     sheet_body(faces)

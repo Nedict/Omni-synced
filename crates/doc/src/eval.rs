@@ -3834,7 +3834,8 @@ fn feature_tools_with_constructor(
                     return Err(DocError::Invalid("not supported yet: guide rails on a loft whose sections have holes".into()));
                 }
                 let outlines: Vec<_> = secs.iter().map(|(p, r)| (*p, r.outer.clone())).collect();
-                let start = outlines.first().map_or(Vec3::ZERO, |(p, lp)| p.to_world(lp.centroid()));
+                // The rails run from the end at the first section.
+                let start = outlines.first().and_then(|(p, lp)| lp.segs.first().map(|seg| p.to_world(seg.start()))).unwrap_or_default();
                 kernel::loft_with_rails(&outlines, &rail_polylines(doc, st, rails, f.component, start)?, kernel_rail_fit(*rail_fit))?
             };
             let roles = crate::lineage::SectionRoles {

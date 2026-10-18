@@ -2054,9 +2054,6 @@ fn loft(s: &mut Session, p: &Value) -> Result<Value> {
         sections.push(solidcraft_doc::LoftSection { sketch: SketchId(sketch), profiles: profiles(sec, cmd)?, point: None });
     }
     let (rails, rail_fit) = guide_rails(s, p, cmd, "loft", None)?;
-    if !rails.is_empty() && sections.iter().any(|sec| sec.point.is_some()) {
-        return Err(bad(cmd, "not supported yet: guide rails on a loft to a point"));
-    }
     add_feature(
         s,
         p,

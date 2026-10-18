@@ -423,6 +423,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             let body = if rails.is_empty() {
                 kernel::loft_sheet(&secs)?
             } else {
+                // The rails run from the end at the first section.
                 let start = secs.first().and_then(|(p, c)| c.first().map(|seg| p.to_world(seg.start()))).unwrap_or_default();
                 let rails = crate::eval::rail_polylines(doc, st, rails, f.component, start)?;
                 kernel::loft_sheet_with_rails(&secs, &rails, crate::eval::kernel_rail_fit(*rail_fit))?

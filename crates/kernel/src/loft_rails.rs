@@ -9,7 +9,7 @@
 //! so the sections and the loft's caps stay exactly as drawn; the loft's smooth surfaces then run
 //! through the sections and the stations together.
 
-use mt::{BoundedCurve, ParametricCurve, SearchNearestParameter};
+use mt::{BoundedCurve, ParametricCurve};
 use solidcraft_geom::{Plane, Vec3};
 use truck_modeling as mt;
 
@@ -18,19 +18,20 @@ use crate::sweep_path::RailFit;
 use crate::{KernelError, Result};
 
 /// Most wires a railed loft is skinned through, sections and stations together.
-const MAX_WIRES: usize = 64;
+const MAX_WIRES: usize = 33;
 /// Most stations between two sections.
 const MAX_PER_SPAN: usize = 15;
 
 type Curve = mt::BSplineCurve<mt::Point3>;
 
 /// Where a rail meets a section: the point of the section's wire it guides (as a wire parameter:
-/// the edge's index plus how far along the edge), that point, where the rail crosses the
-/// section's plane and how far along the rail that is (segment and fraction).
+/// the edge's index plus how far along the edge), that point, how far it is from where the rail
+/// crosses the section's plane (the nudge onto it), and how far along the rail that crossing is
+/// (segment and fraction).
 struct Anchor {
     g: f64,
     on: Vec3,
-    hit: Vec3,
+    nudge: Vec3,
     at: (usize, f64),
 }
 
@@ -99,15 +100,14 @@ pub(crate) fn railed_wires(planes: &[Plane], wires: &[mt::Wire], closed: bool, r
         curves.iter().map(|cs| cs.iter().map(|c| c.control_points().iter().map(|p| from_p3(*p)).collect()).collect()).collect();
     let edges: Vec<Vec<mt::Edge>> = wires.iter().map(|w| w.edge_iter().cloned().collect()).collect();
     let along = crate::build::section_parameters(&edges);
-    let all = ctrl.iter().flatten().flatten();
-    let (lo, hi) = all.fold(
-        (Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY), Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY)),
-        |(lo, hi), p| (lo.min(*p), hi.max(*p)),
-    );
-    let size = lo.dist(hi);
-    if !size.is_finite() {
-        return Err(fail("sections"));
+    let mut bounds = solidcraft_geom::Aabb3::EMPTY;
+    for p in ctrl.iter().flatten().flatten() {
+        if !p.is_finite() {
+            return Err(fail("sections"));
+        }
+        bounds.add(*p);
     }
+    let size = bounds.diagonal();
     let tol = (size * 1e-4).max(1e-6);
     let start = centroid(ctrl.first().ok_or_else(|| fail("sections"))?);
     let rails: Vec<Rail> = rails.iter().map(|r| rail(r, start, planes, &curves, tol)).collect::<Result<_>>()?;
@@ -139,6 +139,22 @@ pub(crate) fn railed_wires(planes: &[Plane], wires: &[mt::Wire], closed: bool, r
         }
         across.iter().map(|cs| cs.iter().map(|c| c.as_ref().map(|c| from_p3(c.subs(v))).ok_or_else(|| fail("the plain loft"))).collect()).collect()
     };
+    // The middle of the plain loft (the middles of the sections' control points, across them as
+    // the control points are: the middle is linear in them) and its direction.
+    let middles: Vec<Vec3> = ctrl.iter().map(|s| centroid(s)).collect();
+    let middle_curve = if count == 2 { None } else { Some(crate::build::across(&middles, &along).ok_or_else(|| fail("the plain loft"))?) };
+    let middle = |v: f64| -> Result<(Vec3, Vec3)> {
+        let (p, d) = match (&middle_curve, middles.first(), middles.last()) {
+            (Some(c), ..) => {
+                let d = c.der(v);
+                (from_p3(c.subs(v)), Vec3::new(d.x, d.y, d.z))
+            }
+            (None, Some(a), Some(b)) => (a.lerp(*b, v), *b - *a),
+            _ => return Err(fail("sections")),
+        };
+        let d = d.normalized().ok_or_else(|| KernelError::Invalid("two loft sections sit on top of each other".into()))?;
+        Ok((p, d))
+    };
     // The sections' normals, turned to agree with the first's.
     let mut normals: Vec<Vec3> = Vec::with_capacity(count);
     for p in planes {
@@ -154,21 +170,21 @@ pub(crate) fn railed_wires(planes: &[Plane], wires: &[mt::Wire], closed: bool, r
         let (Some(&v0), Some(&v1), Some(&n0), Some(&n1)) = (along.get(i), along.get(i + 1), normals.get(i), normals.get(i + 1)) else {
             return Err(fail("sections"));
         };
-        let mut cursors: Vec<(usize, f64)> = rails.iter().map(|r| r.anchors.get(i).map_or((0, 0.0), |a| a.at)).collect();
+        // Each rail's anchors at the span's two sections, and where its walk has got to.
+        let mut spans_of: Vec<(&Rail, &Anchor, &Anchor, (usize, f64))> = Vec::with_capacity(rails.len());
+        for r in &rails {
+            let (Some(a0), Some(a1)) = (r.anchors.get(i), r.anchors.get(i + 1)) else { return Err(fail("rail")) };
+            spans_of.push((r, a0, a1, a0.at));
+        }
         for q in 1..=per {
             let f = q as f64 / (per + 1) as f64;
             let v = v0 + f * (v1 - v0);
             let station = plain(v)?;
-            // The loft's direction there.
-            let h = 1e-3 * (v1 - v0);
-            let dir = (centroid(&plain((v + h).min(1.0))?) - centroid(&plain((v - h).max(0.0))?))
-                .normalized()
-                .ok_or_else(|| KernelError::Invalid("two loft sections sit on top of each other".into()))?;
+            let (mid, dir) = middle(v)?;
             // The station's plane turns from one section's to the next's.
             let normal = n0.lerp(n1, f).normalized().ok_or_else(|| fail("section planes"))?;
             let mut pairs = Vec::with_capacity(rails.len());
-            for (r, cursor) in rails.iter().zip(cursors.iter_mut()) {
-                let (Some(a0), Some(a1)) = (r.anchors.get(i), r.anchors.get(i + 1)) else { return Err(fail("rail")) };
+            for (r, a0, a1, cursor) in &mut spans_of {
                 let anchor = wire_point(&station, &knots, interpolate_g(a0.g, a1.g, f, n, closed))?;
                 // Where the rail crosses the station's plane through the point it guides, nudged
                 // so that at each section it is the section's own point (a rail drawn a hair off
@@ -181,10 +197,10 @@ pub(crate) fn railed_wires(planes: &[Plane], wires: &[mt::Wire], closed: bool, r
                     )));
                 };
                 *cursor = at;
-                let target = hit + (a0.on - a0.hit) * (1.0 - f) + (a1.on - a1.hit) * f;
+                let target = hit + a0.nudge * (1.0 - f) + a1.nudge * f;
                 pairs.push((anchor, target));
             }
-            let map = station_map(&pairs, centroid(&station), dir, fit, size)?;
+            let map = station_map(&pairs, mid, dir, fit, size)?;
             let moved: Vec<Vec<Vec3>> = station.iter().map(|e| e.iter().map(|p| map.apply(*p)).collect()).collect();
             out.push(wire_of(&moved, &knots, closed)?);
         }
@@ -220,7 +236,7 @@ fn rail(pts: &[Vec3], start: Vec3, planes: &[Plane], curves: &[Vec<Curve>], tol:
                 i + 1
             )));
         }
-        anchors.push(Anchor { g, on, hit, at });
+        anchors.push(Anchor { g, on, nudge: on - hit, at });
     }
     Ok(Rail { pts, anchors })
 }
@@ -231,10 +247,7 @@ fn nearest_on(section: &[Curve], p: Vec3) -> Option<(f64, Vec3, f64)> {
     let mut best: Option<(f64, Vec3, f64)> = None;
     for (k, c) in section.iter().enumerate() {
         let (t0, t1) = c.range_tuple();
-        // A start for the search: the nearest of samples along the edge.
-        let hint =
-            (0..=32).map(|i| t0 + (t1 - t0) * i as f64 / 32.0).min_by(|a, b| from_p3(c.subs(*a)).dist(p).total_cmp(&from_p3(c.subs(*b)).dist(p)))?;
-        let t = c.search_nearest_parameter(p3(p), Some(hint), 100).filter(|t| t.is_finite()).unwrap_or(hint).clamp(t0, t1);
+        let t = crate::curveblend::param_on(&mt::Curve::BSplineCurve(c.clone()), p)?;
         let q = from_p3(c.subs(t));
         let d = q.dist(p);
         if best.as_ref().is_none_or(|b| d < b.2) {
@@ -265,7 +278,7 @@ fn wire_point(ctrl: &[Vec<Vec3>], knots: &[mt::KnotVec], g: f64) -> Result<Vec3>
     let n = ctrl.len();
     let k = (g.floor().max(0.0) as usize).min(n.saturating_sub(1));
     let (Some(pts), Some(kv)) = (ctrl.get(k), knots.get(k)) else { return Err(KernelError::Failed("loft rails: wire".into())) };
-    let c = Curve::try_new(kv.clone(), pts.iter().map(|p| p3(*p)).collect()).map_err(|e| KernelError::Failed(format!("loft rails: {e}")))?;
+    let c = edge_curve(kv, pts)?;
     let (t0, t1) = c.range_tuple();
     let f = (g - k as f64).clamp(0.0, 1.0);
     Ok(from_p3(c.subs(t0 + (t1 - t0) * f)))
@@ -282,36 +295,34 @@ fn centroid(ctrl: &[Vec<Vec3>]) -> Vec3 {
 /// the loft's size. One rail: turned about `dir` and sized about the middle, shifted along `dir`;
 /// two: carried with the first, turned and sized with the line between them, leaning along `dir`.
 fn station_map(pairs: &[(Vec3, Vec3)], middle: Vec3, dir: Vec3, fit: RailFit, size: f64) -> Result<Affine> {
-    let (from, to, a, r) = match pairs {
-        [(p, q)] => (middle, middle, *p - middle, *q - middle),
-        [(p1, q1), (p2, q2)] => (*p1, *q1, *p2 - *p1, *q2 - *q1),
+    let (from, to, a, r, two) = match pairs {
+        [(p, q)] => (middle, middle, *p - middle, *q - middle, false),
+        [(p1, q1), (p2, q2)] => (*p1, *q1, *p2 - *p1, *q2 - *q1, true),
         _ => return Err(KernelError::Invalid("a loft takes one or two guide rails".into())),
     };
     let flat = |v: Vec3| v - dir * v.dot(dir);
     let (ap, rp) = (flat(a), flat(r));
     let tiny = 1e-6 * size.max(1e-9);
-    if ap.len() <= tiny || rp.len() <= tiny {
-        return Err(KernelError::Invalid(if pairs.len() == 1 {
-            "a guide rail runs through the middle of the loft: it has to guide a point of the sections away from their middle".into()
-        } else {
+    let (Some(u0), Some(u1)) = (ap.normalized().filter(|_| ap.len() > tiny), rp.normalized().filter(|_| rp.len() > tiny)) else {
+        return Err(KernelError::Invalid(if two {
             "the two guide rails come together between the sections: the loft would shrink to nothing".into()
+        } else {
+            "a guide rail runs through the middle of the loft: it has to guide a point of the sections away from their middle".into()
         }));
-    }
-    let k = rp.len() / ap.len();
-    let (u0, u1) = (ap * (1.0 / ap.len()), rp * (1.0 / rp.len()));
-    let (w0, w1) = (dir.cross(u0), dir.cross(u1));
-    let k_other = match fit {
-        RailFit::Scale => k,
-        RailFit::Stretch => 1.0,
     };
-    // Along the loft stays along it; the way to the rail turns onto the rail and sizes with it;
-    // the third way follows, sized alike or kept. One rail shifts the station along the loft as
-    // far as the rail leads it; two lean it, in step with the way across.
+    // Turned about the loft's direction and sized as the sweep's rails size its profile.
+    let mut m = crate::sweep_path::rail_frame(dir, u0, dir, u1, rp.len() / ap.len(), fit);
+    // Whatever the rails ask along the loft: one rail shifts the station that far, two lean it,
+    // in step with the way across.
     let lead = (r - a).dot(dir);
-    let lean = if pairs.len() == 2 { lead / ap.len() } else { 0.0 };
-    let map = |v: Vec3| dir * (v.dot(dir) + lean * v.dot(u0)) + u1 * (k * v.dot(u0)) + w1 * (k_other * v.dot(w0));
-    let shift = if pairs.len() == 1 { dir * lead } else { Vec3::ZERO };
-    Ok(Affine { from, to: to + shift, m: [map(Vec3::X), map(Vec3::Y), map(Vec3::Z)] })
+    if two {
+        let lean = lead / ap.len();
+        for (col, e) in m.iter_mut().zip([Vec3::X, Vec3::Y, Vec3::Z]) {
+            *col += dir * (lean * e.dot(u0));
+        }
+    }
+    let shift = if two { Vec3::ZERO } else { dir * lead };
+    Ok(Affine { from, to: to + shift, m })
 }
 
 /// A wire of B-spline edges with these control points on these knots, joined end to end
@@ -326,8 +337,13 @@ fn wire_of(ctrl: &[Vec<Vec3>], knots: &[mt::KnotVec], closed: bool) -> Result<mt
     let mut edges = Vec::with_capacity(n);
     for (i, (pts, kv)) in ctrl.iter().zip(knots).enumerate() {
         let (Some(a), Some(b)) = (verts.get(i), verts.get(if closed { (i + 1) % n } else { i + 1 })) else { return Err(fail()) };
-        let c = Curve::try_new(kv.clone(), pts.iter().map(|p| p3(*p)).collect()).map_err(|e| KernelError::Failed(format!("loft rails: {e}")))?;
+        let c = edge_curve(kv, pts)?;
         edges.push(mt::Edge::new(a, b, mt::Curve::BSplineCurve(c)));
     }
     Ok(edges.into())
+}
+
+/// An edge's B-spline from its control points on its knots.
+fn edge_curve(kv: &mt::KnotVec, pts: &[Vec3]) -> Result<Curve> {
+    Curve::try_new(kv.clone(), pts.iter().map(|p| p3(*p)).collect()).map_err(|e| KernelError::Failed(format!("loft rails: {e}")))
 }

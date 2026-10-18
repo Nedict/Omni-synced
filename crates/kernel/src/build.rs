@@ -1806,32 +1806,26 @@ pub fn loft(sections: &[(Plane, Loop2)]) -> Result<Body> {
 /// sections between. Without rails, the plain loft.
 pub fn loft_with_rails(sections: &[(Plane, Loop2)], rails: &[Vec<Vec3>], fit: RailFit) -> Result<Body> {
     let (wires, edge_sources, reversed) = loft_wires(sections)?;
-    if !rails.is_empty() {
-        let mut planes: Vec<Plane> = sections.iter().map(|(p, _)| *p).collect();
-        if reversed {
-            planes.reverse();
-        }
-        return guard("loft", || {
-            let all = crate::loft_rails::railed_wires(&planes, &wires, true, rails, fit)?;
-            let faces = smooth_loft_faces(&all, &edge_sources, true)?;
-            let (Some(w0), Some(w1)) = (wires.first(), wires.last()) else { return Err(KernelError::Failed("loft: sections".into())) };
-            cap_and_close(faces, std::slice::from_ref(w0), std::slice::from_ref(w1), reversed)
-        });
+    let (Some(first), Some(last)) = (wires.first(), wires.last()) else { return Err(KernelError::Failed("loft: sections".into())) };
+    let mut planes: Vec<Plane> = sections.iter().map(|(p, _)| *p).collect();
+    if reversed {
+        planes.reverse();
     }
+    let all = guard("loft", || crate::loft_rails::railed_wires(&planes, &wires, true, rails, fit))?;
     // The wires run from the first section given, or (turned round) the last.
-    // Three sections or more: one smooth surface through them all for each segment.
-    if wires.len() >= 3
-        && let Ok(b) = guard("loft", || {
-            let faces = smooth_loft_faces(&wires, &edge_sources, true)?;
-            let (Some(w0), Some(w1)) = (wires.first(), wires.last()) else { return Err(KernelError::Failed("smooth loft: sections".into())) };
-            cap_and_close(faces, std::slice::from_ref(w0), std::slice::from_ref(w1), reversed)
-        })
-    {
-        return Ok(b);
+    // Three wires or more: one smooth surface through them all for each segment. A plain loft
+    // falls back to ruled faces where that fails; a railed one has to follow its rails.
+    if all.len() >= 3 {
+        let smooth = guard("loft", || {
+            let faces = smooth_loft_faces(&all, &edge_sources, true)?;
+            cap_and_close(faces, std::slice::from_ref(first), std::slice::from_ref(last), reversed)
+        });
+        if smooth.is_ok() || !rails.is_empty() {
+            return smooth;
+        }
     }
     guard("loft", || {
         let sides = ruled_loft_faces(&wires, &edge_sources)?;
-        let (Some(first), Some(last)) = (wires.first(), wires.last()) else { return Err(KernelError::Failed("loft".into())) };
         cap_and_close(sides, std::slice::from_ref(first), std::slice::from_ref(last), reversed)
     })
 }

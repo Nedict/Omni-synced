@@ -432,9 +432,6 @@ fn surface_loft(s: &mut Session, p: &Value) -> Result<Value> {
         }
     };
     let (rails, rail_fit) = super::features::guide_rails(s, p, cmd, "loft", None)?;
-    if !rails.is_empty() && (continuity != [Continuity::G0, Continuity::G0] || sections.iter().any(|sec| sec.body.is_some())) {
-        return Err(bad(cmd, "not supported yet: guide rails on a loft with edge sections or end continuity"));
-    }
     add_feature(s, p, FeatureKind::SurfaceLoft { sections, continuity, crown, rails, rail_fit })
 }
 
