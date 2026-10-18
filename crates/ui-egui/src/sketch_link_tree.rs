@@ -59,7 +59,8 @@ fn status(app: &SolveApp, sketch: u64, link: &Link) -> Option<&'static str> {
 }
 
 /// Shared by the parts browser and the vertical feature history, as the pattern rows are.
-pub(crate) fn rows(app: &mut SolveApp, ui: &mut egui::Ui, sketch: u64, depth: usize, scope: &str) {
+/// `dim`: the sketch is hidden (or a placement above it), so its projections fade with it.
+pub(crate) fn rows(app: &mut SolveApp, ui: &mut egui::Ui, sketch: u64, depth: usize, scope: &str, dim: bool) {
     let links: Vec<Link> = app.session.doc.sketch(sketch).map(|sk| sk.links.iter().filter(|l| listed(l)).cloned().collect()).unwrap_or_default();
     let t = Tokens::get();
     for link in links {
@@ -90,7 +91,7 @@ pub(crate) fn rows(app: &mut SolveApp, ui: &mut egui::Ui, sketch: u64, depth: us
                 label: &text,
                 name: true,
                 selected,
-                dim: link.hidden,
+                dim: dim || link.hidden,
                 color: (state == Some("Lost")).then_some(t.error),
                 ..Default::default()
             },
