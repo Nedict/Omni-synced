@@ -51,6 +51,8 @@ pub struct Input {
     pub raw: Axes,
     /// The guided calibration while its window is open, and the device it is for.
     pub calibrating: Option<(String, solidcraft_space_mouse::Wizard)>,
+    /// The driver mapping navigation used last frame, which says what each axis does to the view.
+    pub mapping: Option<DriverMapping>,
 }
 
 /// Seconds after the cap last moved that wheel events are still taken for 3DxWare's: one can be
@@ -173,6 +175,39 @@ pub fn calibrated(axes: Axes, calibration: Option<Calibration>) -> Axes {
     calibration.map_or(axes, |calibration| calibration.apply(axes.into()).into())
 }
 
+/// The device's six calibrated motions, in the order of a reading: what each axis can be driven
+/// by. They name no kind of device, since calibration defined them: Translation X is whatever the
+/// user did for "slide right".
+pub const MOTIONS: [&str; 6] = [
+    "ui.space_mouse_motion_translation_x",
+    "ui.space_mouse_motion_translation_y",
+    "ui.space_mouse_motion_translation_z",
+    "ui.space_mouse_motion_rotation_x",
+    "ui.space_mouse_motion_rotation_y",
+    "ui.space_mouse_motion_rotation_z",
+];
+
+/// What each logical axis does to the view, as `navigation::device_camera` applies it.
+const VIEW_AXES: [&str; 6] = [
+    "ui.space_mouse_view_pan_sideways",
+    "ui.space_mouse_view_zoom",
+    "ui.space_mouse_view_pan_up_down",
+    "ui.space_mouse_view_orbit_up_down",
+    "ui.space_mouse_view_orbit_sideways",
+    "ui.space_mouse_view_roll",
+];
+
+/// The label of axis row `row`: what it does to the view through `mapping`, the mapping
+/// navigation really uses, or "off" when that mapping leaves it out. Without a mapping yet, the
+/// row's own calibrated motion, rather than a guess at the view.
+pub fn row_label(mapping: Option<DriverMapping>, row: usize) -> &'static str {
+    match mapping.and_then(|mapping| mapping.axes.get(row).copied()) {
+        Some(rule) if rule.enabled => VIEW_AXES.get(rule.output).copied().unwrap_or("ui.space_mouse_view_off"),
+        Some(_) => "ui.space_mouse_view_off",
+        None => MOTIONS.get(row).copied().unwrap_or_default(),
+    }
+}
+
 /// Which of the cap's motions drives each of its axes (`Prefs::space_mouse_axis_source`): row
 /// `r` reads motion `source[r]`. Each motion drives exactly one row.
 pub const SAME_AXES: [usize; 6] = [0, 1, 2, 3, 4, 5];
@@ -210,6 +245,7 @@ pub fn drives_each_once(source: [usize; 6]) -> bool {
 /// calibration window is open, the reading goes to it instead and the view stays put.
 pub fn navigate_frame(app: &mut SolveApp, ctx: &egui::Context, mapping: DriverMapping, axes: Axes, seconds: f64) -> bool {
     app.space_mouse.raw = axes;
+    app.space_mouse.mapping = Some(mapping);
     if let Some((device, wizard)) = &mut app.space_mouse.calibrating {
         if app.space_mouse.device.as_ref() == Some(device) {
             wizard.feed(axes.into(), seconds);
@@ -722,6 +758,39 @@ mod tests {
         let mut reset = setup(SAME_AXES);
         frame(&mut reset, &ctx, DriverMapping::default(), mixed, 0.02);
         assert_eq!(reset.cam, unswapped_reference.cam);
+    }
+
+    #[test]
+    fn rows_say_what_they_do_to_the_view_through_the_mapping_navigation_uses() {
+        let labels = |mapping| (0..6).map(|row| row_label(mapping, row)).collect::<Vec<_>>();
+        assert_eq!(labels(Some(DriverMapping::default())), VIEW_AXES);
+        // Linux, and Windows without a 3DxWare profile: object mode swaps the last two rows'
+        // effect, so their labels swap with it.
+        let object = labels(Some(DriverMapping::object_mode()));
+        assert_eq!((object[4], object[5]), (VIEW_AXES[5], VIEW_AXES[4]));
+        // An axis the mapping switches off says so.
+        let mut off = DriverMapping::default();
+        off.axes[2].enabled = false;
+        assert_eq!(row_label(Some(off), 2), "ui.space_mouse_view_off");
+        // Before navigation has run, each row is named for its own motion, not a guessed effect.
+        assert_eq!(labels(None), MOTIONS);
+    }
+
+    #[test]
+    fn each_frame_records_the_mapping_it_navigated_with() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        assert!(app.space_mouse.mapping.is_none());
+        frame(&mut app, &ctx, DriverMapping::object_mode(), Axes::default(), 0.02);
+        assert_eq!(app.space_mouse.mapping, Some(DriverMapping::object_mode()));
+        // A changed profile shows on the next frame, calibrating or not; a reassignment changes
+        // which motion drives a row, never the row's label.
+        app.space_mouse.device = Some("hid 1234:5678".into());
+        app.preferences.space_mouse_axis_source = [0, 2, 1, 3, 4, 5];
+        crate::space_mouse_calibration::start(&mut app);
+        frame(&mut app, &ctx, DriverMapping::default(), Axes::default(), 0.02);
+        assert_eq!(app.space_mouse.mapping, Some(DriverMapping::default()));
+        assert_eq!(row_label(app.space_mouse.mapping, 1), VIEW_AXES[1]);
     }
 
     #[test]

@@ -48,9 +48,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         (Stage::Done, Some(Ok(_))) => "ui.space_mouse_calibration_done",
         (Stage::Done, _) => "ui.space_mouse_calibration_no_response",
     };
-    // The axis that barely moved, as Preferences names it.
+    // The calibrated motion that barely moved, as Preferences names it.
     let weak = match result {
-        Some(Err(Problem::NoResponse(axis))) => crate::prefs::SPACE_MOUSE_AXES.get(axis).copied(),
+        Some(Err(Problem::NoResponse(axis))) => crate::space_mouse::MOTIONS.get(axis).copied(),
         _ => None,
     };
     let counter = match stage {
@@ -66,7 +66,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         .show(ctx, |ui| {
             ui.label(app.tr(prompt));
             if let Some(axis) = weak {
-                ui.label(egui::RichText::new(app.tr_label(axis)).strong());
+                ui.label(egui::RichText::new(app.tr(axis)).strong());
             }
             ui.add_space(6.0);
             ui.add(egui::ProgressBar::new(progress as f32).text(counter));

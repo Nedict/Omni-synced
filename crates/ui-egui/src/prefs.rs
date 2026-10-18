@@ -1242,8 +1242,16 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             );
             ui.end_row();
             let (driven_by, driven_by_label) = (app.tr("ui.space_mouse_driven_by").to_owned(), app.tr("ui.space_mouse_driven_by_label").to_owned());
-            for (axis, name) in SPACE_MOUSE_AXES.iter().enumerate() {
-                ui.label(crate::i18n::tr_label(name));
+            // Rows say what they do to the view, through the mapping navigation uses; the choices
+            // are the device's calibrated motions. Neither names a kind of device.
+            let mapping = app.space_mouse.mapping;
+            let rows: Vec<String> = (0..6).map(|row| app.tr(crate::space_mouse::row_label(mapping, row)).to_owned()).collect();
+            let motions: Vec<String> = crate::space_mouse::MOTIONS.iter().map(|motion| app.tr(motion).to_owned()).collect();
+            ui.label(egui::RichText::new(app.tr("ui.space_mouse_view_axis")).strong());
+            ui.label(egui::RichText::new(app.tr("ui.space_mouse_rows_header")).strong());
+            ui.end_row();
+            for (axis, name) in rows.iter().enumerate() {
+                ui.label(name);
                 ui.horizontal(|ui| {
                     ui.add_enabled_ui(app.preferences.space_mouse_enabled, |ui| {
                         if let Some(reverse) = app.preferences.space_mouse_reverse.get_mut(axis) {
@@ -1260,10 +1268,10 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                         // One width for all six, so they line up whichever motion each shows.
                         egui::ComboBox::from_id_salt(("sc_space_mouse_source", axis))
                             .width(180.0)
-                            .selected_text(crate::i18n::tr_label(SPACE_MOUSE_AXES.get(current).copied().unwrap_or_default()))
+                            .selected_text(motions.get(current).cloned().unwrap_or_default())
                             .show_ui(ui, |ui| {
-                                for (from, name) in SPACE_MOUSE_AXES.iter().enumerate() {
-                                    ui.selectable_value(&mut chosen, from, crate::i18n::tr_label(name));
+                                for (from, name) in motions.iter().enumerate() {
+                                    ui.selectable_value(&mut chosen, from, name);
                                 }
                             })
                             .response
@@ -1575,10 +1583,6 @@ fn calibrations_that_read<'de, D: serde::Deserializer<'de>>(
         })
         .collect())
 }
-
-/// The cap's physical axes, in the order of `Prefs::space_mouse_reverse`.
-pub(crate) const SPACE_MOUSE_AXES: [&str; 6] =
-    ["Push left / right", "Push forward / back", "Lift / press", "Tilt forward / back", "Tilt left / right", "Twist"];
 
 /// Fold a setting an older release kept in its own field into the one this version reads.
 /// `orbit_cursor` (`true` = the point under the cursor) became `orbit_around`. A 3D mouse
