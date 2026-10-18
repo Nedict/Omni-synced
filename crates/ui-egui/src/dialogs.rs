@@ -2867,12 +2867,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     }
                     Kind::Section { offset, flip, quarter, second_plane, second_offset, second_flip } => {
                         row_label(ui, "");
-                        if ui.button(tr("Remove Section")).clicked() {
-                            if app.run("inspect.section", json!({"clear": true})).is_ok() {
-                                app.tree.hidden_section = None;
-                                app.tree.hidden_section_second = None;
-                                cancel = true;
-                            }
+                        if ui.button(tr("Remove Section")).clicked() && app.run("inspect.section", json!({"clear": true})).is_ok() {
+                            app.tree.hidden_section = None;
+                            app.tree.hidden_section_second = None;
+                            cancel = true;
                         }
                         ui.end_row();
                         row_label(ui, "Quarter section");
