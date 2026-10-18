@@ -147,7 +147,7 @@ fn sheet(tilt: f64) -> Mesh {
 /// A front view of `mesh` with `lines`, as part of a design of `radius`, 40 mm high on 200 px.
 fn front(mesh: Mesh, lines: Vec<SceneLine>, radius: f64, fov: f64) -> (Scene, Camera) {
     let scene = Scene {
-        meshes: vec![SceneMesh { mesh: Arc::new(mesh), color: Rgb(160, 165, 175), face_colors: Vec::new() }],
+        meshes: vec![SceneMesh::solid(Arc::new(mesh), Rgb(160, 165, 175))],
         lines,
         radius,
         ..Default::default()
