@@ -301,7 +301,8 @@ pub fn sketch_curve_visible(sk: &Sketch, i: usize) -> bool {
 }
 
 /// Point roles shown and picked individually. Associated offsets keep their generated
-/// fit nodes private until their association is broken. Build once per sketch/frame.
+/// fit nodes private until their association is broken, except an open offset's two ends,
+/// which other curves snap and constrain to. Build once per sketch/frame.
 pub struct SketchPointVisibility<'a> {
     hidden: std::collections::HashSet<&'a str>,
 }
@@ -321,7 +322,9 @@ impl<'a> SketchPointVisibility<'a> {
         let mut hidden: std::collections::HashSet<&str> =
             sk.points.iter().filter(|p| p.link.as_deref().is_some_and(|l| text.contains(l))).map(|p| p.id.as_str()).collect();
         for curve in sk.curves.iter().filter(|c| outputs.contains(c.id.as_str())) {
-            hidden.extend(curve.kind.point_ids().into_iter().filter_map(|i| sk.points.get(i).map(|p| p.id.as_str())));
+            let ends = curve.kind.ends();
+            let interior = curve.kind.point_ids().into_iter().filter(|i| ends.is_none_or(|(a, b)| *i != a && *i != b));
+            hidden.extend(interior.filter_map(|i| sk.points.get(i).map(|p| p.id.as_str())));
         }
         Self { hidden }
     }
@@ -332,7 +335,7 @@ impl<'a> SketchPointVisibility<'a> {
 }
 
 /// Should sketch point `i` be drawn or picked individually? Text outlines and derived
-/// offset fit nodes are private. Batch callers use [`SketchPointVisibility`].
+/// offset fit nodes (but an open offset's ends) are private. Batch callers use [`SketchPointVisibility`].
 pub fn sketch_point_visible(sk: &Sketch, i: usize) -> bool {
     sk.points.get(i).is_some_and(|p| SketchPointVisibility::new(sk).takes(p))
 }

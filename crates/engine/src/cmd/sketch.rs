@@ -275,6 +275,8 @@ pub(super) fn edit_solved<T>(
     // The stored sketch is solved for its stored values.
     let stored = sk.driving_values();
     let (out, left) = f(&mut sk, &mut doc)?;
+    // A curve that took an offset spline's generated node (drawn from its end) gets its own point there.
+    sk.detach_offset_points()?;
     let offsets = !sk.offsets.is_empty() || !sk.freeform_offsets.is_empty();
     let rep = match left {
         // A drag step solved it (held, with the dimensions' values applied).
