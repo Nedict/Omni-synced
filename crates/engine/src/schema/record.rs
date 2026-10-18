@@ -1,6 +1,16 @@
-//! The spike's audit recorder: when `SOLIDCRAFT_PARAM_AUDIT` names a directory, every call to a
-//! command with a contract that breaks it is recorded, with what the command did, so a test run
-//! shows which callers the contracts would warn about or refuse.
+//! The audit recorder, for checking a new contract against every caller the tests have: in a
+//! build with the `param-audit` feature, when `SOLIDCRAFT_PARAM_AUDIT` names a directory, every
+//! call to a command with a contract that breaks it is recorded, with what the command did, so a
+//! test run shows which callers the contracts would warn about or refuse. Without the feature it
+//! is compiled (so it is linted and tested) but never on.
+//!
+//! ```text
+//! SOLIDCRAFT_PARAM_AUDIT=$PWD/audit cargo test --workspace --no-fail-fast --features solidcraft-engine/param-audit
+//! python3 scripts/param_audit.py audit
+//! ```
+//!
+//! A line whose outcome is `ok` is a call that works today and that strict would refuse: a form
+//! the contract is missing, or a mistake the handler silently ignores.
 //!
 //! Records are aggregated per process by signature (command, issues, outcome, test thread) and
 //! written to `<dir>/audit-<pid>.jsonl` when a signature is first seen and again each time its
@@ -28,9 +38,10 @@ fn dir() -> Option<&'static PathBuf> {
     DIR.get_or_init(|| std::env::var_os("SOLIDCRAFT_PARAM_AUDIT").filter(|v| !v.is_empty()).map(PathBuf::from)).as_ref()
 }
 
-/// Whether the recorder is on (read once per process).
+/// Whether the recorder is on: built with `param-audit` and the variable set (read once per
+/// process).
 pub fn enabled() -> bool {
-    dir().is_some()
+    cfg!(feature = "param-audit") && dir().is_some()
 }
 
 /// Count one more call with signature `key`. A new signature beyond `max` is counted under
@@ -62,7 +73,7 @@ pub(crate) fn outcome_text(outcome: Option<&Result<Value>>) -> String {
 /// Record one call of `command` that broke its contract with `issues`, and what it did
 /// (`None`: refused before the handler ran).
 pub fn note(command: &str, issues: &[Issue], outcome: Option<&Result<Value>>, params: &Value) {
-    let Some(dir) = dir() else { return };
+    let Some(dir) = dir().filter(|_| enabled()) else { return };
     // A handler's own message names the caller's value, which may be long.
     let mut messages: Vec<String> = issues.iter().map(|i| truncate(&i.message, 300)).collect();
     messages.sort_unstable();

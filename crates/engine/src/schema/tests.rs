@@ -549,8 +549,9 @@ fn recorder_lines_have_the_documented_shape() {
     assert_eq!(outcome_text(None), "refused");
     assert_eq!(outcome_text(Some(&Ok(json!({})))), "ok");
     assert_eq!(outcome_text(Some(&Err(crate::EngineError::Other("boom".into())))), "error: boom");
-    // The recorder is on exactly when the variable names a directory.
-    assert_eq!(super::record::enabled(), std::env::var_os("SOLIDCRAFT_PARAM_AUDIT").is_some_and(|v| !v.is_empty()));
+    // The recorder is on exactly when built with `param-audit` and the variable names a directory.
+    let set = std::env::var_os("SOLIDCRAFT_PARAM_AUDIT").is_some_and(|v| !v.is_empty());
+    assert_eq!(super::record::enabled(), cfg!(feature = "param-audit") && set);
 }
 
 /// A call that already fails gets the same error in strict as with the check off, apart from

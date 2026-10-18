@@ -1523,7 +1523,7 @@ fn batch_reports_timings_and_profile() {
 }
 
 /// `describe_command` serves a converted command's schemas, and a headless session set to strict
-/// refuses a misspelt key through `execute` without touching the design (the schema RFC spike).
+/// refuses a misspelt key through `execute` without touching the design.
 #[test]
 fn describe_command_and_strict_parameter_checking() {
     let mut s = server();

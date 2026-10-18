@@ -1,4 +1,4 @@
-//! Typed parameter contracts for commands (the schema RFC's spike).
+//! Typed parameter contracts for commands.
 //!
 //! A converted command declares a [`Contract`]: a Rust type its parameters must deserialize
 //! into, from which the input JSON Schema is generated. The contract is checked *in front of*
@@ -21,6 +21,13 @@
 //! "the contract accepts it" means "the handler's own reader accepts it". Where the handler is
 //! more lenient (a value of the wrong type read as if the key were absent), the contract is the
 //! stricter of the two; that difference is what warn and strict surface.
+//!
+//! To convert a command: declare its parameters type in `commands.rs` (and its reply type, for
+//! an output schema), give its `CommandSpec` `checked!(…)`, `.contract(…)` and `.output(…)` as
+//! `solid.extrude` does, and add it to `schemas_and_the_key_check_agree` and, for messages it
+//! already gives, `strict_keeps_todays_errors`. Then run the whole test suite with the audit
+//! recorder (see `record.rs`): a call that succeeds today but breaks the contract is either a
+//! form the contract is missing or a caller's mistake.
 
 mod check;
 mod commands;
