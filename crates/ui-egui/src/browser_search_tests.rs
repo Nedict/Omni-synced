@@ -340,3 +340,23 @@ fn only_rows_with_something_beneath_fold_during_a_search() {
     search(&mut h, "");
     assert_eq!(folds("Bolt M20:3"), Some(true));
 }
+
+/// The chips and buttons fit the browser in every language: a long translation wraps to the
+/// next line rather than running past the panel's edge, where it would be cut off.
+#[test]
+fn the_search_bar_fits_the_browser_in_every_language() {
+    let mut h = assembly();
+    search(&mut h, "m20");
+    for catalog in crate::i18n::LOCALES {
+        h.app.preferences.language = catalog.id.to_string();
+        h.frames(2);
+        let bar = crate::scenario::rect_of("browser:search:bar").unwrap();
+        let mut names: Vec<String> = crate::scenario::handles("browser:search:kind:").into_iter().map(|(n, _)| n).collect();
+        assert!(names.len() >= 5, "{}: {names:?}", catalog.id);
+        names.extend(["browser:search:select-all".to_string(), "browser:search:hide-others".to_string()]);
+        for name in names {
+            let r = crate::scenario::rect_of(&name).unwrap_or_else(|| panic!("{}: no {name}", catalog.id));
+            assert!(r.max.x <= bar.max.x + 0.5, "{}: {name} ends at {} past the browser's {}", catalog.id, r.max.x, bar.max.x);
+        }
+    }
+}

@@ -235,6 +235,7 @@ fn chip_label(kind: Option<Kind>) -> &'static str {
 pub(crate) fn bar(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     refresh(app);
+    crate::scenario::publish_rect("browser:search:bar", ui.max_rect());
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let (r, _) = ui.allocate_exact_size(vec2(16.0, 20.0), Sense::hover());
@@ -278,7 +279,9 @@ pub(crate) fn bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
         for kind in std::iter::once(None).chain(kinds_present(app).into_iter().map(Some)) {
             let r = ui.selectable_label(app.tree.search.kind == kind, RichText::new(chip_label(kind)).size(11.0));
-            crate::scenario::publish_handle(&format!("browser:search:kind:{}", kind.map_or("all", Kind::id)), r.rect.center());
+            let name = format!("browser:search:kind:{}", kind.map_or("all", Kind::id));
+            crate::scenario::publish_handle(&name, r.rect.center());
+            crate::scenario::publish_rect(&name, r.rect);
             if r.clicked() {
                 app.tree.search.kind = kind;
             }
@@ -296,16 +299,19 @@ pub(crate) fn bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         ui.label(RichText::new(crate::i18n::tr("ui.browser_search_none")).size(12.0).color(t.text_dim));
         return;
     }
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
+    // Wrapped, so a long translation moves Hide others to the next line rather than cutting it off.
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
         let label = crate::i18n::format("ui.browser_select_all", &[("count", &total.to_string())]);
         let r = ui.small_button(label);
         crate::scenario::publish_handle("browser:search:select-all", r.rect.center());
+        crate::scenario::publish_rect("browser:search:select-all", r.rect);
         if r.on_hover_text(crate::i18n::tr("ui.browser_select_all_tip")).clicked() {
             select_found(app);
         }
         let r = ui.add_enabled(hide, egui::Button::new(crate::i18n::tr("ui.browser_hide_others")).small());
         crate::scenario::publish_handle("browser:search:hide-others", r.rect.center());
+        crate::scenario::publish_rect("browser:search:hide-others", r.rect);
         if r.on_hover_text(crate::i18n::tr("ui.browser_hide_others_tip")).clicked() {
             hide_others(app);
         }
