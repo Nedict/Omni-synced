@@ -1245,22 +1245,36 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             // Rows say what they do to the view, through the mapping navigation uses; the choices
             // are the device's calibrated motions. Neither names a kind of device.
             let mapping = app.space_mouse.mapping;
-            let rows: Vec<String> = (0..6).map(|row| app.tr(crate::space_mouse::row_label(mapping, row)).to_owned()).collect();
+            let rows: Vec<(String, bool)> = (0..6)
+                .map(|row| {
+                    let label = crate::space_mouse::row_label(mapping, row);
+                    (app.tr(label).to_owned(), label == "ui.space_mouse_view_off")
+                })
+                .collect();
+            let off_tip = app.tr("ui.space_mouse_view_off_tip").to_owned();
             let motions: Vec<String> = crate::space_mouse::MOTIONS.iter().map(|motion| app.tr(motion).to_owned()).collect();
             ui.label(egui::RichText::new(app.tr("ui.space_mouse_view_axis")).strong());
             ui.label(egui::RichText::new(app.tr("ui.space_mouse_rows_header")).strong());
             ui.end_row();
-            for (axis, name) in rows.iter().enumerate() {
-                ui.label(name);
+            for (axis, (name, off)) in rows.iter().enumerate() {
+                if *off {
+                    ui.label(name).on_hover_text(&off_tip);
+                } else {
+                    ui.label(name);
+                }
                 ui.horizontal(|ui| {
                     ui.add_enabled_ui(app.preferences.space_mouse_enabled, |ui| {
-                        if let Some(reverse) = app.preferences.space_mouse_reverse.get_mut(axis) {
-                            ui.checkbox(reverse, crate::i18n::tr_label("Invert"));
-                        }
-                        if let Some(speed) = app.preferences.space_mouse_axis_speed.get_mut(axis) {
-                            ui.add(egui::Slider::new(speed, 0.0..=3.0).step_by(0.05).custom_formatter(|v, _| format!("{v:.2}×")));
-                        }
-                        // Which motion of the cap drives this axis, labelled in sight, not only on hover.
+                        // Invert and speed do nothing on a row the driver turns off. The motion
+                        // choice stays live, so a motion can still be swapped out of it.
+                        ui.add_enabled_ui(!off, |ui| {
+                            if let Some(reverse) = app.preferences.space_mouse_reverse.get_mut(axis) {
+                                ui.checkbox(reverse, crate::i18n::tr_label("Invert"));
+                            }
+                            if let Some(speed) = app.preferences.space_mouse_axis_speed.get_mut(axis) {
+                                ui.add(egui::Slider::new(speed, 0.0..=3.0).step_by(0.05).custom_formatter(|v, _| format!("{v:.2}×")));
+                            }
+                        });
+                        // Which motion of the device drives this axis, labelled in sight, not only on hover.
                         ui.label(&driven_by_label);
                         let source = &mut app.preferences.space_mouse_axis_source;
                         let current = source.get(axis).copied().unwrap_or(axis);

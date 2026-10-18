@@ -201,6 +201,7 @@ const VIEW_AXES: [&str; 6] = [
 /// navigation really uses, or "off" when that mapping leaves it out. Without a mapping (a build
 /// with no 3D mouse reader, since the apps run navigation every frame before drawing), the
 /// default mapping's: never a motion name, so a row and its dropdown don't say the same thing.
+/// Two rows a driver profile sends to the same output both get its label; that's what they do.
 pub fn row_label(mapping: Option<DriverMapping>, row: usize) -> &'static str {
     match mapping.and_then(|mapping| mapping.axes.get(row).copied()) {
         Some(rule) if rule.enabled => VIEW_AXES.get(rule.output).copied().unwrap_or("ui.space_mouse_view_off"),
