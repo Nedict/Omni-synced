@@ -1,0 +1,70 @@
+//! Point queries against a triangle.
+
+use crate::Vec3;
+
+/// The point of triangle `abc` nearest `p` (Ericson, Real-Time Collision Detection, 5.1.5). A
+/// zero-length edge (a cone's tip repeats its apex vertex) has no interior to project onto, so
+/// its region is skipped rather than dividing 0 by 0: the point then comes from the edges that
+/// have length, and a triangle collapsed to one point gives that point.
+pub fn closest_on_triangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
+    let (ab, ac, ap) = (b - a, c - a, p - a);
+    let (d1, d2) = (ab.dot(ap), ac.dot(ap));
+    if d1 <= 0.0 && d2 <= 0.0 {
+        return a;
+    }
+    let bp = p - b;
+    let (d3, d4) = (ab.dot(bp), ac.dot(bp));
+    if d3 >= 0.0 && d4 <= d3 {
+        return b;
+    }
+    let vc = d1 * d4 - d3 * d2;
+    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 && d1 - d3 > 0.0 {
+        return a + ab * (d1 / (d1 - d3));
+    }
+    let cp = p - c;
+    let (d5, d6) = (ab.dot(cp), ac.dot(cp));
+    if d6 >= 0.0 && d5 <= d6 {
+        return c;
+    }
+    let vb = d5 * d2 - d1 * d6;
+    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 && d2 - d6 > 0.0 {
+        return a + ac * (d2 / (d2 - d6));
+    }
+    let va = d3 * d6 - d5 * d4;
+    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 && (d4 - d3) + (d5 - d6) > 0.0 {
+        return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    }
+    let den = va + vb + vc;
+    if den.abs() < 1e-300 {
+        return a;
+    }
+    a + ab * (vb / den) + ac * (vc / den)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_nearest_point_is_inside_on_an_edge_or_at_a_corner() {
+        let (a, b, c) = (Vec3::new(0., 0., 0.), Vec3::new(4., 0., 0.), Vec3::new(0., 4., 0.));
+        assert_eq!(closest_on_triangle(Vec3::new(1., 1., 5.), a, b, c), Vec3::new(1., 1., 0.));
+        assert_eq!(closest_on_triangle(Vec3::new(2., -3., 0.), a, b, c), Vec3::new(2., 0., 0.));
+        assert_eq!(closest_on_triangle(Vec3::new(-1., -1., 1.), a, b, c), a);
+    }
+
+    /// A cone's tip repeats its apex vertex, so the triangles there have a zero-length edge: the
+    /// nearest point on one must still be a real point (it used to be NaN, which broke picking
+    /// the tip), and the point on the edge that has length.
+    #[test]
+    fn closest_point_on_a_degenerate_triangle_is_finite() {
+        let (a, c) = (Vec3::new(0., 0., 0.), Vec3::new(2., 0., 0.));
+        for (b, c) in [(a, c), (c, c), (a, a)] {
+            for p in [Vec3::new(1., 1., 0.), Vec3::new(-1., 0.5, 0.), Vec3::new(3., -2., 1.), a] {
+                let q = closest_on_triangle(p, a, b, c);
+                assert!(q.x.is_finite() && q.y.is_finite() && q.z.is_finite(), "{a:?} {b:?} {c:?} {p:?} -> {q:?}");
+            }
+        }
+        assert_eq!(closest_on_triangle(Vec3::new(1., 1., 0.), a, a, c), Vec3::new(1., 0., 0.));
+    }
+}

@@ -15,7 +15,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
-use crate::{Aabb3, Mesh, Vec3};
+use crate::{Aabb3, Mesh, Vec3, closest_on_triangle};
 
 /// Runs a job for every index below `n`: the jobs are independent, so any order and any number
 /// of threads will do. [`serial`] runs them one after another; a caller with threads passes one
@@ -125,45 +125,6 @@ pub struct Comparison {
     pub spacing: f64,
     /// The sampled area of each face of `a` and of `b`, by `tri_face` id (mm²).
     pub face_area: [HashMap<u32, f64>; 2],
-}
-
-/// The point of triangle `abc` nearest `p` (Ericson, Real-Time Collision Detection, 5.1.5).
-pub fn closest_on_triangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
-    let (ab, ac, ap) = (b - a, c - a, p - a);
-    let (d1, d2) = (ab.dot(ap), ac.dot(ap));
-    if d1 <= 0.0 && d2 <= 0.0 {
-        return a;
-    }
-    let bp = p - b;
-    let (d3, d4) = (ab.dot(bp), ac.dot(bp));
-    if d3 >= 0.0 && d4 <= d3 {
-        return b;
-    }
-    let vc = d1 * d4 - d3 * d2;
-    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
-        let den = d1 - d3;
-        return if den > 0.0 { a + ab * (d1 / den) } else { a };
-    }
-    let cp = p - c;
-    let (d5, d6) = (ab.dot(cp), ac.dot(cp));
-    if d6 >= 0.0 && d5 <= d6 {
-        return c;
-    }
-    let vb = d5 * d2 - d1 * d6;
-    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
-        let den = d2 - d6;
-        return if den > 0.0 { a + ac * (d2 / den) } else { a };
-    }
-    let va = d3 * d6 - d5 * d4;
-    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
-        let den = (d4 - d3) + (d5 - d6);
-        return if den > 0.0 { b + (c - b) * ((d4 - d3) / den) } else { b };
-    }
-    let den = va + vb + vc;
-    if den.abs() < 1e-300 {
-        return a;
-    }
-    a + ab * (vb / den) + ac * (vc / den)
 }
 
 fn comp(v: Vec3, k: usize) -> f64 {

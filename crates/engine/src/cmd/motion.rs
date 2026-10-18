@@ -219,7 +219,7 @@ fn deepest(a: &solidcraft_geom::Mesh, b: &solidcraft_geom::Mesh, tol: f64) -> f6
         {
             continue;
         }
-        let d = tb.iter().map(|[a, b, c]| closest(p, *a, *b, *c).dist(p)).fold(f64::MAX, f64::min);
+        let d = tb.iter().map(|[a, b, c]| solidcraft_geom::closest_on_triangle(p, *a, *b, *c).dist(p)).fold(f64::MAX, f64::min);
         if d > tol.max(best) && inside(p, &tb) {
             best = d;
         }
@@ -256,42 +256,6 @@ fn inside(p: Vec3, tris: &[[Vec3; 3]]) -> bool {
         }
     }
     n % 2 == 1
-}
-
-/// The point of triangle abc nearest p.
-fn closest(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
-    let (ab, ac, ap) = (b - a, c - a, p - a);
-    let (d1, d2) = (ab.dot(ap), ac.dot(ap));
-    if d1 <= 0.0 && d2 <= 0.0 {
-        return a;
-    }
-    let bp = p - b;
-    let (d3, d4) = (ab.dot(bp), ac.dot(bp));
-    if d3 >= 0.0 && d4 <= d3 {
-        return b;
-    }
-    let vc = d1 * d4 - d3 * d2;
-    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
-        return a + ab * (d1 / (d1 - d3));
-    }
-    let cp = p - c;
-    let (d5, d6) = (ab.dot(cp), ac.dot(cp));
-    if d6 >= 0.0 && d5 <= d6 {
-        return c;
-    }
-    let vb = d5 * d2 - d1 * d6;
-    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
-        return a + ac * (d2 / (d2 - d6));
-    }
-    let va = d3 * d6 - d5 * d4;
-    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
-        return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
-    }
-    let den = va + vb + vc;
-    if den.abs() < 1e-300 {
-        return a;
-    }
-    a + ab * (vb / den) + ac * (vc / den)
 }
 
 /// Set joint values, stopping short where contact sets would collide or a closed loop could no

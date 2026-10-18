@@ -51,45 +51,13 @@ fn face_tris(m: &Mesh) -> Vec<FaceTris> {
     out
 }
 
-fn closest_on_tri(p: Vec3, [a, b, c]: [Vec3; 3]) -> Vec3 {
-    let (ab, ac, ap) = (b - a, c - a, p - a);
-    let (d1, d2) = (ab.dot(ap), ac.dot(ap));
-    if d1 <= 0.0 && d2 <= 0.0 {
-        return a;
-    }
-    let bp = p - b;
-    let (d3, d4) = (ab.dot(bp), ac.dot(bp));
-    if d3 >= 0.0 && d4 <= d3 {
-        return b;
-    }
-    let vc = d1 * d4 - d3 * d2;
-    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
-        return a + ab * (d1 / (d1 - d3));
-    }
-    let cp = p - c;
-    let (d5, d6) = (ab.dot(cp), ac.dot(cp));
-    if d6 >= 0.0 && d5 <= d6 {
-        return c;
-    }
-    let vb = d5 * d2 - d1 * d6;
-    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
-        return a + ac * (d2 / (d2 - d6));
-    }
-    let va = d3 * d6 - d5 * d4;
-    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
-        return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
-    }
-    let den = 1.0 / (va + vb + vc);
-    a + ab * (vb * den) + ac * (vc * den)
-}
-
 /// Does point `p` with normal `n` lie on the face (within `tol`, normals along each other)?
 fn on_face(f: &FaceTris, p: Vec3, n: Vec3, tol: f64) -> bool {
     if p.x < f.lo.x - tol || p.y < f.lo.y - tol || p.z < f.lo.z - tol || p.x > f.hi.x + tol || p.y > f.hi.y + tol || p.z > f.hi.z + tol {
         return false;
     }
     // Either side: a cut's tool faces come out turned inside out.
-    f.tris.iter().any(|(t, tn)| tn.dot(n).abs() > 0.95 && closest_on_tri(p, *t).dist(p) <= tol)
+    f.tris.iter().any(|(t, tn)| tn.dot(n).abs() > 0.95 && solidcraft_geom::closest_on_triangle(p, t[0], t[1], t[2]).dist(p) <= tol)
 }
 
 /// Sample points (triangle centroids, spread out) with normals of a result face.
@@ -406,7 +374,7 @@ mod tests {
         let mut best = (f64::INFINITY, 0);
         for (t, f) in m.triangles.iter().zip(&m.tri_face) {
             let q = m.tri(t).unwrap();
-            let d = super::closest_on_tri(p, q).dist(p);
+            let d = solidcraft_geom::closest_on_triangle(p, q[0], q[1], q[2]).dist(p);
             if d < best.0 {
                 best = (d, *f as usize);
             }

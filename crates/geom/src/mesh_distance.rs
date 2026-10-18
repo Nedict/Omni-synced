@@ -3,7 +3,7 @@
 //! volume hierarchy, so a query costs about the pairs of triangles that come near each other
 //! rather than the product of the triangle counts.
 
-use crate::compare::closest_on_triangle;
+use crate::closest_on_triangle;
 use crate::{Aabb3, Bvh, Mesh, Vec3};
 
 /// A mesh's triangles with their B-rep faces, indexed for distance queries.

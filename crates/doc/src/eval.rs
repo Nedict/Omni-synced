@@ -2376,7 +2376,7 @@ fn faces_through(st: &ModelState, p: Vec3, reach: f64) -> Vec<(f64, Vec3, Option
         let mut near: BTreeMap<u32, (f64, Vec3)> = BTreeMap::new();
         for (t, f) in m.triangles.iter().zip(&m.tri_face) {
             let Some([a, bb, c]) = m.tri(t) else { continue };
-            let d = crate::appearance::closest_on_triangle(p, a, bb, c).dist(p);
+            let d = solidcraft_geom::closest_on_triangle(p, a, bb, c).dist(p);
             let Some(n) = (bb - a).cross(c - a).normalized() else { continue };
             if d <= reach && near.get(f).is_none_or(|(x, _)| d < *x) {
                 near.insert(*f, (d, n));
@@ -4653,7 +4653,7 @@ fn face_plane(st: &ModelState, picked: &Plane, at: Vec3, name: Option<&str>) -> 
                 .zip(&mesh.tri_face)
                 .filter(|(_, tf)| **tf as usize == f.index)
                 .filter_map(|(t, _)| mesh.tri(t))
-                .map(|[a, bb, c]| crate::project::closest_on_triangle(at, a, bb, c).dist(at))
+                .map(|[a, bb, c]| solidcraft_geom::closest_on_triangle(at, a, bb, c).dist(at))
                 .fold(f64::INFINITY, f64::min);
             if best.is_none_or(|x| d < x.0) {
                 best = Some((d, f.centroid.dot(n)));
