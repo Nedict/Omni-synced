@@ -88,7 +88,7 @@ const SAMPLES: usize = 9;
 /// Unit normals of each face's triangles.
 fn normals(m: &Mesh, nf: usize) -> Vec<Vec<Vec3>> {
     let mut per: Vec<Vec<Vec3>> = vec![Vec::new(); nf];
-    for ([a, b, c], f) in m.face_tris() {
+    for (solidcraft_geom::Triangle([a, b, c]), f) in m.face_tris() {
         if let Some(v) = per.get_mut(f as usize)
             && let Some(n) = (b - a).cross(c - a).normalized()
         {
@@ -101,7 +101,7 @@ fn normals(m: &Mesh, nf: usize) -> Vec<Vec<Vec3>> {
 /// Triangle centroids spread over each face: face → points.
 fn samples(m: &Mesh, nf: usize) -> Vec<Vec<Vec3>> {
     let mut per: Vec<Vec<Vec3>> = vec![Vec::new(); nf];
-    for ([a, b, c], f) in m.face_tris() {
+    for (solidcraft_geom::Triangle([a, b, c]), f) in m.face_tris() {
         if let Some(v) = per.get_mut(f as usize) {
             v.push((a + b + c) * (1.0 / 3.0));
         }
@@ -126,7 +126,7 @@ impl FaceIndex {
     fn new(m: &Mesh, nf: usize) -> FaceIndex {
         let mut faces: Vec<(Vec3, Vec3, Vec<[Vec3; 3]>)> =
             vec![(Vec3::new(f64::MAX, f64::MAX, f64::MAX), Vec3::new(f64::MIN, f64::MIN, f64::MIN), Vec::new()); nf];
-        for (tri, f) in m.face_tris() {
+        for (solidcraft_geom::Triangle(tri), f) in m.face_tris() {
             if let Some(slot) = faces.get_mut(f as usize) {
                 for p in tri {
                     slot.0 = Vec3::new(slot.0.x.min(p.x), slot.0.y.min(p.y), slot.0.z.min(p.z));
@@ -145,7 +145,7 @@ impl FaceIndex {
             if p.x < lo.x - tol || p.y < lo.y - tol || p.z < lo.z - tol || p.x > hi.x + tol || p.y > hi.y + tol || p.z > hi.z + tol {
                 continue;
             }
-            let d = tris.iter().map(|[a, b, c]| solidcraft_geom::closest_on_triangle(p, *a, *b, *c).dist(p)).fold(f64::MAX, f64::min);
+            let d = tris.iter().map(|[a, b, c]| solidcraft_geom::Triangle([*a, *b, *c]).closest_point(p).dist(p)).fold(f64::MAX, f64::min);
             if d <= tol && best.is_none_or(|(bd, _)| d < bd) {
                 best = Some((d, i));
             }

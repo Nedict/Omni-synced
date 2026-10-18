@@ -1009,7 +1009,7 @@ fn in_plane(tool: &Body, m: Vec3, d: f64, skin: f64) -> Vec<([Vec3; 3], f64)> {
             Some((i, if straight { -skin } else { 2.0 * chord }))
         })
         .collect();
-    mesh.face_tris().filter_map(|(t, face)| Some((t, *margins.get(&(face as usize))?))).collect()
+    mesh.face_tris().filter_map(|(t, face)| Some((t.0, *margins.get(&(face as usize))?))).collect()
 }
 
 /// Has `a` material behind every part of b's faces in the plane (m, d) (m their outward

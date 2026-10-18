@@ -3,7 +3,6 @@
 //! volume hierarchy, so a query costs about the pairs of triangles that come near each other
 //! rather than the product of the triangle counts.
 
-use crate::closest_on_triangle;
 use crate::{Aabb3, Bvh, Mesh, Vec3};
 
 /// A mesh's triangles with their B-rep faces, indexed for distance queries.
@@ -113,7 +112,7 @@ impl TriangleSet {
     pub fn distance_to(&self, p: Vec3, tris: &[u32]) -> f64 {
         tris.iter()
             .filter_map(|&t| self.tris.get(t as usize))
-            .map(|[a, b, c]| closest_on_triangle(p, *a, *b, *c).dist(p))
+            .map(|[a, b, c]| crate::Triangle([*a, *b, *c]).closest_point(p).dist(p))
             .fold(f64::INFINITY, f64::min)
     }
 }
@@ -194,10 +193,10 @@ pub fn triangle_distance(s: &[Vec3; 3], t: &[Vec3; 3]) -> (f64, Vec3, Vec3) {
         }
     };
     for p in s {
-        keep(*p, closest_on_triangle(*p, t[0], t[1], t[2]));
+        keep(*p, crate::Triangle([t[0], t[1], t[2]]).closest_point(*p));
     }
     for q in t {
-        keep(closest_on_triangle(*q, s[0], s[1], s[2]), *q);
+        keep(crate::Triangle([s[0], s[1], s[2]]).closest_point(*q), *q);
     }
     for (p0, p1) in edges(s) {
         for (q0, q1) in edges(t) {

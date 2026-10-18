@@ -93,7 +93,7 @@ pub(super) fn face_at_state(st: &solidcraft_doc::ModelState, p: Vec3, only: Opti
     for b in st.bodies.iter().filter(|b| only.is_none_or(|n| b.name == n)) {
         let m = b.mesh();
         let mut near: Option<(u32, f64)> = None;
-        for ([a, bb, c], f) in m.face_tris() {
+        for (solidcraft_geom::Triangle([a, bb, c]), f) in m.face_tris() {
             let d = point_triangle_dist(p, a, bb, c);
             if near.is_none_or(|(_, nd)| d < nd) {
                 near = Some((f, d));
@@ -219,7 +219,7 @@ pub(super) fn sketch_of_face(s: &mut Session, point: Vec3, cmd: &str, face_body:
     if d > tol * 10.0 {
         return Err(none());
     }
-    let tris: Vec<[Vec3; 3]> = m.face_tris_of(f as usize).collect();
+    let tris: Vec<[Vec3; 3]> = m.face_tris_of(f as usize).map(|t| t.0).collect();
     let normal = tris.iter().find_map(|[a, b, c]| (*b - *a).cross(*c - *a).normalized()).ok_or_else(|| bad(cmd, "degenerate face"))?;
     if tris.iter().any(|[a, b, c]| (*b - *a).cross(*c - *a).normalized().is_some_and(|n| n.dot(normal) < 1.0 - 1e-6)) {
         return Err(bad(cmd, "only planar faces can be extruded"));

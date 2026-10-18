@@ -51,7 +51,7 @@ fn edge_index(m: &Mesh, index: usize, point: Vec3) -> Option<usize> {
 }
 
 fn face_tris(m: &Mesh, f: usize) -> Vec<[Vec3; 3]> {
-    m.face_tris_of(f).collect()
+    m.face_tris_of(f).map(|t| t.0).collect()
 }
 
 /// A described item: its geometry, direction (planar face normal, straight edge direction),
@@ -238,7 +238,7 @@ fn face_slot(b: &solidcraft_doc::ModelBody, m: &Mesh, shape: &Shape, pts: &[Vec3
         return None;
     }
     let mut verts: Vec<Vec<Vec3>> = vec![Vec::new(); faces];
-    for (tri, f) in m.face_tris() {
+    for (solidcraft_geom::Triangle(tri), f) in m.face_tris() {
         if let Some(v) = verts.get_mut(f as usize) {
             v.extend(tri);
         }
@@ -359,7 +359,7 @@ fn closest(a: &Geo, b: &Geo) -> Option<(Vec3, Vec3)> {
         let mut best: Option<(f64, Vec3, Vec3)> = None;
         for p in &pts {
             for [x, y, z] in &tris {
-                let q = solidcraft_geom::closest_on_triangle(*p, *x, *y, *z);
+                let q = solidcraft_geom::Triangle([*x, *y, *z]).closest_point(*p);
                 let d = p.dist(q);
                 if best.is_none_or(|(bd, _, _)| d < bd) {
                     best = Some((d, *p, q));

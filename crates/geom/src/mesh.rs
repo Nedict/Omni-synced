@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::Vec3;
+use crate::{Triangle, Vec3};
 
 /// Axis-aligned bounding box.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -458,12 +458,12 @@ impl Mesh {
 
     /// Each triangle's corners with the B-rep face it came from (a triangle naming a missing
     /// vertex is skipped).
-    pub fn face_tris(&self) -> impl Iterator<Item = ([Vec3; 3], u32)> + '_ {
-        self.triangles.iter().zip(&self.tri_face).filter_map(|(t, f)| Some((self.tri(t)?, *f)))
+    pub fn face_tris(&self) -> impl Iterator<Item = (Triangle, u32)> + '_ {
+        self.triangles.iter().zip(&self.tri_face).filter_map(|(t, f)| Some((Triangle(self.tri(t)?), *f)))
     }
 
     /// The corners of the triangles that came from B-rep face `face`.
-    pub fn face_tris_of(&self, face: usize) -> impl Iterator<Item = [Vec3; 3]> + '_ {
+    pub fn face_tris_of(&self, face: usize) -> impl Iterator<Item = Triangle> + '_ {
         self.face_tris().filter(move |(_, f)| *f as usize == face).map(|(t, _)| t)
     }
 
@@ -471,8 +471,8 @@ impl Mesh {
     /// `None` for a mesh with no triangles.
     pub fn nearest_face(&self, p: Vec3) -> Option<FaceHit> {
         let mut best: Option<FaceHit> = None;
-        for ([a, b, c], face) in self.face_tris() {
-            let point = crate::closest_on_triangle(p, a, b, c);
+        for (t, face) in self.face_tris() {
+            let point = t.closest_point(p);
             let dist = point.dist(p);
             if best.is_none_or(|h| dist < h.dist) {
                 best = Some(FaceHit { face, point, dist });

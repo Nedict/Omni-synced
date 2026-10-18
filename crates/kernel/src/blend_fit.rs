@@ -299,7 +299,7 @@ fn select_in(body: &Body, pts: &[Vec3]) -> Result<Selection> {
     }
     let m = mesh.measure();
     let coarse = (m.volume, m.area);
-    let tris = mesh.face_tris().map(|(t, f)| (t, f as usize)).collect();
+    let tris = mesh.face_tris().map(|(t, f)| (t.0, f as usize)).collect();
     Ok(Selection { frames, tris, planar, size, chord, coarse })
 }
 

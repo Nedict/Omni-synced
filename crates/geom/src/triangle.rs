@@ -1,12 +1,28 @@
-//! Point queries against a triangle.
+//! A triangle in space and what can be asked of it.
 
 use crate::Vec3;
 
-/// The point of triangle `abc` nearest `p` (Ericson, Real-Time Collision Detection, 5.1.5). A
-/// zero-length edge (a cone's tip repeats its apex vertex) has no interior to project onto, so
-/// its region is skipped rather than dividing 0 by 0: the point then comes from the edges that
-/// have length, and a triangle collapsed to one point gives that point.
-pub fn closest_on_triangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
+/// A triangle by its corners `a`, `b`, `c`, in that order (the order gives it a side).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Triangle(pub [Vec3; 3]);
+
+impl Triangle {
+    /// The point of the triangle nearest `p` (Ericson, Real-Time Collision Detection, 5.1.5). A
+    /// zero-length edge (a cone's tip repeats its apex vertex) has no interior to project onto,
+    /// so its region is skipped rather than dividing 0 by 0: the point then comes from the edges
+    /// that have length, and a triangle collapsed to one point gives that point.
+    pub fn closest_point(&self, p: Vec3) -> Vec3 {
+        closest(p, self.0)
+    }
+}
+
+impl From<[Vec3; 3]> for Triangle {
+    fn from(corners: [Vec3; 3]) -> Triangle {
+        Triangle(corners)
+    }
+}
+
+fn closest(p: Vec3, [a, b, c]: [Vec3; 3]) -> Vec3 {
     let (ab, ac, ap) = (b - a, c - a, p - a);
     let (d1, d2) = (ab.dot(ap), ac.dot(ap));
     if d1 <= 0.0 && d2 <= 0.0 {
@@ -48,9 +64,9 @@ mod tests {
     #[test]
     fn the_nearest_point_is_inside_on_an_edge_or_at_a_corner() {
         let (a, b, c) = (Vec3::new(0., 0., 0.), Vec3::new(4., 0., 0.), Vec3::new(0., 4., 0.));
-        assert_eq!(closest_on_triangle(Vec3::new(1., 1., 5.), a, b, c), Vec3::new(1., 1., 0.));
-        assert_eq!(closest_on_triangle(Vec3::new(2., -3., 0.), a, b, c), Vec3::new(2., 0., 0.));
-        assert_eq!(closest_on_triangle(Vec3::new(-1., -1., 1.), a, b, c), a);
+        assert_eq!(Triangle([a, b, c]).closest_point(Vec3::new(1., 1., 5.)), Vec3::new(1., 1., 0.));
+        assert_eq!(Triangle([a, b, c]).closest_point(Vec3::new(2., -3., 0.)), Vec3::new(2., 0., 0.));
+        assert_eq!(Triangle([a, b, c]).closest_point(Vec3::new(-1., -1., 1.)), a);
     }
 
     /// A cone's tip repeats its apex vertex, so the triangles there have a zero-length edge: the
@@ -61,10 +77,10 @@ mod tests {
         let (a, c) = (Vec3::new(0., 0., 0.), Vec3::new(2., 0., 0.));
         for (b, c) in [(a, c), (c, c), (a, a)] {
             for p in [Vec3::new(1., 1., 0.), Vec3::new(-1., 0.5, 0.), Vec3::new(3., -2., 1.), a] {
-                let q = closest_on_triangle(p, a, b, c);
+                let q = Triangle([a, b, c]).closest_point(p);
                 assert!(q.x.is_finite() && q.y.is_finite() && q.z.is_finite(), "{a:?} {b:?} {c:?} {p:?} -> {q:?}");
             }
         }
-        assert_eq!(closest_on_triangle(Vec3::new(1., 1., 0.), a, a, c), Vec3::new(1., 0., 0.));
+        assert_eq!(Triangle([a, a, c]).closest_point(Vec3::new(1., 1., 0.)), Vec3::new(1., 0., 0.));
     }
 }

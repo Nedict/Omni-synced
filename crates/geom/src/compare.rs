@@ -15,7 +15,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
-use crate::{Aabb3, Mesh, Vec3, closest_on_triangle};
+use crate::{Aabb3, Mesh, Vec3};
 
 /// Runs a job for every index below `n`: the jobs are independent, so any order and any number
 /// of threads will do. [`serial`] runs them one after another; a caller with threads passes one
@@ -266,7 +266,7 @@ impl TriangleTree {
             if node.leaf {
                 for k in node.a..node.b {
                     let Some([a, b, c]) = self.tris.get(k as usize).copied() else { continue };
-                    let d2 = (closest_on_triangle(p, a, b, c) - p).len2();
+                    let d2 = (crate::Triangle([a, b, c]).closest_point(p) - p).len2();
                     if d2 < best2 {
                         best2 = d2;
                         hit = self.ids.get(k as usize).copied();

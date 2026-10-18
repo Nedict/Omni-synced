@@ -632,7 +632,7 @@ fn opening_overreach(healed: &Body, cavity: &Body, opened: &[usize], thickness: 
         let n = pl.normal();
         let Some(n) = Vec3::new(n.x, n.y, n.z).normalized() else { return Ok(None) };
         let d = n.dot(from_p3(pl.origin()));
-        let tris: Vec<[Vec3; 3]> = mesh.face_tris_of(*fi).collect();
+        let tris: Vec<[Vec3; 3]> = mesh.face_tris_of(*fi).map(|t| t.0).collect();
         if tris.is_empty() {
             return Ok(None);
         }

@@ -4543,7 +4543,7 @@ pub(crate) fn face_sel(s: &Session, p0: Vec3) -> Option<Sel> {
     for b in &st.bodies {
         let p = stored_on(&frames, &b.name, p0);
         let m = b.mesh();
-        for ([a, bb, c], f) in m.face_tris() {
+        for (solidcraft_engine::geom::Triangle([a, bb, c]), f) in m.face_tris() {
             let d = crate::preview::point_triangle_dist(p, a, bb, c);
             if best.as_ref().is_none_or(|(bd, _)| d < *bd) {
                 best = Some((d, Sel::Face { body: b.name.clone(), index: f as usize, point: p }));

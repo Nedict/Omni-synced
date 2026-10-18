@@ -31,7 +31,7 @@ fn dist_to(m: &Mesh, p: Vec3) -> f64 {
 }
 
 fn tris(m: &Mesh, face: Option<u32>) -> Vec<[Vec3; 3]> {
-    m.face_tris().filter(|(_, f)| face.is_none_or(|x| x == *f)).map(|(t, _)| t).collect()
+    m.face_tris().filter(|(_, f)| face.is_none_or(|x| x == *f)).map(|(t, _)| t.0).collect()
 }
 
 /// Ray–triangle hit parameter (Möller–Trumbore), any sign.
@@ -355,7 +355,7 @@ pub(crate) fn iso_curve(m: &Mesh, f: u32, p: Vec3, dir: &str) -> Vec<Vec<Vec3>> 
 /// polylines. Each family is the face cut by parallel planes spaced evenly over the face.
 pub fn iso_grid(m: &Mesh, f: u32, p: Vec3, count: usize) -> Vec<Vec<Vec3>> {
     let count = count.clamp(1, 100);
-    let verts: Vec<Vec3> = m.face_tris_of(f as usize).flatten().collect();
+    let verts: Vec<Vec3> = m.face_tris_of(f as usize).flat_map(|t| t.0).collect();
     if verts.is_empty() {
         return Vec::new();
     }

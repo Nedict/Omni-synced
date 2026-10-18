@@ -1455,7 +1455,7 @@ fn sliver_faces(b: &Body, size: f64) -> usize {
     // Per face: its area, and how many of its triangles use each mesh edge (its boundary once).
     let mut area: HashMap<u32, f64> = HashMap::new();
     let mut sides: HashMap<(u32, (i64, i64, i64), (i64, i64, i64)), (u32, f64)> = HashMap::new();
-    for ([a, b, c], f) in m.face_tris() {
+    for (solidcraft_geom::Triangle([a, b, c]), f) in m.face_tris() {
         *area.entry(f).or_default() += (b - a).cross(c - a).len() * 0.5;
         for (p, r) in [(a, b), (b, c), (c, a)] {
             let (kp, kr) = (key(p), key(r));

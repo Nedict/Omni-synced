@@ -1370,7 +1370,7 @@ impl Body {
         let m = self.tessellate(tol)?;
         let nf = self.face_count();
         let mut acc: Vec<(f64, Vec3, Vec3, bool)> = vec![(0.0, Vec3::ZERO, Vec3::ZERO, true); nf];
-        for ([a, b, c], f) in m.face_tris() {
+        for (solidcraft_geom::Triangle([a, b, c]), f) in m.face_tris() {
             let cr = (b - a).cross(c - a);
             let ar = cr.len() * 0.5;
             if let Some(slot) = acc.get_mut(f as usize) {

@@ -219,7 +219,7 @@ fn deepest(a: &solidcraft_geom::Mesh, b: &solidcraft_geom::Mesh, tol: f64) -> f6
         {
             continue;
         }
-        let d = tb.iter().map(|[a, b, c]| solidcraft_geom::closest_on_triangle(p, *a, *b, *c).dist(p)).fold(f64::MAX, f64::min);
+        let d = tb.iter().map(|[a, b, c]| solidcraft_geom::Triangle([*a, *b, *c]).closest_point(p).dist(p)).fold(f64::MAX, f64::min);
         if d > tol.max(best) && inside(p, &tb) {
             best = d;
         }
