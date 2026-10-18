@@ -65,8 +65,9 @@ the visibility work allows for it.
 
 Surfaces are recognised whether they are stored as analytic records, as revolutions of
 lines and circles or as spline patches (to 1e-9 relative; a patch whose control points lie
-in one plane is that plane); a recognised patch is trimmed and intersected in its own
-analytic chart. Faces that lie on one surface (a sphere
+in one plane is that plane). A patch is taken for a quadric or torus only when it lies on it
+at enough points of every knot span to make the check exact for its degree; a recognised
+patch is trimmed and intersected in its own analytic chart. Faces that lie on one surface (a sphere
 stored as two hemispheres, a cylinder split in two) share their silhouettes: the edges
 between them are seams and are not drawn, and a silhouette running along such a seam is
 one curve. A face joins such a set only when the first face's surface passes through its
@@ -145,7 +146,9 @@ and intervals:
   a freeform tube is uncertain where the tube may cover it and visible elsewhere, and so is
   a sloping edge that only dips behind a freeform patch near its end;
 - a torus patch stored as a rational spline is recognised and draws its outer equator as an
-  exact arc;
+  exact arc, and one with a bump in a knot span 0.002 of its parameters wide is not taken for
+  a torus; a big circle passing under a thin freeform tube in a coarse scene is uncertain
+  there;
 - two strips of a torus 0.0003 rad wide keep their 0.006 mm of outline;
 - two touching boxes draw each shared edge once;
 - mirrored placements, bad body indices and bad views are refused; cancellation and

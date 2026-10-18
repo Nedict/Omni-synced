@@ -805,14 +805,22 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
     let shadows = shadow_boxes(defs, scene, view, &unsupported);
     for t in &mut tracks {
         let mut cuts = Vec::new();
-        for w in t.samples.windows(2) {
+        for (i, w) in t.samples.windows(2).enumerate() {
             let (Some(a), Some(b)) = (w.first(), w.get(1)) else { continue };
+            let sag = t.sags.get(i).copied().unwrap_or(0.);
             for sh in &shadows {
                 for (k, edge) in [(0usize, sh.lo[0]), (0, sh.hi[0]), (1, sh.lo[1]), (1, sh.hi[1])] {
                     let (u, v) = (a.1[k], b.1[k]);
                     if (u - edge) * (v - edge) < 0. {
                         cuts.push(a.0 + (b.0 - a.0) * (edge - u) / (v - u));
                     }
+                }
+                // A chord that misses the box by less than its sag may stand for a curve that
+                // enters it: its stretch becomes a piece of its own, judged below.
+                let gap = box_gap(a.1, b.1, sh.lo, sh.hi);
+                if gap > 0. && gap <= sag {
+                    cuts.push(a.0);
+                    cuts.push(b.0);
                 }
             }
         }
@@ -932,23 +940,54 @@ fn shadow_boxes(defs: &[Prepared], scene: &[Placement], view: &View, left_out: &
     out
 }
 
-/// Whether the piece `r` of a track lies inside a left-out face's screen box (it is cut at the
-/// boxes' edges, so its middle tells) with any of its points behind the face's nearest point
-/// (not counting the track's own faces).
+/// Whether the piece `r` of a track may reach into a left-out face's screen box (one of its
+/// points within its chords' sag of the box) with any of its points behind the face's nearest
+/// point (not counting the track's own faces).
 fn in_shadow(t: &Track, r: [f64; 2], scene: &[Placement], view: &View, shadows: &[Shadow]) -> bool {
     let Some(p) = scene.get(t.placement) else { return false };
     let c = t.c3();
-    let s = view.screen(p.apply(c.at(0.5 * (r[0] + r[1]))));
     let inner = t.samples.iter().map(|q| q.0).filter(|x| *x > r[0] && *x < r[1]);
-    let deepest = [r[0], 0.5 * (r[0] + r[1]), r[1]].into_iter().chain(inner).map(|x| p.apply(c.at(x)).dot(view.d)).fold(f64::MIN, f64::max);
+    let pts: Vec<Vec3> = [r[0], 0.5 * (r[0] + r[1]), r[1]].into_iter().chain(inner).map(|x| p.apply(c.at(x))).collect();
+    let sag = t
+        .samples
+        .windows(2)
+        .zip(&t.sags)
+        .filter(|(w, _)| w.get(1).is_some_and(|b| b.0 > r[0]) && w.first().is_some_and(|a| a.0 < r[1]))
+        .map(|(_, s)| *s)
+        .fold(0., f64::max);
+    let deepest = pts.iter().map(|w| w.dot(view.d)).fold(f64::MIN, f64::max);
     shadows.iter().any(|sh| {
         !(sh.placement == t.placement && t.own.contains(&sh.face))
-            && s[0] >= sh.lo[0]
-            && s[0] <= sh.hi[0]
-            && s[1] >= sh.lo[1]
-            && s[1] <= sh.hi[1]
             && deepest > sh.near
+            && pts.iter().any(|w| {
+                let s = view.screen(*w);
+                s[0] >= sh.lo[0] - sag && s[0] <= sh.hi[0] + sag && s[1] >= sh.lo[1] - sag && s[1] <= sh.hi[1] + sag
+            })
     })
+}
+
+/// Distance between the segment `a b` and the box `lo hi` (zero when they meet).
+fn box_gap(a: [f64; 2], b: [f64; 2], lo: [f64; 2], hi: [f64; 2]) -> f64 {
+    let inside = |p: [f64; 2]| p[0] >= lo[0] && p[0] <= hi[0] && p[1] >= lo[1] && p[1] <= hi[1];
+    if inside(a) || inside(b) {
+        return 0.;
+    }
+    let corners = [[lo[0], lo[1]], [hi[0], lo[1]], [hi[0], hi[1]], [lo[0], hi[1]]];
+    let crosses = (0..4).any(|k| {
+        let (Some(c), Some(d)) = (corners.get(k), corners.get((k + 1) % 4)) else { return false };
+        let side = |p: [f64; 2], q: [f64; 2], r: [f64; 2]| (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+        side(a, b, *c) * side(a, b, *d) <= 0. && side(*c, *d, a) * side(*c, *d, b) <= 0.
+    });
+    if crosses {
+        return 0.;
+    }
+    let to_box = |p: [f64; 2]| {
+        let dx = (lo[0] - p[0]).max(p[0] - hi[0]).max(0.);
+        let dy = (lo[1] - p[1]).max(p[1] - hi[1]).max(0.);
+        dx.hypot(dy)
+    };
+    let corner_gap = corners.iter().map(|q| point_segment(*q, a, b)).fold(f64::MAX, f64::min);
+    to_box(a).min(to_box(b)).min(corner_gap)
 }
 
 fn scene_centre(defs: &[Prepared], scene: &[Placement]) -> Result<Vec3, HlrError> {

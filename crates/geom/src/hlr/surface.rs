@@ -71,6 +71,39 @@ pub(crate) enum Analytic {
     Other,
 }
 
+impl Analytic {
+    /// Distance from `q` to the whole surface (a cone's nappe near `q`); infinite for planes
+    /// and other surfaces, which are not checked this way.
+    fn distance(&self, q: Vec3) -> f64 {
+        let rh = |o: Vec3, a: Vec3| {
+            let w = q - o;
+            let h = w.dot(a);
+            ((w - a * h).len(), h)
+        };
+        match *self {
+            Analytic::Cylinder { p, a, r } => (rh(p, a).0 - r).abs(),
+            Analytic::Cone { apex, a, half } => {
+                let (rho, h) = rh(apex, a);
+                (rho * half.cos() - h * half.sin()).abs()
+            }
+            Analytic::Sphere { c, r } => (q.dist(c) - r).abs(),
+            Analytic::Torus { c, a, major, minor } => {
+                let (rho, h) = rh(c, a);
+                ((rho - major).hypot(h) - minor).abs()
+            }
+            Analytic::Plane | Analytic::Other => f64::INFINITY,
+        }
+    }
+
+    /// The degree of the surface's implicit equation: 2 for quadrics, 4 for a torus.
+    fn implicit_degree(&self) -> usize {
+        match self {
+            Analytic::Torus { .. } => 4,
+            _ => 2,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Hit {
     pub lam: f64,
@@ -1080,8 +1113,49 @@ impl Nurbs {
         self.grid.first().zip(self.grid.last()).map_or(1., |(a, b)| a.dist(*b))
     }
 
-    /// Cylinder/cone/sphere recognition from iso-curves: one family straight, the other circles.
+    /// The recognised form, checked over the whole patch: on each knot span the implicit
+    /// equation of a surface of degree d, multiplied out by the weight, is a polynomial of
+    /// degree d p by d q in the span's parameters, so it is zero everywhere when zero at
+    /// d p + 1 by d q + 1 points. It is checked at d p + 3 by d q + 3 Chebyshev points of
+    /// every span and the span's corners: nothing between samples can hide a bump.
     fn analytic(&self, tol: f64) -> Analytic {
+        let an = self.candidate(tol);
+        if matches!(an, Analytic::Other | Analytic::Plane) {
+            return an;
+        }
+        let pts: Vec<Vec3> = self.s.homogeneous().iter().filter_map(|h| h.project()).collect();
+        let hull = pts.iter().skip(1).fold(pts.first().map(|p| (*p, *p)), |acc, p| acc.map(|(lo, hi)| (lo.min(*p), hi.max(*p))));
+        let size = hull.map_or(1., |(lo, hi)| (hi - lo).len()).max(1e-9);
+        let [pu, pv] = self.s.degree();
+        let d = an.implicit_degree();
+        let spans = |k: usize| -> Vec<[f64; 2]> {
+            let (Some(ks), Some(dom)) = (self.s.knots().get(k), self.dom.get(k)) else { return Vec::new() };
+            let mut cuts: Vec<f64> = ks.iter().copied().filter(|x| *x > dom[0] && *x < dom[1]).collect();
+            cuts.push(dom[0]);
+            cuts.push(dom[1]);
+            cuts.sort_by(f64::total_cmp);
+            cuts.dedup();
+            cuts.windows(2).filter_map(|w| Some([*w.first()?, *w.get(1)?])).collect()
+        };
+        let nodes = |deg: usize, s: [f64; 2]| -> Vec<f64> {
+            let n = d * deg + 3;
+            let (mid, half) = (0.5 * (s[0] + s[1]), 0.5 * (s[1] - s[0]));
+            let inner = (0..n).map(move |k| mid + half * (std::f64::consts::PI * (2 * k + 1) as f64 / (2 * n) as f64).cos());
+            [s[0], s[1]].into_iter().chain(inner).collect()
+        };
+        let (su, sv) = (spans(0), spans(1));
+        let on = su.iter().all(|a| {
+            let us = nodes(pu, *a);
+            sv.iter().all(|b| {
+                let vs = nodes(pv, *b);
+                us.iter().all(|u| vs.iter().all(|v| an.distance(self.point([*u, *v])) <= tol * size))
+            })
+        });
+        if on { an } else { Analytic::Other }
+    }
+
+    /// Cylinder/cone/sphere/torus candidates from iso-curves and grid samples.
+    fn candidate(&self, tol: f64) -> Analytic {
         let size = self.size_hint().max(1e-9);
         let iso = |k: usize, x: f64| -> C3 {
             let n = 24;

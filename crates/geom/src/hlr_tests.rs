@@ -886,6 +886,123 @@ fn a_torus_stored_as_a_rational_spline_patch_is_recognised() {
 }
 
 #[test]
+fn a_torus_patch_with_a_bump_in_a_narrow_knot_span_is_not_taken_for_a_torus() {
+    // The torus patch R 20, r 5 again, its longitude in three spans, the middle one 0.002 of
+    // the parameters wide; one control point there pushed out by 0.2 %. Between the sample
+    // grid's points, but not between the checks on every knot span.
+    let (big, small) = (20., 5.);
+    let q = std::f64::consts::FRAC_PI_4;
+    let s2 = std::f64::consts::SQRT_2;
+    let ts = [-q, -q + 0.3, -q + 0.5, q];
+    let mut lon: Vec<([f64; 2], f64)> = vec![([ts[0].cos(), ts[0].sin()], 1.)];
+    for w in ts.windows(2) {
+        let (m, h) = (0.5 * (w[0] + w[1]), 0.5 * (w[1] - w[0]));
+        lon.push(([m.cos() / h.cos(), m.sin() / h.cos()], h.cos()));
+        lon.push(([w[1].cos(), w[1].sin()], 1.));
+    }
+    let mer = [([q.cos(), -q.sin()], 1.), ([s2, 0.], q.cos()), ([q.cos(), q.sin()], 1.)];
+    let homogeneous: Vec<Vec<[f64; 4]>> = lon
+        .iter()
+        .enumerate()
+        .map(|(i, (ci, wi))| {
+            mer.iter()
+                .enumerate()
+                .map(|(j, (mj, wj))| {
+                    let bump = if (i, j) == (3, 1) { 1.002 } else { 1. };
+                    let (rho, h, w) = ((big + small * mj[0]) * bump, small * mj[1], wi * wj);
+                    [rho * ci[0] * w, rho * ci[1] * w, h * w, w]
+                })
+                .collect()
+        })
+        .collect();
+    let at = |t: f64, f: f64| [(big + small * f.cos()) * t.cos(), (big + small * f.cos()) * t.sin(), small * f.sin()];
+    let parallel = |f: f64| crate::brep::Frame { origin: [0., 0., small * f.sin()], x_axis: [1., 0., 0.], y_axis: [0., 1., 0.] };
+    let meridian = |t: f64| crate::brep::Frame { origin: [big * t.cos(), big * t.sin(), 0.], x_axis: [t.cos(), t.sin(), 0.], y_axis: [0., 0., 1.] };
+    let edges = vec![
+        Edge { vertices: [0, 1], curve: Curve::CircleArc { frame: parallel(-q), radius: big + small * q.cos(), angle: [-q, q] } },
+        Edge { vertices: [1, 2], curve: Curve::CircleArc { frame: meridian(q), radius: small, angle: [-q, q] } },
+        Edge { vertices: [3, 2], curve: Curve::CircleArc { frame: parallel(q), radius: big + small * q.cos(), angle: [-q, q] } },
+        Edge { vertices: [0, 3], curve: Curve::CircleArc { frame: meridian(-q), radius: small, angle: [-q, q] } },
+    ];
+    let face = Face {
+        loops: vec![vec![uses(0, true), uses(1, true), uses(2, false), uses(3, false)]],
+        surface: Surface::RationalSpline {
+            u_knots: vec![0., 0., 0., 0.1, 0.1, 0.102, 0.102, 1., 1., 1.],
+            v_knots: vec![0., 0., 0., 1., 1., 1.],
+            homogeneous,
+        },
+        forward: true,
+    };
+    let patch = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell { vertices: vec![at(-q, -q), at(q, -q), at(q, q), at(-q, q)], edges, faces: vec![face] }],
+    };
+    let def = prepare(&patch, &Options::default()).unwrap();
+    assert_eq!(def.report.freeform_faces, vec![0], "{:?}", def.report);
+}
+
+#[test]
+fn a_big_circle_passing_behind_a_thin_left_out_face_is_uncertain_there() {
+    // A disc of radius 5000 whose edge passes under a freeform tube (radius 0.01 to about
+    // 0.02, a cubic profile) lying along Y over (5000, 0), with a cube 9 km away making the scene coarse. The edge is turned so
+    // that its samples on either side of the tube are 30 mm away at x = 4999.905: the chord
+    // between them misses the tube's box by less than its sag, crossing none of its sides.
+    let tau = std::f64::consts::TAU;
+    let turn = 8.5 * std::f64::consts::PI / 256.;
+    let (c, sn) = (turn.cos(), turn.sin());
+    let frame = crate::brep::Frame { origin: [0.; 3], x_axis: [-c, -sn, 0.], y_axis: [sn, -c, 0.] };
+    let disc = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![[-5000. * c, -5000. * sn, 0.]],
+            edges: vec![Edge { vertices: [0, 0], curve: Curve::CircleArc { frame, radius: 5000., angle: [0., tau] } }],
+            faces: vec![Face {
+                loops: vec![vec![uses(0, true)]],
+                surface: Surface::Plane { origin: [0.; 3], u_axis: [1., 0., 0.], v_axis: [0., 1., 0.] },
+                forward: true,
+            }],
+        }],
+    };
+    let profile = Curve::Spline {
+        knots: vec![0., 0., 0., 0., 1., 1., 1., 1.],
+        points: vec![[5000.01, -100., 1.], [5000.03, -33., 1.], [5000.01, 33., 1.], [5000.01, 100., 1.]],
+    };
+    let end = |y: f64, v: u32| Edge {
+        vertices: [v, v],
+        curve: Curve::CircleArc {
+            frame: crate::brep::Frame { origin: [5000., y, 1.], x_axis: [1., 0., 0.], y_axis: [0., 0., 1.] },
+            radius: 0.01,
+            angle: [0., tau],
+        },
+    };
+    let tube = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![[5000.01, -100., 1.], [5000.01, 100., 1.]],
+            edges: vec![end(-100., 0), end(100., 1), Edge { vertices: [0, 1], curve: profile.clone() }],
+            faces: vec![Face {
+                loops: vec![vec![uses(0, true), uses(2, true), uses(1, false), uses(2, false)]],
+                surface: Surface::Revolution { profile: Box::new(profile), origin: [5000., 0., 1.], axis: [0., 1., 0.], angle: [0., tau] },
+                forward: true,
+            }],
+        }],
+    };
+    let defs = [
+        prepare(&tube, &Options::default()).unwrap(),
+        prepare(&disc, &Options::default()).unwrap(),
+        prepare(&cuboid([9e6, 0., 0.], [9e6 + 1., 1., 1.]), &Options::default()).unwrap(),
+    ];
+    assert_eq!(defs[0].report.freeform_faces, vec![0]);
+    let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&defs, &[identity(0, [0.; 3]), identity(1, [0.; 3]), identity(2, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    // The disc's edge reaches (5000, 0) at the parameter pi - turn.
+    let at = std::f64::consts::PI - turn;
+    let under: Vec<&Piece> = edge_line(&d, 1, 0).pieces.iter().filter(|p| p.t[0] <= at && p.t[1] >= at).collect();
+    assert!(!under.is_empty());
+    assert!(under.iter().all(|p| p.visibility != Visibility::Visible), "{under:?}");
+}
+
+#[test]
 fn narrow_torus_strips_keep_their_outline() {
     // Two strips of a torus R 20, r 10 between the meridian angles 0.3002, 0.3005 and 0.3008,
     // seen from the side: each side of the outline is a 0.006 mm piece of the circle traced on
