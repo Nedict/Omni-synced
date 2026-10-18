@@ -865,7 +865,6 @@ fn hostile_crossing_refs_never_panic() {
         json!({"type": "sketch_crossing", "sketch": 999999, "a": "l1", "b": "l2", "near": [1, 1]}),
         json!({"type": "sketch_crossing", "sketch": 1, "a": "nope", "b": "l1", "near": [1, 1]}),
         json!({"type": "sketch_crossing", "sketch": 1, "a": "l1", "b": "l1", "near": [1, 1]}),
-        json!({"type": "sketch_crossing", "sketch": 1, "a": "l1", "b": "l2", "near": [1e308, -1e308]}),
         json!({"sketch": 1, "crossing": "l1", "near": [1, 1]}),
         json!({"sketch": 1, "crossing": ["l1"], "near": [1, 1]}),
         json!({"sketch": 1, "crossing": ["l1", "l2"]}),
@@ -879,8 +878,22 @@ fn hostile_crossing_refs_never_panic() {
         let _ = s.execute("sketch.finish", &json!({}));
         let p = json!({"a": r.clone(), "b": {"point": [100, 0, 0]}, "c": {"point": [0, 100, 0]}});
         let res = s.execute("construct.plane.three_points", &p);
+        // Refused up front, or built as a feature that reports its error.
+        if res.is_ok() {
+            let id = s.doc.features.last().map(|f| f.id);
+            assert!(id.is_some_and(|id| s.model.result(id).is_some_and(|r| r.error.is_some())), "{r}: accepted without an error");
+        }
         assert!(!matches!(res, Err(EngineError::Internal(..))), "{r}: {res:?}");
     }
+    // A huge but finite pick is not an error: it resolves to the nearest crossing, without panicking.
+    let mut s = Session::default();
+    let _ = s.execute("sketch.create", &json!({"plane": "XY"}));
+    let _ = s.execute("sketch.line", &json!({"points": [[0, 0], [10, 10]]}));
+    let _ = s.execute("sketch.line", &json!({"points": [[0, 10], [10, 0]]}));
+    let _ = s.execute("sketch.finish", &json!({}));
+    let far = json!({"type": "sketch_crossing", "sketch": 1, "a": "l1", "b": "l2", "near": [1e308, -1e308]});
+    let res = s.execute("construct.plane.three_points", &json!({"a": far, "b": {"point": [100, 0, 50]}, "c": {"point": [0, 100, 80]}}));
+    assert!(!matches!(res, Err(EngineError::Internal(..))), "{res:?}");
 }
 
 #[test]

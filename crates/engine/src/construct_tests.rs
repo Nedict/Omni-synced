@@ -483,16 +483,19 @@ fn crossing_ref_resolves_on_a_tilted_sketch() {
 
 #[test]
 fn crossing_ref_picks_the_nearest_of_two_crossings() {
-    let mut s = Session::default();
-    let sk = run(&mut s, "sketch.create", json!({"plane": "XY"}))["sketch"].as_u64().unwrap();
-    run(&mut s, "sketch.line", json!({"points": [[-20, 0], [20, 0]]}));
-    run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "radius": 10}));
-    run(&mut s, "sketch.finish", json!({}));
-    crossing_plane(&mut s, sk, "l1", "c1", [10.0, 0.0]).unwrap();
-    let p = plane(&s, "X");
-    let pl = sketch_plane(&s, sk);
-    assert!(on_plane(&p, pl.to_world(Vec2::new(10.0, 0.0))));
-    assert!(!on_plane(&p, pl.to_world(Vec2::new(-10.0, 0.0))));
+    // Either end of the line crosses the circle: the pick decides which.
+    for (pick, other) in [(10.0, -10.0), (-10.0, 10.0)] {
+        let mut s = Session::default();
+        let sk = run(&mut s, "sketch.create", json!({"plane": "XY"}))["sketch"].as_u64().unwrap();
+        run(&mut s, "sketch.line", json!({"points": [[-20, 0], [20, 0]]}));
+        run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "radius": 10}));
+        run(&mut s, "sketch.finish", json!({}));
+        crossing_plane(&mut s, sk, "l1", "c1", [pick, 0.0]).unwrap();
+        let p = plane(&s, "X");
+        let pl = sketch_plane(&s, sk);
+        assert!(on_plane(&p, pl.to_world(Vec2::new(pick, 0.0))), "pick {pick}");
+        assert!(!on_plane(&p, pl.to_world(Vec2::new(other, 0.0))), "pick {pick}");
+    }
 }
 
 #[test]
