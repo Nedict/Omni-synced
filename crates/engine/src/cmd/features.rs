@@ -1537,6 +1537,8 @@ fn plane_angle(s: &mut Session, p: &Value) -> Result<Value> {
         Some(a @ Value::Object(o)) if !o.contains_key("dir") && !o.contains_key("origin") => {
             let g = super::construct::geo(s, Some(a), cmd, "axis")?;
             let (o, d) = solidcraft_doc::construct::resolve_line(&s.doc, &s.model.state(), &g).map_err(|e| bad(cmd, format!("axis: {e}")))?;
+            // An edge along an origin axis points the way the axis does (as picking the axis).
+            let d = if [Vec3::X, Vec3::Y, Vec3::Z].iter().any(|x| d.dot(*x) < -1.0 + 1e-9) { -d } else { d };
             (o, d, Some(Box::new(g)))
         }
         _ => {

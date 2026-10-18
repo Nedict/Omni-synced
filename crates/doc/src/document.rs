@@ -3113,7 +3113,9 @@ impl Document {
                 let (axis_origin, axis_dir) = match axis {
                     Some(axis) => {
                         let st = st.ok_or_else(|| DocError::Invalid("this plane is built from the model: evaluate first".into()))?;
-                        crate::construct::line(&crate::construct::Ctx { doc: self, vals, st, depth }, axis)?
+                        let (o, d) = crate::construct::line(&crate::construct::Ctx { doc: self, vals, st, depth }, axis)?;
+                        // The way the edge runs can change as the model rebuilds: keep the picked sense.
+                        (o, if d.dot(*axis_dir) < 0.0 { -d } else { d })
                     }
                     None => (*axis_origin, *axis_dir),
                 };

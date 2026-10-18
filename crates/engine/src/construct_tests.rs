@@ -327,7 +327,8 @@ fn plane_at_angle_about_a_model_edge_follows_it() {
     let hinged = |pl: &Plane, z: f64| {
         on_plane(pl, Vec3::new(0.0, 30.0, z))
             && on_plane(pl, Vec3::new(40.0, 30.0, z))
-            && (parallel(pl.normal(), Vec3::new(0.0, 1.0, 1.0)) || parallel(pl.normal(), Vec3::new(0.0, -1.0, 1.0)))
+            // Turned about +X (as the X axis would turn it), whichever way the edge runs.
+            && near(pl.normal(), Vec3::new(0.0, -1.0, 1.0) * std::f64::consts::FRAC_1_SQRT_2)
     };
     let tilt = plane(&s, "Tilt");
     assert!(hinged(&tilt, 20.0), "{tilt:?}");
