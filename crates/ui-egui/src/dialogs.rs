@@ -3328,6 +3328,8 @@ fn targets_row(ui: &mut egui::Ui, s: &Session, inputs: &mut [SelInput], index: u
     let mut remove = None;
     let mut activate = false;
     ui.horizontal_wrapped(|ui| {
+        // As wide as the other fields: more bodies wrap onto more lines, not a wider dialog.
+        ui.set_max_width(FIELD_W);
         ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
         for (k, item) in inp.items.iter().enumerate() {
             let name = selection_label(s, item);
