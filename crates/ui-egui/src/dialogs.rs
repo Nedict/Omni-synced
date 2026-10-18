@@ -577,6 +577,7 @@ impl Dialog {
                                         *second_plane = i;
                                         *second_offset = format!("{} mm", pl.normal().dot(o));
                                         *second_flip = dot < 0.0;
+                                        d.extra.remove("section_second_plane");
                                     }
                                 }
                             }
@@ -2878,7 +2879,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         ui.end_row();
                         if *quarter {
                             row_label(ui, "Second plane");
-                            combo(ui, "section_second", &["XY", "XZ", "YZ", "Current plane"], second_plane);
+                            let planes: &[&str] =
+                                if d.extra.contains_key("section_second_plane") { &["XY", "XZ", "YZ", "Current plane"] } else { &["XY", "XZ", "YZ"] };
+                            combo(ui, "section_second", planes, second_plane);
                             ui.end_row();
                             row_label(ui, "Second offset");
                             enter |= field(ui, second_offset);
