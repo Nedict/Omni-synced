@@ -90,22 +90,44 @@ impl<E: Ends> Chain<Vec2, E> {
     }
 }
 
-impl Ring<Vec2> {
+/// A point in a plane, whichever type holds it.
+pub trait Planar: Copy {
+    fn xy(self) -> (f64, f64);
+}
+
+impl Planar for Vec2 {
+    fn xy(self) -> (f64, f64) {
+        (self.x, self.y)
+    }
+}
+
+impl Planar for [f64; 2] {
+    fn xy(self) -> (f64, f64) {
+        (self[0], self[1])
+    }
+}
+
+impl<P: Planar> Ring<P> {
     /// The area the ring encloses, positive when it runs counter-clockwise.
     pub fn signed_area(&self) -> f64 {
-        0.5 * self.edges().map(|(a, b)| a.cross(*b)).sum::<f64>()
+        0.5 * self
+            .edges()
+            .map(|(a, b)| {
+                let ((ax, ay), (bx, by)) = (a.xy(), b.xy());
+                ax * by - ay * bx
+            })
+            .sum::<f64>()
     }
 
     /// Even-odd containment: whether a ray from `p` along +x crosses the ring an odd number of
     /// times.
-    pub fn contains(&self, p: Vec2) -> bool {
+    pub fn contains(&self, p: P) -> bool {
+        let (px, py) = p.xy();
         let mut inside = false;
         for (a, b) in self.edges() {
-            if (a.y > p.y) != (b.y > p.y) {
-                let x = a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x);
-                if p.x < x {
-                    inside = !inside;
-                }
+            let ((ax, ay), (bx, by)) = (a.xy(), b.xy());
+            if (ay > py) != (by > py) && px < ax + (py - ay) / (by - ay) * (bx - ax) {
+                inside = !inside;
             }
         }
         inside
@@ -183,6 +205,9 @@ mod tests {
         assert_eq!(square.iter().rev().copied().collect::<Ring<_>>().signed_area(), -4.0);
         assert!(square.contains(Vec2::new(1.0, 1.0)));
         assert!(!square.contains(Vec2::new(3.0, 1.0)));
+        let uv = Ring::from([[0.0, 0.0], [2.0, 0.0], [2.0, 2.0], [0.0, 2.0]]);
+        assert_eq!(uv.signed_area(), 4.0);
+        assert!(uv.contains([1.0, 1.0]) && !uv.contains([3.0, 1.0]));
         assert_eq!(square.bounds(), (Vec2::new(0.0, 0.0), Vec2::new(2.0, 2.0)));
         let (lo, hi) = Path::<Vec2>::default().bounds();
         assert!(lo.x > hi.x && lo.y > hi.y, "the empty box holds nothing");

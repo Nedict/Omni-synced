@@ -255,14 +255,7 @@ pub(crate) fn cut(
         }
         rings.push(Ring::new(ring));
     }
-    let area = |ring: &Ring<u32>| -> Option<f64> {
-        let mut s = 0.0;
-        for (&a, &b) in ring.edges() {
-            let (a, b) = (pos(a)?, pos(b)?);
-            s += a[0] * b[1] - b[0] * a[1];
-        }
-        Some(0.5 * s)
-    };
+    let area = |ring: &Ring<u32>| -> Option<f64> { Some(ring.iter().map(|&k| pos(k)).collect::<Option<Ring<_>>>()?.signed_area()) };
     let mut pieces: Vec<Piece> = Vec::new();
     let mut holes: Vec<Ring<u32>> = Vec::new();
     for r in rings {
@@ -299,12 +292,7 @@ mod tests {
     use super::*;
 
     fn area(all: &[[f64; 2]], ring: &Ring<u32>) -> f64 {
-        ring.edges()
-            .map(|(&a, &b)| {
-                let (a, b) = (all[a as usize], all[b as usize]);
-                0.5 * (a[0] * b[1] - b[0] * a[1])
-            })
-            .sum()
+        ring.iter().map(|&k| all[k as usize]).collect::<Ring<_>>().signed_area()
     }
 
     /// A square cut by four segments meeting at its centre (one point inside the face, shared)
