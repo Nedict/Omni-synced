@@ -974,6 +974,22 @@ mod tests {
     }
 
     #[test]
+    fn floating_browser_sits_over_the_workspace_and_docks_again() {
+        let mut harness = Harness::new();
+        harness.app.preferences.browser_float = true;
+        harness.frames(4);
+        let card = crate::scenario::rect_of("browser:float").expect("the floating browser is drawn");
+        assert!(card.min.x < 40.0, "the card sits at the view's left edge: {card:?}");
+        assert!(handle_at("left-browser-rail").is_none(), "a floating browser must not take a column of the window");
+        assert!(handle_at("row:Untitled").is_some(), "the tree is still drawn and usable");
+
+        harness.app.preferences.browser_float = false;
+        harness.frames(4);
+        assert!(crate::scenario::rect_of("browser:float").is_none(), "docking again removes the card");
+        assert!(handle_at("left-browser-rail").is_some(), "the docked sidebar is back");
+    }
+
+    #[test]
     fn rollback_bar_above_last_feature_can_be_dragged_to_the_end() {
         let mut harness = Harness::new();
         harness.app.preferences.timeline_left = true;

@@ -503,6 +503,8 @@ const MIN_BROWSER_WIDTH: f32 = 170.0;
 const MAX_BROWSER_WIDTH: f32 = 620.0;
 /// How wide a grip the sidebar's right edge offers, counted inwards from the edge.
 const BROWSER_RAIL: f32 = 6.0;
+/// How opaque the floating browser's card is; the workspace shows through the rest.
+const BROWSER_FLOAT_ALPHA: f32 = 0.4;
 
 fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
     let t = Tokens::get();
@@ -570,6 +572,41 @@ fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
     finish_browser(app, ui, acts);
 }
 
+/// The tree on a translucent card over the workspace, instead of a column that takes width from
+/// it (Preferences: "Float it over the workspace"). Drawn before the central view, in a layer
+/// above it, so the viewport keeps the whole window and the card sits on top of it.
+pub fn floating(app: &mut SolveApp, ui: &mut egui::Ui, viewport: egui::Rect) {
+    let t = Tokens::get();
+    app.tree.order.clear();
+    DRAWN.with(|d| d.borrow_mut().clear());
+    OCCURRENCES.with(|d| d.borrow_mut().clear());
+    let mut acts = Actions::default();
+    let remembered = app.preferences.browser_width;
+    let width = if remembered.is_finite() { remembered.clamp(MIN_BROWSER_WIDTH, MAX_BROWSER_WIDTH) } else { crate::prefs::DEFAULT_BROWSER_WIDTH };
+    // Tall enough for the tree, short enough to leave the view room; the rows scroll inside.
+    let height = (viewport.height() * 0.7).clamp(160.0, 560.0);
+    let card = crate::frame::area(egui::Id::new("sc_browser_float")).fixed_pos(viewport.min + vec2(8.0, 8.0)).order(egui::Order::Middle).show(
+        ui.ctx(),
+        |ui| {
+            egui::Frame::new()
+                .fill(t.panel.gamma_multiply(BROWSER_FLOAT_ALPHA))
+                .stroke(egui::Stroke::new(1.0, t.border))
+                .corner_radius(6)
+                .inner_margin(egui::Margin::symmetric(8, 6))
+                .show(ui, |ui| {
+                    ui.set_width(width - 16.0);
+                    ui.set_max_height(height);
+                    ui.label(RichText::new(crate::i18n::tr_label("BROWSER")).size(11.0).strong().color(t.text_dim));
+                    ui.add_space(4.0);
+                    // The card hugs the tree, so it hides as little of the view as it can.
+                    browser_rows_hugging(app, ui, &mut acts);
+                });
+        },
+    );
+    crate::scenario::publish_rect("browser:float", card.response.rect);
+    finish_browser(app, ui, acts);
+}
+
 fn browser_contents(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
     let t = Tokens::get();
     ui.label(RichText::new(crate::i18n::tr_label("BROWSER")).size(11.0).strong().color(t.text_dim));
@@ -630,9 +667,19 @@ fn model_feature_indices(app: &SolveApp, component: u64, sketches: bool) -> Vec<
 }
 
 fn browser_rows(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
+    rows_scrolling(app, ui, acts, false);
+}
+
+/// As [browser_rows], but the area hugs the rows it drew (the floating card), up to the height
+/// the caller allowed.
+fn browser_rows_hugging(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
+    rows_scrolling(app, ui, acts, true);
+}
+
+fn rows_scrolling(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions, shrink_height: bool) {
     prepare_model(app);
     egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
+        .auto_shrink([false, shrink_height])
         .scroll_source(egui::scroll_area::ScrollSource { scroll_bar: true, mouse_wheel: true, ..egui::scroll_area::ScrollSource::NONE })
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
