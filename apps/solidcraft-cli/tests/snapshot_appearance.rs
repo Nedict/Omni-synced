@@ -45,11 +45,13 @@ fn assert_differs(a: &[u8], b: &[u8], what: &str) {
     assert!(n >= 100, "{what}: only {n} pixels differ");
 }
 
-/// How much of a picture is the tool colour (`preview::TOOL_COLOR`, #e8542c), shaded: a strong
-/// red that neither the default body grey nor the background has.
+/// How much of a picture is the tool colour (`preview::TOOL_COLOR`, #e8542c): a red neither
+/// the default body grey nor the background has, still recognisable once a see-through body in
+/// front of it has tinted it (measured on this machine: (200, 108, 85) through a target at
+/// opacity 0.3, against (164, 173, 184) for the plain grey).
 fn tool_pixels(png: &[u8]) -> usize {
     let (_, _, px) = decode(png);
-    px.as_chunks::<4>().0.iter().filter(|p| p[0] > 120 && u32::from(p[0]) > u32::from(p[1]) * 2 && u32::from(p[0]) > u32::from(p[2]) * 2).count()
+    px.as_chunks::<4>().0.iter().filter(|p| p[0] > 140 && p[0] > p[1].saturating_add(50) && p[0] > p[2].saturating_add(50)).count()
 }
 
 struct Scratch(PathBuf);
@@ -120,12 +122,13 @@ fn a_body_drawn_see_through_is_the_picture_of_the_same_appearance_assigned() {
     assert_differs(&see_through, &solid, "--body opacity was ignored");
     assert_same(&see_through, &dir.snapshot(&assigned, "by-script.png", &[]), "the same appearance assigned by a script");
 
-    // The option's colour is the design's too.
+    // The option's colour is the design's too. It names the target, not the tool: the tool is
+    // inside the target, so a solid target hides whatever colour the tool is given.
     let painted = dir.script(
         "painted.json",
-        &[json!({"command": "appearance.assign", "params": {"bodies": ["Tool"], "color": "#00aa33", "opacity": 1.0}})],
+        &[json!({"command": "appearance.assign", "params": {"bodies": ["Target"], "color": "#00aa33", "opacity": 1.0}})],
     );
-    let by_option = dir.snapshot(&plain, "painted.png", &["--body", "Tool:color=#00aa33"]);
+    let by_option = dir.snapshot(&plain, "painted.png", &["--body", "Target:color=#00aa33"]);
     assert_differs(&by_option, &solid, "--body color was ignored");
     assert_same(&by_option, &dir.snapshot(&painted, "painted-script.png", &[]), "the same colour assigned by a script");
 }
