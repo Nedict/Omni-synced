@@ -656,3 +656,39 @@ fn a_stack_with_a_countersunk_top_plate_is_sized_by_its_whole_grip() {
     let (lo, hi) = bbox(&s, occ(&p["occurrence"]));
     assert!(near((lo.x + hi.x) / 2.0, 26.0) && near(hi.z, 7.0 + 3.5) && near(lo.z, 7.0 - 14.0), "{lo:?} {hi:?}");
 }
+
+/// Two rivet families of the same sizes: `rivet_grip` and `rivet_alt`.
+fn two_rivet_families() -> Library {
+    let family = |name: &str| {
+        json!({"kind": "fastener_family", "name": name, "label": "Rivet", "shape": "blind_rivet",
+               "sizes": [{"size": "4.8", "d": 4.8, "head": {"d": 9.6, "h": 1.5, "style": "dome"},
+                          "lengths": [{"length": 8, "grip": [1, 3.5]}, {"length": 10, "grip": [3.5, 5.5]}, {"length": 12, "grip": [5.5, 7.5]}]}]})
+    };
+    Library::new(&json!({"format": "solidcraft-parts/1", "id": "example.rivets2", "name": "Example rivets", "families": [family("rivet_grip"), family("rivet_alt")]}))
+}
+
+#[test]
+fn a_refresh_of_a_chosen_stack_replaces_what_it_held() {
+    let lib = two_rivet_families();
+    let mut s = Session::default();
+    run(&mut s, "parts.library.load", json!({"path": lib.path()}));
+    run(&mut s, "parameters.add", json!({"name": "t", "expression": "1 mm"}));
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 1, "corner": [0, 0, 0], "operation": "new", "body_name": "Lower"}));
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": "t", "corner": [0, 0, 1], "operation": "new", "body_name": "Upper"}));
+    run(&mut s, "solid.hole", json!({"position": [20, 15, "1 mm + t"], "diameter": 4.9}));
+    let r = run(&mut s, "parts.fasten", json!({"family": "rivet_grip", "stacks": [0], "refresh": false}));
+    assert_eq!(r["placed"][0]["length_mm"].as_f64(), Some(8.0), "{r}");
+    // The top plate 5 thick: grip 6 takes the 12 long rivet, and the 8 long one goes.
+    run(&mut s, "parameters.change", json!({"name": "t", "expression": "5 mm"}));
+    let r = run(&mut s, "parts.fasten", json!({"family": "rivet_grip", "stacks": [0], "refresh": true}));
+    assert_eq!((count(&r, "placed"), count(&r, "kept"), count(&r, "removed"), count(&r, "unfilled")), (1, 0, 1, 0), "{r}");
+    assert_eq!(r["placed"][0]["length_mm"].as_f64(), Some(12.0), "{r}");
+    assert_eq!(part_occurrences(&s), 1);
+    // Another family asked for that stack by name: it takes the stack over.
+    let r = run(&mut s, "parts.fasten", json!({"family": "rivet_alt", "stacks": [0], "refresh": true}));
+    assert_eq!((count(&r, "placed"), count(&r, "kept"), count(&r, "removed"), count(&r, "unfilled")), (1, 0, 1, 0), "{r}");
+    assert_eq!(part_occurrences(&s), 1);
+    let r = run(&mut s, "parts.fasten", json!({"family": "rivet_alt", "stacks": [0], "refresh": true}));
+    assert_eq!((count(&r, "placed"), count(&r, "kept"), count(&r, "removed")), (0, 1, 0), "{r}");
+    assert_eq!(part_occurrences(&s), 1);
+}

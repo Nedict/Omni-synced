@@ -307,7 +307,9 @@ narrowest hole and has a length for its grip.
   (a longer bolt for a thicker plate) has its parts replaced, the parts of a hole that has gone
   are removed, and empty stacks are filled. It manages the parts of this `family`, found by the
   joints that seat them, with their washers and nuts; a stack holding another family's parts is
-  left alone and listed in `unfilled`. Parts are removed from gone holes only when every stack is
+  left alone and listed in `unfilled`, unless `stack` or `stacks` names it: then this family's
+  parts replace them, so one call per family over its own stacks keeps each stack with the family
+  asked for it. Parts are removed from gone holes only when every stack is
   looked at (`stacks` left out or `"all"`; with `bodies`, those on these bodies). The result adds
   `kept` (stack, occurrence, joint, part, `reseated`) and `removed` (occurrences). A second
   refresh changes nothing.

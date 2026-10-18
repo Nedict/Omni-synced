@@ -33,7 +33,8 @@ pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("parts.fasten", "Fill H
      nut?: true | family | {family, size?} (on the far face; true: the built-in hex_nut and washer); \
      drawn?: \"set\" | \"unset\" (blind rivets; default set: the shank as long as the grip, with its formed tail beyond the far face); dry_run?: bool (only work out what goes where); \
      refresh?: bool (fill again after the model changed: parts an earlier fill of this family seated stay where their stack still takes the same parts, re-seated on faces \
-     that moved; they are replaced where it now takes others, and removed where their hole has gone (with stacks: all only); stacks holding another family's parts are left alone) \
+     that moved; they are replaced where it now takes others, and removed where their hole has gone (with stacks: all only); stacks holding another family's parts are left alone, unless named in stack or stacks: \
+     then this family's parts replace them) \
      → placed: [{component, occurrence, joint, stack, head_side, size, length_mm, grip_mm, grip_range?, article?, drawn?, part, washers?: [occurrence], nut?: occurrence}], \
      unfilled: [{stack, reason}]; with refresh also kept: [{stack, occurrence, joint, part, reseated}], removed: [occurrence]. Each distinct part is one component, \
      placed as occurrences. One undo step",
@@ -748,7 +749,9 @@ fn fill(s: &mut Session, p: &Value) -> Result<Value> {
                 continue;
             }
             let fill = fill_in.get_mut(k);
-            if !group.iter().any(|(i, _)| seats.get(*i).is_some_and(|x| x.family == ours)) {
+            // Another family's stack is left alone, unless the call names it: then this family
+            // takes it over.
+            if all && !group.iter().any(|(i, _)| seats.get(*i).is_some_and(|x| x.family == ours)) {
                 let other = group.first().and_then(|(i, _)| seats.get(*i)).map_or(String::new(), |x| x.family.clone());
                 unfilled.push(json!({"stack": w.id, "reason": format!("holds {other} parts: a refresh of `{}` leaves them", f.family)}));
                 if let Some(x) = fill {
