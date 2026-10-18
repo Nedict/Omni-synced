@@ -33,19 +33,21 @@ change give the same measures, the same face and edge names at the same points a
 timeline (errors and warnings), bit for bit, for 116. The other three (`07-fillet-all-edges`,
 `37-pyramid-apex-blend`, `closed_sweep_torus_cut`) number their faces differently from one run
 of `main` to the next; their faces, by area and centre, and their names agree between the two
-builds. `crates/kernel/src/cache_tests.rs` counts what is measured, healed, meshed and searched.
+builds. The meshes a running blend keeps change none of the 116 either (checked the same way on
+`ci` builds with and without them). `crates/kernel/src/cache_tests.rs` counts what is measured,
+healed, meshed and searched.
 
 Release `solidcraft-cli`, Apple M4 Pro (14 cores, 48 GB), macOS 27, shared with other work
 (load 5–15), three alternating before/after pairs (medians; the baseplate once each):
 
 | Design | Before | After |
 |---|---:|---:|
-| #2341 repro, 4 × 3 bosses (pattern feature) | 12.8 s | 4.9 s |
-| #2341 repro, 6 × 5 bosses (pattern feature) | 54.7 s | 20.3 s |
-| 42-cell baseplate, `bench-open` evaluate | 620 s | 236 s |
+| #2341 repro, 4 × 3 bosses (pattern feature) | 12.8 s | 4.3 s |
+| #2341 repro, 6 × 5 bosses (pattern feature) | 58.0 s | 17.2 s |
+| 42-cell baseplate, `bench-open` evaluate | 649 s | 224 s |
 
-Peak memory of the baseplate open goes from 1.31 GB to 1.49 GB: the measures and the bodies a
-running blend keeps. What is left is a heal and an orientation mesh of the whole body per copy,
+Peak memory of the baseplate open goes from 1.18 GB to 1.49 GB: the measures, and the bodies and
+meshes a running blend keeps. What is left is a heal and an orientation mesh of the whole body per copy,
 and the joins of patterns (#2076).
 
 ## Edges made by booleans: each point evaluated once (2026-10-16)
