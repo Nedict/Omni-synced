@@ -73,7 +73,11 @@ mod measurement_ui_tests;
 #[cfg(test)]
 mod menu_tests;
 #[cfg(test)]
+mod pattern_arrow_tests;
+#[cfg(test)]
 mod surface_clamp_tests;
+#[cfg(test)]
+mod surface_errors_tests;
 #[cfg(test)]
 mod timeline_marks_tests;
 #[cfg(test)]
@@ -173,6 +177,7 @@ pub mod stand_up;
 #[cfg(test)]
 mod sweep_dialog_tests;
 pub mod theme;
+pub mod theme_files;
 #[cfg(test)]
 mod thin_extrude_tests;
 pub mod timeline;
