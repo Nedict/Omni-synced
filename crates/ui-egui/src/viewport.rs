@@ -1253,6 +1253,8 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
             }
         }
     }
+    // How close the nearest sketch point or vertex is, to rank crossings against them.
+    let mut pv_near = best.v.iter().map(|x| x.0).fold(f32::INFINITY, f32::min);
     hits.extend(best.hits());
     // Sketch curves (the active sketch wins ties).
     let mut bestc = Near::new(all);
@@ -1372,9 +1374,11 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
             }
         }
     }
+    pv_near = bestv.v.iter().map(|x| x.0).fold(pv_near, f32::min);
     hits.extend(bestv.hits());
-    // Crossings of shown sketches, only where the active input takes them (after points and
-    // vertices, which win).
+    // Crossings of shown sketches, only where the active input takes them. Points and
+    // vertices win unless the crossing is nearer the cursor by more than 2 px.
+    let first_crossing = hits.len();
     if app.dialog.as_ref().and_then(|d| d.active_input()).is_some_and(|i| i.accept & crate::selection::CROSSINGS != 0) {
         let mut bestx = Near::new(all);
         for sid in visible_sketches(app) {
@@ -1390,7 +1394,9 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
                 bestx.offer(dd, Hit::SketchCrossing { sketch: sid, a: ca.id.clone(), b: cb.id.clone(), at: c.at });
             }
         }
-        hits.extend(bestx.hits());
+        let first_x = bestx.v.iter().map(|x| x.0).fold(f32::INFINITY, f32::min);
+        let at = if first_x + 2.0 < pv_near { 0 } else { first_crossing };
+        hits.splice(at..at, bestx.hits());
     }
     hits.extend(beste.hits());
     // Origin axes.
