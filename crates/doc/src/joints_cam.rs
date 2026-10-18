@@ -15,7 +15,7 @@
 use std::f64::consts::TAU;
 
 use serde::{Deserialize, Serialize};
-use solidcraft_geom::{Ring, Vec2, Vec3};
+use solidcraft_geom::{Aabb3, Ring, Vec2, Vec3};
 
 use super::{JointKind, JointOrigin, MotionLink, Size, component_bodies, component_of, flip_of, occurrence_world, size_of};
 use crate::{DocError, Document, IDENTITY, Mat, ModelState, Result, apply_point, apply_vector, mat_inverse, mat_mul};
@@ -498,10 +498,7 @@ fn sampled(lp: &solidcraft_geom::Loop2, tol: f64) -> Option<Vec<Vec2>> {
 
 /// The diagonal of the box around some points (0 for none).
 fn extent<'a>(pts: impl Iterator<Item = &'a Vec3>) -> f64 {
-    let (lo, hi) = pts.fold((Vec3::new(f64::MAX, f64::MAX, f64::MAX), Vec3::new(f64::MIN, f64::MIN, f64::MIN)), |(lo, hi), p| {
-        (Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z)), Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z)))
-    });
-    if lo.x <= hi.x { (hi - lo).len() } else { 0.0 }
+    pts.copied().collect::<Aabb3>().diagonal()
 }
 
 fn bounds_2d(pts: &[Vec2]) -> f64 {
