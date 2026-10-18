@@ -370,16 +370,7 @@ mod tests {
     use crate::{BoolOp, boolean, box_solid, cylinder};
 
     fn face_at(b: &crate::Body, p: Vec3) -> usize {
-        let m = b.tessellate(1e-3).unwrap();
-        let mut best = (f64::INFINITY, 0);
-        for (t, f) in m.triangles.iter().zip(&m.tri_face) {
-            let q = m.tri(t).unwrap();
-            let d = solidcraft_geom::closest_on_triangle(p, q[0], q[1], q[2]).dist(p);
-            if d < best.0 {
-                best = (d, *f as usize);
-            }
-        }
-        best.1
+        b.tessellate(1e-3).unwrap().nearest_face(p).unwrap().face as usize
     }
 
     #[test]

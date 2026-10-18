@@ -2,7 +2,7 @@
 //! centre of mass of bodies.
 
 use serde_json::{Value, json};
-use solidcraft_geom::{Seg2, Vec2, Vec3};
+use solidcraft_geom::{FaceHit, Seg2, Vec2, Vec3};
 
 use super::CommandSpec;
 use crate::params::{bad, num, string_list, vec3};
@@ -165,18 +165,15 @@ fn min_of(teeth: &[(Vec3, f64, Vec3)]) -> Option<(f64, Vec3)> {
 
 /// The face of a body at `at` (nearest triangle): (body index, face index).
 fn face_at(st: &solidcraft_doc::ModelState, at: Vec3) -> Option<(usize, u32)> {
-    let mut best: Option<(f64, usize, u32)> = None;
+    let mut best: Option<(usize, FaceHit)> = None;
     for (bi, b) in st.bodies.iter().enumerate() {
-        let m = b.mesh();
-        for (ti, t) in m.triangles.iter().enumerate() {
-            let [a, bb, c] = t.map(|i| m.positions.get(i as usize).copied().unwrap_or_default());
-            let d = at.dist(solidcraft_geom::closest_on_triangle(at, a, bb, c));
-            if best.is_none_or(|x| d < x.0) {
-                best = Some((d, bi, m.tri_face.get(ti).copied().unwrap_or(0)));
-            }
+        if let Some(h) = b.mesh().nearest_face(at)
+            && best.is_none_or(|(_, x)| h.dist < x.dist)
+        {
+            best = Some((bi, h));
         }
     }
-    best.filter(|b| b.0 < 1.0).map(|b| (b.1, b.2))
+    best.filter(|(_, h)| h.dist < 1.0).map(|(bi, h)| (bi, h.face))
 }
 
 /// Smallest radius of curvature over a face of a mesh, from the turn of the vertex normals

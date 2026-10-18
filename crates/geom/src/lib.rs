@@ -33,7 +33,7 @@ mod vec;
 pub use arcfit::MAX_FIT_PIECES;
 pub use blend::hermite_bezier;
 pub use bvh::{Bvh, MeshIndex};
-pub use mesh::{Aabb3, BoxedTriangle, InsideIndex, MassProperties, Mesh, MeshMeasure, find_close_pair};
+pub use mesh::{Aabb3, BoxedTriangle, FaceHit, InsideIndex, MassProperties, Mesh, MeshMeasure, find_close_pair};
 pub use plane::Plane;
 pub use profile::{Loop2, MAX_BEZIER_CTRL, MAX_BEZIER_DEGREE, MAX_DERIVATIVE_ORDER, Region2, Seg2, bezier, regions_apart};
 pub use triangle::closest_on_triangle;

@@ -49,7 +49,10 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
                     if split {
                         return Err(DocError::Invalid("selected cylinder face was split".into()));
                     }
-                    let (index, _, _) = crate::project::nearest_face(&mb.mesh(), picked)
+                    let index = mb
+                        .mesh()
+                        .nearest_face(picked)
+                        .map(|h| h.face)
                         .ok_or_else(|| DocError::Invalid("selected cylinder face cannot be resolved".into()))?;
                     if !crate::naming::face_has_name(&mb, index as usize, name) {
                         return Err(DocError::Invalid("selected cylinder face is ambiguous".into()));
@@ -1666,7 +1669,7 @@ fn body_under(st: &ModelState, body: &Option<crate::BodyName>, p: Vec3) -> Resul
     let i = body_at(st, body, &[p])?;
     let b = st.bodies.get(i).ok_or_else(|| DocError::Invalid("there is no body".into()))?;
     let tolerance = (b.body.size() * 1e-5).max(1e-4);
-    if crate::project::nearest_face(&b.mesh(), p).is_none_or(|(_, _, distance)| distance > tolerance) {
+    if b.mesh().nearest_face(p).is_none_or(|h| h.dist > tolerance) {
         return Err(DocError::Invalid("the plastic feature's placement is no longer on its body face".into()));
     }
     Ok(b.name.clone())

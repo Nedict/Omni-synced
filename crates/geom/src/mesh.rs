@@ -49,6 +49,15 @@ impl Aabb3 {
     }
 }
 
+/// Where a point meets a mesh: the nearest point of it, the B-rep face that point lies on, and
+/// how far it is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FaceHit {
+    pub face: u32,
+    pub point: Vec3,
+    pub dist: f64,
+}
+
 /// An indexed triangle mesh with per-vertex normals, a face id per triangle (the B-rep face it
 /// came from) and edge polylines (the B-rep edges, for display and picking).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -445,6 +454,26 @@ impl Mesh {
     }
     pub fn tri(&self, t: &[u32; 3]) -> Option<[Vec3; 3]> {
         Some([*self.positions.get(t[0] as usize)?, *self.positions.get(t[1] as usize)?, *self.positions.get(t[2] as usize)?])
+    }
+
+    /// Each triangle's corners with the B-rep face it came from (a triangle naming a missing
+    /// vertex is skipped).
+    pub fn face_tris(&self) -> impl Iterator<Item = ([Vec3; 3], u32)> + '_ {
+        self.triangles.iter().zip(&self.tri_face).filter_map(|(t, f)| Some((self.tri(t)?, *f)))
+    }
+
+    /// The point of the mesh nearest `p` and the face it lies on; the first triangle wins a tie.
+    /// `None` for a mesh with no triangles.
+    pub fn nearest_face(&self, p: Vec3) -> Option<FaceHit> {
+        let mut best: Option<FaceHit> = None;
+        for ([a, b, c], face) in self.face_tris() {
+            let point = crate::closest_on_triangle(p, a, b, c);
+            let dist = point.dist(p);
+            if best.is_none_or(|h| dist < h.dist) {
+                best = Some(FaceHit { face, point, dist });
+            }
+        }
+        best
     }
 
     pub fn bounds(&self) -> Aabb3 {
