@@ -311,3 +311,35 @@ fn drag_end_adds_several_constraints_or_none() {
     assert!(s.execute("sketch.drag_end", &json!({"constraints": 3})).is_err());
     assert!(s.execute("sketch.drag_end", &json!({"constraints": vec![on("l1"); 9]})).is_err());
 }
+
+#[test]
+fn drag_end_skips_a_constraint_that_already_holds() {
+    // l3's start is on l1 ("On") and slides along it to the l1×l2 crossing.
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY"}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [20, 20]]}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 20], [20, 0]]}));
+    run(&mut s, "sketch.line", json!({"points": [[40, 5], [50, 15]]}));
+    run(&mut s, "sketch.constraint.coincident", json!({"a": "l3.start", "b": "l1"}));
+    run(&mut s, "sketch.move_point", json!({"point": "l3.start", "to": [10, 10]}));
+    let on = |c: &str| json!({"command": "sketch.constraint.coincident", "params": {"a": "l3.start", "b": c}});
+    let ons = |s: &Session| {
+        use solidcraft_sketch::ConstraintKind::PointOnCurve;
+        let sk = sketch_of(s);
+        let mut v: Vec<String> = sk
+            .constraints
+            .iter()
+            .filter_map(|k| if let PointOnCurve { c, .. } = k.kind { sk.curves.get(c).map(|c| c.id.clone()) } else { None })
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(ons(&s), ["l1"]);
+    let r = run(&mut s, "sketch.drag_end", json!({"constraints": [on("l1"), on("l2")]}));
+    assert_eq!(ons(&s), ["l1", "l2"], "{r}");
+    assert_eq!(r["constraints"][0]["skipped"], json!(true), "{r}");
+    assert!(r["sketch"]["solved"].is_boolean(), "{r}");
+    // `constraint` and `constraints` together are refused.
+    let e = s.execute("sketch.drag_end", &json!({"constraint": on("l1"), "constraints": [on("l2")]}));
+    assert!(e.is_err(), "{e:?}");
+}

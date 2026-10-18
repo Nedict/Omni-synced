@@ -182,7 +182,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         "entity: point or curve, from: [x,y] where it was grabbed, to: [x,y], live?: bool: a point goes to `to`, a line (spline, conic) slides by to - from, a circle or arc grabbed on its edge takes the radius to `to`; the rest moves as little as it can and keeps its solution branch (a long move is followed in short steps, each solved with the entity held; a step that cannot be solved that way is approached as far as it can be and the next ones tried; when none past it solves, the last one is left to the sketch's ordinary solve, which may pull it back or leave the sketch unsolved; a step that would sweep an arc through its start is undone and the drag ends there). Returns `reached`: how much of the way from `from` to `to` the geometry followed (0..1), and `at`: where the grabbed spot went (`from` moved as the dragged points did), the `from` of the next move. `live: true` (each frame of an interactive drag) solves the sketch once and leaves the features after it as they were (stale) until `sketch.drag_end` or any command that reads the model; `dof` is then the one from before the drag",
     ),
     CommandSpec::new("sketch.drag_end", "End Sketch Drag", drag_end).icon("sketch_move").enabled(in_sketch).doc_only().params(
-        "constraint?: {command: a sketch.constraint.* id, params}, constraints?: [that, up to 8]: ends a drag made of `sketch.drag` `live: true` frames: adds the constraint it let go on (not kept if it over-constrains the sketch), or the constraints in order (all or none: when one fails none is kept), then evaluates the whole model once; returns the constraint's result (`constraints`: the results, when given) and the sketch's solved state and degrees of freedom",
+        "constraint?: {command: a sketch.constraint.* id, params}, constraints?: [that, up to 8]: ends a drag made of `sketch.drag` `live: true` frames: adds the constraint it let go on (not kept if it over-constrains the sketch), or the constraints in order (all or none: when one fails none is kept; one the sketch already determines is skipped, `skipped: true` in its result); not both, then evaluates the whole model once; returns the constraint's result (`constraints`: the results, when given) and the sketch's solved state and degrees of freedom",
     ),
     CommandSpec::new("sketch.dimension_text", "Move Dimension Text", dimension_text).icon("edit")
         .enabled(in_sketch)
@@ -2425,7 +2425,11 @@ fn drag_end(s: &mut Session, p: &Value) -> Result<Value> {
             .filter(|spec| spec.id.starts_with("sketch.constraint."))
             .ok_or_else(|| bad(cmd, "`command` of a constraint must be a sketch.constraint.* command"))
     };
-    if let Some(c) = p.get("constraint").filter(|c| !c.is_null()) {
+    let given = |k: &str| p.get(k).filter(|c| !c.is_null());
+    if given("constraint").is_some() && given("constraints").is_some() {
+        return Err(bad(cmd, "give `constraint` or `constraints`, not both"));
+    }
+    if let Some(c) = given("constraint") {
         let spec = spec_of(c)?;
         let params = c.get("params").cloned().unwrap_or(Value::Null);
         constraint = spec.run_nested(s, &params).unwrap_or_else(|e| {
@@ -2433,14 +2437,20 @@ fn drag_end(s: &mut Session, p: &Value) -> Result<Value> {
             json!({"error": e.to_string()})
         });
     }
-    if let Some(cs) = p.get("constraints").filter(|c| !c.is_null()) {
+    if let Some(cs) = given("constraints") {
         let cs = cs.as_array().filter(|a| a.len() <= 8).ok_or_else(|| bad(cmd, "`constraints` must be an array of at most 8"))?;
         let specs = cs.iter().map(spec_of).collect::<Result<Vec<_>>>()?;
         // All or nothing: the first failure puts the document back as it was before the first.
         let mut out = Vec::new();
         for (spec, c) in specs.iter().zip(cs) {
             let params = c.get("params").cloned().unwrap_or(Value::Null);
+            let before = s.doc.clone();
             match spec.run_nested(s, &params) {
+                // One that already holds (redundant) is skipped: the point is held there already.
+                Ok(r) if r.get("redundant") == Some(&json!(true)) => {
+                    s.doc = before;
+                    out.push(json!({"skipped": true, "determined_by": r.get("determined_by")}));
+                }
                 Ok(r) => out.push(r),
                 Err(e) => {
                     s.doc = start.clone();
@@ -2449,7 +2459,8 @@ fn drag_end(s: &mut Session, p: &Value) -> Result<Value> {
                 }
             }
         }
-        constraint = out.last().cloned().unwrap_or(Value::Null);
+        // The last one added (its result carries the solved sketch).
+        constraint = out.iter().rev().find(|r| r.get("skipped").is_none()).or(out.last()).cloned().unwrap_or(Value::Null);
         results = Some(out);
     }
     // A new constraint changed the document: `execute` evaluates the model after this.
