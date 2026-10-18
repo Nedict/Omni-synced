@@ -118,6 +118,7 @@ mod file_load_ui_tests;
 #[cfg(test)]
 mod fillet_spline_handle_tests;
 pub mod manufacture_setup;
+pub mod manufacture_libraries;
 pub mod manufacture_post;
 pub mod manufacture_modify;
 pub mod manufacture_additive;
