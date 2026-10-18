@@ -293,8 +293,7 @@ fn behind(b: &Body, mesh: &Mesh, f: usize) -> Option<(usize, f64)> {
     // The face most of it looks through to, from points in its largest triangles: a few of them
     // may look at the floor of a label engraved in the other skin.
     let area = |t: &[Vec3; 3]| (t[1] - t[0]).cross(t[2] - t[0]).len();
-    let mut tris: Vec<[Vec3; 3]> =
-        mesh.triangles.iter().zip(&mesh.tri_face).filter(|(_, g)| **g as usize == f).filter_map(|(t, _)| mesh.tri(t)).collect();
+    let mut tris: Vec<[Vec3; 3]> = mesh.face_tris_of(f).collect();
     tris.sort_by(|x, y| area(y).total_cmp(&area(x)));
     let mut seen: Vec<(usize, f64)> = Vec::new();
     for tri in tris.iter().take(8) {

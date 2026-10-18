@@ -581,11 +581,10 @@ pub fn remove_faces(body: &Body, faces: &[usize]) -> Result<Body> {
 pub(crate) fn nearest_face(body: &Body, p: Vec3) -> Result<usize> {
     let m = body.tessellate(body.size() * 2e-3)?;
     let mut best: Option<(f64, u32)> = None;
-    for (t, f) in m.triangles.iter().zip(&m.tri_face) {
-        let Some([a, b, c]) = m.tri(t) else { continue };
+    for ([a, b, c], f) in m.face_tris() {
         let d = ((a + b + c) / 3.0).dist(p).min(a.dist(p)).min(b.dist(p)).min(c.dist(p));
         if best.is_none_or(|(x, _)| d < x) {
-            best = Some((d, *f));
+            best = Some((d, f));
         }
     }
     best.map(|(_, f)| f as usize).ok_or_else(|| KernelError::Invalid("no face there".into()))

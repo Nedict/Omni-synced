@@ -2374,12 +2374,11 @@ fn faces_through(st: &ModelState, p: Vec3, reach: f64) -> Vec<(f64, Vec3, Option
         let m = b.mesh();
         // The nearest facet of each face of this body.
         let mut near: BTreeMap<u32, (f64, Vec3)> = BTreeMap::new();
-        for (t, f) in m.triangles.iter().zip(&m.tri_face) {
-            let Some([a, bb, c]) = m.tri(t) else { continue };
+        for ([a, bb, c], f) in m.face_tris() {
             let d = solidcraft_geom::closest_on_triangle(p, a, bb, c).dist(p);
             let Some(n) = (bb - a).cross(c - a).normalized() else { continue };
-            if d <= reach && near.get(f).is_none_or(|(x, _)| d < *x) {
-                near.insert(*f, (d, n));
+            if d <= reach && near.get(&f).is_none_or(|(x, _)| d < *x) {
+                near.insert(f, (d, n));
             }
         }
         for (f, (d, facet)) in near {

@@ -88,8 +88,8 @@ const SAMPLES: usize = 9;
 /// Unit normals of each face's triangles.
 fn normals(m: &Mesh, nf: usize) -> Vec<Vec<Vec3>> {
     let mut per: Vec<Vec<Vec3>> = vec![Vec::new(); nf];
-    for (t, f) in m.triangles.iter().zip(&m.tri_face) {
-        if let (Some(v), Some([a, b, c])) = (per.get_mut(*f as usize), m.tri(t))
+    for ([a, b, c], f) in m.face_tris() {
+        if let Some(v) = per.get_mut(f as usize)
             && let Some(n) = (b - a).cross(c - a).normalized()
         {
             v.push(n);
@@ -101,8 +101,8 @@ fn normals(m: &Mesh, nf: usize) -> Vec<Vec<Vec3>> {
 /// Triangle centroids spread over each face: face → points.
 fn samples(m: &Mesh, nf: usize) -> Vec<Vec<Vec3>> {
     let mut per: Vec<Vec<Vec3>> = vec![Vec::new(); nf];
-    for (t, f) in m.triangles.iter().zip(&m.tri_face) {
-        if let (Some(v), Some([a, b, c])) = (per.get_mut(*f as usize), m.tri(t)) {
+    for ([a, b, c], f) in m.face_tris() {
+        if let Some(v) = per.get_mut(f as usize) {
             v.push((a + b + c) * (1.0 / 3.0));
         }
     }
@@ -126,8 +126,8 @@ impl FaceIndex {
     fn new(m: &Mesh, nf: usize) -> FaceIndex {
         let mut faces: Vec<(Vec3, Vec3, Vec<[Vec3; 3]>)> =
             vec![(Vec3::new(f64::MAX, f64::MAX, f64::MAX), Vec3::new(f64::MIN, f64::MIN, f64::MIN), Vec::new()); nf];
-        for (t, f) in m.triangles.iter().zip(&m.tri_face) {
-            if let (Some(slot), Some(tri)) = (faces.get_mut(*f as usize), m.tri(t)) {
+        for (tri, f) in m.face_tris() {
+            if let Some(slot) = faces.get_mut(f as usize) {
                 for p in tri {
                     slot.0 = Vec3::new(slot.0.x.min(p.x), slot.0.y.min(p.y), slot.0.z.min(p.z));
                     slot.1 = Vec3::new(slot.1.x.max(p.x), slot.1.y.max(p.y), slot.1.z.max(p.z));

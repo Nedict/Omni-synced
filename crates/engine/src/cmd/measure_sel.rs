@@ -51,7 +51,7 @@ fn edge_index(m: &Mesh, index: usize, point: Vec3) -> Option<usize> {
 }
 
 fn face_tris(m: &Mesh, f: usize) -> Vec<[Vec3; 3]> {
-    m.triangles.iter().zip(&m.tri_face).filter(|(_, tf)| **tf as usize == f).filter_map(|(t, _)| m.tri(t)).collect()
+    m.face_tris_of(f).collect()
 }
 
 /// A described item: its geometry, direction (planar face normal, straight edge direction),
@@ -238,8 +238,8 @@ fn face_slot(b: &solidcraft_doc::ModelBody, m: &Mesh, shape: &Shape, pts: &[Vec3
         return None;
     }
     let mut verts: Vec<Vec<Vec3>> = vec![Vec::new(); faces];
-    for (t, f) in m.triangles.iter().zip(&m.tri_face) {
-        if let (Some(v), Some(tri)) = (verts.get_mut(*f as usize), m.tri(t)) {
+    for (tri, f) in m.face_tris() {
+        if let Some(v) = verts.get_mut(f as usize) {
             v.extend(tri);
         }
     }

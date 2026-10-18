@@ -37,8 +37,8 @@ fn face_tris(m: &Mesh) -> Vec<FaceTris> {
             area: 0.0,
         })
         .collect();
-    for (t, f) in m.triangles.iter().zip(&m.tri_face) {
-        let (Some(slot), Some(p)) = (out.get_mut(*f as usize), m.tri(t)) else { continue };
+    for (p, f) in m.face_tris() {
+        let Some(slot) = out.get_mut(f as usize) else { continue };
         let c = (p[1] - p[0]).cross(p[2] - p[0]);
         let Some(nrm) = c.normalized() else { continue };
         slot.area += c.len() * 0.5;

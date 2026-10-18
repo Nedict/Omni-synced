@@ -462,6 +462,11 @@ impl Mesh {
         self.triangles.iter().zip(&self.tri_face).filter_map(|(t, f)| Some((self.tri(t)?, *f)))
     }
 
+    /// The corners of the triangles that came from B-rep face `face`.
+    pub fn face_tris_of(&self, face: usize) -> impl Iterator<Item = [Vec3; 3]> + '_ {
+        self.face_tris().filter(move |(_, f)| *f as usize == face).map(|(t, _)| t)
+    }
+
     /// The point of the mesh nearest `p` and the face it lies on; the first triangle wins a tie.
     /// `None` for a mesh with no triangles.
     pub fn nearest_face(&self, p: Vec3) -> Option<FaceHit> {

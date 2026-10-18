@@ -416,8 +416,8 @@ pub fn merged_topology(b: &Body, mesh: &Mesh) -> Result<TopoCounts> {
     let verts = face_vertices(mesh, nf);
     // Zero-area faces (a revolved profile edge lying on the axis) don't count.
     let mut area = vec![0.0f64; nf];
-    for (t, f) in mesh.triangles.iter().zip(&mesh.tri_face) {
-        if let (Some([p, q, r]), Some(a)) = (mesh.tri(t), area.get_mut(*f as usize)) {
+    for ([p, q, r], f) in mesh.face_tris() {
+        if let Some(a) = area.get_mut(f as usize) {
             *a += (q - p).cross(r - p).len() * 0.5;
         }
     }
@@ -648,11 +648,10 @@ pub fn cylinder_face_at(b: &Body, p: Vec3) -> Option<CylinderFace> {
     let mesh = b.tessellate((size * 1e-3).max(1e-3)).ok()?;
     // The face of the triangle nearest the point.
     let mut best: Option<(f64, u32)> = None;
-    for (t, f) in mesh.triangles.iter().zip(&mesh.tri_face) {
-        let Some([a, bb, c]) = mesh.tri(t) else { continue };
+    for ([a, bb, c], f) in mesh.face_tris() {
         let d = ((a + bb + c) / 3.0).dist(p).min(a.dist(p)).min(bb.dist(p)).min(c.dist(p));
         if best.is_none_or(|(bd, _)| d < bd) {
-            best = Some((d, *f));
+            best = Some((d, f));
         }
     }
     let (d, face) = best?;

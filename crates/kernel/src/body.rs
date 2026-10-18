@@ -1370,11 +1370,10 @@ impl Body {
         let m = self.tessellate(tol)?;
         let nf = self.face_count();
         let mut acc: Vec<(f64, Vec3, Vec3, bool)> = vec![(0.0, Vec3::ZERO, Vec3::ZERO, true); nf];
-        for (t, f) in m.triangles.iter().zip(&m.tri_face) {
-            let Some([a, b, c]) = m.tri(t) else { continue };
+        for ([a, b, c], f) in m.face_tris() {
             let cr = (b - a).cross(c - a);
             let ar = cr.len() * 0.5;
-            if let Some(slot) = acc.get_mut(*f as usize) {
+            if let Some(slot) = acc.get_mut(f as usize) {
                 slot.0 += ar;
                 slot.1 += (a + b + c) * (ar / 3.0);
                 if let Some(n) = cr.normalized() {

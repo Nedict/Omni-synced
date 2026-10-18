@@ -169,8 +169,8 @@ fn planar_normal_at(b: &Body, p: Vec3) -> Option<Vec3> {
     let faces = b.faces(tol).ok()?;
     let mesh = b.tessellate(tol).ok()?;
     let mut near = vec![f64::INFINITY; faces.len()];
-    for (t, f) in mesh.triangles.iter().zip(&mesh.tri_face) {
-        if let (Some([u, v, w]), Some(d)) = (mesh.tri(t), near.get_mut(*f as usize)) {
+    for ([u, v, w], f) in mesh.face_tris() {
+        if let Some(d) = near.get_mut(f as usize) {
             *d = d.min(solidcraft_geom::closest_on_triangle(p, u, v, w).dist(p));
         }
     }
