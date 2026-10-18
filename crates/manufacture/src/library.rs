@@ -20,7 +20,7 @@ use crate::{MachineProfile, PostProfile, Result, invalid, machines, post};
 
 /// Default central SolidCraft CAM library (posts + machines + templates).
 /// Point additional remotes at vendor forks the same way linked remotes attach cloud libraries.
-pub const DEFAULT_CAM_LIBRARY_REMOTE: &str = "https://devops.quasarke.net/wdunn001/solidcraft-cam-libraries.git";
+pub const DEFAULT_CAM_LIBRARY_REMOTE: &str = "";
 
 pub const MAX_LIBRARY_REMOTES: usize = 32;
 pub const MAX_TEMPLATES: usize = 256;
