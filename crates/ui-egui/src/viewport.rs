@@ -3177,6 +3177,7 @@ fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
             painter.rect_filled(Rect::from_center_size(sp, vec2(5.0, 5.0)), 0.0, c);
         }
     }
+    loose_end_markers(sk, &ss.ends, &ss.plane, painter, proj, &t);
     // Sketch status.
     if let Some(r) = app.viewport.rect {
         let msg = if !ss.report.ok() {
@@ -3188,6 +3189,28 @@ fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
         };
         let c = if ss.report.ok() { t.sketch_accent } else { t.error };
         painter.text(pos2(r.left() + 12.0, r.top() + 12.0), Align2::LEFT_TOP, msg, FontId::proportional(13.0), c);
+    }
+}
+
+/// Where a profile can fail: a ring round each open end (it touches no other curve) and a
+/// diamond round each untied one (it touches another curve only by position), told apart by
+/// shape. Both are warnings, not errors: an open sketch (a sweep path, an axis) is valid.
+fn loose_end_markers(
+    sk: &solidcraft_engine::sketch::Sketch,
+    ends: &solidcraft_engine::sketch::EndReport,
+    plane: &solidcraft_engine::geom::Plane,
+    painter: &egui::Painter,
+    proj: &Proj,
+    t: &Tokens,
+) {
+    let screen = |i: usize| sk.point(i).and_then(|p| proj.to_screen(plane.to_world(p)));
+    for sp in ends.open.iter().filter_map(|&i| screen(i)) {
+        painter.circle_stroke(sp, 7.0, Stroke::new(1.8, t.warning));
+    }
+    for sp in ends.untied.iter().filter_map(|u| screen(u.point)) {
+        let r = 7.5;
+        let diamond = vec![pos2(sp.x, sp.y - r), pos2(sp.x + r, sp.y), pos2(sp.x, sp.y + r), pos2(sp.x - r, sp.y)];
+        painter.add(egui::Shape::closed_line(diamond, Stroke::new(1.8, t.warning)));
     }
 }
 
@@ -4691,6 +4714,90 @@ mod tests {
                 }
                 hover_frame(&mut app, &ctx, vec![egui::Event::PointerButton { pos: p, button, pressed: false, modifiers: Default::default() }]);
                 assert!(app.viewport.hover.is_some(), "hover must return on release");
+            }
+        }
+    }
+
+    fn device_face_app(gpu: bool) -> SolveApp {
+        let mut app = hover_app(gpu);
+        app.session = solidcraft_engine::Session::default();
+        app.session.execute("solid.box", &json!({"length":40,"width":40,"height":40,"corner":[-20,-20,-20]})).unwrap();
+        app.ui.show_origin = false;
+        app.cam.target = Vec3::ZERO;
+        app.cam.distance = 110.0;
+        app.cam.yaw = 0.5;
+        app.cam.pitch = 0.5;
+        app
+    }
+
+    fn device_hover_frame(app: &mut SolveApp, ctx: &egui::Context, events: Vec<egui::Event>) {
+        use crate::space_mouse::{DeviceMotion, Motion};
+        let before = app.cam;
+        app.viewport.device_motion = Some(DeviceMotion { motion: Motion { translation: [0.0; 3], rotation: [0.0, 0.0, 0.1] }, seconds: 0.016 });
+        hover_frame(app, ctx, events);
+        assert_ne!(app.cam, before, "the device must keep moving the camera");
+        assert!(app.viewport.device_motion.is_none());
+    }
+
+    #[test]
+    fn device_navigation_keeps_face_hover_current_for_a_stationary_or_moving_pointer() {
+        for gpu in [false, true] {
+            let ctx = egui::Context::default();
+            let mut app = device_face_app(gpu);
+            hover_frame(&mut app, &ctx, vec![]);
+            let p = projection(&app, app.viewport.rect.unwrap()).to_screen(Vec3::ZERO).unwrap();
+            hover_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(p)]);
+            for offset in [0.0, 15.0, -15.0, 0.0] {
+                let at = p + vec2(offset, 0.0);
+                let mut key = app.viewport.last_pick.as_ref().unwrap().0;
+                for events in [vec![egui::Event::PointerMoved(at)], vec![], vec![]] {
+                    device_hover_frame(&mut app, &ctx, events);
+                    let proj = projection(&app, app.viewport.rect.unwrap());
+                    let (expected, _) = candidate(&app, &pick(&app, &proj, at)).unwrap();
+                    assert!(matches!(expected, Hit::Face { .. }));
+                    assert_eq!(app.viewport.hover.as_ref(), Some(&expected), "hover must use the current camera and pointer");
+                    let next = app.viewport.last_pick.as_ref().unwrap().0;
+                    assert_ne!(next, key, "a moving camera must invalidate cached picking");
+                    key = next;
+                }
+            }
+            hover_frame(&mut app, &ctx, vec![]);
+            assert!(matches!(app.viewport.hover, Some(Hit::Face { .. })));
+        }
+    }
+
+    #[test]
+    fn device_navigation_allows_face_clicks_and_preserves_modifier_selection() {
+        for gpu in [false, true] {
+            for (modifiers, add) in [(egui::Modifiers::NONE, false), (egui::Modifiers::SHIFT, true), (egui::Modifiers::CTRL, true)] {
+                let ctx = egui::Context::default();
+                let mut app = device_face_app(gpu);
+                let existing = Sel::Body { name: "Body1".into() };
+                app.session.selection = vec![existing.clone()];
+                hover_frame(&mut app, &ctx, vec![]);
+                let p = projection(&app, app.viewport.rect.unwrap()).to_screen(Vec3::ZERO).unwrap();
+                device_hover_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(p - vec2(15.0, 0.0))]);
+                assert_eq!(app.session.selection, vec![existing.clone()], "device motion alone must retain selection");
+                let at = p + vec2(15.0, 0.0);
+                device_hover_frame(
+                    &mut app,
+                    &ctx,
+                    vec![
+                        egui::Event::ModifiersChanged(modifiers),
+                        egui::Event::PointerMoved(at),
+                        egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: true, modifiers },
+                    ],
+                );
+                device_hover_frame(
+                    &mut app,
+                    &ctx,
+                    vec![egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers }],
+                );
+                let proj = projection(&app, app.viewport.rect.unwrap());
+                let (_, selected) = candidate(&app, &pick(&app, &proj, at)).unwrap();
+                assert!(matches!(selected, Sel::Face { .. }));
+                let expected = if add { vec![existing, selected] } else { vec![selected] };
+                assert_eq!(app.session.selection, expected, "the click must select the face under the current camera");
             }
         }
     }
