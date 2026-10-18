@@ -16,8 +16,10 @@ None of this work changes when the body doesn't, and none of it is now done twic
   copy's result is the next copy's input, so each body is measured once rather than twice. The
   merged counts follow the split lines, so a clone with other split lines is measured anew.
 - While a blend runs (`memo::scope`, opened by the public fillet and chamfer entry points), its
-  input is healed once and its edges are meshed once per tolerance. The memo goes when the
-  outermost blend returns, so it keeps no body alive past it.
+  input is healed once, its edges are meshed once per tolerance, and each body it works on is
+  meshed once per tolerance. `Body::contains` meshed the whole body for every point it tested,
+  and a chamfer tests four points per edge on its input. The memo goes when the outermost blend
+  returns, so it keeps no body alive past it.
 - The fine tessellation's edge maps (`refined_with_cache`) are presized, look a key up once
   rather than twice, and hash an edge by its parameters; lookups still compare every coordinate.
   The maps are never iterated, so nothing they return depends on the hash.
