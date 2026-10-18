@@ -10,7 +10,7 @@
 //! together; the flat solid is the outline extruded through the thickness.
 
 use serde::{Deserialize, Serialize};
-use solidcraft_geom::{LINEAR_TOL, Loop2, Plane, Region2, Ring, Seg2, Vec2, Vec3};
+use solidcraft_geom::{Aabb2, LINEAR_TOL, Loop2, Plane, Region2, Ring, Seg2, Vec2, Vec3};
 use solidcraft_kernel::{self as kernel, Body, EdgeSpec, FaceSpec, SurfSpec};
 
 use crate::expr::{self, Kind, Value};
@@ -178,14 +178,13 @@ fn regions_complexity<'a>(regions: impl Iterator<Item = &'a Region2>) -> Result<
 /// them (the result is the same: a cut-out clear of a tool's box can't change what it meets).
 pub(crate) struct NearHoles<'a> {
     region: &'a Region2,
-    boxes: Vec<(Vec2, Vec2)>,
+    boxes: Vec<Aabb2>,
 }
 
 /// A loop's bounding box, a little larger than its chords so arcs stay inside.
-fn loop_box(lp: &Loop2) -> Result<(Vec2, Vec2)> {
-    let (lo, hi) = flat_polyline(lp)?.bounds();
-    let pad = 1e-3 + 1e-9 * (lo.x.abs() + lo.y.abs() + hi.x.abs() + hi.y.abs());
-    Ok((lo - Vec2::new(pad, pad), hi + Vec2::new(pad, pad)))
+fn loop_box(lp: &Loop2) -> Result<Aabb2> {
+    let b = flat_polyline(lp)?.bounds();
+    Ok(b.inflated(1e-3 + 1e-9 * (b.min.x.abs() + b.min.y.abs() + b.max.x.abs() + b.max.y.abs())))
 }
 
 impl<'a> NearHoles<'a> {
@@ -198,15 +197,8 @@ impl<'a> NearHoles<'a> {
         if self.region.holes.is_empty() {
             return Ok(self.region.clone());
         }
-        let (lo, hi) = loop_box(&tool.outer)?;
-        let holes = self
-            .region
-            .holes
-            .iter()
-            .zip(&self.boxes)
-            .filter(|(_, (a, b))| a.x <= hi.x && b.x >= lo.x && a.y <= hi.y && b.y >= lo.y)
-            .map(|(h, _)| h.clone())
-            .collect();
+        let near = loop_box(&tool.outer)?;
+        let holes = self.region.holes.iter().zip(&self.boxes).filter(|(_, b)| b.meets(&near)).map(|(h, _)| h.clone()).collect();
         Ok(Region2 { outer: self.region.outer.clone(), holes })
     }
 }
@@ -1146,13 +1138,8 @@ impl SheetBody {
             // Each piece meets only the cut-outs near it: arranging every cut-out of the sheet (a
             // label's letters on its base) against each flange and bend zone too would charge the
             // budget for all of them once per piece.
-            let (lo, hi) = loop_box(&panel.outer)?;
-            let near: Vec<Region2> = cuts
-                .iter()
-                .zip(&cut_boxes)
-                .filter(|(_, (a, b))| a.x <= hi.x && b.x >= lo.x && a.y <= hi.y && b.y >= lo.y)
-                .map(|(c, _)| c.clone())
-                .collect();
+            let panel_box = loop_box(&panel.outer)?;
+            let near: Vec<Region2> = cuts.iter().zip(&cut_boxes).filter(|(_, b)| b.meets(&panel_box)).map(|(c, _)| c.clone()).collect();
             let material = if near.is_empty() { vec![panel] } else { material_boolean(&[panel], &near, kernel::BoolOp::Cut, work)? };
             for region in material {
                 points = points.saturating_add(region_complexity(std::slice::from_ref(&region))?.1);
@@ -1680,10 +1667,11 @@ impl SheetBody {
             .labels
             .iter()
             .map(|r| {
-                let (lo, hi) = r.outer.polyline(1e-3).bounds();
                 // A polyline of 0.001 mm chords is within 0.001 mm of the curve.
-                let pad = Vec2::new(0.01, 0.01);
-                (lo - pad, hi + pad, std::iter::once(&r.outer).chain(&r.holes).flat_map(|lp| lp.segs.iter().copied()).collect())
+                (
+                    r.outer.polyline(1e-3).bounds().inflated(0.01),
+                    std::iter::once(&r.outer).chain(&r.holes).flat_map(|lp| lp.segs.iter().copied()).collect(),
+                )
             })
             .collect();
         Letters { regions }
@@ -1780,18 +1768,18 @@ impl SheetBody {
             Ok(common.iter().map(Region2::area).sum::<f64>() > TOUCH_AREA)
         };
         // The cheap test first: a piece inside another's outline is an island, whatever it holds.
-        let outlines: Vec<(Ring<Vec2>, Vec2, Vec2)> = after
+        let outlines: Vec<(Ring<Vec2>, Aabb2)> = after
             .iter()
             .map(|r| {
                 let pts = r.outer.polyline(1e-3);
-                let (lo, hi) = pts.bounds();
-                (pts, lo, hi)
+                let b = pts.bounds();
+                (pts, b)
             })
             .collect();
         let (mut open, mut islands) = (Vec::new(), Vec::new());
         for (i, piece) in after.iter().enumerate() {
             let p = piece.interior_point();
-            let inside = |(pts, lo, hi): &(Ring<Vec2>, Vec2, Vec2)| (lo.x..=hi.x).contains(&p.x) && (lo.y..=hi.y).contains(&p.y) && pts.contains(p);
+            let inside = |(pts, b): &(Ring<Vec2>, Aabb2)| b.contains(p) && pts.contains(p);
             if outlines.iter().enumerate().any(|(j, o)| j != i && inside(o)) {
                 islands.push(piece);
             } else {
@@ -1916,7 +1904,7 @@ impl SheetBody {
             r.holes.iter().for_each(&mut add);
         }
         zones.iter().for_each(|z| add(&z.outer));
-        let solidcraft_geom::Aabb2 { min: lo, max: hi } = segs.iter().map(|(a, _)| *a).collect();
+        let Aabb2 { min: lo, max: hi } = segs.iter().map(|(a, _)| *a).collect();
         if !(lo.x <= hi.x) || !(p.pitch > 0.0) {
             return Ok(Vec::new());
         }
@@ -2000,13 +1988,8 @@ impl SheetBody {
 
     /// Bounding size of the flat pattern (x, y in the flat frame).
     pub fn flat_size(&self) -> Result<(f64, f64)> {
-        let loops: Vec<Ring<Vec2>> = self.flat_regions()?.iter().map(|r| r.outer.polyline(1e-3)).collect();
-        let (mut lo, mut hi) = (Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN));
-        for p in loops.iter().flatten() {
-            lo = Vec2::new(lo.x.min(p.x), lo.y.min(p.y));
-            hi = Vec2::new(hi.x.max(p.x), hi.y.max(p.y));
-        }
-        Ok((hi.x - lo.x, hi.y - lo.y))
+        let size = self.flat_regions()?.iter().fold(Aabb2::EMPTY, |b, r| b.union(&r.outer.polyline(1e-3).bounds())).size();
+        Ok((size.x, size.y))
     }
 
     /// Panels with their regions and world placements: (flange index or None, region).
@@ -3950,15 +3933,9 @@ fn clear_of(a: Vec2, d: Vec2, len: f64, cuts: &[Region2]) -> Vec<(f64, f64)> {
         return Vec::new();
     }
     let b = a + d * len;
-    let (lo, hi) = (Vec2::new(a.x.min(b.x) - 1e-6, a.y.min(b.y) - 1e-6), Vec2::new(a.x.max(b.x) + 1e-6, a.y.max(b.y) + 1e-6));
+    let line = Aabb2 { min: Vec2::new(a.x.min(b.x), a.y.min(b.y)), max: Vec2::new(a.x.max(b.x), a.y.max(b.y)) }.inflated(1e-6);
     // Only cut-outs whose box the line enters can hold or cross it.
-    let near: Vec<&Region2> = cuts
-        .iter()
-        .filter(|r| {
-            let (p0, p1) = r.outer.polyline(1e-3).bounds();
-            p0.x <= hi.x && lo.x <= p1.x && p0.y <= hi.y && lo.y <= p1.y
-        })
-        .collect();
+    let near: Vec<&Region2> = cuts.iter().filter(|r| r.outer.polyline(1e-3).bounds().meets(&line)).collect();
     let mut at = vec![0.0, len];
     for e in near.iter().flat_map(|r| std::iter::once(&r.outer).chain(&r.holes)).flat_map(|l| &l.segs) {
         line_hits(a, d, e, &mut at);
@@ -4111,8 +4088,8 @@ pub fn loop_lies_on(lp: &Loop2, curves: &[Seg2]) -> bool {
 /// Tells which loops of a sheet's flat pattern are letters (see [`SheetBody::letters`]).
 #[derive(Clone, Debug)]
 pub struct Letters {
-    /// Each text region's corners (lowest, highest) and the segments of its outlines.
-    regions: Vec<(Vec2, Vec2, Vec<Seg2>)>,
+    /// Each text region's box and the segments of its outlines.
+    regions: Vec<(Aabb2, Vec<Seg2>)>,
 }
 
 impl Letters {
@@ -4120,7 +4097,7 @@ impl Letters {
     /// counters.
     pub fn is_letter(&self, lp: &Loop2) -> bool {
         let Some(p) = lp.segs.first().map(Seg2::start) else { return false };
-        self.regions.iter().any(|(lo, hi, curves)| p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y && loop_lies_on(lp, curves))
+        self.regions.iter().any(|(b, curves)| b.contains(p) && loop_lies_on(lp, curves))
     }
 }
 

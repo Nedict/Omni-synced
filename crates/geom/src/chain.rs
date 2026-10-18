@@ -6,7 +6,7 @@
 use std::marker::PhantomData;
 use std::ops::Deref;
 
-use crate::{Vec2, Vec3};
+use crate::{Aabb2, Vec2, Vec3};
 
 /// Whether a chain's last item joins its first.
 pub trait Ends: sealed::Sealed {
@@ -82,11 +82,9 @@ impl<T> Path<T> {
 }
 
 impl<E: Ends> Chain<Vec2, E> {
-    /// The smallest box holding every item, `(low corner, high corner)`. An empty chain gives the
-    /// empty box (low +∞, high −∞), which holds nothing.
-    pub fn bounds(&self) -> (Vec2, Vec2) {
-        let empty = (Vec2::new(f64::INFINITY, f64::INFINITY), Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY));
-        self.items.iter().fold(empty, |(lo, hi), p| (Vec2::new(lo.x.min(p.x), lo.y.min(p.y)), Vec2::new(hi.x.max(p.x), hi.y.max(p.y))))
+    /// The smallest box holding every item (empty for an empty chain).
+    pub fn bounds(&self) -> Aabb2 {
+        self.items.iter().copied().collect()
     }
 }
 
@@ -219,8 +217,7 @@ mod tests {
         let tilted = Ring::from([Vec3::new(0.0, 0.0, 1.0), Vec3::new(2.0, 0.0, 1.0), Vec3::new(2.0, 2.0, 1.0), Vec3::new(0.0, 2.0, 1.0)]);
         assert_eq!(tilted.area_vector(), Vec3::new(0.0, 0.0, 4.0));
         assert!(uv.contains([1.0, 1.0]) && !uv.contains([3.0, 1.0]));
-        assert_eq!(square.bounds(), (Vec2::new(0.0, 0.0), Vec2::new(2.0, 2.0)));
-        let (lo, hi) = Path::<Vec2>::default().bounds();
-        assert!(lo.x > hi.x && lo.y > hi.y, "the empty box holds nothing");
+        assert_eq!(square.bounds(), Aabb2 { min: Vec2::new(0.0, 0.0), max: Vec2::new(2.0, 2.0) });
+        assert!(Path::<Vec2>::default().bounds().is_empty());
     }
 }

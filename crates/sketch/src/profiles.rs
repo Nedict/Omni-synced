@@ -495,7 +495,7 @@ pub fn without_text_counters(sk: &Sketch, profiles: Vec<Profile>) -> Vec<Profile
     }
     // Outer polylines and their boxes, once.
     let polys: Vec<Ring<Vec2>> = profiles.iter().map(|p| p.region.outer.polyline(1e-3)).collect();
-    let boxes: Vec<(Vec2, Vec2)> = polys.iter().map(|pl| pl.bounds()).collect();
+    let boxes: Vec<solidcraft_geom::Aabb2> = polys.iter().map(|pl| pl.bounds()).collect();
     let areas: Vec<f64> = profiles.iter().map(|p| p.region.outer.signed_area().abs()).collect();
     let keep: Vec<bool> = (0..profiles.len())
         .map(|i| {
@@ -509,7 +509,7 @@ pub fn without_text_counters(sk: &Sketch, profiles: Vec<Profile>) -> Vec<Profile
                     j != i
                         && text_only.get(j).copied().unwrap_or(false)
                         && areas.get(j).copied().unwrap_or(0.0) > ai
-                        && boxes.get(j).is_some_and(|(lo, hi)| probe.x >= lo.x && probe.x <= hi.x && probe.y >= lo.y && probe.y <= hi.y)
+                        && boxes.get(j).is_some_and(|b| b.contains(probe))
                         && polys.get(j).is_some_and(|pl| pl.contains(probe))
                 })
                 .count();
@@ -1011,8 +1011,8 @@ fn find_profiles_bounded(sk: &Sketch, max_edges: usize) -> Vec<Profile> {
     // Nesting: parent = smallest containing loop from another component. Bounding boxes rule
     // out most pairs before the point-in-loop test.
     let areas: Vec<f64> = loops.iter().map(|(l, _, _, _)| l.signed_area().abs()).collect();
-    let boxes: Vec<(Vec2, Vec2)> = loops.iter().map(|(l, _, _, _)| l.polyline(1e-3).bounds()).collect();
-    let inside_box = |j: usize, p: Vec2| boxes.get(j).is_some_and(|(lo, hi)| p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y);
+    let boxes: Vec<solidcraft_geom::Aabb2> = loops.iter().map(|(l, _, _, _)| l.polyline(1e-3).bounds()).collect();
+    let inside_box = |j: usize, p: Vec2| boxes.get(j).is_some_and(|b| b.contains(p));
     let mut parent_of: Vec<Option<usize>> = vec![None; loops.len()];
     for (i, (li, _, ci, _)) in loops.iter().enumerate() {
         let probe = li.segs.first().map(Seg2::mid).unwrap_or_default();

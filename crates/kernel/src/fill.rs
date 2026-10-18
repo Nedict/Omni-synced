@@ -506,7 +506,7 @@ mod tests {
     fn gained(fill: &Body, corners: &[Vec2]) -> f64 {
         let s = fill.solid.face_iter().next().unwrap().surface();
         let polygon = solidcraft_geom::Ring::from(corners.to_vec());
-        let (lo, hi) = polygon.bounds();
+        let solidcraft_geom::Aabb2 { min: lo, max: hi } = polygon.bounds();
         let n = 300;
         let (dx, dy) = ((hi.x - lo.x) / n as f64, (hi.y - lo.y) / n as f64);
         let inside = |x: f64, y: f64| polygon.contains(Vec2::new(x, y));

@@ -6,7 +6,7 @@ use std::f64::consts::TAU;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Ring, Vec2};
+use crate::{Aabb2, Ring, Vec2};
 
 /// One boundary segment in sketch coordinates.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -640,12 +640,11 @@ impl Region2 {
 /// over their box refined around the best point. Zero for an empty or degenerate outline.
 fn max_clearance(loops: &[Ring<Vec2>]) -> f64 {
     let sides: Vec<(Vec2, Vec2)> = loops.iter().flat_map(|pl| pl.edges().map(|(a, b)| (*a, *b))).filter(|(a, b)| a.dist(*b) > 0.0).collect();
-    let (Some(lo), Some(hi)) = (
-        sides.iter().map(|s| s.0).reduce(|a, b| Vec2::new(a.x.min(b.x), a.y.min(b.y))),
-        sides.iter().map(|s| s.0).reduce(|a, b| Vec2::new(a.x.max(b.x), a.y.max(b.y))),
-    ) else {
+    let corners: Aabb2 = sides.iter().map(|s| s.0).collect();
+    if corners.is_empty() {
         return 0.0;
-    };
+    }
+    let Aabb2 { min: lo, max: hi } = corners;
     let inside = |p: Vec2| {
         let mut odd = false;
         for (a, b) in &sides {
@@ -776,8 +775,7 @@ pub fn regions_apart(regions: &[Region2], gap: f64) -> bool {
     let reach = gap + 2.0 * tol;
     struct Outline {
         loops: Vec<Ring<Vec2>>,
-        lo: Vec2,
-        hi: Vec2,
+        bounds: Aabb2,
         inside: Vec2,
     }
     let mut outlines = Vec::with_capacity(regions.len());
@@ -787,13 +785,13 @@ pub fn regions_apart(regions: &[Region2], gap: f64) -> bool {
         if outer.iter().any(|p| !p.is_finite()) {
             return false;
         }
-        let (lo, hi) = outer.bounds();
+        let bounds = outer.bounds();
         let Some(inside) = outer.first().copied() else { return false };
-        outlines.push(Outline { loops, lo, hi, inside });
+        outlines.push(Outline { loops, bounds, inside });
     }
     let mut order: Vec<usize> = (0..outlines.len()).collect();
     order.sort_by(|&i, &j| {
-        let x = |k: usize| outlines.get(k).map(|o| o.lo.x).unwrap_or(0.0);
+        let x = |k: usize| outlines.get(k).map(|o| o.bounds.min.x).unwrap_or(0.0);
         x(i).total_cmp(&x(j))
     });
     let mut work = 0usize;
@@ -801,10 +799,11 @@ pub fn regions_apart(regions: &[Region2], gap: f64) -> bool {
         let Some(a) = outlines.get(i) else { return false };
         for &j in order.iter().skip(k + 1) {
             let Some(b) = outlines.get(j) else { return false };
-            if b.lo.x > a.hi.x + reach {
+            let (a_box, b_box) = (a.bounds, b.bounds);
+            if b_box.min.x > a_box.max.x + reach {
                 break;
             }
-            if b.lo.y > a.hi.y + reach || a.lo.y > b.hi.y + reach {
+            if b_box.min.y > a_box.max.y + reach || a_box.min.y > b_box.max.y + reach {
                 continue;
             }
             // A boundary point of one inside the other: one holds the other (boundaries that do
