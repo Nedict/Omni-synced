@@ -2246,13 +2246,32 @@ fn seg_dist(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     p.distance(a + ab * t)
 }
 
-/// Whether both curves of a crossing end at it.
-fn corner(sk: &solidcraft_engine::sketch::Sketch, c: &solidcraft_engine::Crossing) -> bool {
-    let ends_at = |i: usize| {
-        let ends = sk.curves.get(i).and_then(|k| k.kind.ends());
-        ends.is_some_and(|(a, b)| [a, b].iter().any(|&p| sk.point(p).is_some_and(|q| q.dist(c.at) < 1e-6)))
+/// Whether sketch point `id` is already held on both curves of a crossing: an end of each, or
+/// tied (coincident) to such a point or on the curve by a constraint.
+fn held_on_both(sk: &solidcraft_engine::sketch::Sketch, id: &str, c: &solidcraft_engine::Crossing) -> bool {
+    use solidcraft_engine::sketch::ConstraintKind::{Coincident, PointOnCurve};
+    let Some(p) = sk.resolve_point(id) else { return false };
+    let mut same = vec![p];
+    loop {
+        let n = same.len();
+        for k in &sk.constraints {
+            if let Coincident { p, q } = k.kind {
+                match (same.contains(&p), same.contains(&q)) {
+                    (true, false) => same.push(q),
+                    (false, true) => same.push(p),
+                    _ => {}
+                }
+            }
+        }
+        if same.len() == n {
+            break;
+        }
+    }
+    let on = |i: usize| {
+        sk.curves.get(i).and_then(|k| k.kind.ends()).is_some_and(|(a, b)| same.contains(&a) || same.contains(&b))
+            || sk.constraints.iter().any(|k| matches!(k.kind, PointOnCurve { p, c } if c == i && same.contains(&p)))
     };
-    ends_at(c.a) && ends_at(c.b)
+    on(c.a) && on(c.b)
 }
 
 /// Point on the active sketch plane under the cursor (sketch coordinates), snapped to sketch
@@ -2270,8 +2289,8 @@ pub fn sketch_point_at(app: &SolveApp, proj: &Proj, pos: Pos2) -> Option<(Vec2, 
             if !crate::drag_snap::suppressed()
                 && let Some((a, b)) = proj.to_screen(ss.plane.to_world(at)).zip(proj.to_screen(ss.plane.to_world(at + Vec2::X)))
                 && let Some(c) = solidcraft_engine::crossing_near(&ss.sketch, at, 2.0 / (a.distance(b) as f64).max(1e-9))
-                // A corner (both curves end here) is already joined: keep the point.
-                && !corner(&ss.sketch, &c)
+                // Already held on both curves (a corner): keep the point.
+                && !held_on_both(&ss.sketch, &id, &c)
                 && let Some(arg) = crate::sketch_tools::crossing_arg(&ss.sketch, &c)
             {
                 return Some((c.at, Some(arg)));
