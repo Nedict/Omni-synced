@@ -1717,3 +1717,87 @@ fn midplane_asks_for_two_planes_then_builds_the_one_between_them() {
     assert!(pl.normal().cross(Vec3::Z).len() < 1e-6, "{pl:?}");
     assert!((pl.origin.z - 10.0).abs() < 1e-6, "{pl:?}");
 }
+
+/// Two lines crossing at (10, 10) in a shown sketch on XY, seen from the top, with a dialog whose
+/// active input accepts `accept`. Returns the harness and the crossing's screen position.
+fn crossing_scene(accept: crate::selection::Accept) -> (crate::scenario::Harness, [f64; 2]) {
+    let mut h = crate::scenario::Harness::new();
+    h.app.ui.show_origin = false;
+    h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+    h.app.run("sketch.line", json!({"points":[[0,0],[20,20]],"ids":["l1"]})).unwrap();
+    h.app.run("sketch.line", json!({"points":[[0,20],[20,0]],"ids":["l2"]})).unwrap();
+    h.app.run("sketch.finish", json!({})).unwrap();
+    h.call("ui.view", json!({"view":"top"}));
+    h.frames(3);
+    h.app.start("construct.plane.midplane");
+    h.frames(2);
+    h.app.dialog.as_mut().unwrap().inputs[0].accept = accept;
+    let at = h.at(&json!({"world":[10,10,0]})).unwrap();
+    (h, at)
+}
+
+fn crossing_hits(h: &crate::scenario::Harness, at: [f64; 2]) -> Vec<crate::viewport::Hit> {
+    let proj = crate::viewport::projection(&h.app, h.app.viewport.rect.unwrap());
+    crate::viewport::pick(&h.app, &proj, egui::pos2(at[0] as f32, at[1] as f32))
+}
+
+fn crossing_of(hits: &[crate::viewport::Hit]) -> Option<&crate::viewport::Hit> {
+    hits.iter().find(|x| matches!(x, crate::viewport::Hit::SketchCrossing { .. }))
+}
+
+#[test]
+fn crossing_is_picked_only_when_asked() {
+    use crate::selection::{CROSSINGS, POINTS, VERTICES};
+    let (h, at) = crossing_scene(VERTICES | POINTS | CROSSINGS);
+    let hits = crossing_hits(&h, at);
+    match crossing_of(&hits) {
+        Some(crate::viewport::Hit::SketchCrossing { a, b, at, .. }) => {
+            assert!(at.dist(solidcraft_engine::geom::Vec2::new(10.0, 10.0)) < 1e-9, "{at:?}");
+            let mut ids = [a.as_str(), b.as_str()];
+            ids.sort();
+            assert_eq!(ids, ["l1", "l2"]);
+        }
+        _ => panic!("no crossing in {hits:?}"),
+    }
+    let (h, at) = crossing_scene(POINTS);
+    assert!(crossing_of(&crossing_hits(&h, at)).is_none());
+    let (mut h, at) = crossing_scene(VERTICES | POINTS | CROSSINGS);
+    h.app.dialog = None;
+    assert!(crossing_of(&crossing_hits(&h, at)).is_none());
+}
+
+#[test]
+fn point_at_crossing_wins() {
+    use crate::selection::{CROSSINGS, POINTS, VERTICES};
+    let (mut h, at) = crossing_scene(VERTICES | POINTS | CROSSINGS);
+    h.app.dialog = None;
+    h.app.run("sketch.edit", json!({"sketch": h.app.session.world_state().sketches[0].feature})).ok();
+    h.app.run("sketch.point", json!({"point":[10,10]})).unwrap();
+    h.app.run("sketch.finish", json!({})).unwrap();
+    h.frames(3);
+    h.app.start("construct.plane.midplane");
+    h.frames(2);
+    h.app.dialog.as_mut().unwrap().inputs[0].accept = VERTICES | POINTS | CROSSINGS;
+    let hits = crossing_hits(&h, at);
+    let pi = hits.iter().position(|x| matches!(x, crate::viewport::Hit::SketchPoint { .. })).expect("the point");
+    if let Some(ci) = hits.iter().position(|x| matches!(x, crate::viewport::Hit::SketchCrossing { .. })) {
+        assert!(pi < ci);
+    }
+    let (hit, _) = crate::viewport::candidate(&h.app, &hits).expect("a candidate");
+    assert!(matches!(hit, crate::viewport::Hit::SketchPoint { .. }), "{hit:?}");
+}
+
+#[test]
+fn hidden_or_edge_on_sketch_offers_no_crossings() {
+    use crate::selection::{CROSSINGS, POINTS, VERTICES};
+    let (mut h, at) = crossing_scene(VERTICES | POINTS | CROSSINGS);
+    assert!(crossing_of(&crossing_hits(&h, at)).is_some(), "control: shown sketch offers it");
+    let sid = h.app.session.world_state().sketches[0].feature;
+    h.app.session.visibility.hidden_sketches.push(sid);
+    assert!(crossing_of(&crossing_hits(&h, at)).is_none(), "hidden");
+    h.app.session.visibility.hidden_sketches.clear();
+    h.call("ui.view", json!({"view":"front"}));
+    h.frames(3);
+    let at = h.at(&json!({"world":[10,10,0]})).unwrap();
+    assert!(crossing_of(&crossing_hits(&h, at)).is_none(), "edge-on");
+}

@@ -138,6 +138,13 @@ pub struct ViewportState {
 /// Something under the cursor.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Hit {
+    /// Where two curves of one shown sketch cross (`a`, `b` are curve ids; `at` is sketch-local).
+    SketchCrossing {
+        sketch: u64,
+        a: String,
+        b: String,
+        at: Vec2,
+    },
     SketchPoint {
         sketch: u64,
         id: String,
@@ -1166,6 +1173,9 @@ pub fn same_target(a: &Hit, b: &Hit) -> bool {
     match (a, b) {
         (Hit::SketchPoint { sketch: s, id: i, .. }, Hit::SketchPoint { sketch: t, id: j, .. })
         | (Hit::SketchCurve { sketch: s, id: i, .. }, Hit::SketchCurve { sketch: t, id: j, .. }) => s == t && i == j,
+        (Hit::SketchCrossing { sketch: s, a: a1, b: b1, at: p }, Hit::SketchCrossing { sketch: t, a: a2, b: b2, at: q }) => {
+            s == t && a1 == a2 && b1 == b2 && p.dist(*q) < 1e-9
+        }
         (Hit::Vertex { body: a, point: p }, Hit::Vertex { body: b, point: q }) => a == b && p.dist(*q) < 1e-9,
         (Hit::Edge { body: a, index: i, .. }, Hit::Edge { body: b, index: j, .. })
         | (Hit::Face { body: a, index: i, .. }, Hit::Face { body: b, index: j, .. }) => a == b && i == j,
@@ -1363,6 +1373,25 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
         }
     }
     hits.extend(bestv.hits());
+    // Crossings of shown sketches, only where the active input takes them (after points and
+    // vertices, which win).
+    if app.dialog.as_ref().and_then(|d| d.active_input()).is_some_and(|i| i.accept & crate::selection::CROSSINGS != 0) {
+        let mut bestx = Near::new(all);
+        for sid in visible_sketches(app) {
+            let Some(ss) = st.sketch(sid) else { continue };
+            // A plane seen edge-on (or behind the eye) has no point under the cursor.
+            let Some(w) = ss.plane.intersect_ray(o, d) else { continue };
+            let Some(tol) = crate::gizmo::mm_per_px(proj, w).map(|m| 8.0 * m) else { continue };
+            let Some(c) = solidcraft_engine::crossing_near(&ss.sketch, ss.plane.to_local(w), tol, |_| true) else { continue };
+            let (Some(ca), Some(cb)) = (ss.sketch.curves.get(c.a), ss.sketch.curves.get(c.b)) else { continue };
+            let Some(sp) = proj.to_screen(ss.plane.to_world(c.at)) else { continue };
+            let dd = sp.distance(pos);
+            if bestx.wants(dd) {
+                bestx.offer(dd, Hit::SketchCrossing { sketch: sid, a: ca.id.clone(), b: cb.id.clone(), at: c.at });
+            }
+        }
+        hits.extend(bestx.hits());
+    }
     hits.extend(beste.hits());
     // Origin axes.
     let size = origin_size(app.cam.half_height());
@@ -1677,6 +1706,7 @@ const AXIS_LEN: f64 = 1.8;
 /// The hit as a plain selection (no command filter).
 pub fn hit_sel(h: &Hit) -> Option<Sel> {
     Some(match h {
+        Hit::SketchCrossing { sketch, a, b, at } => Sel::SketchCrossing { sketch: *sketch, a: a.clone(), b: b.clone(), at: *at },
         Hit::SketchPoint { id, .. } => Sel::SketchPoint { id: id.clone() },
         Hit::SketchCurve { id, .. } => Sel::SketchCurve { id: id.clone() },
         Hit::Vertex { body, point } => Sel::Vertex { body: body.clone(), point: *point },
@@ -1719,6 +1749,8 @@ pub fn candidates(app: &SolveApp, hits: &[Hit]) -> Vec<(Hit, Sel)> {
 fn pick_allowed(app: &SolveApp, h: &Hit) -> bool {
     let off = |k: &str| app.ui.pick_off.iter().any(|x| x == k);
     match h {
+        // Crossings are only ever picked into a dialog input.
+        Hit::SketchCrossing { .. } => false,
         Hit::SketchCurve { .. } => !off("sketch") && !off("sketch_curves"),
         Hit::SketchPoint { .. } => !off("sketch") && !off("sketch_points"),
         Hit::Profile { .. } => !off("sketch"),
@@ -3161,7 +3193,7 @@ fn hover_highlight(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
                 }
             }
         }
-        Some(Hit::SketchPoint { sketch, at, .. }) => {
+        Some(Hit::SketchPoint { sketch, at, .. } | Hit::SketchCrossing { sketch, at, .. }) => {
             if let Some(ss) = st.sketch(*sketch)
                 && let Some(p) = proj.to_screen(ss.plane.to_world(*at))
             {

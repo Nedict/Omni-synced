@@ -420,6 +420,7 @@ fn fits(a: Accept, s: &Sel) -> bool {
         Sel::Feature { .. } => a & selection::FEATURES != 0,
         // Sketch points go into a sketch command's own inputs (Entities, a base point), so a
         // box selection and a pre-selection reach them the way a click already does.
+        Sel::SketchCrossing { .. } => a & selection::CROSSINGS != 0,
         Sel::SketchPoint { .. } => a & (selection::POINTS | selection::SKETCH_POINTS) != 0,
         Sel::SketchConstraint { .. } | Sel::Occurrence { .. } | Sel::ExternalSketchCurve { .. } | Sel::ExternalSketchPoint { .. } => false,
     }
@@ -1660,6 +1661,7 @@ fn selection_label(s: &Session, item: &Sel) -> String {
     match item {
         Sel::SketchCurve { id } => id.clone(),
         Sel::SketchPoint { id } => crate::sketch_modify_ui::point_id(s, item).unwrap_or(id).to_string(),
+        Sel::SketchCrossing { a, b, .. } => format!("{a} × {b}"),
         Sel::Plane { name } | Sel::Axis { name } | Sel::Body { name } => name.clone(),
         Sel::Face { body, index, .. } => format!("{body} · face {index}"),
         Sel::Edge { body, index, .. } => format!("{body} · edge {index}"),
