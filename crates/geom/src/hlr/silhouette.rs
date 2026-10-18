@@ -93,8 +93,9 @@ pub(crate) fn silhouettes(parts: &[(&S3, &Trim)], an: Analytic, d: Vec3, out: &m
             push(C3::Arc { o: c, x, y, r: [r, r], range: [0., TAU] }, CurveAccuracy::Analytic);
         }
         Analytic::Torus { .. } | Analytic::Other => {
-            // A torus is traced on the whole torus: the faces may each hold part of it.
-            let whole = S3::from_analytic(&an, [0., 0.], Vec3::ZERO);
+            // Several faces of one torus may each hold part of its silhouette: trace it on the
+            // whole torus then. One face keeps its own chart (finer along a narrow strip).
+            let whole = if parts.len() > 1 { S3::from_analytic(&an, [0., 0.], Vec3::ZERO) } else { None };
             let s = whole.as_ref().unwrap_or(s);
             let traced = if matches!(s, S3::Rev(_)) { s.rev_silhouette(d) } else { contour(s, trim, d) };
             for (curve, dev) in traced {

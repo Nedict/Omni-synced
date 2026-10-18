@@ -584,8 +584,20 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
             if matches!(f.analytic, Analytic::Plane) {
                 continue;
             }
+            // The set's silhouette is traced on its first face's surface, so a face joins only
+            // when that surface passes through its own points within the trimming tolerance
+            // (recognition groups surfaces more loosely, 1e-9 of their position).
             let first = f.group.iter().copied().filter(|j| def.faces.get(*j).is_some_and(supported)).min().unwrap_or(fi);
-            sets.entry(first).or_default().push(fi);
+            let tol = 2. * f.trim.chord_error + 1e-9 * (1. + (f.hi - f.lo).len());
+            let fits = def.faces.get(first).is_some_and(|l| {
+                f.trim
+                    .chords
+                    .iter()
+                    .step_by(7)
+                    .chain(f.trim.chords.last())
+                    .all(|(q, _)| f.surface.inverse(*q, None).is_some_and(|uv| l.analytic.distance(f.surface.point(uv)) <= tol))
+            });
+            sets.entry(if fits { first } else { fi }).or_default().push(fi);
         }
         for (fi, members) in sets {
             let Some(f) = def.faces.get(fi) else { continue };
@@ -847,12 +859,12 @@ fn piece_geometry(t: &Track, piece: &Piece, p: &Placement, view: &View) -> (Vec<
                 let w = c.at(x) - o;
                 w.dot(v).atan2(w.dot(u))
             };
-            // Unwrap the piece's angles along the curve, following its sampled points.
+            // Unwrap the piece's angles through the track's own samples (dense, and at every
+            // knot), so an unevenly parameterised circle cannot skip a turn between two of them.
             let mut a0 = angle(piece.t[0]);
             let mut a1 = a0;
-            let steps = 16;
-            for k in 1..=steps {
-                let x = piece.t[0] + (piece.t[1] - piece.t[0]) * k as f64 / steps as f64;
+            let inner = t.samples.iter().map(|s| s.0).filter(|x| *x > piece.t[0] && *x < piece.t[1]);
+            for x in inner.chain(std::iter::once(piece.t[1])) {
                 let raw = angle(x);
                 let d = (raw - a1 + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
                 a1 += d;

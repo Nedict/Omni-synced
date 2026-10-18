@@ -526,3 +526,111 @@ fn a_cone_in_a_front_view_has_exact_outline_rulings_and_edge_on_circles() {
         assert!((drawn - 2. * half).abs() < 1e-6, "circle {edge}: {drawn} mm drawn");
     }
 }
+
+#[test]
+fn a_torus_seen_obliquely_spans_its_outer_diameter() {
+    // Across the view (screen x is square to the axis here) the outline of a torus reaches
+    // R + r on both sides, whatever the tilt; the traced silhouette reports its deviation.
+    let def = prepare(&torus(20., 5.), &Options::default()).unwrap();
+    for tilt in [0.3, 1., 3.] {
+        let view = View::new(Vec3::new(0., 1., -tilt), Vec3::new(0., 0., 1.)).unwrap();
+        let d = hidden_lines(std::slice::from_ref(&def), &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+        assert_eq!(d.stats.uncertain_uncovered, 0, "tilt {tilt}: {:?}", d.stats);
+        let mut dev = 0f64;
+        let (mut lo, mut hi) = (f64::MAX, f64::MIN);
+        for p in pieces(&d).filter(|p| p.visibility == Visibility::Visible && !p.covered) {
+            if let CurveAccuracy::Sampled { max_sample_deviation_mm } = p.accuracy {
+                dev = dev.max(max_sample_deviation_mm);
+            }
+            for g in &p.geometry {
+                for s in [0., 0.5, 1.] {
+                    let q = g.point_at(s);
+                    (lo, hi) = (lo.min(q.x), hi.max(q.x));
+                }
+            }
+        }
+        assert!(dev < 1e-3, "tilt {tilt}: deviation {dev}");
+        assert!((hi - 25.).abs() < 1e-3 && (lo + 25.).abs() < 1e-3, "tilt {tilt}: x from {lo} to {hi}");
+    }
+}
+
+#[test]
+fn an_unevenly_parameterised_circle_is_drawn_whole() {
+    // A disc bounded by an exact rational circle whose first three quarters are squeezed into
+    // the parameters 0 to 0.009: the conic arcs must still turn the full 360 degrees.
+    let r = 10.;
+    let s = std::f64::consts::FRAC_1_SQRT_2;
+    let pts = [[r, 0.], [r, r], [0., r], [-r, r], [-r, 0.], [-r, -r], [0., -r], [r, -r], [r, 0.]];
+    let homogeneous = pts.iter().enumerate().map(|(i, p)| if i % 2 == 1 { [p[0] * s, p[1] * s, 0., s] } else { [p[0], p[1], 0., 1.] }).collect();
+    let knots = vec![0., 0., 0., 0.003, 0.003, 0.006, 0.006, 0.009, 0.009, 1., 1., 1.];
+    let disc = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![[r, 0., 0.]],
+            edges: vec![Edge { vertices: [0, 0], curve: Curve::RationalSpline { knots, homogeneous } }],
+            faces: vec![Face {
+                loops: vec![vec![uses(0, true)]],
+                surface: Surface::Plane { origin: [0.; 3], u_axis: [1., 0., 0.], v_axis: [0., 1., 0.] },
+                forward: true,
+            }],
+        }],
+    };
+    let def = prepare(&disc, &Options::default()).unwrap();
+    let view = View::new(Vec3::new(0.2, 0.1, -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    let mut sweep = 0.;
+    for p in pieces(&d) {
+        assert_eq!((p.visibility, p.accuracy), (Visibility::Visible, CurveAccuracy::Analytic));
+        for g in &p.geometry {
+            let Seg2::Conic { w, .. } = *g else { panic!("a circle is drawn as conic arcs: {g:?}") };
+            sweep += 2. * w.acos();
+        }
+    }
+    assert!((sweep - std::f64::consts::TAU).abs() < 1e-9, "the arcs turn {sweep} rad");
+}
+
+/// A cone frustum about a vertical axis through `o`: radius `r0` at the frame's origin and
+/// slope `k`, between the heights `h`.
+fn frustum(o: [f64; 3], r0: f64, k: f64, h: [f64; 2]) -> Shell {
+    let tau = std::f64::consts::TAU;
+    let at = |z: f64| [o[0] + r0 + k * z, o[1], o[2] + z];
+    let ring = |z: f64, v: u32| circle([o[0], o[1], o[2] + z], r0 + k * z, v);
+    let edges = vec![ring(h[0], 0), ring(h[1], 1), Edge { vertices: [0, 1], curve: Curve::Line { start: at(h[0]), end: at(h[1]) } }];
+    let plane = |z: f64, flip: f64| Surface::Plane { origin: [o[0], o[1], o[2] + z], u_axis: [1., 0., 0.], v_axis: [0., flip, 0.] };
+    let faces = vec![
+        Face {
+            loops: vec![vec![uses(0, true), uses(2, true), uses(1, false), uses(2, false)]],
+            surface: Surface::Cone { frame: frame_at(o), radius_at_origin: r0, half_angle: k.atan(), angle: [0., tau], height: h },
+            forward: true,
+        },
+        Face { loops: vec![vec![uses(0, false)]], surface: plane(h[0], -1.), forward: true },
+        Face { loops: vec![vec![uses(1, true)]], surface: plane(h[1], 1.), forward: true },
+    ];
+    Shell { vertices: vec![at(h[0]), at(h[1])], edges, faces }
+}
+
+#[test]
+fn nearly_coaxial_cones_far_out_keep_their_own_silhouettes() {
+    // Two frusta of slope 0.25 whose axes are 0.005 mm apart, 1e7 mm out: recognition may take
+    // them for one cone, but each is drawn with its own outline.
+    let x = 1e7;
+    let body = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![frustum([x, 0., 0.], 5., 0.25, [0., 10.]), frustum([x + 0.005, 0., 0.], 5., 0.25, [20., 30.])],
+    };
+    let def = prepare(&body, &Options::default()).unwrap();
+    let view = View::new(Vec3::new(0., 1., 0.), Vec3::new(0., 0., 1.)).unwrap();
+    let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    for (z0, z1) in [(0., 10.), (20., 30.)] {
+        let rulings = silhouette_pieces(&d)
+            .iter()
+            .filter(|p| p.visibility == Visibility::Visible && !p.covered)
+            .flat_map(|p| p.geometry.iter())
+            .filter(|g| {
+                let (a, b) = (g.point_at(0.), g.point_at(1.));
+                (a.y.min(b.y) - z0).abs() < 1e-6 && (a.y.max(b.y) - z1).abs() < 1e-6
+            })
+            .count();
+        assert_eq!(rulings, 2, "z {z0}..{z1}: {:?}", silhouette_pieces(&d));
+    }
+}

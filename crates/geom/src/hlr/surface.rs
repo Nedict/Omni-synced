@@ -71,6 +71,32 @@ pub(crate) enum Analytic {
     Other,
 }
 
+impl Analytic {
+    /// Distance from `q` to the whole surface (a cone's nappe near `q`); infinite for planes
+    /// and other surfaces, which are never compared this way.
+    pub fn distance(&self, q: Vec3) -> f64 {
+        // (radial, axial) coordinates about an axis through `o`.
+        let rh = |o: Vec3, a: Vec3| {
+            let w = q - o;
+            let h = w.dot(a);
+            ((w - a * h).len(), h)
+        };
+        match *self {
+            Analytic::Cylinder { p, a, r } => (rh(p, a).0 - r).abs(),
+            Analytic::Cone { apex, a, half } => {
+                let (rho, h) = rh(apex, a);
+                (rho * half.cos() - h * half.sin()).abs()
+            }
+            Analytic::Sphere { c, r } => (q.dist(c) - r).abs(),
+            Analytic::Torus { c, a, major, minor } => {
+                let (rho, h) = rh(c, a);
+                ((rho - major).hypot(h) - minor).abs()
+            }
+            Analytic::Plane | Analytic::Other => f64::INFINITY,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Hit {
     pub lam: f64,
@@ -651,11 +677,34 @@ impl Rev {
             }
             lo
         };
+        // Chords are halved where their middle is further than this from the curve; the angle
+        // moves fastest where a branch starts or ends, so uniform samples alone are coarse there.
+        let target = 1e-7 * (1. + self.rmax + (self.hrange[1] - self.hrange[0]));
         // One polyline per branch while |c| <= 1.
         for sign in [1., -1.] {
             let mut run: Vec<f64> = Vec::new();
             let flush = |run: &mut Vec<f64>, out: &mut Vec<(C3, f64)>| {
                 if run.len() >= 2 {
+                    for _ in 0..40 {
+                        let mut next = Vec::with_capacity(run.len() * 2);
+                        let mut split = false;
+                        for w in run.windows(2) {
+                            let (Some(&a), Some(&b)) = (w.first(), w.get(1)) else { continue };
+                            next.push(a);
+                            let m = 0.5 * (a + b);
+                            if next.len() < 1 << 16 && at(sign, m).dist_to_segment(at(sign, a), at(sign, b)) > target {
+                                next.push(m);
+                                split = true;
+                            }
+                        }
+                        if let Some(&last) = run.last() {
+                            next.push(last);
+                        }
+                        *run = next;
+                        if !split {
+                            break;
+                        }
+                    }
                     let pts: Vec<Vec3> = run.iter().map(|s| at(sign, *s)).collect();
                     let mut dev = 0f64;
                     for (w, q) in run.windows(2).zip(pts.windows(2)) {

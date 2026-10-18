@@ -56,7 +56,7 @@ timings where the platform has a clock (zero on `wasm32-unknown-unknown`).
 | Line edges; cylinder and cone silhouette rulings | one `Seg2::Line` | `Analytic` |
 | Circle and ellipse edges; sphere silhouettes; torus silhouettes seen along the axis | `Seg2::Conic` arcs of at most 90 degrees | `Analytic` |
 | Spline and intersection edges | chords between exact points | `Sampled` (screen chord sag) |
-| Torus silhouettes in other views | chords between traced points | `Sampled` (measured deviation) |
+| Torus silhouettes in other views | chords between traced points, halved to 1e-7 of the torus's size | `Sampled` (measured deviation) |
 
 An orthographic projection is affine, so a circle projects to an ellipse, which a
 rational quadratic arc represents exactly. Chords are refined until their sag on screen
@@ -68,7 +68,8 @@ lines and circles or as spline patches (to 1e-9 relative); a recognised patch is
 and intersected in its own analytic chart. Faces that lie on one surface (a sphere
 stored as two hemispheres, a cylinder split in two) share their silhouettes: the edges
 between them are seams and are not drawn, and a silhouette running along such a seam is
-one curve.
+one curve. A face joins such a set only when the first face's surface passes through its
+own points within the trimming tolerance; recognition alone groups surfaces more loosely.
 
 ## Visibility
 
@@ -116,8 +117,12 @@ and intervals:
 - a cylinder's silhouette rulings are exact lines, including one along the seam; a cone
   frustum seen from the front has exact rulings and draws each edge-on circle once;
 - a sphere's outline is exact conic arcs at its radius in three views;
+- a disc bounded by a rational circle with unevenly spaced knots is drawn as arcs turning
+  the full 360 degrees;
 - a torus stored as two halves, seen face on, is drawn at both equators, one silhouette
-  each; an edge under it is hidden over exactly the intervals the tube covers;
+  each; an edge under it is hidden over exactly the intervals the tube covers; seen
+  obliquely its outline spans R + r on both sides with a deviation under 1e-3 mm;
+- two cone frusta 0.005 mm off one axis, 1e7 mm out, keep their own outlines;
 - a cylinder 1e5 and 1e7 mm from the origin draws as at the origin;
 - a freeform patch is reported and makes the edges it covers uncertain, or hidden when
   freeform faces are enabled;
