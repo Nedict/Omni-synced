@@ -5,7 +5,7 @@
 //! have a direction (planar faces, straight edges), the angle.
 
 use serde_json::{Value, json};
-use solidcraft_geom::{Mesh, Vec3};
+use solidcraft_geom::{Mesh, UnitVec3, Vec3};
 
 use super::measure_shape::{Shape, Slot, add_round, centre};
 use crate::params::bad;
@@ -84,7 +84,7 @@ struct Item {
 
 /// The circle through a polyline's points (all on one within `tol`): a fallback for edges the
 /// kernel can't name (mesh bodies).
-fn fit_circle(pts: &[Vec3], tol: f64) -> Option<(Vec3, Vec3, f64)> {
+fn fit_circle(pts: &[Vec3], tol: f64) -> Option<(Vec3, UnitVec3, f64)> {
     let n = pts.len().checked_sub(1)?;
     let (a, b, c) = (*pts.first()?, *pts.get(n / 3)?, *pts.get(2 * n / 3)?);
     let (u, v) = (b - a, c - a);
@@ -93,7 +93,7 @@ fn fit_circle(pts: &[Vec3], tol: f64) -> Option<(Vec3, Vec3, f64)> {
         return None;
     }
     let center = a + (v * u.len2() - u * v.len2()).cross(w) * (1.0 / (2.0 * w.len2()));
-    let axis = w.normalized()?;
+    let axis = w.unit()?;
     let radius = center.dist(a);
     let on = pts.iter().all(|p| (p.dist(center) - radius).abs() <= tol && (*p - center).dot(axis).abs() <= tol);
     (on && radius.is_finite()).then_some((center, axis, radius))
@@ -110,7 +110,7 @@ fn edge_round(b: &solidcraft_doc::ModelBody, m: &Mesh, index: usize, whole: bool
         ends && on
     });
     let (center, axis, radius, angle) = match exact {
-        Some(c) => (c.center, *c.axis, c.radius, if whole { std::f64::consts::TAU } else { c.angle }),
+        Some(c) => (c.center, c.axis, c.radius, if whole { std::f64::consts::TAU } else { c.angle }),
         None => {
             let all: Vec<Vec3> =
                 if whole { m.circular_rim(index).iter().filter_map(|&i| m.edges.get(i)).flatten().copied().collect() } else { pts.clone() };
@@ -157,12 +157,12 @@ fn sketch_curve(ss: &solidcraft_doc::SolvedSketch, id: &str) -> Option<Item> {
     let sk = &ss.sketch;
     let c = sk.curves.get(sk.curve_index(id)?)?;
     let at = |i: usize| sk.points.get(i).map(|p| ss.plane.to_world(p.pos));
-    let normal = ss.plane.normal();
+    let normal = ss.plane.normal().unit()?;
     let (shape, pts) = match c.kind {
         CurveKind::Circle { c, r } => {
             let center = at(c)?;
             let shape = Shape::Round { center, axis: normal, radius: r, angle: std::f64::consts::TAU, planar: true, lo: 0.0, hi: 0.0 };
-            (shape, arc_points(center, normal, center + ss.plane.x * r, std::f64::consts::TAU))
+            (shape, arc_points(center, *normal, center + ss.plane.x * r, std::f64::consts::TAU))
         }
         CurveKind::Arc { c, a, b } => {
             let (center, a, b) = (at(c)?, at(a)?, at(b)?);
@@ -173,7 +173,7 @@ fn sketch_curve(ss: &solidcraft_doc::SolvedSketch, id: &str) -> Option<Item> {
                 angle += std::f64::consts::TAU;
             }
             let shape = Shape::Round { center, axis: normal, radius, angle, planar: true, lo: 0.0, hi: 0.0 };
-            (shape, arc_points(center, normal, a, angle))
+            (shape, arc_points(center, *normal, a, angle))
         }
         CurveKind::Line { a, b } => {
             let (a, b) = (at(a)?, at(b)?);
@@ -203,7 +203,7 @@ fn profile(ss: &solidcraft_doc::SolvedSketch, index: usize) -> Option<Item> {
     let pr = ss.profiles.get(index)?;
     let outline: Vec<Vec3> = pr.region.outer.polyline(1e-3).iter().map(|p| ss.plane.to_world(*p)).collect();
     let mut json = json!({"type": "profile", "area_mm2": pr.region.area()});
-    let normal = ss.plane.normal();
+    let normal = ss.plane.normal().unit()?;
     // Arcs about one centre merge (a circle is two halves); straight pieces stay as they are.
     let mut arcs: Vec<(Vec2, f64, f64)> = Vec::new();
     let mut lines: Vec<(Vec2, Vec2)> = Vec::new();
@@ -242,7 +242,7 @@ fn profile(ss: &solidcraft_doc::SolvedSketch, index: usize) -> Option<Item> {
             slot = Some(s);
         }
     }
-    let planar = Some(normal);
+    let planar = Some(*normal);
     let geo = Geo::Points(densify(&outline));
     let shape = if matches!(shape, Shape::Other) { Shape::Plane { point: ss.plane.origin, normal } } else { shape };
     Some(Item { geo, dir: planar, json, shape, slot })
@@ -308,7 +308,7 @@ fn describe(s: &Session, sel: &Sel) -> Option<Item> {
             let patch = m.surface_patch(*index);
             let tris = patch.iter().flat_map(|f| face_tris(&m, *f)).collect::<Vec<_>>();
             let area: f64 = tris.iter().map(|[a, b, c]| (*b - *a).cross(*c - *a).len() * 0.5).sum();
-            let normals: Vec<Vec3> = tris.iter().filter_map(|[a, b, c]| (*b - *a).cross(*c - *a).normalized()).collect();
+            let normals: Vec<UnitVec3> = tris.iter().filter_map(|[a, b, c]| (*b - *a).cross(*c - *a).unit()).collect();
             let planar = normals.first().copied().filter(|n0| normals.iter().all(|n| n.dot(*n0) > 1.0 - 1e-6));
             let mut json = json!({"type": "face", "area_mm2": area, "planar": planar.is_some()});
             let verts: Vec<Vec3> = tris.iter().flat_map(|t| t.iter().copied()).collect();
@@ -316,7 +316,7 @@ fn describe(s: &Session, sel: &Sel) -> Option<Item> {
                 Some(solidcraft_kernel::FaceSurface::Cylinder { origin, axis, radius }) => {
                     super::measure_shape::cylinder(origin, axis, radius, &verts).unwrap_or(Shape::Other)
                 }
-                Some(solidcraft_kernel::FaceSurface::Plane { normal, point }) if planar.is_some() => Shape::Plane { point, normal: *normal },
+                Some(solidcraft_kernel::FaceSurface::Plane { normal, point }) if planar.is_some() => Shape::Plane { point, normal },
                 None => match (planar, verts.first()) {
                     (Some(normal), Some(point)) => Shape::Plane { point: *point, normal },
                     _ => Shape::Other,
@@ -328,7 +328,7 @@ fn describe(s: &Session, sel: &Sel) -> Option<Item> {
             if let Some(sl) = &slot {
                 json["slot"] = sl.json();
             }
-            Some(Item { geo: Geo::Tris(tris), dir: planar, json, shape, slot })
+            Some(Item { geo: Geo::Tris(tris), dir: planar.map(Vec3::from), json, shape, slot })
         }
         Sel::Body { name } => {
             let m = st.body(name)?.mesh();
