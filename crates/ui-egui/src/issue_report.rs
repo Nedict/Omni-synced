@@ -680,6 +680,71 @@ mod tests {
     }
 
     #[test]
+    fn issue_report_handoff_includes_edits_from_the_click_frame() {
+        for field in ["issue_report_body", "issue_report_title", "issue_report_steps", "issue_report_expected", "issue_report_technical"] {
+            for clipboard in [false, true] {
+                let mut h = crate::scenario::Harness::new();
+                h.app.home.open = false;
+                let mut draft = Draft::new("Previous summary".into(), "Private diagnostic details".into(), 0);
+                if field != "issue_report_body" {
+                    draft.description = "Previously reviewed problem".into();
+                }
+                if clipboard {
+                    draft.steps = "Reproduction context. ".repeat(100);
+                }
+                h.app.issue_report.draft = Some(draft);
+                h.frames(4);
+                if field == "issue_report_technical" {
+                    h.call("ui.scroll", json!({"x":800,"y":600,"delta":-1000}));
+                    h.step(&json!({"widget":"Technical details"})).unwrap();
+                    h.call("ui.scroll", json!({"x":800,"y":600,"delta":-1000}));
+                }
+                h.ctx.memory_mut(|m| m.request_focus(egui::Id::new(field)));
+                h.frames(1);
+                let [x, y] = h.widget("Continue on GitHub").unwrap();
+                let pos = egui::pos2(x as f32, y as f32);
+                let modifiers = egui::Modifiers { ctrl: true, command: true, ..Default::default() };
+                let raw = egui::RawInput {
+                    screen_rect: Some(h.ctx.content_rect()),
+                    focused: true,
+                    events: vec![
+                        egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers },
+                        egui::Event::Paste("Latest reviewed content".into()),
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() },
+                        egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() },
+                    ],
+                    ..Default::default()
+                };
+                let app = &mut h.app;
+                let output = h.ctx.run_ui(raw, |ui| {
+                    app.logic(ui.ctx());
+                    app.ui(ui);
+                });
+                let draft = h.app.issue_report.draft.as_ref().unwrap();
+                let edited = match field {
+                    "issue_report_body" => &draft.description,
+                    "issue_report_title" => &draft.title,
+                    "issue_report_steps" => &draft.steps,
+                    "issue_report_expected" => &draft.expected,
+                    _ => &draft.body,
+                };
+                assert_eq!(edited, "Latest reviewed content", "{field}, clipboard={clipboard}");
+                let body = draft.report_body();
+                let (url, copy_needed) = draft_url(&draft.report_title(), &body);
+                assert!(
+                    output.platform_output.commands.iter().any(|c| matches!(c, egui::OutputCommand::OpenUrl(u) if u.url == url)),
+                    "handoff must use this frame's edits: {field}, clipboard={clipboard}"
+                );
+                if copy_needed {
+                    assert!(output.platform_output.commands.iter().any(|c| matches!(c, egui::OutputCommand::CopyText(text) if text == &body)));
+                }
+                assert!(draft.opened_github && !draft.missing_description);
+            }
+        }
+    }
+
+    #[test]
     fn issue_report_actual_pending_boolean_settings_and_failure_are_read_only() {
         let mut app = app();
         combine(&mut app);

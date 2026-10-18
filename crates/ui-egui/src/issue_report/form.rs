@@ -108,7 +108,7 @@ pub(super) fn show(app: &mut SolveApp, draft: &mut Draft, ctx: &egui::Context) -
     let mut open = true;
     let mut close = false;
     let mut retake = false;
-    let mut focus_description = false;
+    let mut continue_requested = false;
     crate::frame::window(ctx, tr_label("Report a bug"), crate::frame::Width::Wide)
         .id(Id::new("sc_issue_report"))
         .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
@@ -131,21 +131,7 @@ pub(super) fn show(app: &mut SolveApp, draft: &mut Draft, ctx: &egui::Context) -
                     );
                     crate::scenario::publish_rect("report:continue", primary.rect);
                     crate::scenario::publish_handle("report:continue", primary.rect.center());
-                    if primary.clicked() {
-                        if draft.description.trim().is_empty() {
-                            draft.missing_description = true;
-                            focus_description = true;
-                        } else {
-                            let body = draft.report_body();
-                            let title = draft.report_title();
-                            let (url, copy_needed) = draft_url(&title, &body);
-                            if copy_needed {
-                                ctx.copy_text(body);
-                            }
-                            ctx.open_url(egui::OpenUrl::new_tab(url));
-                            draft.opened_github = true;
-                        }
-                    }
+                    continue_requested = primary.clicked();
                     let response = ui.button(tr_label("Close draft"));
                     crate::scenario::publish_rect("report:close", response.rect);
                     crate::scenario::publish_handle("report:close", response.rect.center());
@@ -195,7 +181,10 @@ pub(super) fn show(app: &mut SolveApp, draft: &mut Draft, ctx: &egui::Context) -
                                 draft.opened_github = false;
                             }
                             crate::scenario::publish_rect("report:description", response.rect);
-                            if !draft.focus_requested || focus_description {
+                            if continue_requested {
+                                draft.missing_description = draft.description.trim().is_empty();
+                            }
+                            if !draft.focus_requested || (continue_requested && draft.missing_description) {
                                 response.scroll_to_me(Some(Align::Center));
                                 response.request_focus();
                                 draft.focus_requested = true;
@@ -249,6 +238,19 @@ pub(super) fn show(app: &mut SolveApp, draft: &mut Draft, ctx: &egui::Context) -
                         });
                     });
             });
+            // TextEdit applies this frame's events while it is drawn. Export only after
+            // every editor has processed its input, including diagnostic redactions.
+            if continue_requested && !draft.description.trim().is_empty() {
+                let body = draft.report_body();
+                let title = draft.report_title();
+                let (url, copy_needed) = draft_url(&title, &body);
+                if copy_needed {
+                    ctx.copy_text(body);
+                }
+                ctx.open_url(egui::OpenUrl::new_tab(url));
+                draft.opened_github = true;
+                ctx.request_repaint();
+            }
         });
     (retake, close || !open)
 }
