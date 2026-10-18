@@ -71,7 +71,7 @@ impl NamedFace<'_> {
 
 /// A cylinder of a body's own coordinates placed by the body's (rigid) offset.
 pub(super) fn placed(m: &Mat, c: CylinderFace) -> CylinderFace {
-    CylinderFace { axis_point: apply_point(m, c.axis_point), axis: apply_vector(m, c.axis), ..c }
+    CylinderFace { axis_point: apply_point(m, c.axis_point), axis: apply_vector(m, *c.axis).unit().unwrap_or(c.axis), ..c }
 }
 
 /// The face across the rim at the `at` end (along the axis) of cylinder `c`, face `face` of `b`

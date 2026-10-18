@@ -688,7 +688,6 @@ pub fn cylinder_face_at(b: &Body, p: Vec3) -> Option<CylinderFace> {
 /// body's). `None` when the face is not part of a cylinder, or has no triangles.
 pub fn cylinder_face(b: &Body, mesh: &Mesh, face: usize) -> Option<CylinderFace> {
     let crate::FaceSurface::Cylinder { origin, axis, radius } = crate::face_surface(b, face)? else { return None };
-    let axis = axis.normalized()?;
     let c = cylinder_extent(mesh, u32::try_from(face).ok()?, axis, origin, radius);
     (c.start.is_finite() && c.end.is_finite()).then_some(c)
 }
