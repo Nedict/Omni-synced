@@ -1196,7 +1196,8 @@ impl Nurbs {
             let (u, v) = (m - a, b - a);
             let n = u.cross(v);
             let n2 = n.len2();
-            if n2 <= 1e-24 {
+            // Nearly collinear relative to the points' own spacing.
+            if n2 <= 1e-24 * u.len2() * v.len2() {
                 return None;
             }
             let c = a + (v * u.len2() - u * v.len2()).cross(n) * (1. / (2. * n2));

@@ -1148,6 +1148,51 @@ fn a_torus_in_two_halves_keeps_whole_outlines_with_fine_trims() {
 }
 
 #[test]
+fn an_arc_folding_back_under_a_left_out_face_seen_edge_on_is_uncertain_there() {
+    // An arc of radius 10000 in the XZ plane, seen from above: its projection lies on the X axis
+    // and turns back at x = 10000 a quarter of the way into its first sample step, so the chord
+    // between its first samples (x 9999.953 and 9999.577) has no sag and stops short of the
+    // turn. A tiny freeform patch above x = 10000 covers the turn.
+    let step = std::f64::consts::PI / 256.;
+    let ta = -step / 4.;
+    let frame = crate::brep::Frame { origin: [0.; 3], x_axis: [1., 0., 0.], y_axis: [0., 0., 1.] };
+    let at = |t: f64| [10000. * t.cos(), 0., 10000. * t.sin()];
+    let (start, end) = (at(ta), at(ta + std::f64::consts::PI / 8.));
+    let arc = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![start, end],
+            edges: vec![
+                Edge { vertices: [0, 1], curve: Curve::CircleArc { frame, radius: 10000., angle: [ta, ta + std::f64::consts::PI / 8.] } },
+                Edge { vertices: [1, 0], curve: Curve::Line { start: end, end: start } },
+            ],
+            faces: vec![Face {
+                loops: vec![vec![uses(0, true), uses(1, true)]],
+                surface: Surface::Plane { origin: [0.; 3], u_axis: [1., 0., 0.], v_axis: [0., 0., 1.] },
+                forward: true,
+            }],
+        }],
+    };
+    let (x0, x1, y0, y1) = (9999.98, 10000.02, -0.02, 0.02);
+    let p = [[x0, y0, 1.], [x1, y0, 1.0004], [x1, y1, 1.], [x0, y1, 1.0004]];
+    let edges =
+        (0..4).map(|i| Edge { vertices: [i as u32, ((i + 1) % 4) as u32], curve: Curve::Line { start: p[i], end: p[(i + 1) % 4] } }).collect();
+    let face = Face {
+        loops: vec![(0..4).map(|e| uses(e, true)).collect()],
+        surface: Surface::Spline { u_knots: vec![0., 0., 1., 1.], v_knots: vec![0., 0., 1., 1.], points: vec![vec![p[0], p[3]], vec![p[1], p[2]]] },
+        forward: true,
+    };
+    let patch = Brep { version: crate::brep::VERSION, shells: vec![Shell { vertices: p.to_vec(), edges, faces: vec![face] }] };
+    let defs = [prepare(&patch, &Options::default()).unwrap(), prepare(&arc, &Options::default()).unwrap()];
+    assert_eq!(defs[0].report.freeform_faces, vec![0]);
+    let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&defs, &[identity(0, [0.; 3]), identity(1, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    let turn: Vec<&Piece> = edge_line(&d, 1, 0).pieces.iter().filter(|p| p.t[0] <= 0. && p.t[1] >= 0.).collect();
+    assert!(!turn.is_empty());
+    assert!(turn.iter().all(|p| p.visibility != Visibility::Visible), "{turn:?}");
+}
+
+#[test]
 fn narrow_torus_strips_keep_their_outline() {
     // Two strips of a torus R 20, r 10 between the meridian angles 0.3002, 0.3005 and 0.3008,
     // seen from the side: each side of the outline is a 0.006 mm piece of the circle traced on

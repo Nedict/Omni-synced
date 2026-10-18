@@ -812,12 +812,13 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
         if ti % 64 == 0 && cancel() {
             return Err(HlrError::Cancelled);
         }
+        let Some(pl) = scene.get(t.placement) else { continue };
         let mut cuts = Vec::new();
-        for (i, w) in t.samples.windows(2).enumerate() {
+        for w in t.samples.windows(2) {
             let (Some(a), Some(b)) = (w.first(), w.get(1)) else { continue };
-            let sag = t.sags.get(i).copied().unwrap_or(0.);
-            let lo = [a.1[0].min(b.1[0]) - sag, a.1[1].min(b.1[1]) - sag];
-            let hi = [a.1[0].max(b.1[0]) + sag, a.1[1].max(b.1[1]) + sag];
+            // The curve's own screen box between the two samples: it can reach past the chord,
+            // across it or along it (a view along an arc's plane folds it back on itself).
+            let (lo, hi) = screen_box(t.c3(), [a.0, b.0], pl, view);
             shadows.query(lo, hi, &mut near);
             checks = checks.saturating_add(near.len());
             if checks > 500_000_000 {
@@ -830,10 +831,9 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
                         cuts.push(a.0 + (b.0 - a.0) * (edge - u) / (v - u));
                     }
                 }
-                // A chord that misses the box by less than its sag may stand for a curve that
-                // enters it: its stretch becomes a piece of its own, judged below.
-                let gap = box_gap(a.1, b.1, sh.lo, sh.hi);
-                if gap > 0. && gap <= sag {
+                // A curve that enters the box where its chord does not: its stretch becomes a
+                // piece of its own, judged below.
+                if overlaps(lo, hi, sh) && box_gap(a.1, b.1, sh.lo, sh.hi) > 0. {
                     cuts.push(a.0);
                     cuts.push(b.0);
                 }
@@ -964,33 +964,70 @@ fn in_shadow(t: &Track, r: [f64; 2], scene: &[Placement], view: &View, shadows: 
     }
     let Some(p) = scene.get(t.placement) else { return false };
     let c = t.c3();
-    let sag = t
-        .samples
-        .windows(2)
-        .zip(&t.sags)
-        .filter(|(w, _)| w.get(1).is_some_and(|b| b.0 > r[0]) && w.first().is_some_and(|a| a.0 < r[1]))
-        .map(|(_, s)| *s)
-        .fold(0., f64::max);
-    // The piece is cut at the boxes' sides: it is in a box when its middle or one of its inner
-    // samples is (its ends may lie on the side it was cut at). Then it is in the shadow when
-    // its depth can pass the face's nearest point anywhere along it: the bound comes from the
-    // curve itself (its control points' hull, an arc's reach), not from samples, which a dip
-    // in depth that the screen does not show could fall between.
-    let mid = view.screen(p.apply(c.at(0.5 * (r[0] + r[1]))));
-    let pts: Vec<[f64; 2]> = std::iter::once(mid).chain(t.samples.iter().filter(|q| q.0 > r[0] && q.0 < r[1]).map(|q| q.1)).collect();
-    let lo = pts.iter().fold([f64::MAX; 2], |m, s| [m[0].min(s[0] - sag), m[1].min(s[1] - sag)]);
-    let hi = pts.iter().fold([f64::MIN; 2], |m, s| [m[0].max(s[0] + sag), m[1].max(s[1] + sag)]);
+    // The piece is cut at the boxes' sides and where its curve enters a box between samples:
+    // it is in a box when its own screen box overlaps it and, for a piece holding samples, its
+    // middle or one of those samples lies in it (its ends may sit on the side it was cut at).
+    // Then it is in the shadow when its depth can pass the face's nearest point anywhere along
+    // it: the bound comes from the curve itself (its control points' hull, an arc's reach),
+    // not from samples, which a dip in depth that the screen does not show could fall between.
+    let (lo, hi) = screen_box(c, r, p, view);
     let mut near = Vec::new();
     shadows.query(lo, hi, &mut near);
     if near.is_empty() {
         return false;
     }
+    let inner: Vec<[f64; 2]> = t.samples.iter().filter(|q| q.0 > r[0] && q.0 < r[1]).map(|q| q.1).collect();
+    let mid = view.screen(p.apply(c.at(0.5 * (r[0] + r[1]))));
     let deepest = depth_bound(c, r, p, view.d);
     near.iter().filter_map(|k| shadows.list.get(*k)).any(|sh| {
+        let within = |s: &[f64; 2]| s[0] >= sh.lo[0] && s[0] <= sh.hi[0] && s[1] >= sh.lo[1] && s[1] <= sh.hi[1];
         !(sh.placement == t.placement && t.own.contains(&sh.face))
             && deepest > sh.near
-            && pts.iter().any(|s| s[0] >= sh.lo[0] - sag && s[0] <= sh.hi[0] + sag && s[1] >= sh.lo[1] - sag && s[1] <= sh.hi[1] + sag)
+            && overlaps(lo, hi, sh)
+            && (inner.is_empty() || within(&mid) || inner.iter().any(within))
     })
+}
+
+/// Whether the box `lo hi` and a shadow's box share some area.
+fn overlaps(lo: [f64; 2], hi: [f64; 2], sh: &Shadow) -> bool {
+    lo[0] < sh.hi[0] && hi[0] > sh.lo[0] && lo[1] < sh.hi[1] && hi[1] > sh.lo[1]
+}
+
+/// The screen box of the curve's part `r` placed by `p`: a line's ends, an arc's ends and its
+/// extremes along each screen axis, the projected control points a spline's part depends on
+/// (they hold it), a polyline's vertices.
+fn screen_box(c: &C3, r: [f64; 2], p: &Placement, view: &View) -> ([f64; 2], [f64; 2]) {
+    let s = |q: Vec3| view.screen(p.apply(q));
+    let mut pts = vec![s(c.at(r[0])), s(c.at(r[1]))];
+    match c {
+        C3::Line { .. } => {}
+        C3::Arc { x, y, r: rad, .. } => {
+            // On screen: centre + U cos t + V sin t; each axis peaks where tan t = V_k / U_k.
+            let lin = |w: Vec3| view.screen(p.apply(w) - p.translation);
+            let (u, v) = (lin(*x * rad[0]), lin(*y * rad[1]));
+            for k in 0..2 {
+                let (Some(&uk), Some(&vk)) = (u.get(k), v.get(k)) else { continue };
+                let base = vk.atan2(uk);
+                for m in -6..=6 {
+                    let t = base + m as f64 * std::f64::consts::PI;
+                    if t > r[0] && t < r[1] {
+                        pts.push(s(c.at(t)));
+                    }
+                }
+            }
+        }
+        C3::Spline { degree, knots, points } => pts.extend(
+            points
+                .iter()
+                .enumerate()
+                .filter(|(i, h)| h[3] > 0. && knots.get(*i).zip(knots.get(i + degree + 1)).is_some_and(|(lo, hi)| *lo < r[1] && *hi > r[0]))
+                .map(|(_, h)| s(Vec3::new(h[0] / h[3], h[1] / h[3], h[2] / h[3]))),
+        ),
+        C3::Polyline(v) => pts.extend(v.iter().enumerate().filter(|(i, _)| (*i as f64) > r[0] && (*i as f64) < r[1]).map(|(_, q)| s(*q))),
+    }
+    let lo = pts.iter().fold([f64::MAX; 2], |m, q| [m[0].min(q[0]), m[1].min(q[1])]);
+    let hi = pts.iter().fold([f64::MIN; 2], |m, q| [m[0].max(q[0]), m[1].max(q[1])]);
+    (lo, hi)
 }
 
 /// Left-out faces' boxes on a uniform screen grid, so a curve meets only those near it.

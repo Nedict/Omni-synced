@@ -113,7 +113,9 @@ in the W05a findings.
 - `Options::tangent_edges` (default on) draws edges between tangent faces, flagged
   `tangent: true`; drafting policy for them is W17.
 - Tolerances are relative to the faces and the scene. They are meant for faces up to
-  about 10 m across and features down to about 1e-3 mm. Distinct surfaces that
+  about 10 m across and features down to about 1e-3 mm. A spline patch only a sliver wide
+  next to its radii (a few millionths of them) cannot be told from its neighbours' surfaces
+  reliably and is reported as freeform. Distinct surfaces that
   recognition takes for one (closer than 1e-9 of their size or position, a nearly flat
   cone's far apex included) share the own-face margin of 1e-6 of the face's size when a
   ray leaves one of them.
@@ -151,7 +153,8 @@ and intervals:
   the patch's box below its level but crosses the box above it stays visible;
 - a curve that swerves 2.9 mm off its circle where its weight is 1e-12, and a nearly straight
   cubic 0.002 mm off a circle of radius 1e7, are drawn as chords; an edge whose depth dips
-  behind a freeform patch between its samples is uncertain there;
+  behind a freeform patch between its samples is uncertain there, and so is an arc seen
+  along its plane whose projection folds back under a freeform patch between two samples;
 - a torus patch stored as a rational spline is recognised and draws its outer equator as an
   exact arc, and one with a bump in a knot span 0.002 of its parameters wide is not taken for
   a torus; a big circle passing under a thin freeform tube in a coarse scene is uncertain
