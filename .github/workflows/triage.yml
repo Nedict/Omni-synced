@@ -33,9 +33,13 @@ jobs:
     name: Triage bot
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # Filtered here so the common events (every comment, every label) start no runner.
     if: >-
-      github.event_name != 'issue_comment' ||
-      (github.event.comment.user.type != 'Bot' && startsWith(github.event.comment.body, '/triage'))
+      (github.event_name == 'issue_comment' &&
+      github.event.comment.user.type != 'Bot' && startsWith(github.event.comment.body, '/triage')) ||
+      (github.event.action == 'labeled' && startsWith(github.event.label.name, 'priority:') &&
+      contains(github.event.issue.labels.*.name, 'needs-triage')) ||
+      (github.event_name != 'issue_comment' && github.event.action != 'labeled')
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
