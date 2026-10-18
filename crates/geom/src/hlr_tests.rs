@@ -641,6 +641,52 @@ fn nearly_coaxial_cones_far_out_keep_their_own_silhouettes() {
     }
 }
 
+/// A sector `a` (radians) of a cone about a vertical axis through `o`, radius `r0` at the
+/// frame's origin and slope `k`, between the heights `h`: one face, no caps.
+fn cone_sector(o: [f64; 3], r0: f64, k: f64, h: [f64; 2], a: [f64; 2]) -> Shell {
+    let at = |z: f64, t: f64| [o[0] + (r0 + k * z) * t.cos(), o[1] + (r0 + k * z) * t.sin(), o[2] + z];
+    let arc = |z: f64, v: u32, w: u32| Edge {
+        vertices: [v, w],
+        curve: Curve::CircleArc { frame: frame_at([o[0], o[1], o[2] + z]), radius: r0 + k * z, angle: a },
+    };
+    let ruling = |t: f64, v: u32, w: u32| Edge { vertices: [v, w], curve: Curve::Line { start: at(h[0], t), end: at(h[1], t) } };
+    let edges = vec![arc(h[0], 0, 1), ruling(a[1], 1, 2), arc(h[1], 3, 2), ruling(a[0], 0, 3)];
+    let face = Face {
+        loops: vec![vec![uses(0, true), uses(1, true), uses(2, false), uses(3, false)]],
+        surface: Surface::Cone { frame: frame_at(o), radius_at_origin: r0, half_angle: k.atan(), angle: a, height: h },
+        forward: true,
+    };
+    Shell { vertices: vec![at(h[0], a[0]), at(h[0], a[1]), at(h[1], a[1]), at(h[1], a[0])], edges, faces: vec![face] }
+}
+
+#[test]
+fn nearly_coincident_cone_sectors_both_draw_their_outline() {
+    // Two sectors (0 to 0.02 rad) of 1 m cones of slope 0.25, 1e9 mm out, axes 3e-6 mm apart,
+    // seen along the tangent at 0.01 rad: recognition takes them for one cone, but a ray along
+    // one's ruling would cross the other, so each keeps its own outline, visible over its
+    // whole height.
+    let x = 1e9;
+    let shells = vec![
+        cone_sector([x, 0., 0.], 1000., 0.25, [0., 1000.], [0., 0.02]),
+        cone_sector([x + 3e-6, 0., 0.], 1000., 0.25, [2000., 3000.], [0., 0.02]),
+    ];
+    let def = prepare(&Brep { version: crate::brep::VERSION, shells }, &Options::default()).unwrap();
+    let view = View::new(Vec3::new(-(0.01f64.sin()), 0.01f64.cos(), 0.), Vec3::new(0., 0., 1.)).unwrap();
+    let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    for (z0, z1) in [(0., 1000.), (2000., 3000.)] {
+        let drawn: f64 = silhouette_pieces(&d)
+            .iter()
+            .filter(|p| p.visibility == Visibility::Visible && !p.covered)
+            .flat_map(|p| p.geometry.iter())
+            .map(|g| {
+                let (a, b) = (g.point_at(0.).y.clamp(z0, z1), g.point_at(1.).y.clamp(z0, z1));
+                (b - a).abs()
+            })
+            .sum();
+        assert!((drawn - (z1 - z0)).abs() < 1e-3, "z {z0}..{z1}: {drawn} mm of ruling drawn");
+    }
+}
+
 fn check_two_cone_outlines(body: &Brep) {
     let def = prepare(body, &Options::default()).unwrap();
     let view = View::new(Vec3::new(0., 1., 0.), Vec3::new(0., 0., 1.)).unwrap();

@@ -69,7 +69,8 @@ and intersected in its own analytic chart. Faces that lie on one surface (a sphe
 stored as two hemispheres, a cylinder split in two) share their silhouettes: the edges
 between them are seams and are not drawn, and a silhouette running along such a seam is
 one curve. A face joins such a set only when the first face's surface passes through its
-own points within the trimming tolerance; recognition alone groups surfaces more loosely.
+own points to rounding (1e-13 of its size); recognition alone groups surfaces more loosely,
+and such faces keep silhouettes of their own.
 
 ## Visibility
 
@@ -85,8 +86,9 @@ comes from the curves' own accuracy (chord sag and fit bounds) plus a rounding a
 of 1e-7 mm and 1e-9 of the scene size, never from the scene size alone, so small parts in
 large scenes keep their detail.
 
-The work is done in a frame centred on the scene and shifted back at the end, so a part
-1e7 mm from the origin is classified exactly as at the origin.
+`prepare` moves each body to its own centre, and the work is done in a frame centred on
+the scene and shifted back at the end, so coordinates stay small: a part 1e7 mm from the
+origin, whether placed there or modelled there, is classified as at the origin.
 
 ## Freeform faces
 
@@ -122,7 +124,8 @@ and intervals:
 - a torus stored as two halves, seen face on, is drawn at both equators, one silhouette
   each; an edge under it is hidden over exactly the intervals the tube covers; seen
   obliquely its outline spans R + r on both sides with a deviation under 1e-3 mm;
-- two cone frusta 0.005 mm off one axis, 1e7 mm out, keep their own outlines;
+- cone frusta and narrow cone sectors a hair off one axis, far from the origin, keep their
+  own outlines;
 - a cylinder 1e5 and 1e7 mm from the origin draws as at the origin;
 - a freeform patch is reported and makes the edges it covers uncertain, or hidden when
   freeform faces are enabled;

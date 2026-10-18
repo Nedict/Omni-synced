@@ -110,6 +110,15 @@ pub(crate) fn silhouettes(parts: &[(&S3, &Trim)], an: Analytic, d: Vec3, out: &m
     }
 }
 
+/// How far a face's surface may lie from the surface its silhouette set is traced on: rounding,
+/// 1e-13 of the face's boundary size plus its coordinates. Only then does a ray along the set's
+/// silhouette leave the face within the own-face margin (1e-6 of the size): a surface `e` away
+/// is crossed about `sqrt(2 R e)` along the ray. Recognition groups surfaces more loosely (1e-9),
+/// and faces outside this keep silhouettes of their own.
+pub(crate) fn join_tol(trim: &Trim) -> f64 {
+    1e-13 * (1. + (trim.hi - trim.lo).len()) + 1e-15 * trim.lo.len().max(trim.hi.len())
+}
+
 /// Parameter ranges of `c` whose points are inside the face, transitions found by bisection.
 pub(crate) fn inside_ranges(c: &C3, s: &S3, trim: &Trim) -> Vec<[f64; 2]> {
     let [t0, t1] = c.domain();
@@ -119,13 +128,14 @@ pub(crate) fn inside_ranges(c: &C3, s: &S3, trim: &Trim) -> Vec<[f64; 2]> {
     // surface, which is not drawn as an edge) is inside. Off the patch is outside: the inversion
     // clamps to the chart's domain.
     let tol = 2. * trim.chord_error + 1e-9 * (1. + (trim.hi - trim.lo).len());
+    let on_patch = tol + 2. * join_tol(trim);
     let state = |t: f64, hint: &mut Option<[f64; 2]>| -> bool {
         let p = c.at(t);
         let uv = s.inverse(p, *hint);
         *hint = uv;
         let Some(uv) = uv else { return false };
         match trim.contains(uv) {
-            _ if s.point(uv).dist(p) > tol => false,
+            _ if s.point(uv).dist(p) > on_patch => false,
             Some(true) => true,
             Some(false) => trim.near(p, tol),
             None => false,

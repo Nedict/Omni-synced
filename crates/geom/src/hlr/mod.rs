@@ -122,6 +122,9 @@ struct FaceData {
 pub struct Prepared {
     edges: Vec<EdgeData>,
     faces: Vec<FaceData>,
+    /// The body's records are kept moved by `-offset` (to its own centre), so its coordinates
+    /// stay small wherever it was modelled; placements add it back.
+    offset: Vec3,
     lo: Vec3,
     hi: Vec3,
     pub report: PrepareReport,
@@ -178,6 +181,11 @@ fn analytic_name(a: &Analytic) -> &'static str {
 
 pub fn prepare(b: &Brep, opts: &Options) -> Result<Prepared, HlrError> {
     b.validate().map_err(|_| HlrError::Invalid("portable B-rep"))?;
+    // Work on the body moved to its own centre: rounding in ray and inversion formulas grows
+    // with the coordinates, and a part may be modelled far from the origin (W05a finding 7).
+    let offset = anchor(b);
+    let moved = shifted(b, offset);
+    let b = &moved;
     let mut edges = Vec::new();
     let mut faces = Vec::new();
     let mut report = PrepareReport::default();
@@ -322,7 +330,84 @@ pub fn prepare(b: &Brep, opts: &Options) -> Result<Prepared, HlrError> {
     if faces.is_empty() || !lo.is_finite() || !hi.is_finite() {
         return Err(HlrError::Invalid("empty or unbounded body"));
     }
-    Ok(Prepared { edges, faces, lo, hi, report })
+    Ok(Prepared { edges, faces, offset, lo, hi, report })
+}
+
+/// The centre of the body's vertices' box (of its faces' reference points when it has no
+/// vertices, a sphere without edges say).
+fn anchor(b: &Brep) -> Vec3 {
+    use crate::brep::Surface;
+    let v3 = |p: &[f64; 3]| Vec3::new(p[0], p[1], p[2]);
+    let mut pts: Vec<Vec3> = b.shells.iter().flat_map(|s| s.vertices.iter().map(v3)).collect();
+    if pts.is_empty() {
+        pts = b
+            .shells
+            .iter()
+            .flat_map(|s| s.faces.iter())
+            .filter_map(|f| match &f.surface {
+                Surface::Plane { origin, .. } | Surface::Revolution { origin, .. } => Some(v3(origin)),
+                Surface::Cylinder { frame, .. } | Surface::Cone { frame, .. } | Surface::Sphere { frame, .. } | Surface::Torus { frame, .. } => {
+                    Some(v3(&frame.origin))
+                }
+                Surface::Spline { points, .. } => points.first().and_then(|r| r.first()).map(v3),
+                Surface::RationalSpline { homogeneous, .. } => {
+                    homogeneous.first().and_then(|r| r.first()).filter(|h| h[3] != 0.).map(|h| Vec3::new(h[0] / h[3], h[1] / h[3], h[2] / h[3]))
+                }
+            })
+            .collect();
+    }
+    let Some(first) = pts.first().copied() else { return Vec3::ZERO };
+    let (lo, hi) = pts.iter().fold((first, first), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+    let c = (lo + hi) * 0.5;
+    if c.is_finite() { c } else { Vec3::ZERO }
+}
+
+/// The body's records with every position moved by `-d`.
+fn shifted(b: &Brep, d: Vec3) -> Brep {
+    use crate::brep::{Curve, Surface};
+    fn point(p: &mut [f64; 3], d: Vec3) {
+        p[0] -= d.x;
+        p[1] -= d.y;
+        p[2] -= d.z;
+    }
+    fn weighted(h: &mut [f64; 4], d: Vec3) {
+        h[0] -= d.x * h[3];
+        h[1] -= d.y * h[3];
+        h[2] -= d.z * h[3];
+    }
+    fn curve(c: &mut Curve, d: Vec3) {
+        match c {
+            Curve::Line { start, end } => {
+                point(start, d);
+                point(end, d);
+            }
+            Curve::CircleArc { frame, .. } | Curve::EllipseArc { frame, .. } => point(&mut frame.origin, d),
+            Curve::Polyline { points } | Curve::Spline { points, .. } | Curve::Intersection { points, .. } => {
+                points.iter_mut().for_each(|p| point(p, d))
+            }
+            Curve::RationalSpline { homogeneous, .. } => homogeneous.iter_mut().for_each(|h| weighted(h, d)),
+        }
+    }
+    let mut out = b.clone();
+    for s in &mut out.shells {
+        s.vertices.iter_mut().for_each(|p| point(p, d));
+        s.edges.iter_mut().for_each(|e| curve(&mut e.curve, d));
+        for f in &mut s.faces {
+            match &mut f.surface {
+                Surface::Plane { origin, .. } => point(origin, d),
+                Surface::Cylinder { frame, .. } | Surface::Cone { frame, .. } | Surface::Sphere { frame, .. } | Surface::Torus { frame, .. } => {
+                    point(&mut frame.origin, d)
+                }
+                Surface::Spline { points, .. } => points.iter_mut().flatten().for_each(|p| point(p, d)),
+                Surface::RationalSpline { homogeneous, .. } => homogeneous.iter_mut().flatten().for_each(|h| weighted(h, d)),
+                Surface::Revolution { profile, origin, .. } => {
+                    curve(profile, d);
+                    point(origin, d);
+                }
+            }
+        }
+    }
+    out
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -524,7 +609,9 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
     // Work in a frame centred on the scene: coordinates stay small, so rounding does not grow
     // with the distance from the origin (W05a finding 7). Results are shifted back at the end.
     let origin = scene_centre(defs, scene)?;
-    let local: Vec<Placement> = scene.iter().map(|p| Placement { translation: p.translation - origin, ..*p }).collect();
+    // Each body's own offset (see `Prepared`) joins its placement here.
+    let local: Vec<Placement> =
+        scene.iter().map(|p| Placement { translation: p.apply(defs.get(p.body).map_or(Vec3::ZERO, |d| d.offset)) - origin, ..*p }).collect();
     let scene = local.as_slice();
     let shift = view.screen(origin);
     let ctx = context(defs, scene, view, opts, cancel)?;
@@ -585,11 +672,9 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
                 continue;
             }
             // The set's silhouette is traced on its first face's surface, so a face joins only
-            // when that surface passes through its own points to 1e-8 of the face's size, plus
-            // rounding at its coordinates (recognition groups surfaces more loosely, 1e-9 of
-            // their position).
+            // when that surface passes through its own points within `join_tol`.
             let first = f.group.iter().copied().filter(|j| def.faces.get(*j).is_some_and(supported)).min().unwrap_or(fi);
-            let tol = 1e-8 * (1. + (f.hi - f.lo).len()) + 1e-14 * f.lo.len().max(f.hi.len());
+            let tol = silhouette::join_tol(&f.trim);
             let fits = def.faces.get(first).is_some_and(|l| {
                 f.trim
                     .chords
@@ -805,7 +890,7 @@ fn scene_centre(defs: &[Prepared], scene: &[Placement]) -> Result<Vec3, HlrError
                 if k & 2 == 0 { def.lo.y } else { def.hi.y },
                 if k & 4 == 0 { def.lo.z } else { def.hi.z },
             );
-            let w = p.apply(c);
+            let w = p.apply(c + def.offset);
             lo = lo.min(w);
             hi = hi.max(w);
         }
