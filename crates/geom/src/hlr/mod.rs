@@ -956,7 +956,9 @@ fn piece_geometry(t: &Track, piece: &Piece, p: &Placement, view: &View) -> (Vec<
                 let wrap = |d: f64| (d + std::f64::consts::PI).rem_euclid(tau) - std::f64::consts::PI;
                 let (t0, t1) = (piece.t[0], piece.t[1]);
                 let span = (t.range[1] - t.range[0]).abs();
-                let h = 1e-7 * span;
+                // A step small next to the piece itself: a piece can be a tiny part of its
+                // parameter range and still turn far.
+                let h = 1e-7 * (t1 - t0).abs();
                 let speed = |x: f64| wrap(angle((x + h).min(t1)) - angle((x - h).max(t0)));
                 let inner = t.samples.iter().map(|s| s.0).filter(|x| *x > t0 && *x < t1);
                 let (mut fwd, mut back) = (false, false);
