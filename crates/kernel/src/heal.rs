@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use solidcraft_geom::Vec3;
+use solidcraft_geom::{Ring, Vec3};
 use truck_modeling::{self as mt, builder};
 
 use crate::body::{Solid, from_p3};
@@ -51,15 +51,7 @@ fn samples(e: &mt::Edge) -> Vec<Vec3> {
 }
 
 fn loop_area(edges: &[mt::Edge], n: Vec3) -> f64 {
-    let pts: Vec<Vec3> = edges.iter().flat_map(samples).collect();
-    let k = pts.len();
-    let mut s = Vec3::ZERO;
-    for i in 0..k {
-        if let (Some(a), Some(b)) = (pts.get(i), pts.get((i + 1) % k)) {
-            s += a.cross(*b);
-        }
-    }
-    s.dot(n) * 0.5
+    edges.iter().flat_map(samples).collect::<Ring<Vec3>>().area_vector().dot(n)
 }
 
 fn inside(p: Vec3, edges: &[mt::Edge], n: Vec3) -> bool {

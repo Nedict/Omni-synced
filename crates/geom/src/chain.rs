@@ -6,7 +6,7 @@
 use std::marker::PhantomData;
 use std::ops::Deref;
 
-use crate::Vec2;
+use crate::{Vec2, Vec3};
 
 /// Whether a chain's last item joins its first.
 pub trait Ends: sealed::Sealed {
@@ -134,6 +134,15 @@ impl<P: Planar> Ring<P> {
     }
 }
 
+impl Ring<Vec3> {
+    /// The ring's vector area (Newell's method): its direction the normal the ring turns about,
+    /// its length the area it encloses when flat; `area_vector().dot(n)` is the area seen along
+    /// the unit vector `n`, positive when the ring runs counter-clockwise about it.
+    pub fn area_vector(&self) -> Vec3 {
+        self.edges().fold(Vec3::ZERO, |s, (a, b)| s + a.cross(*b)) * 0.5
+    }
+}
+
 /// [`Ring::edges`] of items held elsewhere, for a type that keeps a closed ring in a field of its
 /// own ([`crate::Loop2::joints`]).
 pub(crate) fn around<T>(items: &[T]) -> impl Iterator<Item = (&T, &T)> + Clone {
@@ -207,6 +216,8 @@ mod tests {
         assert!(!square.contains(Vec2::new(3.0, 1.0)));
         let uv = Ring::from([[0.0, 0.0], [2.0, 0.0], [2.0, 2.0], [0.0, 2.0]]);
         assert_eq!(uv.signed_area(), 4.0);
+        let tilted = Ring::from([Vec3::new(0.0, 0.0, 1.0), Vec3::new(2.0, 0.0, 1.0), Vec3::new(2.0, 2.0, 1.0), Vec3::new(0.0, 2.0, 1.0)]);
+        assert_eq!(tilted.area_vector(), Vec3::new(0.0, 0.0, 4.0));
         assert!(uv.contains([1.0, 1.0]) && !uv.contains([3.0, 1.0]));
         assert_eq!(square.bounds(), (Vec2::new(0.0, 0.0), Vec2::new(2.0, 2.0)));
         let (lo, hi) = Path::<Vec2>::default().bounds();
