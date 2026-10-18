@@ -186,12 +186,15 @@ catalog above: it has no content revisions, and a family is selected by name.
 The part keeps a copy of its family in the design, so it rebuilds and resizes after the
 library file is moved, changed or gone; `parts.library` then lists the family with
 `source: "design"`. Opening a library again reloads it; parts already inserted keep the copy
-they were made from.
+they were made from. A design file is checked like a library file: a copy that breaks the
+library rules (a size out of range, too many sizes) is never built from. `parts.resize`
+refuses it with the problem's path (`definition.sizes[1].d`), and the family is not offered
+from that copy.
 
 `parts.library.load` refuses a malformed file and names the JSON path of the first bad
 value (`families[0].sizes[1].d: must be a number`). `parts.library {family, check: true}` (or
 `{path, check: true}` for a file that is not open) reports what makes a well-formed family hard
 to use, as `{ok, problems: [{path, message}]}`: grip ranges of one size that overlap (ranges
-that only touch are fine), sizes without lengths, sizes or lengths listed twice, and names
+that only touch are fine), sizes without lengths, sizes (in any case: `M5` and `m5` are one size) or lengths listed twice, and names
 of built-in families. A file is at most 4 MiB with at most 256 families, 256 sizes per family
 and 256 lengths per size; dimensions are finite, above 0 and at most 2,000 mm.
