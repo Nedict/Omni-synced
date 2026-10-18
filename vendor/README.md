@@ -234,5 +234,10 @@ SolidCraft changes:
   a configuration the device refuses (D3D12 "Failed to wait for GPU to come idle before
   reconfiguring the Surface", #1935) is logged, the frame is skipped and the configure is tried
   again, instead of the device's uncaptured-error handler panicking. A streak of refusals warns
-  once (debug after), waits 16 ms doubling up to 1 s between tries (`configure_retry`) and
-  recreates the surface every `SURFACE_RECREATE_AFTER` refusals; the streak survives a recreate.
+  once (debug after), waits 16 ms doubling up to 1 s between tries and recreates the surface
+  every `SURFACE_RECREATE_AFTER` refusals (`ConfigureRetry`). Each surface keeps the deadline of
+  its next try: until it is due, no configure or recreate happens, whether the repaint comes
+  from input, an animation, a resize (its size is kept for the retry) or an outdated surface,
+  and the frame is skipped with a repaint asked for when it is due. The streak and the deadline
+  survive a recreate; a configure the device takes ends the streak, a recreate it asked for
+  included. A recreate for a lost surface goes ahead as before.
