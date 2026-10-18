@@ -159,7 +159,7 @@ The agent reaches the open design only through SolidCraft's own tools (the
   **›** or the arrow keys, closed with Esc or a click outside). A long message scrolls inside its
   box, so **Send** and the buttons beside it stay in view.
 - **Attach selection:** tick it to send what is selected in the model with your message, so the
-  agent knows what "this edge" or "that feature" is. The box shows how many things are selected.
+  agent knows what "this edge" or "that feature" is. The box shows how many things are selected, counted as you clicked them (the two halves of a rim you clicked once are one).
   Faces and edges go with the names and numbers the agent's tools take and with their size and
   place (so they can be found again after an edit), features with their name and kind, bodies with
   their name. The agent gets them as text after your message; the conversation shows your message

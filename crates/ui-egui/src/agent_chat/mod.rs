@@ -235,6 +235,9 @@ pub struct AgentChat {
     pub attach_view: bool,
     /// Send what is selected in the model with the next message.
     pub attach_selection: bool,
+    /// How many things the current selection is by clicks, kept while the selection and the design
+    /// stay as they are: (the selection, the design's address, the count).
+    selected_count: Option<(Vec<solidcraft_engine::Sel>, usize, usize)>,
     /// What the user picked with Pick context for the next message, and how it reads.
     pub picked: Vec<solidcraft_engine::Sel>,
     pub picked_context: Context,
@@ -641,6 +644,20 @@ const MAX_PENDING: usize = 20;
 /// Said to the agent before a message that interrupted it, so it knows its last step may be
 /// incomplete.
 const INTERRUPT_NOTE: &str = "[The user interrupted your previous step.]";
+
+/// How many things the selection is, counting what was clicked (the two halves of a rim are one).
+pub fn selected_count(app: &mut SolveApp) -> usize {
+    let doc = Arc::as_ptr(&app.session.doc) as usize;
+    if let Some((selection, at, count)) = &app.agent_chat.selected_count
+        && *at == doc
+        && *selection == app.session.selection
+    {
+        return *count;
+    }
+    let count = context::selection_count(&app.session, &app.session.selection);
+    app.agent_chat.selected_count = Some((app.session.selection.clone(), doc, count));
+    count
+}
 
 /// Open the picker for the next message's context (what is already picked stays in it). Nothing
 /// happens while another tool or dialog is open.

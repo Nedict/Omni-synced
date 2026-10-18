@@ -577,7 +577,7 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
             crate::scenario::publish_handle("agent_chat:attach", attach.rect.center());
             // What is selected in the model goes with the message: text for the agent, chips in the
             // conversation.
-            let selected = app.session.selection.len();
+            let selected = selected_count(app);
             let label = if selected > 0 {
                 format!("{} ({selected})", tr("ui.agent_chat_attach_selection"))
             } else {

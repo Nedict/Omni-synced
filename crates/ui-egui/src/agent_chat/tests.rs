@@ -1087,3 +1087,58 @@ fn the_picks_go_with_the_next_message_once() {
     send(&mut app, &ctx, "and now?".into());
     assert_eq!(script.calls().pop().as_deref(), Some("prompt: and now?"));
 }
+
+/// Two clicks on two rims are two things, not four edges (a click on a rim selects both halves for
+/// the commands; the chat counts and describes what was clicked).
+#[test]
+fn a_rim_clicked_once_is_one_item_not_its_pieces() {
+    use solidcraft_engine::Sel;
+    let (mut app, script, ctx) = app_with_script();
+    app.run("solid.cylinder", json!({"radius": 10, "height": 20})).expect("a cylinder");
+    let (name, top, bottom, mid_top, mid_bottom) = {
+        let st = app.session.world_state();
+        let body = &st.bodies[0];
+        let mesh = body.mesh();
+        let rim_at = |z: f64| mesh.edges.iter().position(|e| e.len() > 3 && e.iter().all(|p| (p.z - z).abs() < 1e-6)).expect("a rim");
+        let (top, bottom) = (rim_at(20.0), rim_at(0.0));
+        (body.name.clone(), top, bottom, crate::viewport::polyline_mid(&mesh.edges[top]), crate::viewport::polyline_mid(&mesh.edges[bottom]))
+    };
+    crate::viewport::select(&mut app, Some(Sel::Edge { body: name.clone(), index: top, point: mid_top }), false);
+    crate::viewport::select(&mut app, Some(Sel::Edge { body: name, index: bottom, point: mid_bottom }), true);
+    assert_eq!(app.session.selection.len(), 4, "two clicks selected four halves");
+    assert_eq!(selected_count(&mut app), 2, "the checkbox counts the two clicks");
+
+    app.agent_chat.attach_selection = true;
+    send(&mut app, &ctx, "these two rims".into());
+    let prompt = script.calls().pop().expect("a prompt");
+    assert!(prompt.contains("2 item(s)"), "{prompt}");
+    assert_eq!(prompt.matches("(2 pieces)").count(), 2, "{prompt}");
+    // A rim of radius 10 is about 62.8 mm round (the kernel's own figure), both halves together.
+    assert!(prompt.contains("Edge 62.") && prompt.contains("mm (2 pieces)"), "{prompt}");
+    let Some(Item::User { context, .. }) = app.agent_chat.items.last() else { panic!("a sent message") };
+    assert_eq!(context.items.len(), 2);
+    assert_eq!(context.total(), 2);
+    // The detail still names the piece indices the tools take.
+    assert!(context.items.iter().all(|i| i.detail.contains("indices [")), "{:?}", context.items);
+}
+
+/// The same for a surface the kernel splits at a seam: one click on the cylinder's wall is one item.
+#[test]
+fn a_split_wall_clicked_once_is_one_item() {
+    use solidcraft_engine::Sel;
+    let (mut app, script, ctx) = app_with_script();
+    app.run("solid.cylinder", json!({"radius": 10, "height": 20})).expect("a cylinder");
+    let wall = app.session.execute("model.faces", &json!({"body": "Body1"})).expect("faces")["faces"]
+        .as_array()
+        .and_then(|faces| faces.iter().find(|f| f["cylinder"]["radius"].is_number()).cloned())
+        .expect("the wall");
+    let at = &wall["point"];
+    let point = solidcraft_engine::geom::Vec3::new(at[0].as_f64().unwrap_or(0.0), at[1].as_f64().unwrap_or(0.0), at[2].as_f64().unwrap_or(0.0));
+    crate::viewport::select(&mut app, Some(Sel::Face { body: "Body1".into(), index: wall["index"].as_u64().unwrap_or(0) as usize, point }), false);
+    assert!(!app.session.selection.is_empty());
+    assert_eq!(selected_count(&mut app), 1, "one click, however many patches it selected: {:?}", app.session.selection);
+    app.agent_chat.attach_selection = true;
+    send(&mut app, &ctx, "this wall".into());
+    let prompt = script.calls().pop().expect("a prompt");
+    assert!(prompt.contains("1 item(s)") && prompt.contains("Round face r10"), "{prompt}");
+}

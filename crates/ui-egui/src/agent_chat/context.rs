@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use serde_json::{Value, json};
+use solidcraft_engine::geom::Vec3;
 use solidcraft_engine::{Sel, Session};
 
 /// The most items one message carries; the rest are counted, not dropped silently.
@@ -118,25 +119,113 @@ pub fn with_context(text: &str, context: &Context) -> String {
     if block.is_empty() { text.to_string() } else { format!("{text}\n\n{block}") }
 }
 
-/// Describe what the session has selected.
+/// Describe what the session has selected, as what was clicked: see [`clicked`].
 pub fn describe_selection(session: &mut Session) -> Context {
-    let selection = session.selection.clone();
-    describe(session, &selection)
+    let groups = clicked(session, &session.selection.clone());
+    describe_groups(session, &groups)
 }
 
-/// Describe a selection. Face and edge details come from the model's own listings (`model.faces`,
-/// `model.edges`), asked once per body.
+/// How many things were clicked to make a selection: the pieces a click on a rim or on a surface
+/// split by a seam selects count once.
+pub fn selection_count(session: &Session, selection: &[Sel]) -> usize {
+    clicked(session, selection).len()
+}
+
+/// A selection as the things the user clicked. A click on a circular rim or a split surface selects
+/// all its pieces (so commands get them all); here they are one group, the clicked piece first.
+/// Past [`MAX_GROUPING`] items the selection is taken as it is: nobody clicked that many rims.
+pub fn clicked(session: &Session, selection: &[Sel]) -> Vec<Vec<Sel>> {
+    let mut groups: Vec<Vec<Sel>> = Vec::new();
+    let mut taken = vec![false; selection.len()];
+    for (i, sel) in selection.iter().enumerate() {
+        if taken[i] {
+            continue;
+        }
+        let mut group = vec![sel.clone()];
+        if selection.len() <= MAX_GROUPING && matches!(sel, Sel::Edge { .. } | Sel::Face { .. }) {
+            for piece in crate::viewport::grouped_selection(session, sel) {
+                if let Some(j) = selection.iter().enumerate().position(|(j, x)| j != i && !taken[j] && crate::selection::same_item(x, &piece)) {
+                    taken[j] = true;
+                    group.push(selection[j].clone());
+                }
+            }
+        }
+        groups.push(group);
+    }
+    groups
+}
+
+/// More than this many selected things are not grouped into clicks (each grouping reads the model).
+const MAX_GROUPING: usize = 256;
+
+/// Describe a selection, each item on its own: what the picker holds. Face and edge details come
+/// from the model's own listings (`model.faces`, `model.edges`), asked once per body.
 pub fn describe(session: &mut Session, selection: &[Sel]) -> Context {
+    let groups: Vec<Vec<Sel>> = selection.iter().map(|s| vec![s.clone()]).collect();
+    describe_groups(session, &groups)
+}
+
+/// Describe groups of pieces that were clicked as one thing, each once.
+pub fn describe_groups(session: &mut Session, groups: &[Vec<Sel>]) -> Context {
     let mut context = Context::default();
     let mut listings: HashMap<(&'static str, String), Value> = HashMap::new();
-    for sel in selection {
+    for group in groups {
         if context.items.len() >= MAX_ITEMS {
             context.omitted += 1;
-        } else {
-            context.items.push(entry(session, sel, &mut listings));
+        } else if let Some(first) = group.first() {
+            let mut item = entry(session, first, &mut listings);
+            if group.len() > 1 {
+                join_pieces(session, group, &mut item, &mut listings);
+            }
+            context.items.push(item);
         }
     }
     context
+}
+
+/// An item clicked as several pieces (the halves of a rim, the patches of a split surface): one
+/// entry with the whole size, and what the tools take for every piece in its detail.
+fn join_pieces(session: &mut Session, group: &[Sel], item: &mut Entry, listings: &mut HashMap<(&'static str, String), Value>) {
+    let mut sizes = Vec::new();
+    let mut indices = Vec::new();
+    let mut names = Vec::new();
+    let mut unit = "";
+    let mut body = String::new();
+    for sel in group {
+        let found = match sel {
+            Sel::Edge { body: b, index, point } => {
+                unit = "mm";
+                body = b.clone();
+                indices.push(*index);
+                listed_edge(session, listings, b, *index, *point)
+            }
+            Sel::Face { body: b, index, .. } => {
+                unit = "mm²";
+                body = b.clone();
+                indices.push(*index);
+                listed(session, listings, "model.faces", "faces", b, *index)
+            }
+            _ => None,
+        };
+        if let Some(f) = found {
+            if let Some(n) = f["name"].as_str() {
+                names.push(n.to_string());
+            }
+            if let Some(v) = f[if unit == "mm" { "length" } else { "area" }].as_f64() {
+                sizes.push(v);
+            }
+        }
+    }
+    let pieces = group.len();
+    let total: f64 = sizes.iter().sum();
+    if matches!(group.first(), Some(Sel::Edge { .. })) && sizes.len() == pieces {
+        item.label = format!("Edge {} mm ({pieces} pieces) · {body}", num(total));
+    } else {
+        item.label = format!("{} ({pieces} pieces)", item.label);
+    }
+    let whole = if sizes.len() == pieces { format!(", total {} {unit}", num(total)) } else { String::new() };
+    let names = if names.is_empty() { String::new() } else { format!(", names {}", names.join(" + ")) };
+    item.detail = format!("clicked as one: {pieces} pieces, indices {indices:?}{names}{whole}; first piece: {}", item.detail);
 }
 
 fn entry(session: &mut Session, sel: &Sel, listings: &mut HashMap<(&'static str, String), Value>) -> Entry {
@@ -174,7 +263,7 @@ fn entry(session: &mut Session, sel: &Sel, listings: &mut HashMap<(&'static str,
             Entry { kind: Kind::Element, label: format!("{shape} · {body}"), detail: parts.join(", ") }
         }
         Sel::Edge { body, index, point } => {
-            let edge = listed(session, listings, "model.edges", "edges", body, *index);
+            let edge = listed_edge(session, listings, body, *index, *point);
             let mut parts = Vec::new();
             let mut shape = format!("Edge #{index}");
             if let Some(e) = &edge {
@@ -245,6 +334,27 @@ fn listed(
         listings.entry((command, body.to_string())).or_insert_with(|| session.execute(command, &json!({"body": body})).unwrap_or(Value::Null));
     let index = u64::try_from(index).ok()?;
     listing[list].as_array()?.iter().find(|item| item["index"].as_u64() == Some(index)).cloned()
+}
+
+/// The listing entry of the edge picked at `point`: the one with that index, unless its middle is
+/// somewhere else (the selection and the listing number edges alike, but a stale index must not
+/// describe another edge), then the edge whose middle is nearest the point.
+fn listed_edge(session: &mut Session, listings: &mut HashMap<(&'static str, String), Value>, body: &str, index: usize, point: Vec3) -> Option<Value> {
+    let by_index = listed(session, listings, "model.edges", "edges", body, index);
+    let near = |e: &Value| -> Option<f64> {
+        let mid = e["mid"].as_array()?;
+        let p = |i: usize| mid.get(i).and_then(Value::as_f64);
+        let dist = ((p(0)? - point.x).powi(2) + (p(1)? - point.y).powi(2) + (p(2)? - point.z).powi(2)).sqrt();
+        dist.is_finite().then_some(dist)
+    };
+    let tolerance = |e: &Value| (0.02 * e["length"].as_f64().unwrap_or(0.0)).max(0.05);
+    if let Some(e) = &by_index
+        && near(e).is_some_and(|d| d <= tolerance(e))
+    {
+        return by_index;
+    }
+    let all = listings.get(&("model.edges", body.to_string()))?["edges"].as_array()?.clone();
+    all.into_iter().filter_map(|e| near(&e).map(|d| (d, e))).filter(|(d, e)| *d <= tolerance(e)).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, e)| e)
 }
 
 /// A length or area to two decimals, without a trailing `.00`.
