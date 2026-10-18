@@ -251,6 +251,10 @@ pub enum OrbitAround {
     Cursor,
 }
 
+/// The browser sidebar's first width, and the width [`Prefs::default`] restores; the panel
+/// itself clamps what the user drags to its own range.
+pub const DEFAULT_BROWSER_WIDTH: f32 = 250.0;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
@@ -318,6 +322,9 @@ pub struct Prefs {
     pub timeline_left_height: f32,
     /// Whether the browser below the left feature history is collapsed.
     pub timeline_left_browser_collapsed: bool,
+    /// Width of the left sidebar holding the browser (and the feature history above it), which
+    /// the user drags wider or narrower at its right edge.
+    pub browser_width: f32,
     /// The wheel zooms toward the point under the cursor (else toward the view's centre).
     pub zoom_to_cursor: bool,
     /// Spread discrete wheel input across frames (off: apply each event immediately).
@@ -440,6 +447,7 @@ impl Default for Prefs {
             timeline_left: false,
             timeline_left_height: 360.0,
             timeline_left_browser_collapsed: false,
+            browser_width: DEFAULT_BROWSER_WIDTH,
             zoom_to_cursor: true,
             smooth_wheel_zoom: true,
             trackpad_pan: true,
@@ -695,6 +703,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.timeline_left = d.timeline_left;
             p.timeline_left_height = d.timeline_left_height;
             p.timeline_left_browser_collapsed = d.timeline_left_browser_collapsed;
+            p.browser_width = d.browser_width;
             p.default_units = d.default_units;
             p.length_decimals = d.length_decimals;
             p.angle_decimals = d.angle_decimals;

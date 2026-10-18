@@ -958,6 +958,22 @@ mod tests {
     }
 
     #[test]
+    fn browser_sidebar_drags_wider_and_narrower() {
+        let mut harness = Harness::new();
+        harness.frames(4);
+        let before = harness.app.preferences.browser_width;
+        let rail = handle_at("left-browser-rail").expect("the browser sidebar's right edge is drawn");
+        harness.step(&json!({"drag": [[rail.x, rail.y], [rail.x + 90.0, rail.y]]})).unwrap();
+        let wider = harness.app.preferences.browser_width;
+        assert!(wider > before + 40.0, "dragging the right edge right should widen the browser: {before} -> {wider}");
+
+        let rail = handle_at("left-browser-rail").expect("the browser sidebar's right edge is drawn");
+        harness.step(&json!({"drag": [[rail.x, rail.y], [rail.x - 40.0, rail.y]]})).unwrap();
+        let narrower = harness.app.preferences.browser_width;
+        assert!(narrower < wider - 20.0, "dragging it left should narrow it again: {wider} -> {narrower}");
+    }
+
+    #[test]
     fn rollback_bar_above_last_feature_can_be_dragged_to_the_end() {
         let mut harness = Harness::new();
         harness.app.preferences.timeline_left = true;

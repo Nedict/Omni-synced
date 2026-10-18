@@ -498,14 +498,22 @@ pub fn browser_below_timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
     browser_panel(app, ui, true);
 }
 
+/// How narrow the browser sidebar may be dragged, and how wide (the viewport keeps the rest).
+const MIN_BROWSER_WIDTH: f32 = 170.0;
+const MAX_BROWSER_WIDTH: f32 = 620.0;
+/// How wide a grip the sidebar's right edge offers, counted inwards from the edge.
+const BROWSER_RAIL: f32 = 6.0;
+
 fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
     let t = Tokens::get();
     app.tree.order.clear();
     DRAWN.with(|d| d.borrow_mut().clear());
     OCCURRENCES.with(|d| d.borrow_mut().clear());
     let mut acts = Actions::default();
-    egui::Panel::left("sc_browser")
-        .exact_size(250.0)
+    let remembered = app.preferences.browser_width;
+    let width = if remembered.is_finite() { remembered.clamp(MIN_BROWSER_WIDTH, MAX_BROWSER_WIDTH) } else { crate::prefs::DEFAULT_BROWSER_WIDTH };
+    let panel = egui::Panel::left("sc_browser")
+        .exact_size(width)
         .resizable(false)
         .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(6, 6)))
         .show(ui, |ui| {
@@ -548,6 +556,17 @@ fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
                 browser_contents(app, ui, &mut acts);
             }
         });
+    // The sidebar's right edge is a drag handle; the width it is dragged to is remembered.
+    let rect = panel.response.rect;
+    let rail = egui::Rect::from_x_y_ranges(rect.right() - BROWSER_RAIL..=rect.right(), rect.y_range());
+    let response = ui.interact(rail, egui::Id::new("sc_browser_rail"), egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+    if response.dragged() {
+        let delta = ui.input(|input| input.pointer.delta().x);
+        if delta.is_finite() {
+            app.preferences.browser_width = (width + delta).clamp(MIN_BROWSER_WIDTH, MAX_BROWSER_WIDTH);
+        }
+    }
+    crate::scenario::publish_handle("left-browser-rail", egui::pos2(rect.right() - BROWSER_RAIL / 2.0, rect.center().y));
     finish_browser(app, ui, acts);
 }
 
