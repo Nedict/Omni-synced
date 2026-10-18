@@ -86,8 +86,8 @@ the adapter, the folder of the first `node` that can run it goes to the front of
 "Can run" means a Node that reads the imports the adapters use (18.20, 20.10, 21 or newer) and meets whatever the
 adapter's own `package.json` asks for in `engines.node` (Claude Code's adapter asks for 22). If
 the agent still stops on a Node that is too old, the chat says which version it found and which
-one it needs, and looks for agents again, so a Node installed since is used on the next
-**Connect**. A `node` installed with fnm, mise, asdf or nodenv, or with nvm outside `~/.nvm`, is
+one it needs; the next **Connect** first looks for agents again, so a Node installed after
+that message is used. A `node` installed with fnm, mise, asdf or nodenv, or with nvm outside `~/.nvm`, is
 found only when it is on the `PATH` SolidCraft was started with.
 SolidCraft only checks whether the agent's own login file (`~/.claude/.credentials.json`,
 `~/.codex/auth.json`, `~/.gemini/oauth_creds.json`, …) or one of its key variables exists. It never
