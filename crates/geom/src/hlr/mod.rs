@@ -799,6 +799,25 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
     stats.phase_ms[0] = clock.lap();
     // 3. Crossings between projected curves (and each curve with itself).
     stats.crossings = crossings(&mut tracks, &ctx)?;
+    // Faces left out (freeform or with an unsupported trim) draw no silhouettes to cut at, so
+    // the curves are cut where they cross each such face's screen box instead, and below a
+    // piece inside a box and behind its nearest point is uncertain: it may be hidden.
+    let shadows = shadow_boxes(defs, scene, view, &unsupported);
+    for t in &mut tracks {
+        let mut cuts = Vec::new();
+        for w in t.samples.windows(2) {
+            let (Some(a), Some(b)) = (w.first(), w.get(1)) else { continue };
+            for sh in &shadows {
+                for (k, edge) in [(0usize, sh.lo[0]), (0, sh.hi[0]), (1, sh.lo[1]), (1, sh.hi[1])] {
+                    let (u, v) = (a.1[k], b.1[k]);
+                    if (u - edge) * (v - edge) < 0. {
+                        cuts.push(a.0 + (b.0 - a.0) * (edge - u) / (v - u));
+                    }
+                }
+            }
+        }
+        t.splits.extend(cuts);
+    }
     stats.phase_ms[1] = clock.lap();
     // 4. Classify pieces between splits.
     let mut lines = Vec::with_capacity(tracks.len());
@@ -821,6 +840,8 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
         for w in cuts.windows(2) {
             let (Some(&a), Some(&b)) = (w.first(), w.get(1)) else { continue };
             for (r, vis) in classify_range(t, a, b, &ctx)? {
+                let vis =
+                    if vis == Visibility::Visible && in_shadow(t, 0.5 * (r[0] + r[1]), scene, view, &shadows) { Visibility::Uncertain } else { vis };
                 match pieces.last_mut() {
                     Some(last) if last.visibility == vis && (last.t[1] - r[0]).abs() <= 1e-12 * span.max(1e-300) => last.t[1] = r[1],
                     _ => pieces.push(Piece {
@@ -880,6 +901,54 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
 }
 
 /// The centre of the placed bodies' boxes, after checking the placements.
+/// A left-out face's screen box and the depth of its nearest corner.
+struct Shadow {
+    placement: usize,
+    face: usize,
+    lo: [f64; 2],
+    hi: [f64; 2],
+    near: f64,
+}
+
+fn shadow_boxes(defs: &[Prepared], scene: &[Placement], view: &View, left_out: &[Unsupported]) -> Vec<Shadow> {
+    let mut out = Vec::new();
+    for u in left_out {
+        let Some(p) = scene.get(u.placement) else { continue };
+        let Some(f) = defs.get(p.body).and_then(|d| d.faces.get(u.face)) else { continue };
+        let (mut lo, mut hi, mut near) = ([f64::MAX; 2], [f64::MIN; 2], f64::MAX);
+        for k in 0..8 {
+            let c = Vec3::new(
+                if k & 1 == 0 { f.lo.x } else { f.hi.x },
+                if k & 2 == 0 { f.lo.y } else { f.hi.y },
+                if k & 4 == 0 { f.lo.z } else { f.hi.z },
+            );
+            let w = p.apply(c);
+            let s = view.screen(w);
+            lo = [lo[0].min(s[0]), lo[1].min(s[1])];
+            hi = [hi[0].max(s[0]), hi[1].max(s[1])];
+            near = near.min(w.dot(view.d));
+        }
+        out.push(Shadow { placement: u.placement, face: u.face, lo, hi, near });
+    }
+    out
+}
+
+/// Whether the point at `x` on a track lies inside a left-out face's screen box and behind its
+/// nearest point (not counting the track's own faces).
+fn in_shadow(t: &Track, x: f64, scene: &[Placement], view: &View, shadows: &[Shadow]) -> bool {
+    let Some(p) = scene.get(t.placement) else { return false };
+    let w = p.apply(t.c3().at(x));
+    let (s, depth) = (view.screen(w), w.dot(view.d));
+    shadows.iter().any(|sh| {
+        !(sh.placement == t.placement && t.own.contains(&sh.face))
+            && s[0] >= sh.lo[0]
+            && s[0] <= sh.hi[0]
+            && s[1] >= sh.lo[1]
+            && s[1] <= sh.hi[1]
+            && depth > sh.near
+    })
+}
+
 fn scene_centre(defs: &[Prepared], scene: &[Placement]) -> Result<Vec3, HlrError> {
     let (mut lo, mut hi) = (Vec3::new(f64::MAX, f64::MAX, f64::MAX), Vec3::new(f64::MIN, f64::MIN, f64::MIN));
     for p in scene {

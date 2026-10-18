@@ -96,7 +96,9 @@ origin, whether placed there or modelled there, is classified as at the origin.
 Faces that are not planes, cylinders, cones, spheres or tori are freeform. By default
 they are listed in `Drawing::unsupported` with the reason `freeform face`, their
 silhouettes are not drawn, and a piece whose ray meets one is `Uncertain`, never
-`Hidden`. With `Options::freeform` set their silhouettes are contoured and their ray
+`Hidden`. Without its silhouettes nothing marks where such a face's outline crosses a curve,
+so curves are cut at the face's screen box and every piece inside the box and behind its
+nearest point is `Uncertain` too (faces left out for an unsupported trim likewise). With `Options::freeform` set their silhouettes are contoured and their ray
 tests use seeded Newton iterations: slower, `Sampled`, and subject to the misses listed
 in the W05a findings.
 
@@ -139,7 +141,9 @@ and intervals:
 - a cylinder 1e5 and 1e7 mm from the origin draws as at the origin; a cone trimmed to its
   tip 1 mm below the apex hides nothing above it;
 - a freeform patch is reported and makes the edges it covers uncertain, or hidden when
-  freeform faces are enabled; a flat spline patch hides them for certain;
+  freeform faces are enabled; a flat spline patch hides them for certain; a long edge behind
+  a freeform tube is uncertain where the tube may cover it and visible elsewhere;
+- two strips of a torus 0.0003 rad wide keep their 0.006 mm of outline;
 - two touching boxes draw each shared edge once;
 - mirrored placements, bad body indices and bad views are refused; cancellation and
   budgets return errors;

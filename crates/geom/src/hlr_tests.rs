@@ -766,6 +766,79 @@ fn a_cone_tip_trimmed_near_the_apex_is_only_its_tip() {
 }
 
 #[test]
+fn an_edge_behind_a_left_out_freeform_face_is_uncertain_there() {
+    // A freeform tube about the vertical line x = 10 (radius 2.5 at its ends, 2.75 halfway up,
+    // a quadratic profile) in front of a long box edge at z = 5. Its silhouettes are left out,
+    // so nothing cuts the edge where the tube covers it (x from 7.25 to 12.75); that part may
+    // be hidden and must not come out visible.
+    let tau = std::f64::consts::TAU;
+    let profile = Curve::Spline { knots: vec![0., 0., 0., 1., 1., 1.], points: vec![[12.5, 0., 0.], [13., 0., 5.], [12.5, 0., 10.]] };
+    let tube = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![[12.5, 0., 0.], [12.5, 0., 10.]],
+            edges: vec![circle([10., 0., 0.], 2.5, 0), circle([10., 0., 10.], 2.5, 1), Edge { vertices: [0, 1], curve: profile.clone() }],
+            faces: vec![Face {
+                loops: vec![vec![uses(0, true), uses(2, true), uses(1, false), uses(2, false)]],
+                surface: Surface::Revolution { profile: Box::new(profile), origin: [10., 0., 0.], axis: [0., 0., 1.], angle: [0., tau] },
+                forward: true,
+            }],
+        }],
+    };
+    let tube = prepare(&tube, &Options::default()).unwrap();
+    assert_eq!(tube.report.freeform_faces, vec![0]);
+    let bar = prepare(&cuboid([-50., 4., 4.], [50., 6., 5.]), &Options::default()).unwrap();
+    let view = View::new(Vec3::new(0., 1., 0.), Vec3::new(0., 0., 1.)).unwrap();
+    let d = hidden_lines(&[tube, bar], &[identity(0, [0.; 3]), identity(1, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    // Edge 2 joins corners 4 (-50, 4, 5) and 5 (50, 4, 5): x = 100 t - 50.
+    for p in &edge_line(&d, 1, 2).pieces {
+        let (x0, x1) = (100. * p.t[0] - 50., 100. * p.t[1] - 50.);
+        if x1 > 7.25 && x0 < 12.75 {
+            assert_ne!(p.visibility, Visibility::Visible, "x {x0}..{x1}");
+        }
+        if x1 < 6. || x0 > 14. {
+            assert_eq!(p.visibility, Visibility::Visible, "x {x0}..{x1}");
+        }
+    }
+}
+
+#[test]
+fn narrow_torus_strips_keep_their_outline() {
+    // Two strips of a torus R 20, r 10 between the meridian angles 0.3002, 0.3005 and 0.3008,
+    // seen from the side: each side of the outline is a 0.006 mm piece of the circle traced on
+    // the whole torus, whose chords are far longer than the strips are wide.
+    let tau = std::f64::consts::TAU;
+    let ring = |phi: f64, v: u32| circle([0., 0., 10. * phi.sin()], 20. + 10. * phi.cos(), v);
+    let strip = |m: [f64; 2], e: [u32; 2]| Face {
+        loops: vec![vec![uses(e[0], true)], vec![uses(e[1], false)]],
+        surface: Surface::Torus { frame: frame_at([0.; 3]), major_radius: 20., minor_radius: 10., longitude: [0., tau], meridian: m },
+        forward: true,
+    };
+    let phis: [f64; 3] = [0.3002, 0.3005, 0.3008];
+    let body = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: phis.iter().map(|p| [20. + 10. * p.cos(), 0., 10. * p.sin()]).collect(),
+            edges: vec![ring(phis[0], 0), ring(phis[1], 1), ring(phis[2], 2)],
+            faces: vec![strip([phis[0], phis[1]], [0, 1]), strip([phis[1], phis[2]], [1, 2])],
+        }],
+    };
+    let def = prepare(&body, &Options::default()).unwrap();
+    let view = View::new(Vec3::new(0., 1., 0.), Vec3::new(0., 0., 1.)).unwrap();
+    let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    for side in [-1., 1.] {
+        let drawn: f64 = silhouette_pieces(&d)
+            .iter()
+            .filter(|p| p.visibility == Visibility::Visible && !p.covered)
+            .flat_map(|p| p.geometry.iter())
+            .filter(|g| g.point_at(0.5).x * side > 0.)
+            .map(|g| g.point_at(0.).dist(g.point_at(1.)))
+            .sum();
+        assert!((drawn - 0.006).abs() < 1e-4, "side {side}: {drawn} mm of outline");
+    }
+}
+
+#[test]
 fn mirrored_placements_bad_indices_and_bad_views_are_refused() {
     let def = prepare(&cuboid([0.; 3], [1.; 3]), &Options::default()).unwrap();
     let view = View::new(Vec3::new(-1., -1., -1.), Vec3::new(0., 0., 1.)).unwrap();

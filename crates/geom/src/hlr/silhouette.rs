@@ -210,7 +210,19 @@ fn closest_param(c: &C3, p: Vec3) -> Option<f64> {
             let t = t + k * TAU;
             (t <= range[1]).then_some(t)
         }
-        C3::Polyline(pts) => pts.iter().enumerate().min_by(|(_, a), (_, b)| a.dist(p).total_cmp(&b.dist(p))).map(|(i, _)| i as f64),
+        // The nearest point on any chord, not just the nearest vertex: a face narrower than
+        // the chords still gets parameters inside it.
+        C3::Polyline(pts) => pts
+            .windows(2)
+            .enumerate()
+            .filter_map(|(i, w)| {
+                let (a, b) = (*w.first()?, *w.get(1)?);
+                let e = b - a;
+                let f = if e.len2() > 0. { ((p - a).dot(e) / e.len2()).clamp(0., 1.) } else { 0. };
+                Some((i as f64 + f, (a + e * f).dist(p)))
+            })
+            .min_by(|x, y| x.1.total_cmp(&y.1))
+            .map(|(t, _)| t),
         C3::Spline { .. } => None,
     }
 }
