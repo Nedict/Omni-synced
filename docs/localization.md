@@ -24,6 +24,13 @@ Catalogs are parsed once and looked up through ordered maps. This is offline loc
 not a claim of zero runtime overhead. The catalog tests check registered locale IDs,
 translation keys, and placeholder consistency. Run `cargo xtask ci` before submitting changes.
 
+## Terms
+
+The [glossary](book/src/reference/glossary.md) gives one English term for each idea, and each
+entry has a note for translators: what the term must not be confused with. Its "Words with more
+than one meaning" table lists the English words that need a separate catalogue entry for each
+meaning (Construction, Flat, Round, Normal, Gap, Clearance).
+
 ## Coverage
 
 A message a locale never received falls back to English silently, so a gap shows up only as a row
