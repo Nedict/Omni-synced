@@ -173,6 +173,34 @@ pub fn calibrated(axes: Axes, calibration: Option<Calibration>) -> Axes {
     calibration.map_or(axes, |calibration| calibration.apply(axes.into()).into())
 }
 
+/// Which of the cap's motions drives each of its axes (`Prefs::space_mouse_axis_source`): row
+/// `r` reads motion `source[r]`. Each motion drives exactly one row.
+pub const SAME_AXES: [usize; 6] = [0, 1, 2, 3, 4, 5];
+
+/// The reading with its rows reassigned: row `r` takes motion `source[r]`. A `source` that
+/// isn't one motion per row reads as [`SAME_AXES`].
+pub fn reassigned(axes: Axes, source: [usize; 6]) -> Axes {
+    let source = if drives_each_once(source) { source } else { SAME_AXES };
+    let raw: [i16; 6] = axes.into();
+    source.map(|from| raw.get(from).copied().unwrap_or(0)).into()
+}
+
+/// Makes `row` read motion `from`. The row that read `from` before takes this row's old motion,
+/// so each motion still drives exactly one row.
+pub fn reassign(source: &mut [usize; 6], row: usize, from: usize) {
+    if let Some(other) = source.iter().position(|&s| s == from)
+        && row < source.len()
+    {
+        source.swap(row, other);
+    }
+}
+
+/// Whether each of the six motions drives exactly one row.
+pub fn drives_each_once(source: [usize; 6]) -> bool {
+    let mut seen = [false; 6];
+    source.iter().all(|&from| seen.get_mut(from).is_some_and(|seen| !std::mem::replace(seen, true)))
+}
+
 /// Hands one frame of 3D mouse input, `seconds` after the previous frame, to the page showing
 /// the camera. Nothing happens with navigation switched off, on the start page or while a file
 /// picker is open, or while the reading is inside the dead zone (after calibration, which takes
@@ -191,7 +219,9 @@ pub fn navigate_frame(app: &mut SolveApp, ctx: &egui::Context, mapping: DriverMa
         // Another device is being read now, or none: what was recorded isn't its.
         app.space_mouse.calibrating = None;
     }
-    let axes = calibrated(axes, calibration(app));
+    // Calibrated first, so the calibration puts the device's axes in order, then the user's choice
+    // of which motion drives which axis. Invert and speed then go with the axis, not the motion.
+    let axes = reassigned(calibrated(axes, calibration(app)), app.preferences.space_mouse_axis_source);
     if !app.preferences.space_mouse_enabled || app.home.open || app.file_picker_busy() || !axes.moving() {
         return false;
     }
@@ -606,5 +636,90 @@ mod tests {
         older.as_object_mut().unwrap().remove("dead_zone_share");
         saved["space_mouse_calibrations"]["hid 1234:5678"] = older;
         assert_eq!(crate::prefs::lenient(&saved), prefs);
+    }
+
+    #[test]
+    fn picking_a_motion_another_axis_uses_swaps_the_two() {
+        let mut source = SAME_AXES;
+        reassign(&mut source, 1, 2);
+        assert_eq!(source, [0, 2, 1, 3, 4, 5], "Y and Z swapped");
+        reassign(&mut source, 4, 5);
+        assert_eq!(source, [0, 2, 1, 3, 5, 4], "then roll and twist");
+        reassign(&mut source, 1, 1);
+        assert_eq!(source, [0, 1, 2, 3, 5, 4], "back again");
+        assert!(drives_each_once(source));
+        // A row or a motion that doesn't exist changes nothing.
+        reassign(&mut source, 9, 0);
+        reassign(&mut source, 0, 9);
+        assert_eq!(source, [0, 1, 2, 3, 5, 4]);
+        assert!(!drives_each_once([0, 0, 2, 3, 4, 5]) && !drives_each_once([0, 1, 2, 3, 4, 9]));
+        // A value that doesn't drive each axis once is read as the default.
+        let reading = Axes { translation: [1, 2, 3], rotation: [4, 5, 6] };
+        assert_eq!(reassigned(reading, [0, 2, 1, 3, 5, 4]), Axes { translation: [1, 3, 2], rotation: [4, 6, 5] });
+        assert_eq!(reassigned(reading, [0, 0, 2, 3, 4, 5]), reading);
+    }
+
+    #[test]
+    fn a_reassigned_motion_drives_its_new_axis_and_invert_stays_with_the_axis() {
+        let ctx = egui::Context::default();
+        let press = Axes { translation: [0, 0, 350], rotation: [0; 3] };
+        // With Y and Z swapped, pressing the cap does what pushing it back would.
+        let mut reference = app();
+        frame(&mut reference, &ctx, DriverMapping::default(), PUSH, 0.02);
+        let mut swapped = app();
+        swapped.preferences.space_mouse_axis_source = [0, 2, 1, 3, 4, 5];
+        assert!(frame(&mut swapped, &ctx, DriverMapping::default(), press, 0.02));
+        assert_eq!(swapped.cam, reference.cam);
+        // Inverting the Y axis inverts whatever motion drives it now, not the Y motion.
+        let mut inverted = app();
+        inverted.preferences.space_mouse_reverse[1] = true;
+        frame(&mut inverted, &ctx, DriverMapping::default(), PUSH, 0.02);
+        let mut swapped_inverted = app();
+        swapped_inverted.preferences.space_mouse_axis_source = [0, 2, 1, 3, 4, 5];
+        swapped_inverted.preferences.space_mouse_reverse[1] = true;
+        frame(&mut swapped_inverted, &ctx, DriverMapping::default(), press, 0.02);
+        assert_eq!(swapped_inverted.cam, inverted.cam);
+        assert_ne!(swapped_inverted.cam, reference.cam);
+    }
+
+    #[test]
+    fn the_choice_is_between_calibrated_motions_on_a_device_whose_calibration_shuffles_its_channels() {
+        // `homemade()` reads Y from raw channel 4, reversed, and Ry from raw 1. With Y and Z
+        // swapped, the choices are calibrated motions: pressing the cap (calibrated Z, raw 2)
+        // drives Y, and pushing it back (calibrated Y, raw 4 the other way) drives Z.
+        let ctx = egui::Context::default();
+        let device = "hid 1234:5678";
+        let setup = |source: [usize; 6]| {
+            let mut app = app();
+            app.space_mouse.device = Some(device.into());
+            app.preferences.space_mouse_calibrations.insert(device.into(), homemade());
+            app.preferences.space_mouse_axis_source = source;
+            app
+        };
+        // Mixed motion: a press and a push back together, on the device's own channels.
+        let mixed = Axes { translation: [0, 0, 1750], rotation: [0, -3500, 0] };
+        let expected = Axes { translation: [0, 175, 350], rotation: [0; 3] };
+        let mut reference = app();
+        frame(&mut reference, &ctx, DriverMapping::default(), expected, 0.02);
+        let mut swapped = setup([0, 2, 1, 3, 4, 5]);
+        assert!(frame(&mut swapped, &ctx, DriverMapping::default(), mixed, 0.02));
+        assert_eq!(swapped.cam, reference.cam, "calibrated first, then the motions swapped, once");
+        // Saved and loaded, it's the same choice; reset, the device reads as calibrated.
+        let saved = serde_json::to_value(&swapped.preferences).unwrap();
+        assert_eq!(crate::prefs::lenient(&saved).space_mouse_axis_source, [0, 2, 1, 3, 4, 5]);
+        let mut unswapped_reference = app();
+        frame(&mut unswapped_reference, &ctx, DriverMapping::default(), Axes { translation: [0, 350, 175], rotation: [0; 3] }, 0.02);
+        let mut reset = setup(SAME_AXES);
+        frame(&mut reset, &ctx, DriverMapping::default(), mixed, 0.02);
+        assert_eq!(reset.cam, unswapped_reference.cam);
+    }
+
+    #[test]
+    fn a_saved_axis_assignment_that_doesnt_drive_each_axis_once_loads_as_the_default() {
+        let mut saved = serde_json::to_value(crate::prefs::Prefs::default()).unwrap();
+        saved["space_mouse_axis_source"] = serde_json::json!([0, 2, 1, 3, 4, 5]);
+        assert_eq!(crate::prefs::lenient(&saved).space_mouse_axis_source, [0, 2, 1, 3, 4, 5]);
+        saved["space_mouse_axis_source"] = serde_json::json!([1, 1, 2, 3, 4, 5]);
+        assert_eq!(crate::prefs::lenient(&saved).space_mouse_axis_source, SAME_AXES);
     }
 }

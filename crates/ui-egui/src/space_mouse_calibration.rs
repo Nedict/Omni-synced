@@ -73,6 +73,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             // The device's six raw axes as they come, so the jitter at rest is there to see.
             let reading = raw.map(|value| format!("{value:>6}")).join(" ");
             ui.label(egui::RichText::new(format!("{}: {reading}", app.tr("ui.space_mouse_reading"))).monospace());
+            // A reassignment made in Preferences stays on top of whatever this records.
+            if app.preferences.space_mouse_axis_source != crate::space_mouse::SAME_AXES {
+                ui.label(egui::RichText::new(app.tr("ui.space_mouse_axes_reassigned")).small());
+            }
             ui.horizontal(|ui| {
                 ui.label(app.tr("ui.space_mouse_dead_zone"));
                 dead_zone_slider(ui, &mut dead_zone).on_hover_text(app.tr("ui.space_mouse_dead_zone_tip"));
