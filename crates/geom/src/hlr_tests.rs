@@ -449,6 +449,84 @@ fn freeform_faces_are_reported_and_never_hide_for_certain() {
 }
 
 #[test]
+fn a_flat_spline_patch_is_a_plane_that_hides_for_certain() {
+    // A bilinear patch with all four corners at z = 0 over a bar whose top is at z = -1.
+    let p = [[-5., -5., 0.], [5., -5., 0.], [5., 5., 0.], [-5., 5., 0.]];
+    let edges =
+        (0..4).map(|i| Edge { vertices: [i as u32, ((i + 1) % 4) as u32], curve: Curve::Line { start: p[i], end: p[(i + 1) % 4] } }).collect();
+    let face = Face {
+        loops: vec![(0..4).map(|e| uses(e, true)).collect()],
+        surface: Surface::Spline { u_knots: vec![0., 0., 1., 1.], v_knots: vec![0., 0., 1., 1.], points: vec![vec![p[0], p[3]], vec![p[1], p[2]]] },
+        forward: true,
+    };
+    let patch =
+        prepare(&Brep { version: crate::brep::VERSION, shells: vec![Shell { vertices: p.to_vec(), edges, faces: vec![face] }] }, &Options::default())
+            .unwrap();
+    assert!(patch.report.freeform_faces.is_empty());
+    let bar = prepare(&cuboid([-2., -1., -3.], [2., 1., -1.]), &Options::default()).unwrap();
+    let view = View::new(Vec3::new(0.1, 0.05, -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&[patch, bar], &[identity(0, [0.; 3]), identity(1, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    assert!(d.unsupported.is_empty());
+    let top: Vec<Visibility> = [2, 3, 6, 7].iter().flat_map(|&e| edge_line(&d, 1, e).pieces.iter().map(|p| p.visibility)).collect();
+    assert!(top.iter().all(|v| *v == Visibility::Hidden), "{top:?}");
+}
+
+/// The Bernstein coefficients of the product of two polynomials given by theirs.
+fn bernstein_product(a: &[f64], b: &[f64]) -> Vec<f64> {
+    let binom = |n: usize, k: usize| (0..k).fold(1f64, |acc, i| acc * (n - i) as f64 / (i + 1) as f64);
+    let (m, n) = (a.len() - 1, b.len() - 1);
+    (0..=m + n)
+        .map(|k| {
+            let terms = (k.saturating_sub(n)..=k.min(m)).map(|i| binom(m, i) * binom(n, k - i) * a[i] * b[k - i]);
+            terms.sum::<f64>() / binom(m + n, k)
+        })
+        .collect()
+}
+
+#[test]
+fn a_circle_racing_through_its_first_turn_is_drawn_whole_edge_on() {
+    // A closed rational sextic on the circle of radius 10: 10 (A + iB)^6 / |A + iB|^6 with
+    // A = 0.05 + 0.95 t, B = sqrt 3 t. It turns 3.6 rad in its first screen sample step, and
+    // seen along its plane that step looks straight; the arcs must still turn 360 degrees.
+    // A + iB = 0.05 (1 - t) + (1 + i sqrt 3) t, so (A + iB)^6 has the Bernstein coefficients
+    // 0.05^(6-k) (1 + i sqrt 3)^k, and A^2 + B^2 the coefficients 0.0025, 0.05, 4.
+    let c1 = (1f64, 3f64.sqrt());
+    let mut num = Vec::new();
+    let mut pw = (1f64, 0f64);
+    for k in 0..=6 {
+        num.push((0.05f64.powi(6 - k) * pw.0, 0.05f64.powi(6 - k) * pw.1));
+        pw = (pw.0 * c1.0 - pw.1 * c1.1, pw.0 * c1.1 + pw.1 * c1.0);
+    }
+    let q = [0.0025, 0.05, 4.];
+    let w = bernstein_product(&bernstein_product(&q, &q), &q);
+    let homogeneous: Vec<[f64; 4]> = num.iter().zip(&w).map(|((re, im), w)| [10. * re, 10. * im, 0., *w]).collect();
+    let start = [10., 0., 0.];
+    let disc = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![start],
+            edges: vec![Edge { vertices: [0, 0], curve: Curve::RationalSpline { knots: [[0.; 7], [1.; 7]].concat(), homogeneous } }],
+            faces: vec![Face {
+                loops: vec![vec![uses(0, true)]],
+                surface: Surface::Plane { origin: [0.; 3], u_axis: [1., 0., 0.], v_axis: [0., 1., 0.] },
+                forward: true,
+            }],
+        }],
+    };
+    let def = prepare(&disc, &Options::default()).unwrap();
+    let view = View::new(Vec3::new(0., 1., 0.), Vec3::new(0., 0., 1.)).unwrap();
+    let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    let mut sweep = 0.;
+    for p in pieces(&d) {
+        for g in &p.geometry {
+            let Seg2::Conic { w, .. } = *g else { panic!("a circle is drawn as conic arcs: {g:?}") };
+            sweep += 2. * w.acos();
+        }
+    }
+    assert!((sweep - std::f64::consts::TAU).abs() < 1e-9, "the arcs turn {sweep} rad");
+}
+
+#[test]
 fn mirrored_placements_bad_indices_and_bad_views_are_refused() {
     let def = prepare(&cuboid([0.; 3], [1.; 3]), &Options::default()).unwrap();
     let view = View::new(Vec3::new(-1., -1., -1.), Vec3::new(0., 0., 1.)).unwrap();

@@ -219,6 +219,10 @@ pub fn prepare(b: &Brep, opts: &Options) -> Result<Prepared, HlrError> {
         let mut users: Vec<Vec<usize>> = vec![Vec::new(); shell.edges.len()];
         for (fi, f) in shell.faces.iter().enumerate() {
             let mut surface = S3::new(&f.surface)?;
+            // A flat spline patch is a plane: trimmed and intersected as one.
+            if let Some(plane) = surface.flat(1e-9) {
+                surface = plane;
+            }
             let analytic = surface.analytic(1e-9);
             // Trim and intersect recognised spline surfaces in their own analytic chart.
             if matches!(surface, S3::Nurbs(_)) {
@@ -942,14 +946,34 @@ fn piece_geometry(t: &Track, piece: &Piece, p: &Placement, view: &View) -> (Vec<
                 w.dot(v).atan2(w.dot(u))
             };
             // Unwrap the piece's angles through the track's own samples (dense, and at every
-            // knot), so an unevenly parameterised circle cannot skip a turn between two of them.
+            // knot), halving each step in 3D until its halves turn less than a quarter turn:
+            // the samples were spaced for the screen, and a view along the circle's plane does
+            // not split a step that turns far. Past the halving budget, chords.
+            let wrap = |d: f64| (d + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
             let mut a0 = angle(piece.t[0]);
             let mut a1 = a0;
+            let mut budget = 1usize << 16;
             let inner = t.samples.iter().map(|s| s.0).filter(|x| *x > piece.t[0] && *x < piece.t[1]);
-            for x in inner.chain(std::iter::once(piece.t[1])) {
-                let raw = angle(x);
-                let d = (raw - a1 + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
-                a1 += d;
+            let (mut xa, mut aa) = (piece.t[0], a0);
+            for xb in inner.chain(std::iter::once(piece.t[1])) {
+                let ab = angle(xb);
+                let mut stack = vec![(xa, aa, xb, ab, 0u32)];
+                while let Some((x0, g0, x1, g1, depth)) = stack.pop() {
+                    let xm = 0.5 * (x0 + x1);
+                    let gm = angle(xm);
+                    let (d0, d1) = (wrap(gm - g0), wrap(g1 - gm));
+                    if (d0.abs() > std::f64::consts::FRAC_PI_4 || d1.abs() > std::f64::consts::FRAC_PI_4) && depth < 60 && !param_is_angle {
+                        budget = match budget.checked_sub(1) {
+                            Some(b) => b,
+                            None => return chords(),
+                        };
+                        stack.push((xm, gm, x1, g1, depth + 1));
+                        stack.push((x0, g0, xm, gm, depth + 1));
+                    } else {
+                        a1 += d0 + d1;
+                    }
+                }
+                (xa, aa) = (xb, ab);
             }
             if param_is_angle {
                 a0 = piece.t[0];

@@ -204,6 +204,21 @@ impl S3 {
         r.silhouette(d)
     }
 
+    /// A spline patch whose control points all lie in one plane (to `tol` of its size) as that
+    /// plane; the convex hull property puts the whole patch in it.
+    pub fn flat(&self, tol: f64) -> Option<S3> {
+        let S3::Nurbs(n) = self else { return None };
+        let pts: Vec<Vec3> = n.s.homogeneous().iter().filter_map(|h| h.project()).collect();
+        let o = *pts.first()?;
+        let far = |key: &dyn Fn(Vec3) -> f64| pts.iter().copied().max_by(|a, b| key(*a).total_cmp(&key(*b)));
+        let p1 = far(&|p| p.dist(o))?;
+        let u = (p1 - o).normalized()?;
+        let p2 = far(&|p| (p - o).cross(u).len())?;
+        let nrm = u.cross(p2 - o).normalized()?;
+        let size = (p1 - o).len();
+        pts.iter().all(|p| (*p - o).dot(nrm).abs() <= tol * size).then(|| S3::Plane { o, u, v: nrm.cross(u), n: nrm })
+    }
+
     pub fn domain(&self) -> [[f64; 2]; 2] {
         match self {
             S3::Plane { .. } => [[f64::NEG_INFINITY, f64::INFINITY]; 2],
