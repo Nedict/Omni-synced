@@ -80,6 +80,7 @@ fn a_sweep_refuses_what_it_cannot_sweep() {
         json!({"parameter": "hx", "values": []}),
         json!({"parameter": "hx", "values": [null]}),
         json!({"parameter": "hx", "from": 1, "to": 2, "steps": 0}),
+        json!({"parameter": "hx", "from": 1, "to": 2, "steps": 200}),
         json!({"parameter": "hx", "from": 1, "to": 2, "steps": 500}),
         json!({"parameter": "hx", "from": "a", "to": 2}),
     ] {

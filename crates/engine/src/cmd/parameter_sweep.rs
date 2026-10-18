@@ -14,11 +14,12 @@ use crate::params::{bad, num, str_};
 use crate::{Result, Session};
 
 pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("inspect.parameter_sweep", "Parameter Sweep", sweep).icon("params").noundo().params(
-    "parameter: name; values: [number | expression] (at most 200) | from, to: numbers, steps? (default 10, at most 200: steps + 1 values) → \
-     for each value, in a copy of the design (the design itself is not changed): {value, ms (the rebuild), ok, failed: [{feature, error}], warned: [{feature, warning}] \
-     (features that build at the current value and fail or warn at this one), joints_lost: [{joint, name, why}], joints_flipped: [{joint, name, origin: a|b, degrees}] \
+    "parameter: name; values: [number | expression] (at most 200) | from, to: numbers, steps? (default 10, at most 199: steps + 1 values) → \
+     for each value, in a copy of the design (the design itself is not changed): {value, ms (the rebuild), ok, failed: [{feature, name, error}], warned: [{feature, name, warning}] \
+     (features that build at the current value and fail or warn at this one), joints_lost: [{joint, name, origin?: a|b, why}], joints_flipped: [{joint, name, origin: a|b, degrees}] \
      (an origin's z turned more than 90° on its own part from where it is now), sketches_flipped: [{sketch, name, degrees}] (the sketch plane's normal turned more than 90°), \
-     sketches_failed: [{sketch, name, failing, folded}] (a solve that fails, or keeps a triangle's turn or an offset's side only by flipping it)}; \
+     sketches_failed: [{sketch, name, failing, folded}] (a solve that fails, or keeps a triangle's turn or an offset's side only by flipping it)} \
+     (or {value, ms, ok: false, error} where the parameter takes no such value); \
      summary: {values, ok, slowest_ms, failed, joints_lost, joints_flipped, sketches_flipped, sketches_failed} (how many values show each)",
 )];
 
