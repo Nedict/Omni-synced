@@ -127,6 +127,10 @@ The [README](README.md#architecture) has the layer table. The short version:
    `navigation::handle`; never read drags, the wheel or pinch to move the camera yourself. The
    `hand_rolled_camera_input_is_rejected` test fails if a page does.
 
+Labels, parameter docs, messages and docs use the terms in the
+[glossary](https://docs.solidcraft.io/reference/glossary.html): one term for each idea. A change that adds a new
+idea adds its term there.
+
 [AGENTS.md](AGENTS.md) has the long form of these rules. It's written for AI agents, but it's
 the most complete description of the house style.
 

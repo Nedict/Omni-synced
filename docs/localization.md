@@ -24,10 +24,17 @@ Catalogs are parsed once and looked up through ordered maps. This is offline loc
 not a claim of zero runtime overhead. The catalog tests check registered locale IDs,
 translation keys, and placeholder consistency. Run `cargo xtask ci` before submitting changes.
 
+## Terms
+
+The [glossary](book/src/reference/glossary.md) gives one English term for each idea, and each
+entry has a note for translators: what the term must not be confused with. Its "Words with more
+than one meaning" table lists the English words that need a separate catalogue entry for each
+meaning (Construction, Flat, Round, Normal, Gap, Clearance).
+
 ## English (UK)
 
 `en-GB.json` holds only the English messages whose spelling differs in UK English (Centre,
-Colour, Customise, Organisation, Licence, …), in UK spelling; every other message is English's.
+Customise, Organisation, Licence, colours, …), in UK spelling; every other message is English's.
 `english_uk_is_english_in_uk_spelling` (in `i18n.rs`) works the catalog out from `en.json` and
 its table of US and UK words, and fails with the exact lines to add when an English message
 with a US spelling is added or changed. A word the table doesn't know yet goes in the table.
