@@ -1,0 +1,69 @@
+# Labels new issues and PRs from fixed rules, `/triage` for maintainers, and a manual backfill
+# over everything still unlabelled (CONTRIBUTING.md, "Labels and triage"). The logic is in
+# scripts/triage/triage.js (tested in ci.yml).
+name: Triage
+
+on:
+  issues:
+    types: [opened, labeled]
+  issue_comment:
+    types: [created]
+  # pull_request_target so PRs from forks can be labelled. It runs the base branch's
+  # scripts/triage and only lists the PR's changed paths; the PR's code is never checked out.
+  pull_request_target:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Only report what would be labelled'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read # to check out scripts/triage
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: triage-${{ github.event.issue.number || github.event.pull_request.number || 'backfill' }}
+  cancel-in-progress: false
+
+jobs:
+  triage:
+    name: Triage bot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Filtered here so the common events (every comment, every label) start no runner.
+    if: >-
+      (github.event_name == 'issue_comment' &&
+      github.event.comment.user.type != 'Bot' && startsWith(github.event.comment.body, '/triage')) ||
+      (github.event.action == 'labeled' && startsWith(github.event.label.name, 'priority:') &&
+      contains(github.event.issue.labels.*.name, 'needs-triage')) ||
+      (github.event_name != 'issue_comment' && github.event.action != 'labeled')
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/triage
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        with:
+          script: |
+            const triage = require('./scripts/triage/triage.js');
+            const event = context.eventName;
+            if (event === 'issue_comment') {
+              core.info(await triage.handleComment({ github, context }));
+            } else if (event === 'issues' && context.payload.action === 'labeled') {
+              await triage.handleLabeled({ github, context });
+            } else if (event === 'workflow_dispatch') {
+              const dryRun = process.env.DRY_RUN !== 'false';
+              const plan = await triage.backfill({ github, context, dryRun });
+              const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+              const rows = plan.map((p) => [`#${p.number}`, p.pull ? 'PR' : 'issue', esc(p.labels.join(', ') || '—'), esc(p.title)]);
+              await core.summary
+                .addHeading(dryRun ? `Backfill dry run: ${plan.length} unlabelled` : `Backfill: ${plan.length} labelled`)
+                .addTable([[{ data: 'Item', header: true }, { data: 'Kind', header: true }, { data: 'Labels', header: true }, { data: 'Title', header: true }], ...rows])
+                .write();
+            } else {
+              core.info(`Labelled: ${(await triage.handleOpened({ github, context })).join(', ') || 'nothing'}`);
+            }
