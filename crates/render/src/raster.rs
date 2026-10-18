@@ -39,6 +39,12 @@ impl Canvas {
 /// the see-through ones are then blended over them, far sides before near sides, so a
 /// translucent body reads like glass and whatever lies inside it shows through. This is the
 /// order the GPU viewport draws its own glass in.
+///
+/// Splitting each see-through body by facing orders its own two layers, which is what a single
+/// translucent body needs. Two see-through bodies that overlap on screen blend in the order the
+/// scene lists them, where the GPU sorts its glass triangles back to front: the difference shows
+/// only where translucent bodies lie in front of each other, which the CPU rasterizer (a
+/// fallback for machines without a GPU) does not try to match.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Pass {
     Solid,
