@@ -446,7 +446,7 @@ fn crossing_point(sk: &mut Sketch, t: &str) -> std::result::Result<String, Strin
         .ok_or_else(|| format!("`{c1}` and `{c2}` do not cross near {x},{y}"))?;
     let reuse = (0..sk.points.len())
         .filter_map(|i| Some((i, sk.point(i)?.dist(at))))
-        .filter(|&(_, d)| d <= 1e-6)
+        .filter(|&(_, d)| d <= crate::AT_CROSSING)
         .min_by(|p, q| p.1.total_cmp(&q.1))
         .map(|(i, _)| i);
     let pi = match reuse {
@@ -465,6 +465,19 @@ fn crossing_point(sk: &mut Sketch, t: &str) -> std::result::Result<String, Strin
     }
     sk.points.get(pi).map(|q| q.id.clone()).ok_or_else(|| "no such point".into())
 }
+
+/// The commands whose point arguments go through [`snap_points`], so take the snap forms
+/// (`"x:…"`, `"mid:…"`, `"on:…"`, vertices). Others take only point ids and coordinates.
+pub const SNAPPING_COMMANDS: &[&str] = &[
+    "sketch.line",
+    "sketch.circle.center",
+    "sketch.arc.three_point",
+    "sketch.arc.center_point",
+    "sketch.spline.fit_point",
+    "sketch.spline.control_point",
+    "sketch.spline.control_point_5",
+    "sketch.conic",
+];
 
 /// Point arguments that snap to model geometry while drawing, rewritten to sketch point ids:
 /// `{"vertex": [x,y,z]}` projects the vertex (a linked point); `{"on_edge": [x,y,z]}` projects

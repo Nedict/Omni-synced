@@ -382,6 +382,13 @@ fn pulling_the_curves_apart_is_refused() {
 }
 
 #[test]
+fn the_snapping_commands_are_commands() {
+    for c in crate::SNAPPING_COMMANDS {
+        assert!(crate::find_command(c).is_some(), "{c}");
+    }
+}
+
+#[test]
 fn bad_crossing_snaps_are_errors() {
     let mut s = new_sketch();
     let (l1, l2) = two_lines(&mut s);

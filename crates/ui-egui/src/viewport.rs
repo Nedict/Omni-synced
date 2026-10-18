@@ -2246,6 +2246,23 @@ fn seg_dist(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     p.distance(a + ab * t)
 }
 
+thread_local! {
+    static TAKES_CROSSINGS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether the active tool's command takes crossing snaps (kept from the last hover: a click
+/// takes the tool out of the app while it runs).
+fn takes_crossings(app: &SolveApp) -> bool {
+    match app.tool.as_ref() {
+        Some(t) => {
+            let takes = solidcraft_engine::SNAPPING_COMMANDS.contains(&t.cmd);
+            TAKES_CROSSINGS.with(|c| c.set(takes));
+            takes
+        }
+        None => TAKES_CROSSINGS.with(std::cell::Cell::get),
+    }
+}
+
 /// Point on the active sketch plane under the cursor (sketch coordinates), snapped to sketch
 /// points within a few pixels and otherwise to a fine grid. Returns the snapped point and the
 /// id of the sketch point it snapped to.
@@ -2257,10 +2274,12 @@ pub fn sketch_point_at(app: &SolveApp, proj: &Proj, pos: Pos2) -> Option<(Vec2, 
         if let Hit::SketchPoint { sketch, id, at } = h
             && sketch == sid
         {
-            // A point sitting on a crossing is held on both curves, unless snapping is off.
-            if !crate::drag_snap::suppressed()
-                && let Some((a, b)) = proj.to_screen(ss.plane.to_world(at)).zip(proj.to_screen(ss.plane.to_world(at + Vec2::X)))
-                && let Some(c) = solidcraft_engine::crossing_near(&ss.sketch, at, 2.0 / (a.distance(b) as f64).max(1e-9), |_| true)
+            // A point sitting on a crossing is held on both curves, unless snapping is off or the
+            // tool's command takes only point ids. Only a point the engine would reuse there:
+            // one merely near the crossing stays itself.
+            if takes_crossings(app)
+                && !crate::drag_snap::suppressed()
+                && let Some(c) = solidcraft_engine::crossing_near(&ss.sketch, at, solidcraft_engine::AT_CROSSING, |_| true)
                 && let Some(arg) = crate::sketch_tools::crossing_arg(&ss.sketch, &c)
             {
                 return Some((c.at, Some(arg)));

@@ -7,6 +7,10 @@ use solidcraft_sketch::Sketch;
 use super::sketch_freeform::{cuts_pair, pieces};
 use super::sketch_modify::cut_pair;
 
+/// How near a crossing (sketch units) an existing point must be to be the point there: the
+/// crossing snap reuses it rather than adding one (Trim's own tolerance for a point on a cut).
+pub const AT_CROSSING: f64 = super::sketch_modify::TOL * 10.0;
+
 /// Tangent directions closer than this (sin of 0.5°) touch rather than cross.
 const PARALLEL: f64 = 0.008_726_6;
 
@@ -42,12 +46,13 @@ fn seg_dist(w: &[Vec2], q: Vec2) -> f64 {
     }
 }
 
-/// Distance from `p` to curve `ci` as drawn (infinite lines run on forever).
+/// Distance from `p` to curve `ci` as drawn (infinite lines run on forever). Exact for free-form
+/// curves too: a point on one of their crossings is off the display polyline.
 fn dist_to(sk: &Sketch, ci: usize, p: Vec2) -> f64 {
     match sk.shape(ci) {
         Some(sh) if infinite(sk, ci) => sh.project(p).dist(p),
         Some(sh) => sh.dist(p),
-        None => sk.polyline(ci).windows(2).map(|w| seg_dist(w, p)).fold(f64::INFINITY, f64::min),
+        None => pieces(sk, ci).iter().map(|s| s.point_at(s.closest_param(p)).dist(p)).fold(f64::INFINITY, f64::min),
     }
 }
 
@@ -190,6 +195,17 @@ mod tests {
             assert!((q.y - 2.0).abs() < 1e-6);
             let d = segs.iter().map(|g| g.point_at(g.closest_param(q)).dist(q)).fold(f64::INFINITY, f64::min);
             assert!(d < 1e-6, "off the spline by {d}");
+        }
+    }
+
+    #[test]
+    fn a_point_on_a_spline_crossing_finds_it_within_the_reuse_tolerance() {
+        let mut sk = Sketch::new();
+        let s = spline(&mut sk, &[(0.0, 0.0), (5.0, 5.0), (10.0, 0.0)]);
+        let l = line(&mut sk, (0.0, 2.0), (10.0, 2.0));
+        for q in crossings_of(&sk, s, l) {
+            let c = crossing_near(&sk, q, AT_CROSSING, |_| true).expect("the crossing");
+            assert!(c.at.dist(q) <= AT_CROSSING);
         }
     }
 
