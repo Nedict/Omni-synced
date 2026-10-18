@@ -313,6 +313,8 @@ pub struct Prefs {
     pub timeline_left: bool,
     /// Height of the feature-history section when it shares the left sidebar with the browser.
     pub timeline_left_height: f32,
+    /// Width of the left sidebar (browser tree, and the feature history above it); drag its edge to change.
+    pub browser_width: f32,
     /// Whether the browser below the left feature history is collapsed.
     pub timeline_left_browser_collapsed: bool,
     /// The wheel zooms toward the point under the cursor (else toward the view's centre).
@@ -435,6 +437,7 @@ impl Default for Prefs {
             ui_font: String::new(),
             timeline_left: false,
             timeline_left_height: 360.0,
+            browser_width: crate::browser::DEFAULT_WIDTH,
             timeline_left_browser_collapsed: false,
             zoom_to_cursor: true,
             smooth_wheel_zoom: true,

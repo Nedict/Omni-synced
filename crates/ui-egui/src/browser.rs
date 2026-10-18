@@ -502,9 +502,11 @@ fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
     DRAWN.with(|d| d.borrow_mut().clear());
     OCCURRENCES.with(|d| d.borrow_mut().clear());
     let mut acts = Actions::default();
-    egui::Panel::left("sc_browser")
-        .exact_size(250.0)
-        .resizable(false)
+    let width = if app.preferences.browser_width.is_finite() { app.preferences.browser_width } else { DEFAULT_WIDTH };
+    let panel = egui::Panel::left("sc_browser")
+        .default_size(width.clamp(MIN_WIDTH, MAX_WIDTH))
+        .size_range(MIN_WIDTH..=MAX_WIDTH)
+        .resizable(true)
         .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(6, 6)))
         .show(ui, |ui| {
             if timeline_above {
@@ -546,8 +548,17 @@ fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
                 browser_contents(app, ui, &mut acts);
             }
         });
+    let w = panel.response.rect.width();
+    if w.is_finite() && (MIN_WIDTH..=MAX_WIDTH).contains(&w) {
+        app.preferences.browser_width = w;
+    }
     finish_browser(app, ui, acts);
 }
+
+/// The left sidebar's width when nothing is remembered, and the range its drag handle allows.
+pub const DEFAULT_WIDTH: f32 = 250.0;
+const MIN_WIDTH: f32 = 160.0;
+const MAX_WIDTH: f32 = 700.0;
 
 fn browser_contents(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
     let t = Tokens::get();
