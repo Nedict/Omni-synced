@@ -123,7 +123,7 @@ fn edge_round(b: &solidcraft_doc::ModelBody, m: &Mesh, index: usize, whole: bool
 }
 
 /// Points along a circle or arc (`angle` from `start` about `axis`).
-fn arc_points(center: Vec3, axis: Vec3, start: Vec3, angle: f64) -> Vec<Vec3> {
+fn arc_points(center: Vec3, axis: UnitVec3, start: Vec3, angle: f64) -> Vec<Vec3> {
     let x = start - center;
     let y = axis.cross(x);
     let n = 128;
@@ -162,7 +162,7 @@ fn sketch_curve(ss: &solidcraft_doc::SolvedSketch, id: &str) -> Option<Item> {
         CurveKind::Circle { c, r } => {
             let center = at(c)?;
             let shape = Shape::Round { center, axis: normal, radius: r, angle: std::f64::consts::TAU, planar: true, lo: 0.0, hi: 0.0 };
-            (shape, arc_points(center, *normal, center + ss.plane.x * r, std::f64::consts::TAU))
+            (shape, arc_points(center, normal, center + ss.plane.x * r, std::f64::consts::TAU))
         }
         CurveKind::Arc { c, a, b } => {
             let (center, a, b) = (at(c)?, at(a)?, at(b)?);
@@ -173,7 +173,7 @@ fn sketch_curve(ss: &solidcraft_doc::SolvedSketch, id: &str) -> Option<Item> {
                 angle += std::f64::consts::TAU;
             }
             let shape = Shape::Round { center, axis: normal, radius, angle, planar: true, lo: 0.0, hi: 0.0 };
-            (shape, arc_points(center, *normal, a, angle))
+            (shape, arc_points(center, normal, a, angle))
         }
         CurveKind::Line { a, b } => {
             let (a, b) = (at(a)?, at(b)?);

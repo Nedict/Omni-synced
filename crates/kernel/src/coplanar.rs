@@ -1625,8 +1625,8 @@ pub(crate) fn bore_union(a: &Body, b: &Body, accept: &dyn Fn(&Body) -> bool) -> 
             // arbitrarily thin web is absent. Every additional current boundary
             // must be wholly clear of the recut; unsupported trims refuse.
             let other_bore: Vec<usize> = co.iter().filter(|x| same_cylinder(c, x, tol)).map(|x| x.index).collect();
-            if crate::bore_guard::boundaries_clear(tool, &bore, c.origin, *c.axis, c.radius, lo, hi, tol).is_none()
-                || crate::bore_guard::boundaries_clear(target, &other_bore, c.origin, *c.axis, c.radius, lo, hi, tol).is_none()
+            if crate::bore_guard::boundaries_clear(tool, &bore, c.origin, c.axis, c.radius, lo, hi, tol).is_none()
+                || crate::bore_guard::boundaries_clear(target, &other_bore, c.origin, c.axis, c.radius, lo, hi, tol).is_none()
             {
                 continue;
             }

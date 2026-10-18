@@ -113,7 +113,7 @@ fn bulge(center: Vec3, axis: UnitVec3, pts: &[Vec3]) -> Option<Vec3> {
 }
 
 /// Closest points of two infinite lines (a point and a unit direction each).
-fn line_line(p1: Vec3, d1: Vec3, p2: Vec3, d2: Vec3) -> (Vec3, Vec3) {
+fn line_line(p1: Vec3, d1: UnitVec3, p2: Vec3, d2: UnitVec3) -> (Vec3, Vec3) {
     let w = p1 - p2;
     let b = d1.dot(d2);
     let denom = 1.0 - b * b;
@@ -176,7 +176,7 @@ fn from_round(a: &Shape, b: &Shape) -> Option<Centre> {
                 (true, true) => (ca, cb),
                 (true, false) => (ca, cb + nb * (ca - cb).dot(nb)),
                 (false, true) => (ca + na * (cb - ca).dot(na), cb),
-                (false, false) => line_line(ca, *na, cb, *nb),
+                (false, false) => line_line(ca, na, cb, nb),
             };
             let (mut min, mut max) = (None, None);
             if parallel(na, nb) {
@@ -213,7 +213,7 @@ fn from_round(a: &Shape, b: &Shape) -> Option<Centre> {
             }
         }
         Shape::Line { a: la, b: lb } => {
-            let dir = (lb - la).normalized()?;
+            let dir = (lb - la).unit()?;
             let across = dir.dot(na).abs() < 1e-6;
             if pa {
                 // A circle/arc has a fixed centre. Project that point onto the picked
@@ -225,7 +225,7 @@ fn from_round(a: &Shape, b: &Shape) -> Option<Centre> {
                 let min = (full_a && across && radial >= ra).then(|| (radial - ra).hypot(height));
                 Centre { distance: ca.dist(to), from: ca, to, min, max: None }
             } else {
-                let (p, q) = line_line(ca, *na, la, dir);
+                let (p, q) = line_line(ca, na, la, dir);
                 let d = p.dist(q);
                 let min = (full_a && across && d >= ra).then_some(d - ra);
                 Centre { distance: d, from: p, to: q, min, max: None }
