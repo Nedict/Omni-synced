@@ -26,12 +26,12 @@ fn streamed_text_joins_and_tool_updates_change_their_call() {
 #[test]
 fn a_sign_in_request_keeps_the_question_for_after_the_login() {
     let mut c = chat();
-    c.last = Some(("make a cube".into(), false));
+    c.last = Some(("make a cube".into(), false, None));
     c.state = Some(State::Busy);
     assert!(c.on_event(Event::TurnEnded { reason: "auth".into() }).is_some());
     c.on_event(Event::AuthRequired { methods: vec![] });
     assert_eq!(c.state(), State::NeedsAuth);
-    assert_eq!(c.queued, Some(("make a cube".into(), false)));
+    assert_eq!(c.queued, Some(("make a cube".into(), false, None)));
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn app_in_a_turn() -> (SolveApp, Sender<ControlRequest>) {
     let (tx, rx) = channel();
     app.agent_chat.tools_rx = Some(rx);
     app.agent_chat.state = Some(State::Busy);
-    start_turn(&mut app, "two boxes".into(), false);
+    start_turn(&mut app, "two boxes".into(), false, None);
     (app, tx)
 }
 
@@ -854,23 +854,65 @@ fn a_messages_pictures_open_in_a_viewer() {
     assert!(h.app.agent_chat.gallery.is_none());
 }
 
-/// A message's picture is kept on the message the agent starts on, not on an earlier one.
+/// A message's picture is kept on exactly the message it was taken for: not an earlier one that
+/// also wanted a picture, not one that has it already, and nothing that isn't such a message.
 #[test]
-fn the_picture_goes_to_the_newest_message_that_wanted_one() {
+fn the_picture_goes_to_the_message_it_was_taken_for() {
     let mut chat = AgentChat::default();
     chat.push(Item::User { text: "no picture".into(), image: false, pictures: Vec::new() });
     chat.push(Item::User { text: "first".into(), image: true, pictures: vec![Picture::new(vec![1], "")] });
     chat.push(Item::User { text: "second".into(), image: true, pictures: Vec::new() });
-    chat.keep_picture(vec![2, 3]);
-    let kept: Vec<usize> = chat
-        .items
-        .iter()
-        .filter_map(|i| match i {
-            Item::User { pictures, .. } => Some(pictures.iter().map(|p| p.png.len()).sum()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(kept, [0, 1, 2]);
-    chat.keep_picture(vec![0; super::MAX_PICTURE_BYTES + 1]);
-    assert!(matches!(chat.items.last(), Some(Item::User { pictures, .. }) if pictures.len() == 1), "an oversized picture is not kept");
+    chat.push(Item::User { text: "third".into(), image: true, pictures: Vec::new() });
+    let sizes = |chat: &AgentChat| -> Vec<usize> {
+        chat.items
+            .iter()
+            .filter_map(|i| match i {
+                Item::User { pictures, .. } => Some(pictures.iter().map(|p| p.png.len()).sum()),
+                _ => None,
+            })
+            .collect()
+    };
+    // The picture of the third message goes to the third, though the second still waits for one.
+    chat.keep_picture(Some(3), vec![2, 3]);
+    assert_eq!(sizes(&chat), [0, 1, 0, 2]);
+    // The same message again (it was sent again): nothing is added, nor moved to an older message.
+    chat.keep_picture(Some(3), vec![9; 5]);
+    assert_eq!(sizes(&chat), [0, 1, 0, 2]);
+    // A message that did not want one, no message, or a place that is gone.
+    chat.keep_picture(Some(0), vec![1]);
+    chat.keep_picture(None, vec![1]);
+    chat.keep_picture(Some(99), vec![1]);
+    assert_eq!(sizes(&chat), [0, 1, 0, 2]);
+    chat.keep_picture(Some(2), vec![0; super::MAX_PICTURE_BYTES + 1]);
+    assert_eq!(sizes(&chat), [0, 1, 0, 2], "an oversized picture is not kept");
+}
+
+/// A message sent again after a sign-in is still the message it was: its turn points at its own
+/// place in the conversation, so its picture is kept there, once, and never on an older message that
+/// wanted one (#2224 review). The picture itself can't be drawn without a renderer in a test, so the
+/// place a turn is started for is what is checked.
+#[test]
+fn a_message_sent_again_after_sign_in_stays_the_message_it_was() {
+    let (mut app, script, ctx) = app_with_script();
+    app.agent_chat.images = true;
+    // An older message that wanted a picture and has none.
+    app.agent_chat.push(Item::User { text: "older".into(), image: true, pictures: Vec::new() });
+    app.agent_chat.attach_view = true;
+    send(&mut app, &ctx, "the new one".into());
+    let place = app.agent_chat.items.len() - 1;
+    assert_eq!(app.agent_chat.last, Some(("the new one".into(), true, Some(place))), "the turn knows its message");
+    // The agent asked for a sign-in; after it the message goes again, as it is done on a sign-in.
+    ended(&script, "");
+    poll(&mut app, &ctx);
+    app.agent_chat.queued = app.agent_chat.last.take();
+    script.report(Event::Ready { agent: "fake".into(), images: true });
+    poll(&mut app, &ctx);
+    assert_eq!(app.agent_chat.last, Some(("the new one".into(), true, Some(place))), "sent again, still for the same message");
+    assert_eq!(app.agent_chat.items.iter().filter(|i| matches!(i, Item::User { .. })).count(), 2, "not a new message");
+    // Its picture goes there, once; the older message gets none.
+    app.agent_chat.keep_picture(Some(place), test_png([1, 2, 3, 255], 4));
+    app.agent_chat.keep_picture(Some(place), test_png([1, 2, 3, 255], 4));
+    let counts: Vec<usize> =
+        app.agent_chat.items.iter().filter_map(|i| if let Item::User { pictures, .. } = i { Some(pictures.len()) } else { None }).collect();
+    assert_eq!(counts, [0, 1]);
 }
