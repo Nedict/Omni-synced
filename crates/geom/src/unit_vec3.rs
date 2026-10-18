@@ -1,6 +1,6 @@
 //! A unit vector: a 3D vector of length 1.
 
-use std::ops::{Deref, Mul, Neg};
+use std::ops::{Add, Deref, Mul, Neg, Sub};
 
 use serde::{Deserialize, Serialize};
 
@@ -67,6 +67,25 @@ impl Neg for UnitVec3 {
     }
 }
 
+/// `+` and `-` with a [`Vec3`] or another unit vector, giving a [`Vec3`].
+macro_rules! sum_ops {
+    ($($l:ty, $r:ty);*) => {$(
+        impl Add<$r> for $l {
+            type Output = Vec3;
+            fn add(self, o: $r) -> Vec3 {
+                Vec3::from(self) + Vec3::from(o)
+            }
+        }
+        impl Sub<$r> for $l {
+            type Output = Vec3;
+            fn sub(self, o: $r) -> Vec3 {
+                Vec3::from(self) - Vec3::from(o)
+            }
+        }
+    )*};
+}
+sum_ops!(UnitVec3, Vec3; Vec3, UnitVec3; UnitVec3, UnitVec3);
+
 impl Mul<f64> for UnitVec3 {
     type Output = Vec3;
     fn mul(self, s: f64) -> Vec3 {
@@ -87,6 +106,8 @@ mod tests {
         assert_eq!(d.dot(Vec3::Z), 0.8);
         assert_eq!(UnitVec3::Z.cross(UnitVec3::X), Vec3::Y);
         assert_eq!(Vec3::X.dot(d), 0.0);
+        assert_eq!(Vec3::X + d, Vec3::new(1.0, 0.6, 0.8));
+        assert!((d - UnitVec3::Z).dist(Vec3::new(0.0, 0.6, -0.2)) < 1e-15);
     }
 
     #[test]
