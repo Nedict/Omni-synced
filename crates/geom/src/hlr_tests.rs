@@ -728,6 +728,106 @@ fn spherical_caps_through_one_circle_keep_their_own_outlines() {
     assert_eq!(d.stats.uncertain_uncovered, 0, "{:?}", d.stats);
 }
 
+/// The lateral face of a cone with its apex at the origin, slope 0.25, between the heights
+/// `h`, its axis turned by `tilt` about Y from +Z.
+fn tilted_cone(tilt: f64, h: [f64; 2]) -> Shell {
+    let (x, y, z) = (Vec3::new(tilt.cos(), 0., -tilt.sin()), Vec3::new(0., 1., 0.), Vec3::new(tilt.sin(), 0., tilt.cos()));
+    let arr = |v: Vec3| [v.x, v.y, v.z];
+    let frame = |o: Vec3| crate::brep::Frame { origin: arr(o), x_axis: arr(x), y_axis: arr(y) };
+    let at = |hh: f64| x * (0.25 * hh) + z * hh;
+    let ring = |hh: f64, v: u32| Edge {
+        vertices: [v, v],
+        curve: Curve::CircleArc { frame: frame(z * hh), radius: 0.25 * hh, angle: [0., std::f64::consts::TAU] },
+    };
+    let seam = Edge { vertices: [0, 1], curve: Curve::Line { start: arr(at(h[0])), end: arr(at(h[1])) } };
+    let face = Face {
+        loops: vec![vec![uses(0, true), uses(2, true), uses(1, false), uses(2, false)]],
+        surface: Surface::Cone {
+            frame: frame(Vec3::new(0., 0., 0.)),
+            radius_at_origin: 0.,
+            half_angle: 0.25f64.atan(),
+            angle: [0., std::f64::consts::TAU],
+            height: h,
+        },
+        forward: true,
+    };
+    Shell { vertices: vec![arr(at(h[0])), arr(at(h[1]))], edges: vec![ring(h[0], 0), ring(h[1], 1), seam], faces: vec![face] }
+}
+
+#[test]
+fn cones_with_slightly_turned_axes_keep_their_own_outlines() {
+    // One apex, axes 3e-7 rad apart, heights 1000 to 3000 and 6000 to 8000: each frustum draws
+    // both rulings of its own outline.
+    let shells = vec![tilted_cone(0., [1000., 3000.]), tilted_cone(3e-7, [6000., 8000.])];
+    let def = prepare(&Brep { version: crate::brep::VERSION, shells }, &Options::default()).unwrap();
+    let view = View::new(Vec3::new(0., 1., 0.), Vec3::new(0., 0., 1.)).unwrap();
+    let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    for (z0, z1) in [(1000., 3000.), (6000., 8000.)] {
+        let drawn: f64 = silhouette_pieces(&d)
+            .iter()
+            .filter(|p| p.visibility == Visibility::Visible && !p.covered)
+            .flat_map(|p| p.geometry.iter())
+            .filter(|g| g.point_at(0.5).y > z0 && g.point_at(0.5).y < z1)
+            .map(|g| g.point_at(0.).dist(g.point_at(1.)))
+            .sum();
+        let ruling = (z1 - z0) * (1f64 + 0.0625).sqrt();
+        assert!((drawn - 2. * ruling).abs() < 1e-3 * ruling, "z {z0}..{z1}: {drawn} mm of rulings drawn, want {}", 2. * ruling);
+    }
+}
+
+#[test]
+fn a_high_degree_spline_through_points_of_a_circle_is_not_taken_for_one() {
+    // A closed degree-16 Bezier through 17 points of a circle of radius 10 at t = j / 16, at
+    // unevenly spaced angles: on the circle at every t = j / 16 (where a check with evenly
+    // spaced samples would look), off it between them, so it is drawn as chords.
+    let n = 16usize;
+    let ts: Vec<f64> = (0..=n).map(|j| j as f64 / n as f64).collect();
+    let binom = |k: usize| (0..k).fold(1f64, |acc, i| acc * (n - i) as f64 / (i + 1) as f64);
+    // Solve the Bernstein collocation system for x and y by Gaussian elimination.
+    let mut rows: Vec<Vec<f64>> = ts
+        .iter()
+        .enumerate()
+        .map(|(j, t)| {
+            let a = std::f64::consts::TAU * j as f64 / n as f64 + 0.2 * (std::f64::consts::TAU * 3. * j as f64 / n as f64).sin();
+            let mut row: Vec<f64> = (0..=n).map(|i| binom(i) * t.powi(i as i32) * (1. - t).powi((n - i) as i32)).collect();
+            row.extend([10. * a.cos(), 10. * a.sin()]);
+            row
+        })
+        .collect();
+    for col in 0..=n {
+        let pivot = (col..=n).max_by(|a, b| rows[*a][col].abs().total_cmp(&rows[*b][col].abs())).unwrap();
+        rows.swap(col, pivot);
+        for r in 0..=n {
+            if r != col {
+                let f = rows[r][col] / rows[col][col];
+                let src = rows[col].clone();
+                for (x, s) in rows[r].iter_mut().zip(src) {
+                    *x -= f * s;
+                }
+            }
+        }
+    }
+    let points: Vec<[f64; 3]> = (0..=n).map(|i| [rows[i][n + 1] / rows[i][i], rows[i][n + 2] / rows[i][i], 0.]).collect();
+    let knots: Vec<f64> = std::iter::repeat_n(0., n + 1).chain(std::iter::repeat_n(1., n + 1)).collect();
+    let start = points[0];
+    let disc = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![start],
+            edges: vec![Edge { vertices: [0, 0], curve: Curve::Spline { knots, points } }],
+            faces: vec![Face {
+                loops: vec![vec![uses(0, true)]],
+                surface: Surface::Plane { origin: [0.; 3], u_axis: [1., 0., 0.], v_axis: [0., 1., 0.] },
+                forward: true,
+            }],
+        }],
+    };
+    let def = prepare(&disc, &Options::default()).unwrap();
+    let view = View::new(Vec3::new(0.2, 0.1, -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    assert!(pieces(&d).all(|p| matches!(p.accuracy, CurveAccuracy::Sampled { .. })), "{:?}", pieces(&d).map(|p| p.accuracy).collect::<Vec<_>>());
+}
+
 fn check_two_cone_outlines(body: &Brep) {
     let def = prepare(body, &Options::default()).unwrap();
     let view = View::new(Vec3::new(0., 1., 0.), Vec3::new(0., 0., 1.)).unwrap();

@@ -158,7 +158,9 @@ fn same_analytic(a: &Analytic, b: &Analytic, tol: f64) -> bool {
             (r - s).abs() <= tol * r && a.cross(*b).len() <= tol && on_axis(*p, *q, *a, *r)
         }
         (Analytic::Cone { apex, a, half }, Analytic::Cone { apex: b_apex, a: b, half: h }) => {
-            (half - h).abs() <= tol && a.dot(*b) > 1. - tol && close(*apex, *b_apex, apex.len())
+            // The axes by their angle, as for cylinders and tori (a dot product would compare
+            // its square).
+            (half - h).abs() <= tol && a.cross(*b).len() <= tol && a.dot(*b) > 0. && close(*apex, *b_apex, apex.len())
         }
         (Analytic::Sphere { c, r }, Analytic::Sphere { c: d, r: s }) => (r - s).abs() <= tol * r && close(*c, *d, *r),
         (Analytic::Torus { c, a, major, minor }, Analytic::Torus { c: d, a: b, major: m, minor: n }) => {
