@@ -1356,9 +1356,7 @@ fn mesh_box(mb: &ModelBody) -> Option<Aabb3> {
 
 fn padded_box(mesh: &solidcraft_geom::Mesh, tol: f64) -> Option<Aabb3> {
     let b = mesh.bounds();
-    let pad = 2.0 * tol + 1e-6;
-    let pad = Vec3::new(pad, pad, pad);
-    (!b.is_empty() && b.min.is_finite() && b.max.is_finite()).then(|| Aabb3 { min: b.min - pad, max: b.max + pad })
+    (!b.is_empty() && b.min.is_finite() && b.max.is_finite()).then(|| b.inflated(2.0 * tol + 1e-6))
 }
 
 /// Whether two boxes are known to be apart (an unknown box is never apart).

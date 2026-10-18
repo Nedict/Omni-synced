@@ -59,6 +59,10 @@ impl Aabb3 {
     pub fn contains(&self, p: Vec3) -> bool {
         p.x >= self.min.x && p.y >= self.min.y && p.z >= self.min.z && p.x <= self.max.x && p.y <= self.max.y && p.z <= self.max.z
     }
+    /// The box both hold: empty when they do not meet.
+    pub fn intersection(&self, o: &Aabb3) -> Aabb3 {
+        Aabb3 { min: self.min.max(o.min), max: self.max.min(o.max) }
+    }
     /// Whether the two boxes share a point (never when either is empty).
     pub fn meets(&self, o: &Aabb3) -> bool {
         self.min.x <= o.max.x

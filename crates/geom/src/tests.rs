@@ -729,4 +729,7 @@ fn a_box_from_points_holds_them_and_grows() {
     assert!(Aabb3::EMPTY.inflated(1e9).is_empty() && !Aabb3::EMPTY.contains(Vec3::ZERO));
     let far = Aabb3 { min: Vec3::new(2.0, 0.0, 3.0), max: Vec3::new(3.0, 1.0, 4.0) };
     assert!(!b.meets(&far) && b.inflated(1.0).meets(&far) && !b.meets(&Aabb3::EMPTY));
+    let both = b.intersection(&b.inflated(1.0).intersection(&Aabb3 { min: Vec3::new(0.0, 1.0, 4.0), max: Vec3::new(9.0, 9.0, 9.0) }));
+    assert_eq!((both.min, both.max), (Vec3::new(0.0, 1.0, 4.0), Vec3::new(1.0, 2.0, 5.0)));
+    assert!(b.intersection(&far).is_empty());
 }

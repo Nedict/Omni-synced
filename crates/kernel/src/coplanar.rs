@@ -1091,7 +1091,7 @@ fn faces_box(body: &Body, faces: &[usize], gap: f64) -> Option<Aabb3> {
         bb.add(b.min);
         bb.add(b.max);
     }
-    (!bb.is_empty()).then(|| Aabb3 { min: bb.min - Vec3::new(gap, gap, gap), max: bb.max + Vec3::new(gap, gap, gap) })
+    (!bb.is_empty()).then(|| bb.inflated(gap))
 }
 
 /// `body` (with its history `h` over its operand) with its faces in the plane (n, d) split
