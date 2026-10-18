@@ -1143,15 +1143,26 @@ impl Nurbs {
             let inner = (0..n).map(move |k| mid + half * (std::f64::consts::PI * (2 * k + 1) as f64 / (2 * n) as f64).cos());
             [s[0], s[1]].into_iter().chain(inner).collect()
         };
+        // As for circles (curve::as_circle): the largest distance at the points, times the
+        // tensor Lebesgue constant (below 16) and the weights' spread to the power d, bounds the
+        // distance anywhere on the patch.
+        let (w_min, w_max) = self.s.homogeneous().iter().fold((f64::MAX, f64::MIN), |(lo, hi), h| (lo.min(h.w), hi.max(h.w)));
+        if !(w_min > 0. && w_max.is_finite()) {
+            return Analytic::Other;
+        }
         let (su, sv) = (spans(0), spans(1));
-        let on = su.iter().all(|a| {
+        let mut far = 0f64;
+        for a in &su {
             let us = nodes(pu, *a);
-            sv.iter().all(|b| {
-                let vs = nodes(pv, *b);
-                us.iter().all(|u| vs.iter().all(|v| an.distance(self.point([*u, *v])) <= tol * size))
-            })
-        });
-        if on { an } else { Analytic::Other }
+            for b in &sv {
+                for v in nodes(pv, *b) {
+                    for u in &us {
+                        far = far.max(an.distance(self.point([*u, v])));
+                    }
+                }
+            }
+        }
+        if 16. * (w_max / w_min).powi(d as i32) * far <= tol * size { an } else { Analytic::Other }
     }
 
     /// Cylinder/cone/sphere/torus candidates from iso-curves and grid samples.

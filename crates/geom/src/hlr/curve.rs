@@ -165,7 +165,7 @@ pub(crate) fn de_boor(p: usize, knots: &[f64], ctrl: &[[f64; 4]], t: f64) -> Vec
 pub(crate) fn as_circle(c: &C3, tol: f64) -> Option<(Vec3, Vec3, f64)> {
     match c {
         C3::Arc { o, x, y, r, .. } if (r[0] - r[1]).abs() <= tol * r[0] => Some((*o, x.cross(*y).normalized()?, r[0])),
-        C3::Spline { degree, .. } => {
+        C3::Spline { degree, points, .. } => {
             let [t0, t1] = c.domain();
             let at = |f: f64| c.at(t0 + (t1 - t0) * f);
             let (a, b, m) = (at(0.), at(1.), at(0.5));
@@ -180,20 +180,28 @@ pub(crate) fn as_circle(c: &C3, tol: f64) -> Option<(Vec3, Vec3, f64)> {
             let centre = a + (v * u.len2() - u * v.len2()).cross(n) * (1. / (2. * n2));
             let normal = n.normalized()?;
             let r = centre.dist(a);
-            // On one knot span of a (rational) spline of degree p, w^2 (|P - c|^2 - r^2) is a
-            // polynomial of degree 2p: zero at 2p + 1 points means zero everywhere. Checked at
-            // 2p + 3 Chebyshev points of every span, which also keep its values between them
-            // close to those at them.
-            let on = |p: Vec3| (p.dist(centre) - r).abs() <= tol * r && (p - centre).dot(normal).abs() <= tol * r;
+            // On one knot span of a (rational) spline of degree p, f = w^2 (|P - c|^2 - r^2) is
+            // a polynomial of degree 2p. At 2p + 3 Chebyshev points of the span it is at most
+            // w_max^2 2 r d (d the largest distance from the circle there), so everywhere at most
+            // 4 times that (their Lebesgue constant is below 4), and as w >= w_min the distance
+            // anywhere is at most 4 (w_max / w_min)^2 d: weights near zero cannot hide a swerve.
+            let weights = points.iter().map(|h| h[3]);
+            let (w_min, w_max) = weights.fold((f64::MAX, f64::MIN), |(lo, hi), w| (lo.min(w), hi.max(w)));
+            if !(w_min > 0. && w_max.is_finite()) {
+                return None;
+            }
+            let off = |p: Vec3| (p.dist(centre) - r).abs().max((p - centre).dot(normal).abs());
             let n = (2 * degree + 3).max(9);
-            let ok = c.breaks().windows(2).all(|w| {
-                let (Some(&s0), Some(&s1)) = (w.first(), w.get(1)) else { return true };
+            let mut d = 0f64;
+            for w in c.breaks().windows(2) {
+                let (Some(&s0), Some(&s1)) = (w.first(), w.get(1)) else { continue };
                 let (mid, half) = (0.5 * (s0 + s1), 0.5 * (s1 - s0));
-                on(c.at(s0))
-                    && on(c.at(s1))
-                    && (0..n).all(|k| on(c.at(mid + half * (std::f64::consts::PI * (2 * k + 1) as f64 / (2 * n) as f64).cos())))
-            });
-            ok.then_some((centre, normal, r))
+                d = d.max(off(c.at(s0))).max(off(c.at(s1)));
+                for k in 0..n {
+                    d = d.max(off(c.at(mid + half * (std::f64::consts::PI * (2 * k + 1) as f64 / (2 * n) as f64).cos())));
+                }
+            }
+            (4. * (w_max / w_min).powi(2) * d <= tol * r).then_some((centre, normal, r))
         }
         _ => None,
     }

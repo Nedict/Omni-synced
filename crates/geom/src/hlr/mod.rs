@@ -940,9 +940,9 @@ fn shadow_boxes(defs: &[Prepared], scene: &[Placement], view: &View, left_out: &
     out
 }
 
-/// Whether the piece `r` of a track may reach into a left-out face's screen box (one of its
-/// points within its chords' sag of the box) with any of its points behind the face's nearest
-/// point (not counting the track's own faces).
+/// Whether the piece `r` of a track may lie behind a left-out face: one of its points within
+/// its chords' sag of the face's screen box and behind the face's nearest point (not counting
+/// the track's own faces).
 fn in_shadow(t: &Track, r: [f64; 2], scene: &[Placement], view: &View, shadows: &[Shadow]) -> bool {
     let Some(p) = scene.get(t.placement) else { return false };
     let c = t.c3();
@@ -955,13 +955,13 @@ fn in_shadow(t: &Track, r: [f64; 2], scene: &[Placement], view: &View, shadows: 
         .filter(|(w, _)| w.get(1).is_some_and(|b| b.0 > r[0]) && w.first().is_some_and(|a| a.0 < r[1]))
         .map(|(_, s)| *s)
         .fold(0., f64::max);
-    let deepest = pts.iter().map(|w| w.dot(view.d)).fold(f64::MIN, f64::max);
+    // A point counts when it is both within the box and behind the face's nearest point; the
+    // piece is cut at the box's sides, so its points inside it are all of it there.
     shadows.iter().any(|sh| {
         !(sh.placement == t.placement && t.own.contains(&sh.face))
-            && deepest > sh.near
             && pts.iter().any(|w| {
                 let s = view.screen(*w);
-                s[0] >= sh.lo[0] - sag && s[0] <= sh.hi[0] + sag && s[1] >= sh.lo[1] - sag && s[1] <= sh.hi[1] + sag
+                w.dot(view.d) > sh.near && s[0] >= sh.lo[0] - sag && s[0] <= sh.hi[0] + sag && s[1] >= sh.lo[1] - sag && s[1] <= sh.hi[1] + sag
             })
     })
 }

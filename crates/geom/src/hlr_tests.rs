@@ -282,6 +282,24 @@ fn pieces(d: &Drawing) -> impl Iterator<Item = &Piece> {
     d.lines.iter().flat_map(|l| l.pieces.iter())
 }
 
+/// The turn of a circle edge's pieces drawn as exact conic arcs, or `None` when they are all
+/// drawn as chords (weights too far apart to certify the circle): never a wrong exact arc.
+fn turn_or_chords<'a>(pieces: impl Iterator<Item = &'a Piece>) -> Option<f64> {
+    let pieces: Vec<&Piece> = pieces.collect();
+    if pieces.iter().all(|p| matches!(p.accuracy, CurveAccuracy::Sampled { .. })) {
+        return None;
+    }
+    let mut sweep = 0.;
+    for p in pieces {
+        assert_eq!(p.accuracy, CurveAccuracy::Analytic, "{p:?}");
+        for g in &p.geometry {
+            let Seg2::Conic { w, .. } = *g else { panic!("a circle is drawn as conic arcs: {g:?}") };
+            sweep += 2. * w.acos();
+        }
+    }
+    Some(sweep)
+}
+
 fn silhouette_pieces(d: &Drawing) -> Vec<&Piece> {
     d.lines.iter().filter(|l| matches!(l.source, Source::Silhouette { .. })).flat_map(|l| l.pieces.iter()).collect()
 }
@@ -516,14 +534,9 @@ fn a_circle_racing_through_its_first_turn_is_drawn_whole_edge_on() {
     let def = prepare(&disc, &Options::default()).unwrap();
     let view = View::new(Vec3::new(0., 1., 0.), Vec3::new(0., 0., 1.)).unwrap();
     let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
-    let mut sweep = 0.;
-    for p in pieces(&d) {
-        for g in &p.geometry {
-            let Seg2::Conic { w, .. } = *g else { panic!("a circle is drawn as conic arcs: {g:?}") };
-            sweep += 2. * w.acos();
-        }
+    if let Some(sweep) = turn_or_chords(pieces(&d)) {
+        assert!((sweep - std::f64::consts::TAU).abs() < 1e-9, "the arcs turn {sweep} rad");
     }
-    assert!((sweep - std::f64::consts::TAU).abs() < 1e-9, "the arcs turn {sweep} rad");
 }
 
 #[test]
@@ -563,14 +576,9 @@ fn an_arc_racing_through_almost_a_full_turn_is_drawn_whole() {
     let def = prepare(&shape, &Options::default()).unwrap();
     let view = View::new(Vec3::new(0.45f64.sin(), 0.45f64.cos(), 0.), Vec3::new(0., 0., 1.)).unwrap();
     let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
-    let mut sweep = 0.;
-    for p in edge_line(&d, 0, 0).pieces.iter() {
-        for g in &p.geometry {
-            let Seg2::Conic { w, .. } = *g else { panic!("an arc is drawn as conic arcs: {g:?}") };
-            sweep += 2. * w.acos();
-        }
+    if let Some(sweep) = turn_or_chords(edge_line(&d, 0, 0).pieces.iter()) {
+        assert!((sweep - sweep_want).abs() < 1e-9, "the arcs turn {sweep} rad, want {sweep_want}");
     }
-    assert!((sweep - sweep_want).abs() < 1e-9, "the arcs turn {sweep} rad, want {sweep_want}");
 }
 
 #[test]
@@ -618,14 +626,9 @@ fn a_short_piece_of_a_fast_arc_turns_its_own_way() {
     let d = hidden_lines(&[arc, block], &[identity(0, [0.; 3]), identity(1, [0.; 3])], &view, &Options::default(), &never).unwrap();
     let line = edge_line(&d, 0, 0);
     assert!(line.pieces.len() > 1, "the block splits the arc");
-    let mut sweep = 0.;
-    for p in &line.pieces {
-        for g in &p.geometry {
-            let Seg2::Conic { w, .. } = *g else { panic!("an arc is drawn as conic arcs: {g:?}") };
-            sweep += 2. * w.acos();
-        }
+    if let Some(sweep) = turn_or_chords(line.pieces.iter()) {
+        assert!((sweep - 5.8).abs() < 1e-9, "the pieces turn {sweep} rad in all, want 5.8");
     }
-    assert!((sweep - 5.8).abs() < 1e-9, "the pieces turn {sweep} rad in all, want 5.8");
 }
 
 /// The homogeneous control points of an exact quartic arc of radius 10 about the origin from
@@ -729,6 +732,64 @@ fn a_piece_in_a_knot_span_of_1e_11_turns_its_own_way() {
     }
     assert!(line.pieces.len() >= 3, "{:?}", line.pieces.iter().map(|p| p.t).collect::<Vec<_>>());
     assert!((sweep - 4.5).abs() < 1e-9, "the pieces turn {sweep} rad in all, want 4.5");
+}
+
+#[test]
+fn a_curve_that_swerves_where_its_weight_is_near_zero_is_not_taken_for_a_circle() {
+    // 1e-12 (1 - t)^3 (0, -10) + t Q(t), Q the exact quarter circle of radius 10 from (10, 0)
+    // to (0, 10): on the circle at every check point to 1.3e-9 mm, yet near t = 1e-12, where
+    // its weight is tiny, it passes (5, -5), 2.9 mm inside. Drawn as chords, not an arc.
+    let s = std::f64::consts::FRAC_1_SQRT_2;
+    let q = [[10., 0., 0., 1.], [10. * s, 10. * s, 0., s], [0., 10., 0., 1.]];
+    let homogeneous: Vec<[f64; 4]> = (0..4)
+        .map(|k| {
+            let tq: Vec<f64> = (0..4).map(|c| bernstein_product(&[0., 1.], &q.map(|h| h[c]))[k]).collect();
+            let a = if k == 0 { [0., -10e-12, 0., 1e-12] } else { [0.; 4] };
+            [tq[0] + a[0], tq[1] + a[1], tq[2] + a[2], tq[3] + a[3]]
+        })
+        .collect();
+    let shape = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![[0., -10., 0.], [0., 10., 0.]],
+            edges: vec![
+                Edge { vertices: [0, 1], curve: Curve::RationalSpline { knots: [[0.; 4], [1.; 4]].concat(), homogeneous } },
+                Edge { vertices: [1, 0], curve: Curve::Line { start: [0., 10., 0.], end: [0., -10., 0.] } },
+            ],
+            faces: vec![Face {
+                loops: vec![vec![uses(0, true), uses(1, true)]],
+                surface: Surface::Plane { origin: [0.; 3], u_axis: [1., 0., 0.], v_axis: [0., 1., 0.] },
+                forward: true,
+            }],
+        }],
+    };
+    let def = prepare(&shape, &Options::default()).unwrap();
+    let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    assert!(edge_line(&d, 0, 0).pieces.iter().all(|p| matches!(p.accuracy, CurveAccuracy::Sampled { .. })), "{d:?}");
+}
+
+#[test]
+fn an_edge_leaving_a_left_out_faces_box_in_front_stays_visible() {
+    // Over the twisted patch (x, y in [-5, 5], z in [0, 1]), seen from above, an edge from
+    // (-10, 0, -1) up to (0, 0, 5): below the patch's level only outside its box, inside the
+    // box above the patch. Nothing can hide it.
+    let patch = prepare(&twisted_patch(), &Options::default()).unwrap();
+    let c = [[-10., 0., -1.], [0., 0., 5.], [0., 0.2, 5.], [-10., 0.2, -1.]];
+    let edges =
+        (0..4).map(|i| Edge { vertices: [i as u32, ((i + 1) % 4) as u32], curve: Curve::Line { start: c[i], end: c[(i + 1) % 4] } }).collect();
+    let face = Face {
+        loops: vec![(0..4).map(|e| uses(e, true)).collect()],
+        surface: Surface::Plane { origin: c[0], u_axis: [10., 0., 6.], v_axis: [0., 0.2, 0.] },
+        forward: true,
+    };
+    let strip =
+        prepare(&Brep { version: crate::brep::VERSION, shells: vec![Shell { vertices: c.to_vec(), edges, faces: vec![face] }] }, &Options::default())
+            .unwrap();
+    let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&[patch, strip], &[identity(0, [0.; 3]), identity(1, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    let states: Vec<([f64; 2], Visibility)> = edge_line(&d, 1, 0).pieces.iter().map(|p| (p.t, p.visibility)).collect();
+    assert!(states.iter().all(|(_, v)| *v == Visibility::Visible), "{states:?}");
 }
 
 #[test]
