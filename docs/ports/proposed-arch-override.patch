@@ -1,0 +1,79 @@
+# Proposed patch: scope robustness golden expectations by architecture.
+#
+# Problem: robustness_goldens keys per-platform overrides on std::env::consts::OS
+# only ("linux", "windows", "macos"). On aarch64 Linux the two seeds that
+# produce a different topology (13, 67) cannot be recorded without overwriting
+# the shared `seeds` table that x86_64 Linux also uses.
+#
+# Change: key overrides on "{os}-{arch}" (e.g. "linux-aarch64", "linux-x86_64",
+# "windows-x86_64") and fall back to the OS-only key (backwards compat with the
+# existing "windows" records) and then to the shared `seeds` table. x86_64 Linux
+# resolves to "linux-x86_64" -> no platform entry -> shared `seeds` (unchanged).
+#
+# This patch is PROPOSED ONLY. It is not applied. It does not change any golden
+# value, tolerance, or x86_64 behaviour. Applying it requires a one-time migration
+# of the existing "windows" platform key to "windows-x86_64" in
+# tests/robustness/goldens.json (data change, not included here).
+
+--- a/crates/engine/src/tests/robustness_goldens.rs
++++ b/crates/engine/src/tests/robustness_goldens.rs
+@@ -56,12 +56,22 @@ fn differs(want: &Value, got: &Value) -> Option<String> {
+     (!out.is_empty()).then(|| out.join("; "))
+ }
+ 
+-/// Platform records only override the seeds explicitly verified on that platform.
++/// Platform records only override the seeds explicitly verified on that platform.
++/// The key is "{os}-{arch}" (e.g. "linux-aarch64"); the OS-only key (e.g.
++/// "linux") is tried as a fallback for backwards compatibility with records
++/// written before architecture was part of the key.
+ fn expected<'a>(file: &'a Value, seed: u64, platform: &str) -> &'a Value {
+     let key = seed.to_string();
+-    file.get("platforms")
+-        .and_then(|platforms| platforms.get(platform))
+-        .and_then(|record| record.get("seeds"))
+-        .and_then(|seeds| seeds.get(&key))
+-        .unwrap_or(&file["seeds"][key])
++    // platform is "{os}-{arch}"; derive the OS-only key for the fallback.
++    let os = platform.split('-').next().unwrap_or(platform);
++    for p in [platform, os] {
++        if let Some(v) = file.get("platforms")
++            .and_then(|platforms| platforms.get(p))
++            .and_then(|record| record.get("seeds"))
++            .and_then(|seeds| seeds.get(&key)) {
++            return v;
++        }
++    }
++    &file["seeds"][key]
+ }
+ 
+ #[test]
+@@ -94,7 +104,7 @@ fn check(seed: u64) {
+         if file.get("about").is_none() {
+             file["about"] = json!(
+                 "What each robustness seed builds (crates/engine/src/tests/robustness_goldens.rs, docs/robustness.md). Record changes with ROBUSTNESS_GOLDENS_BLESS=\"why\"."
+             );
+         }
+-        let platform = std::env::consts::OS;
++        let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+         let platform_record = file["platforms"][platform]["seeds"].is_object();
+         for (seed, g) in &got {
+             if platform_record {
+@@ -133,7 +143,7 @@ fn check(seed: u64) {
+         match notes.last_mut() {
+-            Some(last) if last["reason"] == json!(reason) && (!platform_record || last["platform"] == json!(platform)) => {
++            Some(last) if last["reason"] == json!(reason) && (!platform_record || last["platform"] == json!(platform) || last["platform"] == json!(std::env::consts::OS)) => {
+                 let mut all: Vec<u64> = last["seeds"].as_array().into_iter().flatten().filter_map(Value::as_u64).chain(seeds).collect();
+                 all.sort_unstable();
+                 all.dedup();
+@@ -141,7 +151,7 @@ fn check(seed: u64) {
+             _ => {
+                 let mut note = json!({"reason": reason, "seeds": seeds});
+                 if platform_record {
+-                    note["platform"] = json!(platform);
++                    note["platform"] = json!(platform);  // "{os}-{arch}"
+                 }
+                 notes.push(note);
+             }
+# The existing unit test needs NO change: expected(&file, 1, "windows") resolves
+# via the OS-only fallback to platforms.windows.seeds.1 = 11, and
+# expected(&file, 1, "linux") falls through to the shared seeds = 10.
