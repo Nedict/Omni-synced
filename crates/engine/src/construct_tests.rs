@@ -194,6 +194,95 @@ fn plane_through_three_points() {
     assert!(on_plane(&t, Vec3::new(0.0, 0.0, 20.0)) && on_plane(&t, Vec3::new(40.0, 30.0, 0.0)) && on_plane(&t, Vec3::new(0.0, 30.0, 0.0)), "{t:?}");
 }
 
+fn plane_size(s: &Session, name: &str) -> solidcraft_doc::PlaneSize {
+    match s.doc.find_feature(name).map(|f| &f.kind) {
+        Some(solidcraft_doc::FeatureKind::ConstructionPlane { size, .. }) => *size,
+        other => panic!("no plane {name}: {other:?}"),
+    }
+}
+
+const TRI: fn(&str) -> Value = |extra| {
+    let mut v = json!({"a": {"vertex": [0, 0, 20]}, "b": {"vertex": [40, 0, 20]}, "c": {"vertex": [40, 30, 20]}, "name": "T"});
+    if let (Some(o), Ok(Value::Object(e))) = (v.as_object_mut(), serde_json::from_str::<Value>(extra)) {
+        o.extend(e);
+    }
+    v
+};
+
+#[test]
+fn three_point_plane_offsets_parallel() {
+    let mut s = part();
+    run(&mut s, "construct.plane.three_points", TRI("{}"));
+    let base = plane(&s, "T");
+    let before = s.doc.features.len();
+    for (name, off, sign) in [("P", "5 mm", -1.0), ("N", "-5 mm", 1.0)] {
+        let mut p = TRI(&format!("{{\"offset\": \"{off}\"}}"));
+        p["name"] = json!(name);
+        run(&mut s, "construct.plane.three_points", p);
+        let o = plane(&s, name);
+        assert!(parallel(o.normal(), base.normal()), "{o:?}");
+        assert!((o.height(base.origin) - 5.0 * sign).abs() < 1e-6, "{off}: {}", o.height(base.origin));
+    }
+    assert_eq!(s.doc.features.len(), before + 2, "one feature per plane");
+    // Zero offset is plain three points.
+    let mut p = TRI("{\"offset\": \"0 mm\"}");
+    p["name"] = json!("Z");
+    run(&mut s, "construct.plane.three_points", p);
+    let Some(solidcraft_doc::FeatureKind::ConstructionPlane { plane: pr, .. }) = s.doc.find_feature("Z").map(|f| &f.kind) else { panic!("Z") };
+    assert!(matches!(pr, solidcraft_doc::PlaneRef::ThreePoints { .. }), "{pr:?}");
+}
+
+#[test]
+fn three_point_plane_size_round_trips() {
+    let mut s = part();
+    run(&mut s, "construct.plane.three_points", TRI("{\"size\": \"large\"}"));
+    assert_eq!(plane_size(&s, "T"), solidcraft_doc::PlaneSize::Large);
+    let reopened = solidcraft_doc::format::read(&s.doc.to_json()).unwrap();
+    let Some(solidcraft_doc::FeatureKind::ConstructionPlane { size, .. }) = reopened.find_feature("T").map(|f| &f.kind) else { panic!("T") };
+    assert_eq!(*size, solidcraft_doc::PlaneSize::Large);
+    run(
+        &mut s,
+        "timeline.redefine",
+        json!({"feature": "T", "command": "construct.plane.three_points", "params": TRI("{\"size\": \"large\", \"offset\": \"3 mm\"}")}),
+    );
+    assert_eq!(plane_size(&s, "T"), solidcraft_doc::PlaneSize::Large);
+    // A default plane saves no `size` at all.
+    let mut d = part();
+    run(&mut d, "construct.plane.three_points", TRI("{\"size\": \"default\"}"));
+    assert!(!d.doc.to_json().contains("\"size\""), "default size must not be saved");
+    assert!(s.execute("construct.plane.three_points", &TRI("{\"size\": \"huge\", \"name\": \"H\"}")).is_err());
+}
+
+#[test]
+fn three_point_plane_rejects_one_line() {
+    let mut s = part();
+    let v = |x: f64, y: f64, z: f64| json!({"vertex": [x, y, z]});
+    let pt = |x: f64| json!({"point": [x, 0.0, 0.0]});
+    let before = s.doc.features.len();
+    let cases = [
+        ("collinear", json!({"a": pt(0.0), "b": pt(20.0), "c": pt(40.0)})),
+        ("same vertex as a and b", json!({"a": v(0.0, 0.0, 0.0), "b": v(0.0, 0.0, 0.0), "c": v(40.0, 0.0, 20.0)})),
+        ("same vertex as b and c", json!({"a": v(0.0, 0.0, 0.0), "b": v(40.0, 0.0, 20.0), "c": v(40.0, 0.0, 20.0)})),
+        ("same point three times", json!({"a": v(0.0, 0.0, 0.0), "b": v(0.0, 0.0, 0.0), "c": v(0.0, 0.0, 0.0), "offset": "2 mm"})),
+    ];
+    for (what, p) in cases {
+        let e = s.execute("construct.plane.three_points", &p).unwrap_err().to_string();
+        assert!(e.contains("on one line"), "{what}: {e}");
+    }
+    assert_eq!(s.doc.features.len(), before);
+}
+
+#[test]
+fn older_plane_designs_open_unchanged() {
+    let mut s = part();
+    run(&mut s, "construct.plane.three_points", TRI("{}"));
+    let json = s.doc.to_json();
+    assert!(!json.contains("\"size\""), "an old design has no size");
+    let reopened = solidcraft_doc::format::read(&json).unwrap();
+    let Some(solidcraft_doc::FeatureKind::ConstructionPlane { size, .. }) = reopened.find_feature("T").map(|f| &f.kind) else { panic!("T") };
+    assert_eq!(*size, solidcraft_doc::PlaneSize::Default);
+}
+
 #[test]
 fn plane_tangent_to_a_cylinder() {
     let mut s = part();

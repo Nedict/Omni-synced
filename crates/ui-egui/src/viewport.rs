@@ -985,7 +985,12 @@ pub fn construction_quads(app: &SolveApp) -> Vec<(String, Vec3, [Vec3; 4])> {
     solidcraft_engine::view::construction_planes(&app.session)
         .into_iter()
         .filter(|(_, n, _)| app.session.construction_visible(n))
-        .map(|(_, name, pl)| {
+        .map(|(id, name, pl)| {
+            let big = match app.session.doc.feature(id).map(|f| &f.kind) {
+                Some(solidcraft_engine::doc::FeatureKind::ConstructionPlane { size, .. }) => size.scale(),
+                _ => 1.0,
+            };
+            let h = h * big;
             let (o, x, y) = (pl.origin, pl.x * h, pl.y * h);
             (name, pl.normal(), [o - x - y, o + x - y, o + x + y, o - x + y])
         })
@@ -3588,6 +3593,21 @@ fn view_menu(app: &mut SolveApp, ui: &mut egui::Ui, button: Rect) -> bool {
 mod tests {
     use super::*;
     use crate::navigation::*;
+
+    #[test]
+    fn construction_quads_large_plane_is_three_times() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("solid.box", serde_json::json!({"length": 40, "width": 30, "height": 20})).unwrap();
+        for (name, size) in [("Small", "default"), ("Big", "large")] {
+            let pts =
+                serde_json::json!({"a": {"point": [0, 0, 0]}, "b": {"point": [10, 0, 0]}, "c": {"point": [0, 10, 0]}, "name": name, "size": size});
+            h.app.run("construct.plane.three_points", pts).unwrap();
+        }
+        let quads = construction_quads(&h.app);
+        let diagonal = |n: &str| quads.iter().find(|q| q.0 == n).map(|q| q.2[0].dist(q.2[2])).unwrap();
+        assert!(diagonal("Small") > 0.0);
+        assert!((diagonal("Big") - 3.0 * diagonal("Small")).abs() < 1e-9, "{} vs {}", diagonal("Big"), diagonal("Small"));
+    }
 
     /// Every tangent seam Continuity Analysis reports keeps its colour while the pointer rests on
     /// a face (#1247): a 60 x 40 x 20 box with its four top edges rounded (6 mm) has eight, four

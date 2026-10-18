@@ -8,7 +8,7 @@
 
 use serde_json::Value;
 use solidcraft_doc::construct::{AxisDef, GeoRef, PointDef};
-use solidcraft_doc::{FeatureKind, PlaneRef};
+use solidcraft_doc::{FeatureKind, PlaneRef, PlaneSize};
 
 use super::CommandSpec;
 use super::features::{add_feature, check_expr, plane_param, sketch_id};
@@ -73,7 +73,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("construct.plane.three_points", "Plane Through Three Points", plane_points)
         .at("SOLID", "CONSTRUCT")
         .icon("plane_three_points")
-        .params("a, b, c: point refs; name?"),
+        .params("a, b, c: point refs; offset?: expr (length, default 0; negative goes to the other side); size?: \"default\" | \"large\" (how big it is drawn); name?"),
     CommandSpec::new("construct.plane.tangent", "Tangent Plane", plane_tangent)
         .at("SOLID", "CONSTRUCT")
         .icon("plane_tangent")
@@ -155,7 +155,7 @@ fn point(s: &mut Session, p: &Value, def: PointDef) -> Result<Value> {
 }
 
 fn plane(s: &mut Session, p: &Value, plane: PlaneRef) -> Result<Value> {
-    add_feature(s, p, FeatureKind::ConstructionPlane { plane })
+    add_feature(s, p, FeatureKind::ConstructionPlane { plane, size: Default::default() })
 }
 
 fn axis_face(s: &mut Session, p: &Value) -> Result<Value> {
@@ -237,7 +237,23 @@ fn plane_edges(s: &mut Session, p: &Value) -> Result<Value> {
 fn plane_points(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "construct.plane.three_points";
     let (a, b, c) = (geo(s, p.get("a"), cmd, "a")?, geo(s, p.get("b"), cmd, "b")?, geo(s, p.get("c"), cmd, "c")?);
-    plane(s, p, PlaneRef::ThreePoints { a: Box::new(a), b: Box::new(b), c: Box::new(c) })
+    let mut pl = PlaneRef::ThreePoints { a: Box::new(a), b: Box::new(b), c: Box::new(c) };
+    // A literal zero is plain three points; a parameter that happens to be 0 stays an offset so
+    // that the plane follows it.
+    if p.get("offset").is_some_and(|v| !v.is_null()) {
+        let d = req_expr(cmd, p, "offset")?;
+        check_expr(s, &d, solidcraft_doc::expr::Kind::Length, cmd, "offset")?;
+        let zero = solidcraft_doc::expr::is_literal(&d) && s.doc.eval(&d, solidcraft_doc::expr::Kind::Length).is_ok_and(|v| v == 0.0);
+        if !zero {
+            pl = PlaneRef::Offset { base: Box::new(pl), distance: d };
+        }
+    }
+    let size = match str_(p, "size") {
+        None | Some("default") => PlaneSize::Default,
+        Some("large") => PlaneSize::Large,
+        Some(_) => return Err(bad(cmd, "`size` must be \"default\" or \"large\"")),
+    };
+    add_feature(s, p, FeatureKind::ConstructionPlane { plane: pl, size })
 }
 
 fn plane_tangent(s: &mut Session, p: &Value) -> Result<Value> {
