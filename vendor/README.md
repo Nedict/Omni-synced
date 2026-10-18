@@ -191,6 +191,13 @@ Changes:
   the face, many degrees round: those triangles cut through the surface and folded over each
   other (a cone face with a small hole meshed several mm² too large, and the boolean that made
   it was refused for its volume).
+- `tessellation/triangulation.rs`: a face that comes out of the triangulation with no triangle
+  at all, though the points of its one boundary loop enclose an area in space, is given the
+  triangles of that loop (ears clipped on the plane of the loop, no point added, so the faces on
+  either side of its edges still meet it). Its two edges can be different curves that, sampled
+  as they are, run along the same line in the face's parameters (a lens thinner than the
+  tolerance), and the loop then has no area there. The shell's mesh had a hole. Faces that
+  mesh are untouched. `crates/kernel/src/thin_face_tests.rs` holds it.
 
 ## matext4cgmath 0.1.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/matext4cgmath)
 
