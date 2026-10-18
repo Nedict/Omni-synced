@@ -629,6 +629,67 @@ fn a_short_piece_of_a_fast_arc_turns_its_own_way() {
 }
 
 #[test]
+fn a_piece_in_a_knot_span_of_1e_11_turns_its_own_way() {
+    // An exact arc of radius 10 in three quartic spans: 0 to 0.1 rad, then 0.1 to 3.85 rad over
+    // the parameters 0.25 to 0.25 + 1e-11, then on to 4.5 rad. Two blocks in front hide the
+    // outer spans, so the middle one is a visible piece of its own turning 3.75 rad.
+    let span = |a0: f64, a1: f64| -> Vec<[f64; 4]> {
+        let (c0, c1) = ((a0 / 4.).cos(), (a0 / 4.).sin());
+        let (d0, d1) = ((a1 / 4.).cos(), (a1 / 4.).sin());
+        let mul = |a: (f64, f64), b: (f64, f64)| (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0);
+        let pw = |c: (f64, f64), k: usize| (0..k).fold((1., 0.), |acc, _| mul(acc, c));
+        let q = [1., c0 * d0 + c1 * d1, 1.];
+        let w = bernstein_product(&q, &q);
+        (0..=4)
+            .map(|k| {
+                let z = mul(pw((c0, c1), 4 - k), pw((d0, d1), k));
+                [10. * z.0, 10. * z.1, 0., w[k]]
+            })
+            .collect()
+    };
+    let (s1, s2, s3) = (span(0., 0.1), span(0.1, 3.85), span(3.85, 4.5));
+    let homogeneous: Vec<[f64; 4]> = s1.iter().chain(s2.iter().skip(1)).chain(s3.iter().skip(1)).copied().collect();
+    let k = 0.25 + 1e-11;
+    let end = [10. * 4.5f64.cos(), 10. * 4.5f64.sin(), 0.];
+    let shape = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![[10., 0., 0.], end],
+            edges: vec![
+                Edge {
+                    vertices: [0, 1],
+                    curve: Curve::RationalSpline { knots: [vec![0.; 5], vec![0.25; 4], vec![k; 4], vec![1.; 5]].concat(), homogeneous },
+                },
+                Edge { vertices: [1, 0], curve: Curve::Line { start: end, end: [10., 0., 0.] } },
+            ],
+            faces: vec![Face {
+                loops: vec![vec![uses(0, true), uses(1, true)]],
+                surface: Surface::Plane { origin: [0.; 3], u_axis: [1., 0., 0.], v_axis: [0., 1., 0.] },
+                forward: true,
+            }],
+        }],
+    };
+    let arc = prepare(&shape, &Options::default()).unwrap();
+    let low = prepare(&cuboid([9., -1., 1.], [11., 10. * 0.1f64.sin(), 2.]), &Options::default()).unwrap();
+    let high = prepare(&cuboid([-11., -11., 1.], [0., 10. * 3.85f64.sin(), 2.]), &Options::default()).unwrap();
+    let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let scene = [identity(0, [0.; 3]), identity(1, [0.; 3]), identity(2, [0.; 3])];
+    let d = hidden_lines(&[arc, low, high], &scene, &view, &Options::default(), &never).unwrap();
+    let line = edge_line(&d, 0, 0);
+    let mut sweep = 0.;
+    for p in &line.pieces {
+        for g in &p.geometry {
+            match *g {
+                Seg2::Conic { w, .. } => sweep += 2. * w.acos(),
+                _ => panic!("an arc is drawn as conic arcs: {g:?}"),
+            }
+        }
+    }
+    assert!(line.pieces.len() >= 3, "{:?}", line.pieces.iter().map(|p| p.t).collect::<Vec<_>>());
+    assert!((sweep - 4.5).abs() < 1e-9, "the pieces turn {sweep} rad in all, want 4.5");
+}
+
+#[test]
 fn a_cone_tip_trimmed_near_the_apex_is_only_its_tip() {
     // A cone record of slope 0.25 from its apex up to 10 m, trimmed by a circle at z = 1 to the
     // tip below it: a box edge at x = 40, z = 50 to 150, seen along +X, is in front of nothing.

@@ -806,13 +806,17 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
         if ti % 64 == 0 && cancel() {
             return Err(HlrError::Cancelled);
         }
+        let c = t.c3();
         let mut cuts = t.splits.clone();
         cuts.push(t.range[0]);
         cuts.push(t.range[1]);
         cuts.retain(|x| *x >= t.range[0] && *x <= t.range[1]);
         cuts.sort_by(f64::total_cmp);
         let span = t.range[1] - t.range[0];
-        cuts.dedup_by(|a, b| (*a - *b).abs() <= 1e-10 * span);
+        // Cuts merge when their parameters and their points are both close: nearby parameters
+        // alone do not tell (a knot span narrower than 1e-10 of the range can carry most of a
+        // circle), nor do equal points (a closed curve's two ends).
+        cuts.dedup_by(|a, b| *a == *b || ((*a - *b).abs() <= 1e-10 * span && c.at(*a).dist(c.at(*b)) <= 1e-9 * scale.max(1.)));
         let mut pieces: Vec<Piece> = Vec::new();
         for w in cuts.windows(2) {
             let (Some(&a), Some(&b)) = (w.first(), w.get(1)) else { continue };
@@ -832,7 +836,6 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
             }
         }
         let p = scene.get(t.placement).ok_or(HlrError::Invalid("placement"))?;
-        let c = t.c3();
         for piece in &mut pieces {
             let mut pts = vec![view.screen(p.apply(c.at(piece.t[0])))];
             pts.extend(t.samples.iter().filter(|(x, _)| *x > piece.t[0] && *x < piece.t[1]).map(|(_, s)| *s));
@@ -956,22 +959,29 @@ fn piece_geometry(t: &Track, piece: &Piece, p: &Placement, view: &View) -> (Vec<
                 let wrap = |d: f64| (d + std::f64::consts::PI).rem_euclid(tau) - std::f64::consts::PI;
                 let (t0, t1) = (piece.t[0], piece.t[1]);
                 let span = (t.range[1] - t.range[0]).abs();
-                // A step small next to the piece itself: a piece can be a tiny part of its
-                // parameter range and still turn far.
-                let h = 1e-7 * (t1 - t0).abs();
-                let speed = |x: f64| wrap(angle((x + h).min(t1)) - angle((x - h).max(t0)));
-                let inner = t.samples.iter().map(|s| s.0).filter(|x| *x > t0 && *x < t1);
+                // Measured inside each knot span the piece crosses, over a step small next to that
+                // part (a span can be a tiny part of the range and still turn far), yet a few
+                // roundings of the parameter.
                 let (mut fwd, mut back) = (false, false);
-                for x in std::iter::once(t0).chain(inner).chain(std::iter::once(t1)) {
-                    let sp = speed(x);
-                    fwd |= sp > 1e-12;
-                    back |= sp < -1e-12;
-                }
-                if fwd && back {
-                    return chords();
+                for w in c.breaks().windows(2) {
+                    let (Some(&b0), Some(&b1)) = (w.first(), w.get(1)) else { continue };
+                    let (lo, hi) = (b0.max(t0), b1.min(t1));
+                    if hi <= lo {
+                        continue;
+                    }
+                    let h = (1e-7 * (hi - lo)).max(8. * f64::EPSILON * lo.abs().max(hi.abs()));
+                    for x in [lo, 0.5 * (lo + hi), hi] {
+                        let sp = wrap(angle((x + h).min(hi)) - angle((x - h).max(lo)));
+                        fwd |= sp > 1e-12;
+                        back |= sp < -1e-12;
+                    }
                 }
                 let a0 = angle(t0);
                 let ends = angle(t1) - a0;
+                // Turning both ways, or no measurable way while its ends differ: not guessed.
+                if (fwd && back) || (!fwd && !back && wrap(ends).abs() > 1e-9) {
+                    return chords();
+                }
                 let dir = if fwd || (!back && wrap(ends) >= 0.) { 1. } else { -1. };
                 let mut turn = (dir * ends).rem_euclid(tau);
                 let whole =

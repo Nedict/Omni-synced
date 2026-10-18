@@ -128,8 +128,9 @@ and intervals:
 - a disc bounded by a rational circle with unevenly spaced knots, with a knot span narrower
   than rounding, or with a parameterisation that races through its first turn is drawn as
   arcs turning the full 360 degrees; splines off their circle between evenly spaced samples
-  or inside such a narrow span are drawn as chords; an exact arc that turns almost all of
-  its 358 degrees in the first hundredth of its parameter is drawn whole;
+  or inside such a narrow span are drawn as chords; exact arcs that turn almost all of
+  their 358 degrees in the first hundredth of their parameter, or several radians in a
+  knot span of 1e-6 or 1e-11, keep the turn of every piece;
 - a torus stored as two halves, seen face on, is drawn at both equators, one silhouette
   each; an edge under it is hidden over exactly the intervals the tube covers; seen
   obliquely its outline spans R + r on both sides with a deviation under 1e-3 mm;
