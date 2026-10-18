@@ -199,9 +199,8 @@ pub(crate) fn build(face: &Face, edges: &[C3], surface: &S3, per_break: usize) -
             // tip) keeps its point; a loop on the edge itself has no room on the outer side.
             let step = |dir: [f64; 2]| {
                 let mut s = delta;
-                for k in 0..2 {
-                    let (Some(d), Some(&c), Some(&mk)) = (dom.get(k), dir.get(k), m.get(k)) else { continue };
-                    if period[k].is_some() {
+                for (((d, &c), &mk), p) in dom.iter().zip(&dir).zip(&m).zip(&period) {
+                    if p.is_some() {
                         continue;
                     }
                     if c < 0. {
