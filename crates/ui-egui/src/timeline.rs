@@ -122,6 +122,7 @@ fn construction_plane_icon(plane: &PlaneRef) -> &'static str {
         PlaneRef::ThreePoints { .. } => "plane_three_points",
         PlaneRef::Tangent { .. } => "plane_tangent",
         PlaneRef::AlongPath { .. } => "plane_along_path",
+        PlaneRef::Offset { base, .. } if matches!(base.as_ref(), PlaneRef::ThreePoints { .. }) => "plane_three_points",
         PlaneRef::Perpendicular { .. } => "plane_perpendicular",
         _ => "plane",
     }
