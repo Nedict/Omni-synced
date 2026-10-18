@@ -558,9 +558,14 @@ fn a_torus_seen_obliquely_spans_its_outer_diameter() {
 /// weights 1 and 1/sqrt 2 alternating) whose first three quarters are squeezed into the
 /// parameters 0 to 0.009.
 fn squeezed_disc(r: f64, pts: [[f64; 2]; 9]) -> Brep {
+    disc(r, pts, vec![0., 0., 0., 0.003, 0.003, 0.006, 0.006, 0.009, 0.009, 1., 1., 1.])
+}
+
+/// A disc bounded by a rational quadratic spline with control points `pts` (weights 1 and
+/// 1/sqrt 2 alternating) and `knots`, starting at (`r`, 0).
+fn disc(r: f64, pts: [[f64; 2]; 9], knots: Vec<f64>) -> Brep {
     let s = std::f64::consts::FRAC_1_SQRT_2;
     let homogeneous = pts.iter().enumerate().map(|(i, p)| if i % 2 == 1 { [p[0] * s, p[1] * s, 0., s] } else { [p[0], p[1], 0., 1.] }).collect();
-    let knots = vec![0., 0., 0., 0.003, 0.003, 0.006, 0.006, 0.009, 0.009, 1., 1., 1.];
     Brep {
         version: crate::brep::VERSION,
         shells: vec![Shell {
@@ -577,6 +582,23 @@ fn squeezed_disc(r: f64, pts: [[f64; 2]; 9]) -> Brep {
 
 fn circle_points(r: f64) -> [[f64; 2]; 9] {
     [[r, 0.], [r, r], [0., r], [-r, r], [-r, 0.], [-r, -r], [0., -r], [r, -r], [r, 0.]]
+}
+
+#[test]
+fn a_bent_quarter_in_a_knot_span_narrower_than_rounding_is_drawn() {
+    // The second quarter lives in the knot span 0.25 to 0.25 + 2^-50 and bulges to a radius of
+    // about 10.3: the edge is not taken for a circle and the bulge is drawn.
+    let mut pts = circle_points(10.);
+    if let Some(p) = pts.get_mut(3) {
+        *p = [-11., 10.];
+    }
+    let k = 0.25 + 2f64.powi(-50);
+    let def = prepare(&disc(10., pts, vec![0., 0., 0., 0.25, 0.25, k, k, 0.5, 0.5, 1., 1., 1.]), &Options::default()).unwrap();
+    let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    assert!(pieces(&d).all(|p| matches!(p.accuracy, CurveAccuracy::Sampled { .. })), "{d:?}");
+    let far = pieces(&d).flat_map(|p| p.geometry.iter()).flat_map(|g| [g.point_at(0.), g.point_at(1.)]).map(|q| q.len()).fold(0., f64::max);
+    assert!(far > 10.25, "the bulge reaches {far}");
 }
 
 #[test]

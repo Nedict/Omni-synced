@@ -119,7 +119,8 @@ impl C3 {
             C3::Line { .. } => {}
         }
         out.sort_by(f64::total_cmp);
-        out.dedup_by(|a, b| (*a - *b).abs() <= 1e-15 * (1. + b.abs()));
+        // Only equal knots merge: a span narrower than rounding can still carry a whole arc.
+        out.dedup();
         out
     }
 }
