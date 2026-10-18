@@ -287,7 +287,7 @@ pub fn refine_snap(
         }
     }
     // Where two curves cross: the point is held on both (beats Mid and the other inferences).
-    if let Some(c) = solidcraft_engine::crossing_near(sk, lp, tol)
+    if let Some(c) = solidcraft_engine::crossing_near(sk, lp, tol, |_| true)
         && let Some(arg) = crossing_arg(sk, &c)
     {
         SNAP.with(|s| *s.borrow_mut() = Some(("X", c.at)));

@@ -78,9 +78,10 @@ pub fn crossings_of(sk: &Sketch, a: usize, b: usize) -> Vec<Vec2> {
         .collect()
 }
 
-/// The crossing nearest `at`, within `tol` (sketch units), among curves passing within `tol` of `at`.
-pub fn crossing_near(sk: &Sketch, at: Vec2, tol: f64) -> Option<Crossing> {
-    let near: Vec<usize> = (0..sk.curves.len()).filter(|&ci| dist_to(sk, ci, at) <= tol).collect();
+/// The crossing nearest `at`, within `tol` (sketch units), among the `allowed` curves passing
+/// within `tol` of `at` (a drag leaves out the curves that move with it).
+pub fn crossing_near(sk: &Sketch, at: Vec2, tol: f64, allowed: impl Fn(usize) -> bool) -> Option<Crossing> {
+    let near: Vec<usize> = (0..sk.curves.len()).filter(|&ci| allowed(ci) && dist_to(sk, ci, at) <= tol).collect();
     let mut best: Option<(f64, Crossing)> = None;
     for (n, &a) in near.iter().enumerate() {
         for &b in near.iter().skip(n + 1) {
@@ -122,7 +123,7 @@ mod tests {
         let mut sk = Sketch::new();
         line(&mut sk, (0.0, 0.0), (10.0, 10.0));
         line(&mut sk, (0.0, 10.0), (10.0, 0.0));
-        let c = crossing_near(&sk, v(5.1, 5.0), 0.5).unwrap();
+        let c = crossing_near(&sk, v(5.1, 5.0), 0.5, |_| true).unwrap();
         assert!(c.at.dist(v(5.0, 5.0)) < 1e-9 && c.a < c.b);
     }
 
@@ -132,7 +133,7 @@ mod tests {
         let a = line(&mut sk, (0.0, 0.0), (4.0, 4.0));
         let b = line(&mut sk, (0.0, 10.0), (10.0, 0.0));
         assert!(crossings_of(&sk, a, b).is_empty());
-        assert!(crossing_near(&sk, v(5.0, 5.0), 1.0).is_none());
+        assert!(crossing_near(&sk, v(5.0, 5.0), 1.0, |_| true).is_none());
     }
 
     #[test]
@@ -144,7 +145,7 @@ mod tests {
         let x = crossings_of(&sk, a, b);
         assert_eq!(x.len(), 1);
         assert!(x[0].dist(v(5.0, 0.0)) < 1e-9);
-        assert!(crossing_near(&sk, v(5.0, 0.1), 0.5).is_some());
+        assert!(crossing_near(&sk, v(5.0, 0.1), 0.5, |_| true).is_some());
     }
 
     #[test]
@@ -152,8 +153,8 @@ mod tests {
         let mut sk = Sketch::new();
         sk.add_circle(v(0.0, 0.0), 1.0, None, None).unwrap();
         line(&mut sk, (-3.0, 0.0), (3.0, 0.0));
-        assert!(crossing_near(&sk, v(0.6, 0.1), 2.0).unwrap().at.dist(v(1.0, 0.0)) < 1e-9);
-        assert!(crossing_near(&sk, v(-0.6, 0.1), 2.0).unwrap().at.dist(v(-1.0, 0.0)) < 1e-9);
+        assert!(crossing_near(&sk, v(0.6, 0.1), 2.0, |_| true).unwrap().at.dist(v(1.0, 0.0)) < 1e-9);
+        assert!(crossing_near(&sk, v(-0.6, 0.1), 2.0, |_| true).unwrap().at.dist(v(-1.0, 0.0)) < 1e-9);
     }
 
     #[test]
@@ -162,10 +163,10 @@ mod tests {
         sk.add_arc(v(0.0, 0.0), v(5.0, 0.0), v(0.0, 5.0), [None; 3], None).unwrap();
         // The line meets the circle at x = -4.97, outside the 0..90 degree sweep.
         line(&mut sk, (-10.0, 0.5), (0.0, 0.5));
-        assert!(crossing_near(&sk, v(-4.97, 0.5), 1.0).is_none());
+        assert!(crossing_near(&sk, v(-4.97, 0.5), 1.0, |_| true).is_none());
         // Inside the sweep it does cross.
         line(&mut sk, (0.0, 2.0), (10.0, 2.0));
-        let c = crossing_near(&sk, v(4.5, 2.0), 1.0).unwrap();
+        let c = crossing_near(&sk, v(4.5, 2.0), 1.0, |_| true).unwrap();
         assert!(c.at.dist(v(21.0f64.sqrt(), 2.0)) < 1e-9);
     }
 
@@ -199,7 +200,7 @@ mod tests {
         let l = line(&mut sk, (-3.0, 2.0), (-2.0, 2.0));
         sk.curves[l].infinite = true;
         assert_eq!(crossings_of(&sk, s, l).len(), 2);
-        assert!(crossing_near(&sk, v(1.5, 2.0), 1.0).is_some());
+        assert!(crossing_near(&sk, v(1.5, 2.0), 1.0, |_| true).is_some());
     }
 
     #[test]
@@ -208,7 +209,7 @@ mod tests {
         let a = line(&mut sk, (0.0, 0.0), (10.0, 0.0));
         let b = line(&mut sk, (2.0, 0.0), (8.0, 0.0));
         assert!(crossings_of(&sk, a, b).is_empty());
-        assert!(crossing_near(&sk, v(5.0, 0.0), 0.5).is_none());
+        assert!(crossing_near(&sk, v(5.0, 0.0), 0.5, |_| true).is_none());
     }
 
     #[test]
@@ -235,7 +236,7 @@ mod tests {
         assert!(crossings_of(&sk, s, s).is_empty());
         for i in 0..=10 {
             for j in 0..=10 {
-                assert!(crossing_near(&sk, v(i as f64, j as f64), 3.0).is_none());
+                assert!(crossing_near(&sk, v(i as f64, j as f64), 3.0, |_| true).is_none());
             }
         }
     }

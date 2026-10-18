@@ -116,10 +116,7 @@ pub fn find(sk: &Sketch, moving: &[(usize, Vec2)], exclude: &[usize], mm_px: f64
     // A crossing of two curves that stay put beats a midpoint or a curve.
     if best.is_none() {
         for &(mi, p) in moving {
-            let Some(x) = solidcraft_engine::crossing_near(sk, p, CURVE_PX * mm_px) else { continue };
-            if !free_curves.contains(&x.a) || !free_curves.contains(&x.b) {
-                continue;
-            }
+            let Some(x) = solidcraft_engine::crossing_near(sk, p, CURVE_PX * mm_px, |c| free_curves.contains(&c)) else { continue };
             let (Some(a), Some(b)) = (sk.curves.get(x.a), sk.curves.get(x.b)) else { continue };
             let t = Target::Cross(a.id.clone(), b.id.clone());
             offer(&mut best, p.dist(x.at), Snap { point: id(mi), at: x.at, offset: x.at - p, target: t, guides: Vec::new() });
@@ -313,6 +310,20 @@ mod tests {
         assert_eq!(x.label(), "X");
         let both = release(&s);
         assert_eq!(both["constraints"].as_array().map(Vec::len), Some(2));
+    }
+
+    #[test]
+    fn a_dragged_line_resting_on_a_curve_still_finds_the_crossing() {
+        // The dragged line is drawn first and its end rests on l1 near the l1×l2 crossing: its
+        // own touch of l1 is nearer, but it moves with the drag, so it is no target.
+        let mut s = Sketch::new();
+        let _ = s.add_line(Vec2::new(40.0, 5.0), Vec2::new(10.3, 10.3), None, None, Some("l0"));
+        let _ = s.add_line(Vec2::new(0.0, 0.0), Vec2::new(20.0, 20.0), None, None, Some("l1"));
+        let _ = s.add_line(Vec2::new(0.0, 20.0), Vec2::new(20.0, 0.0), None, None, Some("l2"));
+        let end = s.points[s.resolve_point("l0.end").unwrap_or(0)].id.clone();
+        let x = drag(&s, &end, Vec2::new(10.35, 10.25)).expect("crossing");
+        assert_eq!(x.target, Target::Cross("l1".into(), "l2".into()));
+        assert!(x.at.dist(Vec2::new(10.0, 10.0)) < 1e-6);
     }
 
     #[test]

@@ -2288,7 +2288,7 @@ pub fn sketch_point_at(app: &SolveApp, proj: &Proj, pos: Pos2) -> Option<(Vec2, 
             // A point sitting on a crossing is held on both curves, unless snapping is off.
             if !crate::drag_snap::suppressed()
                 && let Some((a, b)) = proj.to_screen(ss.plane.to_world(at)).zip(proj.to_screen(ss.plane.to_world(at + Vec2::X)))
-                && let Some(c) = solidcraft_engine::crossing_near(&ss.sketch, at, 2.0 / (a.distance(b) as f64).max(1e-9))
+                && let Some(c) = solidcraft_engine::crossing_near(&ss.sketch, at, 2.0 / (a.distance(b) as f64).max(1e-9), |_| true)
                 // Already held on both curves (a corner): keep the point.
                 && !held_on_both(&ss.sketch, &id, &c)
                 && let Some(arg) = crate::sketch_tools::crossing_arg(&ss.sketch, &c)
