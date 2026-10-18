@@ -126,7 +126,7 @@ fn in_quad(p: Pos2, q: &[Pos2]) -> bool {
         return false;
     }
     let mut sign = 0.0f32;
-    for (&a, &b) in q.iter().zip(q.iter().cycle().skip(1)) {
+    for (&a, &b) in solidcraft_engine::geom::ring_edges(q) {
         let c = (b - a).x * (p - a).y - (b - a).y * (p - a).x;
         if c.abs() < 1e-6 {
             continue;

@@ -735,7 +735,7 @@ fn cap_loop(wire: &mt::Wire, plane: &Plane, tolerance: f64, work: &mut usize) ->
     }
     // Curve endpoints already agree with actual shared vertices in the
     // whole-span proof. Check the fitted representation's continuity too.
-    for (a, b) in segments.iter().zip(segments.iter().cycle().skip(1)) {
+    for (a, b) in solidcraft_geom::ring_edges(&segments) {
         if a.end().dist(b.start()) > 2. * tolerance {
             return None;
         }

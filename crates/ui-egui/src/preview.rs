@@ -537,7 +537,7 @@ pub fn build(before: &ModelState, after: &ModelState, c: Colors) -> Built {
                     sc.xray_tri(p.to_f32(), plane.normal().to_f32(), color);
                 }
             }
-            for (a, b) in quad.iter().zip(quad.iter().cycle().skip(1)).take(4) {
+            for (a, b) in solidcraft_engine::geom::ring_edges(&quad) {
                 sc.line(a.to_f32(), b.to_f32(), c.added, 1.3, true);
             }
         }

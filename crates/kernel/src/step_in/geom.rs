@@ -711,7 +711,7 @@ fn largest_gap(angles: &[f64]) -> Option<(f64, f64)> {
     }
     a.sort_by(f64::total_cmp);
     let (mut best, mut mid) = (0.0, 0.0);
-    for (i, (&x, &y)) in a.iter().zip(a.iter().cycle().skip(1)).enumerate() {
+    for (i, (&x, &y)) in solidcraft_geom::ring_edges(&a).enumerate() {
         let gap = if i + 1 == a.len() { y + TAU - x } else { y - x };
         if gap > best {
             best = gap;

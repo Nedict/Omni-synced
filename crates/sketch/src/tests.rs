@@ -842,7 +842,7 @@ fn exact_profiles_for_high_degree_and_cut_free_form_curves() {
     let exact_loop = |p: &Profile| p.region.outer.segs.iter().all(|s| !matches!(s, Seg2::Line { .. }) || s.length() > 1.0);
     let closed = |p: &Profile| {
         let s = &p.region.outer.segs;
-        s.iter().zip(s.iter().cycle().skip(1)).all(|(a, b)| a.end().dist(b.start()) < 1e-9)
+        solidcraft_geom::ring_edges(s).all(|(a, b)| a.end().dist(b.start()) < 1e-9)
     };
     // Degree 5 over six points, closed by a line.
     let mut sk = Sketch::default();

@@ -49,10 +49,7 @@ fn facets(cam: &Camera, c: Pos2, half: f64) -> Vec<Facet> {
             let b = project(cam, *b - centre, half);
             a.y.atan2(a.x).total_cmp(&b.y.atan2(b.x))
         });
-        let outer_edges = vertices
-            .iter()
-            .zip(vertices.iter().cycle().skip(1))
-            .take(vertices.len())
+        let outer_edges = solidcraft_engine::geom::ring_edges(&vertices)
             .map(|(a, b)| [(a.x, b.x), (a.y, b.y), (a.z, b.z)].into_iter().filter(|(a, b)| a.abs() == 1.0 && a == b).count() >= 2)
             .collect();
         let points = vertices.into_iter().map(|v| c + project(cam, v, half)).collect();
@@ -97,7 +94,7 @@ fn contains(points: &[Pos2], p: Pos2) -> bool {
         return false;
     }
     let mut sign = 0.0_f32;
-    for (a, b) in points.iter().zip(points.iter().cycle().skip(1)).take(points.len()) {
+    for (a, b) in solidcraft_engine::geom::ring_edges(points) {
         let edge = *b - *a;
         let offset = p - *a;
         let cross = edge.x * offset.y - edge.y * offset.x;

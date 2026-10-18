@@ -1913,7 +1913,7 @@ impl SheetBody {
         let mut segs: Vec<(Vec2, Vec2)> = Vec::new();
         let mut add = |l: &Loop2| {
             let pts = l.polyline(1e-3);
-            for (&a, &b) in pts.iter().zip(pts.iter().cycle().skip(1)) {
+            for (&a, &b) in solidcraft_geom::ring_edges(&pts) {
                 segs.push((a, b));
             }
         };

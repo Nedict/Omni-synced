@@ -1429,8 +1429,7 @@ fn inset_into(outer: &Body, inner: &Body, outer_operand: usize) -> Option<Result
             let outer_polys: Vec<_> = outer_loops.iter().map(|l| flat(l)).collect();
             let inner_poly = flat(&inner_pts);
             let in_outer = |p: Vec3| outer_polys.iter().filter(|l| l.contains(flat_point(p))).count() % 2 == 1;
-            let near_outer =
-                |p: Vec3| outer_loops.iter().any(|l| l.iter().zip(l.iter().cycle().skip(1)).any(|(s, t)| p.dist_to_segment(*s, *t) < clear));
+            let near_outer = |p: Vec3| outer_loops.iter().any(|l| solidcraft_geom::ring_edges(l).any(|(s, t)| p.dist_to_segment(*s, *t) < clear));
             let fits = inner_pts.iter().all(|p| in_outer(*p) && !near_outer(*p))
                 && outer_loops.iter().flatten().all(|p| !inner_poly.contains(flat_point(*p)));
             if !fits {

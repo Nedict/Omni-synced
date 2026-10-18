@@ -680,7 +680,7 @@ mod tests {
             .map(|k| builder::vertex(mt::Point3::new(k as f64, 0.0, 0.0)))
             .chain([builder::vertex(mt::Point3::new(n as f64, 3.0, 0.0)), builder::vertex(mt::Point3::new(0.0, 3.0, 0.0))])
             .collect();
-        let edges: Vec<mt::Edge> = pts.iter().zip(pts.iter().cycle().skip(1)).map(|(a, b)| builder::line(a, b)).collect();
+        let edges: Vec<mt::Edge> = solidcraft_geom::ring_edges(&pts).map(|(a, b)| builder::line(a, b)).collect();
         let face = builder::try_attach_plane(&[mt::Wire::from(edges)]).expect("a plane");
         builder::tsweep(&face, mt::Vector3::new(0.0, 0.0, 2.0))
     }

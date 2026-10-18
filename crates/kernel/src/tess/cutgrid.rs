@@ -205,7 +205,7 @@ pub(crate) fn cut_grid(
             let centre = [0.5 * (lu.at.get(i0)? + lu.at.get(i1)?), 0.5 * (lv.at.get(j0)? + lv.at.get(j1)?)];
             let m = u32::try_from(n + extra.len()).ok()?;
             extra.push(centre);
-            for (&a, &b) in poly.iter().zip(poly.iter().cycle().skip(1)) {
+            for (&a, &b) in solidcraft_geom::ring_edges(&poly) {
                 tris.push([m, a, b]);
             }
         }

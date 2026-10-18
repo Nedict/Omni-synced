@@ -255,7 +255,7 @@ pub(crate) fn cut(
     }
     let area = |ring: &[u32]| -> Option<f64> {
         let mut s = 0.0;
-        for (&a, &b) in ring.iter().zip(ring.iter().cycle().skip(1)) {
+        for (&a, &b) in solidcraft_geom::ring_edges(ring) {
             let (a, b) = (pos(a)?, pos(b)?);
             s += a[0] * b[1] - b[0] * a[1];
         }
@@ -275,7 +275,7 @@ pub(crate) fn cut(
         let p = pos(*h.first()?)?;
         let contains = |ring: &[u32]| {
             let mut odd = false;
-            for (&a, &b) in ring.iter().zip(ring.iter().cycle().skip(1)) {
+            for (&a, &b) in solidcraft_geom::ring_edges(ring) {
                 let (Some(a), Some(b)) = (pos(a), pos(b)) else { continue };
                 if (a[1] > p[1]) != (b[1] > p[1]) && p[0] < a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]) {
                     odd = !odd;

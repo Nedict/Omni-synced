@@ -788,7 +788,7 @@ pub fn convert_body(mb: &ModelBody, rule: &str, rv: &RuleValues, face: Vec3, ben
     }
     // The flat frame: on the fixed face, x along its longest edge, z into the material.
     let Some(base) = panels.get(&f0) else { return err("fixed face") };
-    let corners = base.face.pts.iter().zip(base.face.pts.iter().cycle().skip(1));
+    let corners = solidcraft_geom::ring_edges(&base.face.pts);
     let straight = corners.zip(&base.face.round).filter(|(_, r)| r.is_none()).map(|(c, _)| c);
     let longest = straight.max_by(|x, y| x.0.dist(*x.1).total_cmp(&y.0.dist(*y.1)));
     let frame = longest

@@ -1841,7 +1841,7 @@ pub(super) fn plastic_eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &F
             // wall standing on the face, whose side the band would run against.
             let opening = |l: &[Vec2]| {
                 let eps = (tol * 4.0).max(1e-3);
-                l.iter().zip(l.iter().cycle().skip(1)).filter_map(|(a, b)| Some(((*a + *b) * 0.5, (*b - *a).normalized()?))).take(3).any(|(m, t)| {
+                solidcraft_geom::ring_edges(l).filter_map(|(a, b)| Some(((*a + *b) * 0.5, (*b - *a).normalized()?))).take(3).any(|(m, t)| {
                     // Just over the face, inside the loop (to the left of a ccw loop's edges).
                     let q = plane.to_world(m + Vec2::new(-t.y, t.x) * eps) + n * eps;
                     !mesh.contains(q)

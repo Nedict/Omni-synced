@@ -428,7 +428,7 @@ fn edge_sheets(faces: &[FaceSpec], group: &[(EdgeUse, Vec3, Vec3)]) -> Result<[[
             j -= 1;
         }
     }
-    let wedges: Vec<_> = rays.iter().zip(rays.iter().cycle().skip(1)).collect();
+    let wedges: Vec<_> = solidcraft_geom::ring_edges(&rays).collect();
     // Each wedge's faces must use the edge in opposite directions, and be told apart (faces
     // leaving the same way and turning alike lie on each other).
     let same_way = |p: f64, q: f64| {
