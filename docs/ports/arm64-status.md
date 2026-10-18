@@ -57,4 +57,31 @@ Notes:
 
 ## What builds / what runs / what was not tested
 
-Filled in as the port progresses; see the final section of this file at handoff.
+### Builds (verified on real ARM64 hardware)
+
+| Target | Build | Result |
+|---|---|---|
+| `aarch64-unknown-linux-gnu` (WSL Ubuntu 22.04, native) | `cargo build --release -p solidcraft -p solidcraft-cli` | pass (20m 59s; both binaries) |
+| `aarch64-pc-windows-gnullvm` (this machine, native) | `cargo build --release -p solidcraft -p solidcraft-cli` | pass (3m 28s; both binaries, icon via llvm-mingw windres) |
+| `aarch64-pc-windows-msvc` | `cargo check` (no linking) | not run locally (no MSVC ARM64 linker); CI builds it on x64 runners. Code identical to the gnullvm build. |
+| `wasm32-unknown-unknown` | `cargo xtask wasm` | pass (12 crates) |
+
+### Runs (verified on real ARM64 hardware)
+
+- Windows ARM64: `solidcraft-cli --version` prints `solidcraft-cli 0.15.0`; `solidcraft-cli snapshot` rendered a 512x512 box PNG via the GPU renderer (`renderer: gpu`) on this machine's Adreno-class GPU.
+- Linux aarch64: release binaries built; core crate tests compiled and ran.
+- Clippy (`-D warnings`) on the gnullvm host: pass (7m 00s).
+- Lints already passing: `fmt`, `assets` (376 files), `licences`, `lists`, `layers` (17 crates).
+
+### Not verified / known gaps
+
+- robustness_goldens seed 13 and seed 67 fail on Linux aarch64: topological difference (seed 13: area 2101.52 -> 2112.85, edges 103 -> 99, faces 41 -> 39, volume 2396.94 -> 2410.78; seed 67: edges 88 -> 86, faces 37 -> 36). Golden regression tests; the framework supports per-platform overrides but only by OS (`std::env::consts::OS`), not by arch. Needs investigation: likely a tolerance-sensitive boolean in the kernel whose outcome flips on aarch64 FP. Not a crash; not blocking CI (the aarch64 gate is compile-only).
+- App/UI tests on Linux aarch64 hang in headless WSL (need a real display for the app test binary); core crate tests (geom/sketch/kernel/render/doc/engine) compile and run.
+- Windows ARM64 MSI not installed or run (no Snapdragon X device in CI; the binary runs on this ARM64 host but the MSI packaging path is untested). The D3D12 shader tests and app-startup tests (`windows-fxc`, `windows-startup`) run on x64 only.
+- 3D mouse (hidapi) not exercised on either target (no device attached).
+- `cargo xtask icons` fails on this Windows host for pre-existing reasons unrelated to ARM64: `python3` not on PATH (xtask spawns `python3`), and two Python tool tests assume Linux (`/` path separators, cp1252 default encoding). Passes on CI's Linux runners. Workaround used locally: a `python3.exe` shim + `PYTHONUTF8=1`.
+
+### What needs a real ARM device
+
+- Linux aarch64: AppImage/deb/rpm install + run, snap smoke (X11 + Wayland), Vulkan via Mesa on a real ARM GPU (not lavapipe), wgpu GL fallback.
+- Windows aarch64: install the MSI, app startup on the Adreno GPU (DX12) and WARP fallback, D3D12 shader tests, hidapi 3D-mouse detection, `solidcraft-cli` end-to-end.

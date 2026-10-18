@@ -75,6 +75,26 @@ cargo build --release --target aarch64-pc-windows-msvc -p solidcraft -p solidcra
   gnullvm target builds the same binaries. The script picks the triple from
   `$Arch` alone (package.ps1:52) — see Open questions.
 
+## Verified on this host (2026-10-18)
+
+- `cargo build --release -p solidcraft -p solidcraft-cli` (gnullvm) succeeded in 3m 28s;
+  both binaries produced. `solidcraft-cli --version` prints `solidcraft-cli 0.15.0`.
+- `solidcraft-cli snapshot` rendered a 512x512 box PNG via the GPU renderer
+  (`renderer: gpu`, 180 KB) — proves rendering works on this ARM64 GPU.
+- `cargo clippy --workspace --all-targets --profile ci -- -D warnings` passed (7m 00s).
+- `cargo xtask wasm` passed (12 crates).
+- Local toolchain fixes required (machine-level, not repo changes):
+  - `~/.cargo/syslibs-aarch64-gnullvm/` was missing import libs for `ole32`,
+    `oleaut32`, `dwmapi`, `comctl32`, `gdiplus`, `uxtheme`; overlaid from
+    llvm-mingw's aarch64 import libs. Also removed the hand-made CRT archives
+    (`libmingw32.a`, `libmsvcrt.a`, ...) that shadowed the toolchain's
+    self-contained CRT.
+  - Installed llvm-mingw (Windows ARM64) at `~/llvm-mingw-aarch64` and wired
+    `CC_aarch64_pc_windows_gnullvm` / `AR_...` / `RC` / `RC_aarch64_pc_windows_gnullvm`
+    into `~/.cargo/config.toml`, plus prepended its `bin` to the user PATH so
+    `windres` resolves to llvm-windres (the embed_resource crate needs an
+    ARM64-capable windres for the app icon).
+
 ## Test plan
 
 - Native build of `solidcraft` + `solidcraft-cli` on this host (done, see
