@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
-use solidcraft_geom::Vec3;
+use solidcraft_geom::{UnitVec3, Vec3};
 
 use solidcraft_sketch::linalg;
 
@@ -405,7 +405,7 @@ pub fn resolve_origin(doc: &Document, st: &ModelState, o: &JointOrigin) -> Resul
         Snap::FaceCenter { pick, face } => {
             let pick = &named_pick(st, *pick, face.as_deref())?;
             let comp = component_of(doc, o.occurrence)?;
-            let mut best: Option<(f64, Vec3, Vec3)> = None;
+            let mut best: Option<(f64, Vec3, UnitVec3)> = None;
             for b in component_bodies(doc, st, comp) {
                 let tol = (b.body.size() * 2e-3).max(1e-3);
                 for f in b.body.faces(tol)? {
@@ -417,7 +417,7 @@ pub fn resolve_origin(doc: &Document, st: &ModelState, o: &JointOrigin) -> Resul
                 }
             }
             let (_, c, n) = best.ok_or_else(|| DocError::Invalid("joint origin: no planar face there".into()))?;
-            frame(c, n, None).ok_or_else(bad)
+            frame(c, *n, None).ok_or_else(bad)
         }
         Snap::CircleCenter { .. } => {
             let (pick, cyl) = circle_at(doc, st, o)?;

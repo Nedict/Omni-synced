@@ -104,7 +104,7 @@ fn turn<T>(per_edge: &mut [T]) {
 
 /// The circle (centre in `plane` coordinates, radius) of face `f` when it is a round wall
 /// standing square on the plane: a cylinder about the plane's normal `n`.
-pub(crate) fn round_wall(body: &Body, plane: &Plane, n: Vec3, f: u32) -> Option<(Vec2, f64)> {
+pub(crate) fn round_wall(body: &Body, plane: &Plane, n: UnitVec3, f: u32) -> Option<(Vec2, f64)> {
     match face_surface(body, f as usize)? {
         FaceSurface::Cylinder { origin, axis, radius } if axis.cross(n).len() < 1e-6 => Some((plane.to_local(origin), radius)),
         _ => None,
@@ -227,7 +227,7 @@ fn outline(b: &Body, mesh: &Mesh, f: usize, tol: f64) -> Result<Face> {
         loops.push(lp);
     }
     let mut walls = std::collections::HashMap::new();
-    let mut wall = |g: u32| *walls.entry(g).or_insert_with(|| round_wall(b, &plane, *n, g));
+    let mut wall = |g: u32| *walls.entry(g).or_insert_with(|| round_wall(b, &plane, n, g));
     // Each loop with the faces of its walls.
     let mut shaped: Vec<(Vec<(Seg2, Option<u32>)>, Vec<usize>)> = loops
         .iter()
