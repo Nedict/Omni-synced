@@ -294,12 +294,108 @@ fn runs_on_env_node(program: &Path) -> bool {
     words.find(|w| !w.starts_with('-')).is_some_and(|w| w == "node")
 }
 
-/// The Node.js version in an agent's last stderr lines, when it is one the adapters can't run on:
-/// the panel then says so instead of leaving only Node's own syntax error.
-pub(super) fn node_too_old_in(tail: &[String]) -> Option<String> {
+/// One alternative of an npm `engines.node` range, by its lower bound.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NodeRange {
+    /// `>=22`, `>20.10`, `>=18 <23` (the upper bound is not checked).
+    AtLeast((u32, u32)),
+    /// `^20.10`, `20`, `20.x`: that major version, from that minor on.
+    SameMajor((u32, u32)),
+    /// `~20.10`, `20.10.x`: that major and minor version.
+    SameMinor((u32, u32)),
+}
+
+impl NodeRange {
+    fn allows(self, v: (u32, u32)) -> bool {
+        match self {
+            NodeRange::AtLeast(min) => v >= min,
+            NodeRange::SameMajor(min) => v.0 == min.0 && v >= min,
+            NodeRange::SameMinor(min) => v == min,
+        }
+    }
+
+    fn min(self) -> (u32, u32) {
+        match self {
+            NodeRange::AtLeast(m) | NodeRange::SameMajor(m) | NodeRange::SameMinor(m) => m,
+        }
+    }
+}
+
+/// An npm `engines.node` range (`>=22`, `^20.10.0 || >=22`) as its alternatives, or `None` when
+/// any part is not understood: then only the syntax the adapters need is checked.
+fn node_ranges_of(range: &str) -> Option<Vec<NodeRange>> {
+    let number = |s: &str| -> Option<(u32, u32, bool)> {
+        let mut parts = s.trim_start_matches('v').split('.');
+        let major = parts.next()?.parse().ok()?;
+        let minor = match parts.next() {
+            None | Some("x" | "X" | "*") => return Some((major, 0, false)),
+            Some(m) => m.parse().ok()?,
+        };
+        Some((major, minor, true))
+    };
+    let mut out = Vec::new();
+    for alt in range.split("||").take(8) {
+        // The first comparator is the lower bound (`>=18 <23` → `>=18`); npm allows a space after
+        // its operator (`>= 20.10.0`).
+        let alt = alt.trim();
+        let op_len = alt.len() - alt.trim_start_matches(['>', '=', '^', '~']).len();
+        let (op, rest) = alt.split_at_checked(op_len)?;
+        let version = rest.split_whitespace().next()?;
+        let r = match op {
+            ">=" | ">" => {
+                let (a, b, _) = number(version)?;
+                NodeRange::AtLeast((a, b))
+            }
+            "^" => {
+                let (a, b, _) = number(version)?;
+                NodeRange::SameMajor((a, b))
+            }
+            "~" => {
+                let (a, b, _) = number(version)?;
+                NodeRange::SameMinor((a, b))
+            }
+            "" | "=" => match number(version)? {
+                (a, b, true) => NodeRange::SameMinor((a, b)),
+                (a, _, false) => NodeRange::SameMajor((a, 0)),
+            },
+            _ => return None,
+        };
+        out.push(r);
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// The `engines.node` range of the npm package `program` belongs to (`claude-agent-acp` asks for
+/// `>=22`): the `package.json` in the nearest folder above the script it points to. Only files are
+/// read; nothing is started.
+fn node_ranges_for(program: &Path) -> Option<Vec<NodeRange>> {
+    let script = std::fs::canonicalize(program).ok()?;
+    let manifest = script.ancestors().skip(1).take(6).map(|d| d.join("package.json")).find(|p| p.is_file())?;
+    if std::fs::metadata(&manifest).ok()?.len() > 1 << 20 {
+        return None;
+    }
+    let json: serde_json::Value = serde_json::from_slice(&std::fs::read(manifest).ok()?).ok()?;
+    node_ranges_of(json.get("engines")?.get("node")?.as_str()?)
+}
+
+/// Whether Node `v` can run a program needing `ranges` (from [`node_ranges_for`]).
+fn node_can_run(ranges: Option<&[NodeRange]>, v: (u32, u32)) -> bool {
+    node_runs_adapters(v) && ranges.is_none_or(|r| r.iter().any(|a| a.allows(v)))
+}
+
+/// The lowest Node.js version that runs a program needing `ranges`, for the panel (`22`, `20.10`).
+fn node_needed(ranges: Option<&[NodeRange]>) -> String {
+    let min = ranges.and_then(|r| r.iter().map(|a| a.min()).min()).map_or((20, 10), |m| m.max((18, 20)));
+    if min.1 == 0 { min.0.to_string() } else { format!("{}.{}", min.0, min.1) }
+}
+
+/// The Node.js version in an agent's last stderr lines and the version `program` needs, when the
+/// one it ran on can't run it: the panel then says so instead of leaving only Node's own error.
+pub(super) fn node_too_old_in(tail: &[String], program: &Path) -> Option<(String, String)> {
     let line = tail.iter().rev().map(|l| l.trim()).find(|l| l.starts_with("Node.js v"))?;
     let v = node_version_of(line)?;
-    (!node_runs_adapters(v)).then(|| line.trim_start_matches("Node.js ").to_string())
+    let ranges = node_ranges_for(program);
+    (!node_can_run(ranges.as_deref(), v)).then(|| (line.trim_start_matches("Node.js ").to_string(), node_needed(ranges.as_deref())))
 }
 
 /// The most `node`s looked at for one program.
@@ -310,18 +406,21 @@ const NODE_PROBE_TOTAL: Duration = Duration::from_secs(4);
 
 /// The folder to put first on `program`'s PATH: when `program` runs on `env node` and the first
 /// `node` in `dirs` is too old for it (Ubuntu's packaged Node ahead of a newer one from nvm, say),
-/// the folder of the first `node` that can run it. `None` when nothing needs to move. `probe`
-/// reads a `node`'s version (`None`: unknown, so it is not chosen).
+/// the folder of the first `node` that can run it. "Can run" is the syntax the adapters use and
+/// the package's own `engines.node` (`claude-agent-acp` asks for 22). `None` when nothing needs to
+/// move. `probe` reads a `node`'s version (`None`: unknown, so it is not chosen).
 pub(super) fn node_dir_for(program: &Path, dirs: &[PathBuf], mut probe: impl FnMut(&Path) -> Option<(u32, u32)>) -> Option<PathBuf> {
     if !cfg!(unix) || !runs_on_env_node(program) {
         return None;
     }
+    let ranges = node_ranges_for(program);
+    let mut ok = |node: &Path| probe(node).is_some_and(|v| node_can_run(ranges.as_deref(), v));
     let mut nodes = dirs.iter().filter(|d| d.join("node").is_file()).take(MAX_NODES);
     let first = nodes.next()?;
-    if probe(&first.join("node")).is_some_and(node_runs_adapters) {
+    if ok(&first.join("node")) {
         return None;
     }
-    nodes.find(|d| probe(&d.join("node")).is_some_and(node_runs_adapters)).cloned()
+    nodes.find(|d| ok(&d.join("node"))).cloned()
 }
 
 /// `dirs` with `node_dir` (from [`node_dir_for`]) moved to the front; everything else keeps its order.
@@ -551,10 +650,49 @@ mod tests {
             ["SyntaxError: Unexpected token 'with'", "    at ModuleLoader.moduleStrategy (node:internal/modules/esm/translators:152:18)", "", last]
                 .map(String::from)
         };
-        assert_eq!(node_too_old_in(&tail("Node.js v18.19.1")).as_deref(), Some("v18.19.1"));
-        assert_eq!(node_too_old_in(&tail("Node.js v22.11.0")), None, "a new enough Node failed for another reason");
-        assert_eq!(node_too_old_in(&tail("error: not signed in")), None);
-        assert_eq!(node_too_old_in(&[]), None);
+        let unknown = Path::new("/nonexistent/claude-agent-acp");
+        let old = |v: &str, need: &str| Some((v.to_string(), need.to_string()));
+        assert_eq!(node_too_old_in(&tail("Node.js v18.19.1"), unknown), old("v18.19.1", "20.10"));
+        assert_eq!(node_too_old_in(&tail("Node.js v22.11.0"), unknown), None, "a new enough Node failed for another reason");
+        assert_eq!(node_too_old_in(&tail("error: not signed in"), unknown), None);
+        assert_eq!(node_too_old_in(&[], unknown), None);
+
+        // An adapter whose package asks for Node 22: 20.11 reads the syntax but is still too old.
+        let root = std::env::temp_dir().join(format!("sc-agent-node-engines-{}", std::process::id()));
+        let pkg = root.join("lib/node_modules/@agentclientprotocol/claude-agent-acp");
+        std::fs::create_dir_all(pkg.join("dist")).unwrap();
+        std::fs::write(pkg.join("package.json"), r#"{"name":"claude-agent-acp","engines":{"node":">=22"}}"#).unwrap();
+        std::fs::write(pkg.join("dist/index.js"), "#!/usr/bin/env node\n").unwrap();
+        let script = pkg.join("dist/index.js");
+        assert_eq!(node_too_old_in(&tail("Node.js v20.11.1"), &script), old("v20.11.1", "22"));
+        assert_eq!(node_too_old_in(&tail("Node.js v22.11.0"), &script), None);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn engines_ranges_read_by_their_lower_bound() {
+        use NodeRange::*;
+        assert_eq!(node_ranges_of(">=22"), Some(vec![AtLeast((22, 0))]));
+        assert_eq!(node_ranges_of(">= 20.10.0"), Some(vec![AtLeast((20, 10))]));
+        assert_eq!(node_ranges_of("<23"), None, "no lower bound");
+        assert_eq!(node_ranges_of(">=18 <23"), Some(vec![AtLeast((18, 0))]));
+        assert_eq!(node_ranges_of("^20.10.0 || >=22"), Some(vec![SameMajor((20, 10)), AtLeast((22, 0))]));
+        assert_eq!(node_ranges_of("~20.10 || 22.x"), Some(vec![SameMinor((20, 10)), SameMajor((22, 0))]));
+        assert_eq!(node_ranges_of("lts/*"), None);
+        assert_eq!(node_ranges_of(""), None);
+
+        let need = node_ranges_of("^20.10.0 || >=22");
+        for (v, ok) in [((20, 9), false), ((20, 12), true), ((21, 0), false), ((22, 1), true), ((18, 20), false)] {
+            assert_eq!(node_can_run(need.as_deref(), v), ok, "{v:?}");
+        }
+        // No range known: only the syntax decides.
+        assert!(node_can_run(None, (18, 20)) && !node_can_run(None, (18, 19)));
+        // A range below what the syntax needs never lets an older Node through.
+        assert!(!node_can_run(node_ranges_of(">=16").as_deref(), (18, 19)));
+        assert_eq!(node_needed(node_ranges_of(">=22").as_deref()), "22");
+        assert_eq!(node_needed(node_ranges_of("^20.10.0 || >=22").as_deref()), "20.10");
+        assert_eq!(node_needed(node_ranges_of(">=16").as_deref()), "18.20");
+        assert_eq!(node_needed(None), "20.10");
     }
 
     /// Ubuntu's packaged Node 18.19 in /usr/bin comes before nvm's folders in the desktop PATH,
@@ -586,6 +724,19 @@ mod tests {
         assert_eq!(node_dir_for(&native, &dirs, probe), None);
         assert_eq!(node_dir_for(&adapter, &[old.clone(), other.clone()], probe), None);
         assert_eq!(dirs_with(dirs.clone(), None), dirs);
+
+        // The package asks for Node 22 (as claude-agent-acp does): a 20.11 first on the PATH reads
+        // the syntax but is still passed over for the 22 further on.
+        let pkg = root.join("lib/node_modules/claude-agent-acp");
+        std::fs::create_dir_all(pkg.join("dist")).unwrap();
+        std::fs::write(pkg.join("package.json"), r#"{"engines":{"node":">=22"}}"#).unwrap();
+        std::fs::write(pkg.join("dist/index.js"), "#!/usr/bin/env node\n").unwrap();
+        let mid = root.join("usr-bin-20");
+        std::fs::create_dir_all(&mid).unwrap();
+        std::fs::write(mid.join("node"), "20").unwrap();
+        let script = pkg.join("dist/index.js");
+        assert_eq!(node_dir_for(&script, &[mid.clone(), new.clone()], probe).as_deref(), Some(new.as_path()));
+        assert_eq!(node_dir_for(&adapter, &[mid.clone(), new.clone()], probe), None, "without a package range 20.11 is enough");
 
         std::fs::write(&adapter, "#!/usr/bin/env -S node --no-warnings\n").unwrap();
         assert!(runs_on_env_node(&adapter));

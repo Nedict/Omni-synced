@@ -235,6 +235,10 @@ pub struct AgentChat {
     detection: Option<discover::Detection>,
     #[cfg(not(target_arch = "wasm32"))]
     detecting: Option<Receiver<discover::Detection>>,
+    /// The agent stopped on a Node too old for it: look for agents (and their Node) again, so a
+    /// Node installed since is used on the next Connect.
+    #[cfg(not(target_arch = "wasm32"))]
+    redetect: bool,
 }
 
 impl Drop for AgentChat {
@@ -406,14 +410,18 @@ impl AgentChat {
                 self.state = Some(State::Exited);
                 self.steering = false;
                 #[cfg(not(target_arch = "wasm32"))]
-                let old_node = discover::node_too_old_in(&tail);
+                let old_node = self.argv.first().and_then(|p| discover::node_too_old_in(&tail, std::path::Path::new(p)));
                 #[cfg(target_arch = "wasm32")]
-                let old_node: Option<String> = None;
+                let old_node: Option<(String, String)> = None;
                 let last: Vec<String> = tail.into_iter().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect();
                 let detail = if last.is_empty() { String::new() } else { format!("\n{}", last.join("\n")) };
                 self.notice(format!("{}{detail}", tr("ui.agent_chat_exited")), true);
-                if let Some(version) = old_node {
-                    self.notice(trf("ui.agent_chat_node_too_old", &[("version", &version)]), true);
+                if let Some((found, required)) = old_node {
+                    self.notice(trf("ui.agent_chat_node_too_old", &[("version", &found), ("required", &required)]), true);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        self.redetect = true;
+                    }
                 }
                 self.stop_backend(false);
                 return Some(Outcome::TurnEnd);
@@ -970,6 +978,12 @@ pub fn poll(app: &mut SolveApp, ctx: &egui::Context) {
     {
         app.agent_chat.detection = Some(d);
         app.agent_chat.detecting = None;
+    }
+    // A search already running may have started before the newer Node was installed: wait for it.
+    #[cfg(not(target_arch = "wasm32"))]
+    if app.agent_chat.redetect && app.agent_chat.detecting.is_none() {
+        app.agent_chat.redetect = false;
+        refresh(app, ctx);
     }
     // AI features turned off: nothing keeps running, nothing is looked for.
     if !shown(app) {
