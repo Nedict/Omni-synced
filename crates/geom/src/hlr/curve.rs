@@ -20,11 +20,14 @@ pub(crate) enum C3 {
         r: [f64; 2],
         range: [f64; 2],
     },
-    /// Homogeneous control points `[x*w, y*w, z*w, w]` (w = 1 for polynomial splines).
+    /// Homogeneous control points `[x*w, y*w, z*w, w]` (w = 1 for polynomial splines), and the
+    /// same curve as Bézier pieces (each piece's parameter span and control points; empty when
+    /// it could not be split).
     Spline {
         degree: usize,
         knots: Vec<f64>,
         points: Vec<[f64; 4]>,
+        pieces: Vec<([f64; 2], Vec<[f64; 4]>)>,
     },
     Polyline(Vec<Vec3>),
 }
@@ -64,7 +67,7 @@ impl C3 {
         match self {
             C3::Line { .. } => [0., 1.],
             C3::Arc { range, .. } => *range,
-            C3::Spline { degree, knots, points } => [knots.get(*degree).copied().unwrap_or(0.), knots.get(points.len()).copied().unwrap_or(1.)],
+            C3::Spline { degree, knots, points, .. } => [knots.get(*degree).copied().unwrap_or(0.), knots.get(points.len()).copied().unwrap_or(1.)],
             C3::Polyline(p) => [0., p.len().saturating_sub(1) as f64],
         }
     }
@@ -73,7 +76,7 @@ impl C3 {
         match self {
             C3::Line { a, b } => *a + (*b - *a) * t,
             C3::Arc { o, x, y, r, .. } => *o + *x * (r[0] * t.cos()) + *y * (r[1] * t.sin()),
-            C3::Spline { degree, knots, points } => de_boor(*degree, knots, points, t),
+            C3::Spline { degree, knots, points, .. } => de_boor(*degree, knots, points, t),
             C3::Polyline(p) => {
                 let n = p.len();
                 if n == 0 {
@@ -130,7 +133,68 @@ fn spline(knots: &[f64], points: Vec<[f64; 4]>) -> Result<C3, HlrError> {
     if degree == 0 || degree > 16 || points.is_empty() {
         return Err(HlrError::Unsupported("spline degree"));
     }
-    Ok(C3::Spline { degree, knots: knots.to_vec(), points })
+    let pieces = bezier_pieces(degree, knots, &points);
+    Ok(C3::Spline { degree, knots: knots.to_vec(), points, pieces })
+}
+
+/// A spline split into Bézier pieces: clamped, then every inner knot raised to the degree
+/// (NURBS Book §5.2); empty when that fails.
+fn bezier_pieces(p: usize, knots: &[f64], points: &[[f64; 4]]) -> Vec<([f64; 2], Vec<[f64; 4]>)> {
+    use crate::bspline::{HPoint, clamp_row, insert_knot};
+    let row: Vec<HPoint> = points.iter().map(|h| HPoint { x: h[0], y: h[1], z: h[2], w: h[3] }).collect();
+    let Ok((mut k, mut c)) = clamp_row(p, knots, &row) else { return Vec::new() };
+    let (Some(&lo), Some(&hi)) = (k.get(p), k.get(c.len())) else { return Vec::new() };
+    let mut inner: Vec<f64> = k.iter().copied().filter(|x| *x > lo && *x < hi).collect();
+    inner.dedup();
+    for u in &inner {
+        let mut guard = 0;
+        while k.iter().filter(|x| *x == u).count() < p {
+            guard += 1;
+            let Ok((nk, nc)) = insert_knot(p, &k, &c, *u) else { return Vec::new() };
+            if guard > p + 1 {
+                return Vec::new();
+            }
+            (k, c) = (nk, nc);
+        }
+    }
+    let breaks: Vec<f64> = std::iter::once(lo).chain(inner).chain(std::iter::once(hi)).collect();
+    let mut out = Vec::with_capacity(breaks.len());
+    for (j, w) in breaks.windows(2).enumerate() {
+        let (Some(&s0), Some(&s1)) = (w.first(), w.get(1)) else { return Vec::new() };
+        let Some(ctrl) = c.get(j * p..=j * p + p) else { return Vec::new() };
+        out.push(([s0, s1], ctrl.iter().map(|h| [h.x, h.y, h.z, h.w]).collect()));
+    }
+    out
+}
+
+impl C3 {
+    /// Points whose hull holds the spline's part `r`: the projected control points of its
+    /// Bézier pieces cut to `r` (de Casteljau). They close in on the curve as `r` shrinks.
+    /// `None` for other curves, or when a weight is not positive.
+    pub fn hull(&self, r: [f64; 2]) -> Option<Vec<Vec3>> {
+        use crate::bspline::{HPoint, bezier_segment};
+        let C3::Spline { pieces, .. } = self else { return None };
+        let mut out = Vec::new();
+        for (span, ctrl) in pieces {
+            let (a, b) = (r[0].max(span[0]), r[1].min(span[1]));
+            let len = span[1] - span[0];
+            if !(b > a && len > 0.) {
+                continue;
+            }
+            let (fa, fb) = (((a - span[0]) / len).clamp(0., 1.), ((b - span[0]) / len).clamp(0., 1.));
+            if !(fb > fa) {
+                continue;
+            }
+            let h: Vec<HPoint> = ctrl.iter().map(|q| HPoint { x: q[0], y: q[1], z: q[2], w: q[3] }).collect();
+            for q in bezier_segment(&h, fa, fb).ok()? {
+                if !(q.w > 0.) {
+                    return None;
+                }
+                out.push(q.project()?);
+            }
+        }
+        (!out.is_empty()).then_some(out)
+    }
 }
 
 /// De Boor evaluation of a (rational) B-spline at `t`, clamped to the active domain.

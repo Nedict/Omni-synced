@@ -1316,6 +1316,121 @@ fn a_sphere_with_a_spline_band_between_record_caps_is_one_sphere() {
 }
 
 #[test]
+fn chords_of_a_racing_circle_stay_within_their_stated_deviation() {
+    // z^6 / |z|^6 with z = 0.01 (1 - t) + (1 + i sqrt 3) t: the unit circle, its weights
+    // 1e-12 to 64 apart, so drawn as chords; a cube 9 km away makes the scene coarse. Every
+    // point of the circle must lie within the chords' stated deviation of them.
+    let c1 = (1f64, 3f64.sqrt());
+    let mut num = Vec::new();
+    let mut pw = (1f64, 0f64);
+    for k in 0..=6 {
+        num.push((0.01f64.powi(6 - k) * pw.0, 0.01f64.powi(6 - k) * pw.1));
+        pw = (pw.0 * c1.0 - pw.1 * c1.1, pw.0 * c1.1 + pw.1 * c1.0);
+    }
+    let q = [1e-4, 0.01, 4.];
+    let w = bernstein_product(&bernstein_product(&q, &q), &q);
+    let homogeneous: Vec<[f64; 4]> = num.iter().zip(&w).map(|((re, im), w)| [*re, *im, 0., *w]).collect();
+    let disc = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![[1., 0., 0.]],
+            edges: vec![Edge { vertices: [0, 0], curve: Curve::RationalSpline { knots: [[0.; 7], [1.; 7]].concat(), homogeneous } }],
+            faces: vec![Face {
+                loops: vec![vec![uses(0, true)]],
+                surface: Surface::Plane { origin: [0.; 3], u_axis: [1., 0., 0.], v_axis: [0., 1., 0.] },
+                forward: true,
+            }],
+        }],
+    };
+    let defs = [prepare(&disc, &Options::default()).unwrap(), prepare(&cuboid([9e6, 0., 0.], [9e6 + 1., 1., 1.]), &Options::default()).unwrap()];
+    let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&defs, &[identity(0, [0.; 3]), identity(1, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    let line = edge_line(&d, 0, 0);
+    if turn_or_chords(line.pieces.iter()).is_some() {
+        return;
+    }
+    let dev = line
+        .pieces
+        .iter()
+        .filter_map(|p| if let CurveAccuracy::Sampled { max_sample_deviation_mm: v } = p.accuracy { Some(v) } else { None })
+        .fold(0., f64::max);
+    let chords: Vec<(Vec2, Vec2)> =
+        line.pieces.iter().flat_map(|p| p.geometry.iter()).filter_map(|g| if let Seg2::Line { a, b } = *g { Some((a, b)) } else { None }).collect();
+    for k in 0..720 {
+        let t = std::f64::consts::TAU * k as f64 / 720.;
+        let q = Vec2::new(t.cos(), t.sin());
+        let gap = chords.iter().map(|(a, b)| point_segment([q.x, q.y], [a.x, a.y], [b.x, b.y])).fold(f64::MAX, f64::min);
+        assert!(gap <= dev + 1e-6, "({}, {}) is {gap} mm from the chords, stated {dev}", q.x, q.y);
+    }
+}
+
+#[test]
+fn a_big_arc_is_cut_where_it_meets_a_left_out_faces_box() {
+    // An arc of radius 10000 (angles -pi/8 to 0) under a freeform tube lying along Y at
+    // x = 9990 (radius about 2.5, a cubic profile), a cube 9 km away making the scene coarse:
+    // no visible piece of the arc may reach under the tube.
+    let tau = std::f64::consts::TAU;
+    let a0 = -std::f64::consts::PI / 8.;
+    let (start, end) = ([10000. * a0.cos(), 10000. * a0.sin(), 0.], [10000., 0., 0.]);
+    let arc = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![start, end],
+            edges: vec![
+                Edge { vertices: [0, 1], curve: Curve::CircleArc { frame: frame_at([0.; 3]), radius: 10000., angle: [a0, 0.] } },
+                Edge { vertices: [1, 0], curve: Curve::Line { start: end, end: start } },
+            ],
+            faces: vec![Face {
+                loops: vec![vec![uses(0, true), uses(1, true)]],
+                surface: Surface::Plane { origin: [0.; 3], u_axis: [1., 0., 0.], v_axis: [0., 1., 0.] },
+                forward: true,
+            }],
+        }],
+    };
+    let x = 9990.;
+    let profile = Curve::Spline {
+        knots: vec![0., 0., 0., 0., 1., 1., 1., 1.],
+        points: vec![[x + 2.5, -4000., 1.], [x + 2.504, -4000. / 3., 1.], [x + 2.5, 2000. / 3., 1.], [x + 2.5, 3000., 1.]],
+    };
+    let end_circle = |y: f64, v: u32| Edge {
+        vertices: [v, v],
+        curve: Curve::CircleArc {
+            frame: crate::brep::Frame { origin: [x, y, 1.], x_axis: [1., 0., 0.], y_axis: [0., 0., 1.] },
+            radius: 2.5,
+            angle: [0., tau],
+        },
+    };
+    let tube = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![[x + 2.5, -4000., 1.], [x + 2.5, 3000., 1.]],
+            edges: vec![end_circle(-4000., 0), end_circle(3000., 1), Edge { vertices: [0, 1], curve: profile.clone() }],
+            faces: vec![Face {
+                loops: vec![vec![uses(0, true), uses(2, true), uses(1, false), uses(2, false)]],
+                surface: Surface::Revolution { profile: Box::new(profile), origin: [x, 0., 1.], axis: [0., 1., 0.], angle: [0., tau] },
+                forward: true,
+            }],
+        }],
+    };
+    let defs = [
+        prepare(&tube, &Options::default()).unwrap(),
+        prepare(&arc, &Options::default()).unwrap(),
+        prepare(&cuboid([9e6, 0., 0.], [9e6 + 1., 1., 1.]), &Options::default()).unwrap(),
+    ];
+    assert_eq!(defs[0].report.freeform_faces, vec![0]);
+    let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&defs, &[identity(0, [0.; 3]), identity(1, [0.; 3]), identity(2, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    for p in edge_line(&d, 1, 0).pieces.iter().filter(|p| p.visibility == Visibility::Visible) {
+        for k in 0..=400 {
+            let t = p.t[0] + (p.t[1] - p.t[0]) * k as f64 / 400.;
+            let (px, py) = (10000. * t.cos(), 10000. * t.sin());
+            let under = px > x - 2.5 && px < x + 2.5 && py > -4000. && py < 3000.;
+            assert!(!under, "visible at ({px}, {py}), t {t}, piece {:?}", p.t);
+        }
+    }
+}
+
+#[test]
 fn narrow_torus_strips_keep_their_outline() {
     // Two strips of a torus R 20, r 10 between the meridian angles 0.3002, 0.3005 and 0.3008,
     // seen from the side: each side of the outline is a 0.006 mm piece of the circle traced on

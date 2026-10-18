@@ -55,7 +55,7 @@ timings where the platform has a clock (zero on `wasm32-unknown-unknown`).
 | --- | --- | --- |
 | Line edges; cylinder and cone silhouette rulings | one `Seg2::Line` | `Analytic` |
 | Circle and ellipse edges; sphere silhouettes; torus silhouettes seen along the axis | `Seg2::Conic` arcs of at most 90 degrees | `Analytic` |
-| Spline and intersection edges | chords between exact points | `Sampled` (screen chord sag) |
+| Spline and intersection edges | chords between exact points, halved until each piece's control hull is within the sag target | `Sampled` (a bound from that hull) |
 | Torus silhouettes in other views | chords between traced points, halved to 1e-7 of the torus's size | `Sampled` (measured deviation) |
 
 An orthographic projection is affine, so a circle projects to an ellipse, which a

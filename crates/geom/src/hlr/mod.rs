@@ -760,7 +760,11 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
                     next.push(*a);
                     let m = 0.5 * (a.0 + b.0);
                     let q = screen(m);
-                    if point_segment(q, a.1, b.1) > target && next.len() < 1 << 16 {
+                    // A spline's piece is held by its control points' hull: a parameterisation
+                    // racing between samples cannot hide a swerve from the chord.
+                    let hull =
+                        c.hull([a.0, b.0]).map_or(0., |h| h.iter().map(|x| point_segment(view.screen(p.apply(*x)), a.1, b.1)).fold(0., f64::max));
+                    if point_segment(q, a.1, b.1).max(hull) > target && next.len() < 1 << 16 {
                         next.push((m, q));
                         split = true;
                     }
@@ -791,7 +795,12 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
                             CurveAccuracy::Sampled { max_sample_deviation_mm: dev } => dev,
                             _ => 0.,
                         },
-                        (_, Some(a), Some(b)) => point_segment(view.screen(p.apply(c.at(0.5 * (a.0 + b.0)))), a.1, b.1),
+                        (_, Some(a), Some(b)) => {
+                            let hull = c
+                                .hull([a.0, b.0])
+                                .map_or(0., |h| h.iter().map(|x| point_segment(view.screen(p.apply(*x)), a.1, b.1)).fold(0., f64::max));
+                            point_segment(view.screen(p.apply(c.at(0.5 * (a.0 + b.0)))), a.1, b.1).max(hull)
+                        }
                         _ => 0.,
                     }
             })
@@ -831,7 +840,18 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
                 for (k, edge) in [(0usize, sh.lo[0]), (0, sh.hi[0]), (1, sh.lo[1]), (1, sh.hi[1])] {
                     let (u, v) = (a.1[k], b.1[k]);
                     if (u - edge) * (v - edge) < 0. {
-                        cuts.push(a.0 + (b.0 - a.0) * (edge - u) / (v - u));
+                        // Where the curve itself crosses the side, not its chord.
+                        let side = |x: f64| view.screen(pl.apply(t.c3().at(x))).get(k).copied().unwrap_or(0.) - edge;
+                        let (mut lo, mut hi) = (a.0, b.0);
+                        for _ in 0..60 {
+                            let mid = 0.5 * (lo + hi);
+                            if (side(mid) < 0.) == (u - edge < 0.) {
+                                lo = mid;
+                            } else {
+                                hi = mid;
+                            }
+                        }
+                        cuts.push(0.5 * (lo + hi));
                     }
                 }
                 // A curve that enters the box where its chord does not: its stretch becomes a
@@ -1019,13 +1039,16 @@ fn screen_box(c: &C3, r: [f64; 2], p: &Placement, view: &View) -> ([f64; 2], [f6
                 }
             }
         }
-        C3::Spline { degree, knots, points } => pts.extend(
-            points
-                .iter()
-                .enumerate()
-                .filter(|(i, h)| h[3] > 0. && knots.get(*i).zip(knots.get(i + degree + 1)).is_some_and(|(lo, hi)| *lo < r[1] && *hi > r[0]))
-                .map(|(_, h)| s(Vec3::new(h[0] / h[3], h[1] / h[3], h[2] / h[3]))),
-        ),
+        C3::Spline { degree, knots, points, .. } => match c.hull(r) {
+            Some(h) => pts.extend(h.into_iter().map(s)),
+            None => pts.extend(
+                points
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, h)| h[3] > 0. && knots.get(*i).zip(knots.get(i + degree + 1)).is_some_and(|(lo, hi)| *lo < r[1] && *hi > r[0]))
+                    .map(|(_, h)| s(Vec3::new(h[0] / h[3], h[1] / h[3], h[2] / h[3]))),
+            ),
+        },
         C3::Polyline(v) => pts.extend(v.iter().enumerate().filter(|(i, _)| (*i as f64) > r[0] && (*i as f64) < r[1]).map(|(_, q)| s(*q))),
     }
     let lo = pts.iter().fold([f64::MAX; 2], |m, q| [m[0].min(q[0]), m[1].min(q[1])]);
@@ -1107,14 +1130,17 @@ fn depth_bound(c: &C3, r: [f64; 2], p: &Placement, d: Vec3) -> f64 {
             let dl = p.local_dir(d);
             depth(*o) + (rad[0] * x.dot(dl)).hypot(rad[1] * y.dot(dl))
         }
-        C3::Spline { degree, knots, points } => points
-            .iter()
-            .enumerate()
-            .filter(|(i, h)| h[3] > 0. && knots.get(*i).zip(knots.get(i + degree + 1)).is_some_and(|(lo, hi)| *lo < r[1] && *hi > r[0]))
-            .map(|(_, h)| depth(Vec3::new(h[0] / h[3], h[1] / h[3], h[2] / h[3])))
-            .fold(f64::MIN, f64::max)
-            .max(depth(c.at(r[0])))
-            .max(depth(c.at(r[1]))),
+        C3::Spline { degree, knots, points, .. } => match c.hull(r) {
+            Some(h) => h.into_iter().map(depth).fold(f64::MIN, f64::max),
+            None => points
+                .iter()
+                .enumerate()
+                .filter(|(i, h)| h[3] > 0. && knots.get(*i).zip(knots.get(i + degree + 1)).is_some_and(|(lo, hi)| *lo < r[1] && *hi > r[0]))
+                .map(|(_, h)| depth(Vec3::new(h[0] / h[3], h[1] / h[3], h[2] / h[3])))
+                .fold(f64::MIN, f64::max),
+        }
+        .max(depth(c.at(r[0])))
+        .max(depth(c.at(r[1]))),
         C3::Polyline(pts) => pts
             .iter()
             .enumerate()
