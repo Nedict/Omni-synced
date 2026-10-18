@@ -1,0 +1,67 @@
+# Only maintainers make a fork's pull request ready for review, and so ready for CI.
+# - A fork PR opened ready, or marked ready, by someone without write access goes back to draft,
+#   with a comment saying how it moves on.
+# - A maintainer adds the `ready for ci` label: that event starts CI (ci.yml runs fork PRs only
+#   while they carry the label), and this marks the PR ready for review. The label is added by a
+#   person on purpose: events from this workflow's own token never start other workflows.
+# Branches of this repository (people with write access) are not gated.
+name: Ready gate
+
+on:
+  # pull_request_target so it can edit fork PRs. It reads only the event; the PR's code is never
+  # checked out.
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, labeled]
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  gate:
+    name: Ready gate
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    # Runs main's own step only (never PR code), so the trusted light runner takes it.
+    runs-on: self-hosted-light
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const LABEL = 'ready for ci';
+            const pr = context.payload.pull_request;
+            const sender = context.payload.sender.login;
+            const { owner, repo } = context.repo;
+            const permission = await github.rest.repos
+              .getCollaboratorPermissionLevel({ owner, repo, username: sender })
+              .then((r) => r.data.permission, () => 'none');
+            const maintainer = ['admin', 'maintain', 'write'].includes(permission);
+
+            if (context.payload.action === 'labeled') {
+              if (context.payload.label.name !== LABEL) return;
+              if (!maintainer) {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number: pr.number, name: LABEL });
+                core.info(`${sender} can't add "${LABEL}": removed`);
+                return;
+              }
+              if (pr.draft) {
+                await github.graphql(
+                  'mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }',
+                  { id: pr.node_id },
+                );
+              }
+              core.info(`ready for review and CI, by ${sender}`);
+              return;
+            }
+
+            // opened, reopened, ready_for_review
+            if (pr.draft || maintainer) return;
+            await github.graphql(
+              'mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { clientMutationId } }',
+              { id: pr.node_id },
+            );
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: pr.number,
+              body: 'Thanks for the pull request! It stays a draft until a maintainer has looked at it; they mark it ready (the `ready for ci` label), which also starts CI. You can keep pushing in the meantime.',
+            });
+            core.info(`${sender} has no write access: back to draft`);

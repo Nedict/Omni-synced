@@ -31,9 +31,10 @@ name: CI
 
 on:
   # Draft pull requests run no CI (see `changes`, `checks` and `ci`): it starts when the PR is
-  # marked ready for review, and on every push after that.
+  # marked ready for review, and on every push after that. A fork's PR runs CI only while it has
+  # the `ready for ci` label, which a maintainer adds (ready-gate.yml).
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
   # The merge queue: each queued group runs the full suite before it lands on main.
   merge_group:
   push:
@@ -76,7 +77,7 @@ jobs:
   changes:
     name: Select checks
     # Not on a draft: every other check needs this one, so they skip too.
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    if: github.event_name != 'pull_request' || ((github.event.action != 'labeled' || github.event.label.name == 'ready for ci') && (github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft || github.event.pull_request.head.repo.full_name != github.repository && contains(github.event.pull_request.labels.*.name, 'ready for ci')))
     # Trusted runs (see the top of this file) use the self-hosted runners.
     runs-on: ${{ (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && 'self-hosted-light' || 'ubuntu-24.04' }}
     permissions:
@@ -195,7 +196,7 @@ jobs:
 
   checks:
     name: Format and repository checks
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    if: github.event_name != 'pull_request' || ((github.event.action != 'labeled' || github.event.label.name == 'ready for ci') && (github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft || github.event.pull_request.head.repo.full_name != github.repository && contains(github.event.pull_request.labels.*.name, 'ready for ci')))
     runs-on: ${{ (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && 'self-hosted-fast' || 'ubuntu-24.04' }}
     timeout-minutes: 15
     steps:
@@ -628,7 +629,7 @@ jobs:
   # Preserve the existing check name for branch protection, including docs-only PRs.
   ci:
     needs: [changes, checks, clippy, build-tests, tests, doc-tests, oracle, windows-fxc, windows-startup]
-    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    if: always() && (github.event_name != 'pull_request' || ((github.event.action != 'labeled' || github.event.label.name == 'ready for ci') && (github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft || github.event.pull_request.head.repo.full_name != github.repository && contains(github.event.pull_request.labels.*.name, 'ready for ci'))))
     runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-light' || 'ubuntu-24.04' }}
     steps:
       - name: Verify required checks
