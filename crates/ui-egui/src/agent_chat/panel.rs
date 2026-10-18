@@ -18,6 +18,12 @@ fn panel_id(left: bool) -> Id {
     Id::new(if left { "sc_agent_chat_left" } else { "sc_agent_chat_right" })
 }
 
+/// The largest thumbnail of a message's picture, and its largest preview while hovered (points).
+#[cfg(not(target_arch = "wasm32"))]
+const THUMB_MAX: (f32, f32) = (150.0, 56.0);
+#[cfg(not(target_arch = "wasm32"))]
+const PREVIEW_MAX: (f32, f32) = (560.0, 380.0);
+
 /// Forget the panel's own idea of its width, so the preference applies on the next frame.
 pub fn forget_width(ctx: &egui::Context) {
     ctx.data_mut(|d| {
@@ -88,6 +94,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         .show(ui, |ui| body(app, ui, left));
     crate::scenario::publish_rect("agent_chat:panel", r.response.rect);
     app.agent_chat.panel_rect = Some(r.response.rect);
+    #[cfg(not(target_arch = "wasm32"))]
+    gallery_window(app, &ctx);
     let w = r.response.rect.width();
     if w.is_finite() && (MIN_WIDTH..=MAX_WIDTH).contains(&w) {
         app.preferences.agent_chat_width = w;
@@ -99,12 +107,15 @@ const MAX_CHIPS: usize = 6;
 /// A chip's longest label (characters), and what its frame adds to the text's width.
 const CHIP_CHARS: usize = 26;
 const CHIP_PAD: f32 = 13.0;
+/// What a chip's × adds.
+const CHIP_CROSS: f32 = 14.0;
 
 /// One thing in a group's rows: its heading, a chip for an item, or the "+N more" note.
 #[cfg(not(target_arch = "wasm32"))]
 enum ChipPart<'a> {
     Heading(String),
-    Chip(&'a context::Entry),
+    /// An item and its place among all of the context's items.
+    Chip(usize, &'a context::Entry),
     More(String),
 }
 
@@ -113,9 +124,10 @@ enum ChipPart<'a> {
 /// hand: egui wraps plain widgets, not framed ones, and one row wider than the chat would widen
 /// the whole panel.
 #[cfg(not(target_arch = "wasm32"))]
-fn context_chips(ui: &mut egui::Ui, context: &Context) {
+fn context_chips(ui: &mut egui::Ui, context: &Context, removable: bool) -> Option<usize> {
+    let mut removed = None;
     if context.is_empty() {
-        return;
+        return removed;
     }
     let t = Tokens::get();
     let font = egui::FontId::proportional(11.0);
@@ -123,12 +135,12 @@ fn context_chips(ui: &mut egui::Ui, context: &Context) {
     let text_width = |ui: &egui::Ui, text: &str| ui.painter().layout_no_wrap(text.to_string(), font.clone(), t.text).size().x;
     let more = |n: usize| trf("ui.agent_chat_ctx_more", &[("n", &n.to_string())]);
     for kind in context::Kind::ALL {
-        let items: Vec<&context::Entry> = context.items.iter().filter(|i| i.kind == kind).collect();
+        let items: Vec<(usize, &context::Entry)> = context.items.iter().enumerate().filter(|(_, i)| i.kind == kind).collect();
         if items.is_empty() {
             continue;
         }
         let mut parts = vec![ChipPart::Heading(format!("{} {}", tr(kind.heading()), items.len()))];
-        parts.extend(items.iter().take(MAX_CHIPS).map(|i| ChipPart::Chip(i)));
+        parts.extend(items.iter().take(MAX_CHIPS).map(|(n, i)| ChipPart::Chip(*n, i)));
         if items.len() > MAX_CHIPS {
             parts.push(ChipPart::More(more(items.len() - MAX_CHIPS)));
         }
@@ -136,7 +148,7 @@ fn context_chips(ui: &mut egui::Ui, context: &Context) {
             .iter()
             .map(|p| match p {
                 ChipPart::Heading(s) | ChipPart::More(s) => text_width(ui, s),
-                ChipPart::Chip(i) => text_width(ui, &shorten(&i.label, CHIP_CHARS)) + CHIP_PAD,
+                ChipPart::Chip(_, i) => text_width(ui, &shorten(&i.label, CHIP_CHARS)) + CHIP_PAD + if removable { CHIP_CROSS } else { 0.0 },
             })
             .collect();
         let mut rows: Vec<Vec<usize>> = vec![Vec::new()];
@@ -159,16 +171,29 @@ fn context_chips(ui: &mut egui::Ui, context: &Context) {
                         ChipPart::Heading(s) | ChipPart::More(s) => {
                             ui.label(RichText::new(s).color(t.text_dim).size(11.0));
                         }
-                        ChipPart::Chip(item) => {
+                        ChipPart::Chip(place, item) => {
                             let chip = egui::Frame::NONE
                                 .stroke(Stroke::new(1.0, t.text_dim.gamma_multiply(0.5)))
                                 .corner_radius(8.0)
                                 .inner_margin(egui::Margin::symmetric(5, 1))
                                 .show(ui, |ui| {
-                                    ui.add(
-                                        egui::Label::new(RichText::new(shorten(&item.label, CHIP_CHARS)).color(t.text).size(11.0))
-                                            .wrap_mode(egui::TextWrapMode::Extend),
-                                    )
+                                    ui.spacing_mut().item_spacing.x = 3.0;
+                                    ui.horizontal(|ui| {
+                                        let label = ui.add(
+                                            egui::Label::new(RichText::new(shorten(&item.label, CHIP_CHARS)).color(t.text).size(11.0))
+                                                .wrap_mode(egui::TextWrapMode::Extend),
+                                        );
+                                        if removable {
+                                            let cross =
+                                                ui.add(egui::Button::new(RichText::new("×").color(t.text_dim).size(11.0)).frame(false).small());
+                                            crate::scenario::publish_handle(&format!("agent_chat:picked_remove:{place}"), cross.rect.center());
+                                            if cross.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                removed = Some(*place);
+                                            }
+                                        }
+                                        label
+                                    })
+                                    .inner
                                 })
                                 .response;
                             if !item.detail.is_empty() {
@@ -183,12 +208,95 @@ fn context_chips(ui: &mut egui::Ui, context: &Context) {
     if context.omitted > 0 {
         ui.label(RichText::new(more(context.omitted)).color(t.text_dim).size(11.0));
     }
+    removed
 }
 
 /// `s` cut to `max` characters, with an ellipsis.
 #[cfg(not(target_arch = "wasm32"))]
 fn shorten(s: &str, max: usize) -> String {
     if s.chars().count() <= max { s.to_string() } else { format!("{}…", s.chars().take(max.saturating_sub(1)).collect::<String>()) }
+}
+
+/// The pictures of a message as small thumbnails in a row. Hovering one shows it bigger for as long
+/// as the pointer stays; a click returns its place in the row, to open the viewer there.
+#[cfg(not(target_arch = "wasm32"))]
+fn picture_strip(ui: &mut egui::Ui, n: usize, pictures: &[Picture]) -> Option<usize> {
+    let t = Tokens::get();
+    let mut clicked = None;
+    ui.horizontal_wrapped(|ui| {
+        for (i, picture) in pictures.iter().enumerate() {
+            let Some(texture) = picture.texture(ui.ctx()) else {
+                ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim).size(11.0));
+                continue;
+            };
+            let size = fit(texture.size_vec2(), vec2(THUMB_MAX.0, THUMB_MAX.1));
+            let thumb = ui.add(egui::Image::new((texture.id(), size)).corner_radius(4.0).sense(Sense::click()));
+            crate::scenario::publish_handle(&format!("agent_chat:picture:{n}:{i}"), thumb.rect.center());
+            let hover_max = (ui.ctx().content_rect().size() * 0.5).min(vec2(PREVIEW_MAX.0, PREVIEW_MAX.1));
+            let thumb = thumb.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_ui(|ui| {
+                ui.add(egui::Image::new((texture.id(), fit(texture.size_vec2(), hover_max))).corner_radius(4.0));
+                if !picture.note.is_empty() {
+                    ui.label(&picture.note);
+                }
+            });
+            if thumb.clicked() {
+                clicked = Some(i);
+            }
+        }
+    });
+    clicked
+}
+
+/// `size` scaled to fit in `max`, keeping its shape (never below one point).
+#[cfg(not(target_arch = "wasm32"))]
+fn fit(size: egui::Vec2, max: egui::Vec2) -> egui::Vec2 {
+    let scale = (max.x / size.x.max(1.0)).min(max.y / size.y.max(1.0)).min(2.0);
+    vec2((size.x * scale).max(1.0), (size.y * scale).max(1.0))
+}
+
+/// The viewer: a message's pictures over the app, one at a time with a counter, Previous and Next
+/// (also the arrow keys), closed with the button, Esc or a click outside.
+#[cfg(not(target_arch = "wasm32"))]
+fn gallery_window(app: &mut SolveApp, ctx: &egui::Context) {
+    let Some(mut gallery) = app.agent_chat.gallery.take() else { return };
+    let count = gallery.pictures.len();
+    gallery.at = gallery.at.min(count.saturating_sub(1));
+    let (left, right) =
+        ctx.input_mut(|i| (i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft), i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)));
+    let mut step: isize = if left { -1 } else { isize::from(right) };
+    let t = Tokens::get();
+    let max = ctx.content_rect().size() * vec2(0.8, 0.7);
+    let modal = egui::Modal::new(Id::new("sc_agent_chat_gallery")).show(ctx, |ui| {
+        ui.set_max_width(max.x);
+        ui.horizontal(|ui| {
+            let prev = ui.add_enabled(count > 1, egui::Button::new("‹"));
+            crate::scenario::publish_handle("agent_chat:gallery_prev", prev.rect.center());
+            let next = ui.add_enabled(count > 1, egui::Button::new("›"));
+            crate::scenario::publish_handle("agent_chat:gallery_next", next.rect.center());
+            if prev.clicked() {
+                step = -1;
+            }
+            if next.clicked() {
+                step = 1;
+            }
+            ui.label(RichText::new(format!("{} / {}", gallery.at + 1, count)).color(t.text_dim));
+        });
+        if let Some(picture) = gallery.pictures.get(gallery.at) {
+            if let Some(texture) = picture.texture(ui.ctx()) {
+                let resp = ui.add(egui::Image::new((texture.id(), fit(texture.size_vec2(), max))).corner_radius(4.0));
+                crate::scenario::publish_rect("agent_chat:gallery_picture", resp.rect);
+            }
+            if !picture.note.is_empty() {
+                ui.add(egui::Label::new(&picture.note).wrap());
+            }
+        }
+    });
+    if count > 0 && step != 0 {
+        gallery.at = (gallery.at as isize + step).rem_euclid(count as isize) as usize;
+    }
+    if !modal.should_close() {
+        app.agent_chat.gallery = Some(gallery);
+    }
 }
 
 /// New chat (when the chat has focus).
@@ -419,19 +527,12 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
         auth_box(app, ui);
     }
     ui.separator();
-    // The input sits at the bottom; the conversation takes the rest.
-    let input_h = 92.0;
-    let avail = (ui.available_height() - input_h).max(80.0);
-    egui::ScrollArea::vertical().id_salt("sc_agent_chat_scroll").max_height(avail).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
-        conversation(app, ui);
-    });
-    ui.separator();
+    // The input sits at the bottom of the panel and grows upwards: a long message makes its box
+    // taller up to `edit_max`, then it scrolls, and the conversation takes what is left above. It
+    // is a panel of its own at the bottom, as high as its content this frame, so the buttons under
+    // the box are always in view.
+    let edit_max = (ui.available_height() * 0.4).clamp(48.0, 160.0);
     let busy = state == State::Busy;
-    let edit = egui::TextEdit::multiline(&mut app.agent_chat.input)
-        .hint_text(tr(if busy { "ui.agent_chat_placeholder_busy" } else { "ui.agent_chat_placeholder" }))
-        .desired_rows(2)
-        .desired_width(f32::INFINITY)
-        .id_salt("sc_agent_chat_input");
     // Enter sends (queues while the agent works); Ctrl/Cmd+Enter sends now; Esc stops. They are
     // read before the field sees them so no newline is typed.
     let focused = ui.memory(|m| m.has_focus(Id::new("sc_agent_chat_input")));
@@ -440,46 +541,86 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
     } else {
         (false, false)
     };
-    let r = ui.add(edit);
-    crate::scenario::publish_rect("agent_chat:input", r.rect);
-    let enter = r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
-    if esc {
+    let (mut send_clicked, mut stop_clicked, mut enter, mut pick_clicked) = (false, false, false, false);
+    let mut remove_picked_at = None;
+    egui::Panel::bottom(Id::new("sc_agent_chat_composer")).resizable(false).show_separator_line(false).frame(egui::Frame::NONE).show(ui, |ui| {
+        ui.separator();
+        // What Pick context chose for this message, each item with an ×.
+        if !app.agent_chat.picked_context.is_empty() {
+            let tray = app.agent_chat.picked_context.clone();
+            remove_picked_at = context_chips(ui, &tray, true);
+        }
+        let edit = egui::TextEdit::multiline(&mut app.agent_chat.input)
+            .hint_text(tr(if busy { "ui.agent_chat_placeholder_busy" } else { "ui.agent_chat_placeholder" }))
+            .desired_rows(2)
+            .desired_width(f32::INFINITY)
+            .id_salt("sc_agent_chat_input");
+        let r = egui::ScrollArea::vertical()
+            .id_salt("sc_agent_chat_input_scroll")
+            .max_height(edit_max)
+            .auto_shrink([false, true])
+            .show(ui, |ui| ui.add(edit))
+            .inner;
+        crate::scenario::publish_rect("agent_chat:input", r.rect);
+        enter = r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
+        ui.horizontal_wrapped(|ui| {
+            let send_b = ui.button(tr(if busy { "ui.agent_chat_queue" } else { "ui.agent_chat_send" }));
+            crate::scenario::publish_handle("agent_chat:send", send_b.rect.center());
+            send_clicked = send_b.clicked();
+            stop_clicked = busy && glyph_button(ui, "stopturn", tr("ui.agent_chat_stop_turn_tip")).clicked();
+            // A picture of the view goes with the message to agents that take pictures.
+            let images = app.agent_chat.images || !state.running();
+            let attach = ui
+                .add_enabled(images, egui::Checkbox::new(&mut app.agent_chat.attach_view, tr("ui.agent_chat_attach_view")))
+                .on_hover_text(tr("ui.agent_chat_attach_view_tip"))
+                .on_disabled_hover_text(tr("ui.agent_chat_no_images"));
+            crate::scenario::publish_handle("agent_chat:attach", attach.rect.center());
+            // What is selected in the model goes with the message: text for the agent, chips in the
+            // conversation.
+            let selected = app.session.selection.len();
+            let label = if selected > 0 {
+                format!("{} ({selected})", tr("ui.agent_chat_attach_selection"))
+            } else {
+                tr("ui.agent_chat_attach_selection").to_string()
+            };
+            let pick =
+                ui.add(egui::Checkbox::new(&mut app.agent_chat.attach_selection, label)).on_hover_text(tr("ui.agent_chat_attach_selection_tip"));
+            crate::scenario::publish_handle("agent_chat:attach_selection", pick.rect.center());
+            // Choose faces, edges, features and bodies on purpose, then OK.
+            let picker = ui
+                .add_enabled(app.dialog.is_none(), egui::Button::new(tr("ui.agent_chat_pick_context")))
+                .on_hover_text(tr("ui.agent_chat_pick_context_tip"));
+            crate::scenario::publish_handle("agent_chat:pick_context", picker.rect.center());
+            pick_clicked = picker.clicked();
+        });
+    });
+    if let Some(at) = remove_picked_at {
+        remove_picked(app, at);
+    }
+    if pick_clicked {
+        start_pick(app);
+    }
+    egui::ScrollArea::vertical()
+        .id_salt("sc_agent_chat_scroll")
+        .max_height(ui.available_height())
+        .auto_shrink([false, false])
+        .stick_to_bottom(true)
+        .show(ui, |ui| {
+            conversation(app, ui);
+        });
+    if esc || stop_clicked {
         cancel(app);
     }
-    ui.horizontal_wrapped(|ui| {
-        let send_b = ui.button(tr(if busy { "ui.agent_chat_queue" } else { "ui.agent_chat_send" }));
-        crate::scenario::publish_handle("agent_chat:send", send_b.rect.center());
-        if (send_b.clicked() || enter || steer) && !app.agent_chat.input.trim().is_empty() {
-            let text = std::mem::take(&mut app.agent_chat.input).trim_end_matches('\n').to_string();
-            send(app, ui.ctx(), text);
-            if steer {
-                send_now(app, ui.ctx());
-            }
-        } else if steer {
-            // Nothing typed: Ctrl+Enter sends what is already queued.
+    if (send_clicked || enter || steer) && !app.agent_chat.input.trim().is_empty() {
+        let text = std::mem::take(&mut app.agent_chat.input).trim_end_matches('\n').to_string();
+        send(app, ui.ctx(), text);
+        if steer {
             send_now(app, ui.ctx());
         }
-        if busy && glyph_button(ui, "stopturn", tr("ui.agent_chat_stop_turn_tip")).clicked() {
-            cancel(app);
-        }
-        // A picture of the view goes with the message to agents that take pictures.
-        let images = app.agent_chat.images || !state.running();
-        let attach = ui
-            .add_enabled(images, egui::Checkbox::new(&mut app.agent_chat.attach_view, tr("ui.agent_chat_attach_view")))
-            .on_hover_text(tr("ui.agent_chat_attach_view_tip"))
-            .on_disabled_hover_text(tr("ui.agent_chat_no_images"));
-        crate::scenario::publish_handle("agent_chat:attach", attach.rect.center());
-        // What is selected in the model goes with the message: text for the agent, chips in the
-        // conversation.
-        let selected = app.session.selection.len();
-        let label = if selected > 0 {
-            format!("{} ({selected})", tr("ui.agent_chat_attach_selection"))
-        } else {
-            tr("ui.agent_chat_attach_selection").to_string()
-        };
-        let pick = ui.add(egui::Checkbox::new(&mut app.agent_chat.attach_selection, label)).on_hover_text(tr("ui.agent_chat_attach_selection_tip"));
-        crate::scenario::publish_handle("agent_chat:attach_selection", pick.rect.center());
-    });
+    } else if steer {
+        // Nothing typed: Ctrl+Enter sends what is already queued.
+        send_now(app, ui.ctx());
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -732,18 +873,24 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
     // Allow (true), Deny (false), Always allow (None).
     let mut approval: Option<(u64, Option<bool>)> = None;
     let mut undo: Option<usize> = None;
+    let mut open_gallery: Option<Gallery> = None;
     let current_doc = app.session.doc.clone();
     for (n, item) in app.agent_chat.items.iter().enumerate() {
         match item {
-            Item::User { text, image, context } => {
+            Item::User { text, image, pictures, context } => {
                 ui.add_space(6.0);
                 egui::Frame::NONE.fill(t.accent_soft).corner_radius(6.0).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.add(egui::Label::new(RichText::new(text).color(t.text)).selectable(true).wrap());
-                    if *image {
+                    if !pictures.is_empty() {
+                        if let Some(at) = picture_strip(ui, n, pictures) {
+                            open_gallery = Some(Gallery { pictures: pictures.clone(), at });
+                        }
+                    } else if *image {
+                        // Taken when the agent starts on the message: nothing to show yet.
                         ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim).size(11.0));
                     }
-                    context_chips(ui, context);
+                    context_chips(ui, context, false);
                 });
             }
             Item::Agent { thought, text } => {
@@ -896,7 +1043,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
                     if p.image {
                         ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim).size(11.0));
                     }
-                    context_chips(ui, &p.context);
+                    context_chips(ui, &p.context, false);
                 }
             }
         });
@@ -939,6 +1086,9 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     if send_queue_clicked {
         send_now(app, ui.ctx());
+    }
+    if open_gallery.is_some() {
+        app.agent_chat.gallery = open_gallery;
     }
     if let Some((n, o)) = answer {
         answer_permission(app, n, o.as_deref());

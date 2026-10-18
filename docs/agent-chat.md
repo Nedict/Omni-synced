@@ -153,7 +153,11 @@ The agent reaches the open design only through SolidCraft's own tools (the
   (with **Copy**), bold, italic, `code` and links (web links only; each link is a button that opens
   it in your browser). What you type, and the agent's thoughts, stay plain text.
 - **Attach view:** tick it to send a picture of the current view with your message, for agents
-  that take pictures.
+  that take pictures. The picture is taken when the agent starts on the message and then shows as
+  a small thumbnail under it. Hold the pointer over the thumbnail for a bigger preview that stays
+  while you do; click it to open the viewer (the message's pictures one at a time, with **‹** and
+  **›** or the arrow keys, closed with Esc or a click outside). A long message scrolls inside its
+  box, so **Send** and the buttons beside it stay in view.
 - **Attach selection:** tick it to send what is selected in the model with your message, so the
   agent knows what "this edge" or "that feature" is. The box shows how many things are selected.
   Faces and edges go with the names and numbers the agent's tools take and with their size and
@@ -163,6 +167,13 @@ The agent reaches the open design only through SolidCraft's own tools (the
   hover a chip for what the agent was told about it. At most 64 things go with one message; the
   rest are counted ("+N more"), not dropped silently. The selection is read when you send, also for
   a message that waits in the queue.
+- **Pick context:** press it to choose what the message is about on purpose. A picker opens with
+  three lists, **Elements** (faces, edges, vertices), **Features** (steps of the timeline) and
+  **Bodies**; click things in the model, the timeline or the browser to put them in the list that
+  is active (click a list to make it active; click a picked thing again to take it out). **OK**
+  puts them as chips above the message box, each with a **×**; they go with the next message like
+  an attached selection (and are shown the same way), and the box is empty again afterwards.
+  **Cancel** keeps what was picked before.
 
 ## Permissions
 
