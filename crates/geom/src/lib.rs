@@ -14,6 +14,7 @@ pub mod blend;
 pub mod brep;
 pub mod bspline;
 mod bvh;
+mod chain;
 pub mod compare;
 pub mod env;
 pub mod fill;
@@ -23,7 +24,6 @@ pub mod mesh_distance;
 pub mod network;
 mod plane;
 mod profile;
-mod ring;
 pub mod section;
 pub mod spline_space;
 pub mod tess;
@@ -33,10 +33,10 @@ mod vec;
 pub use arcfit::MAX_FIT_PIECES;
 pub use blend::hermite_bezier;
 pub use bvh::{Bvh, MeshIndex};
+pub use chain::{Chain, Closed, Ends, Open, Path, Ring};
 pub use mesh::{Aabb3, BoxedTriangle, InsideIndex, MassProperties, Mesh, MeshMeasure, find_close_pair};
 pub use plane::Plane;
 pub use profile::{Loop2, MAX_BEZIER_CTRL, MAX_BEZIER_DEGREE, MAX_DERIVATIVE_ORDER, Region2, Seg2, bezier, regions_apart};
-pub use ring::Ring;
 pub use vec::{Vec2, Vec3};
 
 /// Geometric tolerance for coincidence tests (mm).

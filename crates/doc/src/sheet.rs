@@ -59,7 +59,7 @@ impl FlatWork {
     }
 }
 
-fn flat_polyline(lp: &Loop2) -> Result<Vec<Vec2>> {
+fn flat_polyline(lp: &Loop2) -> Result<Ring<Vec2>> {
     if lp.segs.len() > MAX_FLAT_POINTS {
         return Err(flat_budget_error());
     }
@@ -72,7 +72,7 @@ fn flat_polyline(lp: &Loop2) -> Result<Vec<Vec2>> {
         }
         points.extend(p.iter().take(add));
     }
-    Ok(points)
+    Ok(Ring::new(points))
 }
 
 fn flat_points(polys: &[Vec<Vec2>]) -> Result<usize> {
@@ -183,10 +183,7 @@ pub(crate) struct NearHoles<'a> {
 
 /// A loop's bounding box, a little larger than its chords so arcs stay inside.
 fn loop_box(lp: &Loop2) -> Result<(Vec2, Vec2)> {
-    let pts = flat_polyline(lp)?;
-    let (lo, hi) = pts.iter().fold((Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN)), |(lo, hi), p| {
-        (Vec2::new(lo.x.min(p.x), lo.y.min(p.y)), Vec2::new(hi.x.max(p.x), hi.y.max(p.y)))
-    });
+    let (lo, hi) = flat_polyline(lp)?.bounds();
     let pad = 1e-3 + 1e-9 * (lo.x.abs() + lo.y.abs() + hi.x.abs() + hi.y.abs());
     Ok((lo - Vec2::new(pad, pad), hi + Vec2::new(pad, pad)))
 }
@@ -1681,11 +1678,7 @@ impl SheetBody {
             .labels
             .iter()
             .map(|r| {
-                let (mut lo, mut hi) = (Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN));
-                for p in r.outer.polyline(1e-3) {
-                    lo = Vec2::new(lo.x.min(p.x), lo.y.min(p.y));
-                    hi = Vec2::new(hi.x.max(p.x), hi.y.max(p.y));
-                }
+                let (lo, hi) = r.outer.polyline(1e-3).bounds();
                 // A polyline of 0.001 mm chords is within 0.001 mm of the curve.
                 let pad = Vec2::new(0.01, 0.01);
                 (lo - pad, hi + pad, std::iter::once(&r.outer).chain(&r.holes).flat_map(|lp| lp.segs.iter().copied()).collect())
@@ -1789,8 +1782,7 @@ impl SheetBody {
             .iter()
             .map(|r| {
                 let pts = r.outer.polyline(1e-3);
-                let lo = pts.iter().fold(Vec2::new(f64::MAX, f64::MAX), |a, p| Vec2::new(a.x.min(p.x), a.y.min(p.y)));
-                let hi = pts.iter().fold(Vec2::new(f64::MIN, f64::MIN), |a, p| Vec2::new(a.x.max(p.x), a.y.max(p.y)));
+                let (lo, hi) = pts.bounds();
                 (pts, lo, hi)
             })
             .collect();
@@ -3993,11 +3985,7 @@ fn clear_of(a: Vec2, d: Vec2, len: f64, cuts: &[Region2]) -> Vec<(f64, f64)> {
     let near: Vec<&Region2> = cuts
         .iter()
         .filter(|r| {
-            let pts = r.outer.polyline(1e-3);
-            let (mut p0, mut p1) = (Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN));
-            for p in &pts {
-                (p0, p1) = (Vec2::new(p0.x.min(p.x), p0.y.min(p.y)), Vec2::new(p1.x.max(p.x), p1.y.max(p.y)));
-            }
+            let (p0, p1) = r.outer.polyline(1e-3).bounds();
             p0.x <= hi.x && lo.x <= p1.x && p0.y <= hi.y && lo.y <= p1.y
         })
         .collect();

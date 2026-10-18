@@ -533,7 +533,7 @@ impl Loop2 {
     /// Each segment with the next and the last with the first: the loop's joints, where one
     /// segment should end on the start of the next.
     pub fn joints(&self) -> impl Iterator<Item = (&Seg2, &Seg2)> + Clone {
-        crate::ring::around(&self.segs)
+        crate::chain::around(&self.segs)
     }
     /// The loop as a polyline within `tol`: each segment's points but its last, which the next
     /// segment starts on.
@@ -787,8 +787,7 @@ pub fn regions_apart(regions: &[Region2], gap: f64) -> bool {
         if outer.iter().any(|p| !p.is_finite()) {
             return false;
         }
-        let lo = outer.iter().fold(Vec2::new(f64::MAX, f64::MAX), |m, p| Vec2::new(m.x.min(p.x), m.y.min(p.y)));
-        let hi = outer.iter().fold(Vec2::new(f64::MIN, f64::MIN), |m, p| Vec2::new(m.x.max(p.x), m.y.max(p.y)));
+        let (lo, hi) = outer.bounds();
         let Some(inside) = outer.first().copied() else { return false };
         outlines.push(Outline { loops, lo, hi, inside });
     }

@@ -498,14 +498,7 @@ pub fn without_text_counters(sk: &Sketch, profiles: Vec<Profile>) -> Vec<Profile
     }
     // Outer polylines and their boxes, once.
     let polys: Vec<Ring<Vec2>> = profiles.iter().map(|p| p.region.outer.polyline(1e-3)).collect();
-    let boxes: Vec<(Vec2, Vec2)> = polys
-        .iter()
-        .map(|pl| {
-            pl.iter().fold((Vec2::new(f64::INFINITY, f64::INFINITY), Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY)), |(lo, hi), p| {
-                (Vec2::new(lo.x.min(p.x), lo.y.min(p.y)), Vec2::new(hi.x.max(p.x), hi.y.max(p.y)))
-            })
-        })
-        .collect();
+    let boxes: Vec<(Vec2, Vec2)> = polys.iter().map(|pl| pl.bounds()).collect();
     let areas: Vec<f64> = profiles.iter().map(|p| p.region.outer.signed_area().abs()).collect();
     let keep: Vec<bool> = (0..profiles.len())
         .map(|i| {
@@ -1017,14 +1010,7 @@ fn find_profiles_bounded(sk: &Sketch, max_edges: usize) -> Vec<Profile> {
     // Nesting: parent = smallest containing loop from another component. Bounding boxes rule
     // out most pairs before the point-in-loop test.
     let areas: Vec<f64> = loops.iter().map(|(l, _, _, _)| l.signed_area().abs()).collect();
-    let boxes: Vec<(Vec2, Vec2)> = loops
-        .iter()
-        .map(|(l, _, _, _)| {
-            l.polyline(1e-3).iter().fold((Vec2::new(f64::INFINITY, f64::INFINITY), Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY)), |(lo, hi), p| {
-                (Vec2::new(lo.x.min(p.x), lo.y.min(p.y)), Vec2::new(hi.x.max(p.x), hi.y.max(p.y)))
-            })
-        })
-        .collect();
+    let boxes: Vec<(Vec2, Vec2)> = loops.iter().map(|(l, _, _, _)| l.polyline(1e-3).bounds()).collect();
     let inside_box = |j: usize, p: Vec2| boxes.get(j).is_some_and(|(lo, hi)| p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y);
     let mut parent_of: Vec<Option<usize>> = vec![None; loops.len()];
     for (i, (li, _, ci, _)) in loops.iter().enumerate() {
