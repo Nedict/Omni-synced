@@ -298,6 +298,16 @@ fn groups(t: &Tokens) -> Vec<Group> {
         ),
         group("section", &[("section_cap", t.section_cap)], &[("body", t.body)]),
         group("interference", &[("interference", t.interference)], &[("body", t.body)]),
+        group(
+            "continuity seams",
+            &[
+                ("continuity[0]", t.continuity[0]),
+                ("continuity[1]", t.continuity[1]),
+                ("continuity[2]", t.continuity[2]),
+                ("continuity[3]", t.continuity[3]),
+            ],
+            &[("body", t.body), ("viewport_top", t.viewport_top)],
+        ),
         // The scale's three stops, unlit. Shaded (a stop at one angle to the light, the next at
         // another), middle and tight merge for a red-green loss (3.3 protan, 5.2 deutan) and flat
         // and middle for tritan (4.6). That is the scale's own fault, in Off too: #975.
@@ -711,6 +721,7 @@ fn the_sections_messages_are_in_every_catalog() {
         .chain(["ui.colour_vision", "ui.colour_vision_mode", "ui.colour_vision_sample", "ui.colour_vision_note"])
         .collect();
     for (lang, text) in [
+        ("cs", include_str!("../../../assets/locales/cs.json")),
         ("de", include_str!("../../../assets/locales/de.json")),
         ("ja", include_str!("../../../assets/locales/ja.json")),
         ("ko", include_str!("../../../assets/locales/ko.json")),

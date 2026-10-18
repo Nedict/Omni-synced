@@ -32,6 +32,13 @@ Editable drawing code, native projects and shipped exports are collected under `
 | docs/screenshots/demo-0.8.mp4 | SolidCraft contributors | original screen recording of the actual SolidCraft 0.8 English desktop UI modelling an original Raspberry Pi 4 case (no logos or branding; the engraved text is set in the system's DejaVu Sans Bold), generated with examples/demo/record_ui.sh and its original animated pointer overlay (9× playback) | MIT OR Apache-2.0 |
 | docs/screenshots/rover-build.gif | 0xlillith (model); SolidCraft contributors (recording) | screen recording of the actual SolidCraft desktop UI replaying the timeline of the SELENE rover (`Rover-recorded.solidcraft` from https://github.com/0xlillith/solidcraft-rover, an original model by 0xlillith built through SolidCraft MCP); the model's lettering follows Ubuntu Light outlines (Canonical Ltd., Ubuntu Font Licence 1.0, as noted in that repository); the emblem is the SolidCraft project icon (2× playback) | MIT OR Apache-2.0 |
 | docs/screenshots/rover-build.mp4 | 0xlillith (model); SolidCraft contributors (recording) | screen recording of the actual SolidCraft desktop UI replaying the timeline of the SELENE rover (`Rover-recorded.solidcraft` from https://github.com/0xlillith/solidcraft-rover, an original model by 0xlillith built through SolidCraft MCP); the model's lettering follows Ubuntu Light outlines (Canonical Ltd., Ubuntu Font Licence 1.0, as noted in that repository); the emblem is the SolidCraft project icon | MIT OR Apache-2.0 |
+| docs/design/ux-redesign/model-floating.png | SolidCraft contributors | original UX mockup (Model tab, floating layout) rendered from an HTML mockup that uses the original Technical Accent icon set; no third-party artwork, and not a screenshot of any other CAD product | MIT OR Apache-2.0 |
+| docs/design/ux-redesign/model-compact.png | SolidCraft contributors | original UX mockup (Model tab, compact docked layout) rendered from an HTML mockup that uses the original Technical Accent icon set; no third-party artwork, and not a screenshot of any other CAD product | MIT OR Apache-2.0 |
+| docs/design/ux-redesign/sketch.png | SolidCraft contributors | original UX mockup (Sketch tab) rendered from an HTML mockup that uses the original Technical Accent icon set; no third-party artwork, and not a screenshot of any other CAD product | MIT OR Apache-2.0 |
+| docs/design/ux-redesign/sheet-metal.png | SolidCraft contributors | original UX mockup (Sheet Metal contextual tab) rendered from an HTML mockup that uses the original Technical Accent icon set; no third-party artwork, and not a screenshot of any other CAD product | MIT OR Apache-2.0 |
+| docs/design/ux-redesign/start-page.png | SolidCraft contributors | original UX mockup (start page (File view)) rendered from an HTML mockup that uses the original Technical Accent icon set; no third-party artwork, and not a screenshot of any other CAD product | MIT OR Apache-2.0 |
+| docs/design/ux-redesign/workspaces.png | SolidCraft contributors | original UX mockup (workspace switcher) rendered from an HTML mockup that uses the original Technical Accent icon set; no third-party artwork, and not a screenshot of any other CAD product | MIT OR Apache-2.0 |
+| docs/design/ux-redesign/command-map.png | SolidCraft contributors | original UX mockup (ribbon command map) rendered from an HTML mockup that uses the original Technical Accent icon set; no third-party artwork, and not a screenshot of any other CAD product | MIT OR Apache-2.0 |
 | assets/branding/web/source/og.png | SolidCraft contributors | original 1280 × 640 social preview card (the SolidCraft mark, name and tagline), served by the docs site for link previews | MIT OR Apache-2.0 |
 | docs/book/src/generated/sample-plate.png | SolidCraft contributors | copy of docs/screenshots/sample-plate.png made by `cargo xtask book` (gitignored) | MIT OR Apache-2.0 |
 | docs/book/src/generated/bracket.png | SolidCraft contributors | rendered by `cargo xtask book` (`solidcraft-cli snapshot examples/bracket.json`; gitignored) | MIT OR Apache-2.0 |
@@ -80,8 +87,10 @@ Editable drawing code, native projects and shipped exports are collected under `
 | assets/icons/ui/source/markers.rs | SolidCraft contributors | Original SolidCraft resource data or drawing code, collected without redesign | MIT OR Apache-2.0 |
 | assets/icons/ui/source/navigation.rs | SolidCraft contributors | Original SolidCraft resource data or drawing code, collected without redesign | MIT OR Apache-2.0 |
 | assets/icons/ui/source/pointer.rs | SolidCraft contributors | Original SolidCraft resource data or drawing code, collected without redesign | MIT OR Apache-2.0 |
+| assets/locales/cs.json | potuzai | Czech translation of the English catalog, contributed upstream | MIT OR Apache-2.0 |
 | assets/locales/de.json | SolidCraft contributors | Original SolidCraft resource data or drawing code, collected without redesign | MIT OR Apache-2.0 |
 | assets/locales/en.json | SolidCraft contributors | Original SolidCraft resource data or drawing code, collected without redesign | MIT OR Apache-2.0 |
+| assets/locales/es.json | jawler | Spanish (Spain) translation of the English catalog, contributed upstream | MIT OR Apache-2.0 |
 | assets/locales/fr.json | rlartot | French translation of the English catalog, contributed upstream | MIT OR Apache-2.0 |
 | assets/locales/gl.json | Pablo López (pablopeza) | Galician translation of the English catalog, contributed upstream | MIT OR Apache-2.0 |
 | assets/locales/ja.json | SolidCraft contributors | Original SolidCraft resource data or drawing code, collected without redesign | MIT OR Apache-2.0 |
@@ -101,6 +110,7 @@ Editable drawing code, native projects and shipped exports are collected under `
 | assets/platforms/windows/solidcraft.wxs | PhotoCraft / SolidCraft contributors | PhotoCraft packaging templates (https://github.com/storytold/photocraft), adapted for SolidCraft | Apache-2.0 |
 | assets/shaders/viewport.wgsl | SolidCraft contributors | Original SolidCraft resource data or drawing code, collected without redesign | MIT OR Apache-2.0 |
 | assets/styles/ui/palettes.rs | SolidCraft contributors | Original SolidCraft resource data or drawing code, collected without redesign | MIT OR Apache-2.0 |
+| assets/styles/web/loading-logo.svg | SolidCraft contributors | Animation of the SolidCraft mark, built from the paths and gradients of assets/icons/app/macos/source/SolidCraft.icon/Assets/03-solid-blue-cutout.svg; original animation | MIT OR Apache-2.0 |
 | assets/styles/web/loading.css | SolidCraft contributors | Original SolidCraft resource data or drawing code, collected without redesign | MIT OR Apache-2.0 |
 | crates/io/src/native_cad/fixtures/block.FCStd | SolidCraft contributors | original 10 × 20 × 30 mm test box saved by FreeCAD 1.1.4 run as an external program (`make_block_fcstd.py` beside it); no third-party geometry | MIT OR Apache-2.0 |
 | crates/io/src/native_cad/fixtures/block.3dm | SolidCraft contributors | original 10 × 20 × 30 mm test box written with McNeel's MIT-licensed rhino3dm Python package (`make_block_3dm.py` beside it); no third-party geometry | MIT OR Apache-2.0 |
@@ -465,3 +475,5 @@ and shares that effective count with the surface attachments and CAD callbacks.
 Vulkan, DirectX 12, Metal and WebGPU retain their requested multisampling.
 A frame whose meshes the GPU refuses to stage (device lost or out of memory) is
 skipped with a warning instead of panicking (#1469).
+Paint callbacks are prepared only after a drawable is acquired, so a skipped
+surface frame cannot strand cached meshes without their GPU initialization.
