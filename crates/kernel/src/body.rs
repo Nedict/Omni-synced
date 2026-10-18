@@ -978,6 +978,22 @@ impl Body {
         if d.is_finite() && d > 0.0 { d } else { 1.0 }
     }
 
+    /// Bounds of the body's topological vertices, or its mesh vertices for a mesh body.
+    /// Useful as a conservative framing fallback when tessellation produces extreme points.
+    pub fn vertex_bounds(&self) -> solidcraft_geom::Aabb3 {
+        let mut bounds = solidcraft_geom::Aabb3::EMPTY;
+        if let Some(mesh) = &self.mesh {
+            for point in &mesh.positions {
+                bounds.add(*point);
+            }
+        } else {
+            for vertex in self.solid.vertex_iter() {
+                bounds.add(from_p3(vertex.point()));
+            }
+        }
+        bounds
+    }
+
     /// The body's volume from a mesh at `tol`, measured once per (solid, tolerance): clones of
     /// a body share the measurement, so an operand a later boolean takes again is not meshed
     /// twice for the same number. `None` when the body cannot be meshed.

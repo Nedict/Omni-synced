@@ -6,7 +6,7 @@ use std::sync::{Arc, OnceLock};
 
 use serde::Serialize;
 use solidcraft_geom::tess::TessPlan;
-use solidcraft_geom::{Mesh, Plane, Region2, Vec2, Vec3, regions_apart};
+use solidcraft_geom::{Aabb3, Mesh, Plane, Region2, Vec2, Vec3, regions_apart};
 use solidcraft_kernel::{self as kernel, Body, BoolOp};
 use solidcraft_sketch::{CurveKind, Profile, SolveReport, find_profiles};
 
@@ -86,6 +86,18 @@ impl ModelBody {
         self.mesh
             .get_or_init(|| Arc::new(self.body.reference_display_mesh_angular(self.display_tol(), kernel::DISPLAY_ANGLE).unwrap_or_default()))
             .clone()
+    }
+
+    /// Bounds to frame this body in a view. Fall back to topology vertices when its generated
+    /// display mesh is empty or wildly larger than the body's source geometry.
+    pub fn framing_bounds(&self) -> Aabb3 {
+        let display_bounds = self.plan_mesh().map(|mesh| mesh.bounds()).unwrap_or_else(|| self.mesh().bounds());
+        let vertex_bounds = self.body.vertex_bounds();
+        if !vertex_bounds.is_empty() && (display_bounds.is_empty() || display_bounds.diagonal() > self.body.size() * 10.0) {
+            vertex_bounds
+        } else {
+            display_bounds
+        }
     }
 
     /// The display plan of this body at the viewport's display quality

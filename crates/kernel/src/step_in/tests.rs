@@ -653,6 +653,21 @@ fn hand_written_assembly() {
     assert!((root.children[1].transform[3][0] - 100.0).abs() < 1e-9);
 }
 
+#[test]
+fn cartesian_transformation_operator_applies_axes_origin_and_scale() {
+    let text = two_instance_assembly()
+        .replace("#84=AXIS2_PLACEMENT_3D('',#85,#86,#87);", "#84=CARTESIAN_TRANSFORMATION_OPERATOR_3D('',#1001,#1002,#85,2.,#1003);")
+        .replace(TAIL, &format!("#1001=DIRECTION('',(0.,1.,0.));\n#1002=DIRECTION('',(-1.,0.,0.));\n#1003=DIRECTION('',(0.,0.,1.));\n{TAIL}"));
+    let imported = step_import(&text).unwrap();
+    assert!(imported.warnings.is_empty(), "{:?}", imported.warnings);
+    assert_eq!(imported.bodies.len(), 2);
+
+    let placed = measure(&imported.bodies[1].body).unwrap();
+    assert!(rel(placed.volume, 8000.0) < 1e-9, "{}", placed.volume);
+    assert!(placed.bbox.min.dist(Vec3::new(80.0, 0.0, 0.0)) < 1e-6, "{:?}", placed.bbox);
+    assert!(placed.bbox.max.dist(Vec3::new(100.0, 20.0, 20.0)) < 1e-6, "{:?}", placed.bbox);
+}
+
 /// A part an assembly places twice is meshed once: the second instance shows the first one's
 /// display mesh, placed (the same triangles and faces, at its own place), and keeps its own
 /// placed geometry for everything else.

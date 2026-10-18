@@ -558,9 +558,7 @@ impl Reader {
         let cx = Ctx { ex: &self.ex, len: u.len, ang: u.ang, tol: u.tol };
         let e = geom::entity(&cx, item)?;
         if e.name() == "CARTESIAN_TRANSFORMATION_OPERATOR_3D" {
-            let p = e.params();
-            let o = geom::point(&cx, p.get(4).and_then(Param::as_ref_id).ok_or("transformation without origin")?)?;
-            return Ok(mt::Matrix4::from_translation(o.to_homogeneous().truncate()));
+            return geom::transformation_operator(&cx, item);
         }
         Ok(geom::frame(&cx, item)?.matrix())
     }
