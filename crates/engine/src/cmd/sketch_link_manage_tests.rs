@@ -382,3 +382,161 @@ fn a_tilted_source_changes_shape_visibly_and_never_panics() {
     let sk = &st.sketch(sketch).unwrap().sketch;
     assert!(sk.link(&edge).is_some() && sk.link(&face).is_some());
 }
+
+/// Part A: a `w` × 40 × 10 plate (`w` a parameter, 40 mm), optionally with a Ø10 hole at
+/// (20, 20), placed twice (A:2 at x = 100); part B's sketch projects A:2's top face.
+/// Returns (session, A:2, sketch, face link).
+fn parametric_plate(hole: bool) -> (Session, u64, u64, String) {
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name":"w","expression":"40 mm"}));
+    let a1 = run(&mut s, "component.create", json!({"name":"A"}))["occurrence"].as_u64().unwrap();
+    run(&mut s, "solid.box", json!({"length":"w","width":40,"height":10,"body_name":"Plate"}));
+    if hole {
+        run(&mut s, "solid.cylinder", json!({"radius":5,"height":10,"base":[20,20,0],"operation":"cut","targets":["Plate"]}));
+    }
+    let a2 = run(&mut s, "occurrence.copy", json!({"occurrence":a1}))["occurrence"].as_u64().unwrap();
+    run(&mut s, "occurrence.move", json!({"occurrence":a2,"translate":[100,0,0]}));
+    run(&mut s, "component.activate", json!({"component":0}));
+    run(&mut s, "component.create", json!({"name":"B"}));
+    let sketch = run(&mut s, "sketch.create", json!({"plane":"XY","name":"Receiver"}))["sketch"].as_u64().unwrap();
+    let face = top_face_of_second(&mut s, a2);
+    (s, a2, sketch, face)
+}
+
+/// The link's lines in the evaluated (or stored) sketch: id and end points.
+fn link_lines(s: &Session, sketch: u64, link: &str, stored: bool) -> Vec<(String, Vec2, Vec2)> {
+    let st = s.model.state();
+    let sk = if stored { s.doc.sketch(sketch).unwrap().clone() } else { st.sketch(sketch).unwrap().sketch.clone() };
+    sk.link_curves(link)
+        .into_iter()
+        .filter_map(|c| match sk.curves[c].kind {
+            CurveKind::Line { a, b } => Some((sk.curves[c].id.clone(), sk.point(a)?, sk.point(b)?)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A line along x = `x` (both ends there).
+fn on_x(lines: &[(String, Vec2, Vec2)], x: f64) -> Option<String> {
+    lines.iter().find(|(_, a, b)| (a.x - x).abs() < 1e-6 && (b.x - x).abs() < 1e-6).map(|(id, ..)| id.clone())
+}
+
+#[test]
+fn a_deleted_edge_stays_that_edge_when_the_source_is_resized() {
+    let (mut s, _, sketch, face) = parametric_plate(false);
+    let lines = link_lines(&s, sketch, &face, true);
+    assert_eq!(lines.len(), 4);
+    let right = on_x(&lines, 140.0).expect("the right edge at x = 140");
+    let left = on_x(&lines, 100.0).expect("the left edge at x = 100");
+    // A line of the sketch's own, held parallel to the left edge: its constraint must survive.
+    let own = run(&mut s, "sketch.line", json!({"points":[[90,0],[90,30]]}))["curves"][0].as_str().unwrap().to_string();
+    run(&mut s, "sketch.constraint.parallel", json!({"a":own,"b":left}));
+    run(&mut s, "sketch.delete", json!({"entities":[right]}));
+    let constraints = s.doc.sketch(sketch).unwrap().constraints.len();
+    run(&mut s, "sketch.finish", json!({}));
+    // Ten times as wide: the right edge moves to x = 500, the left stays at x = 100.
+    run(&mut s, "parameters.change", json!({"name":"w","expression":"400 mm"}));
+    run(&mut s, "sketch.update_references", json!({}));
+    let check = |s: &Session, stored: bool| {
+        let lines = link_lines(s, sketch, &face, stored);
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        assert!(on_x(&lines, 500.0).is_none(), "the deleted right edge stays deleted: {lines:?}");
+        assert_eq!(on_x(&lines, 100.0), Some(left.clone()), "the left edge stays, with its id: {lines:?}");
+        assert!(lines.iter().any(|(_, a, b)| (a.y - b.y).abs() < 1e-6 && (a.x - b.x).abs() > 399.0), "top and bottom span the new width");
+        assert!(!s.model.state().sketch(sketch).unwrap().sketch.link(&face).unwrap().lost);
+        assert_eq!(s.doc.sketch(sketch).unwrap().constraints.len(), constraints, "the constraint on the left edge survives");
+    };
+    check(&s, false);
+    check(&s, true);
+    let mut reopened = Session { doc: solidcraft_doc::format::read(&s.doc.to_json()).unwrap().into(), ..Default::default() };
+    reopened.refresh();
+    check(&reopened, false);
+    // Back to 40 mm and wider again: still the same edge left out.
+    run(&mut s, "parameters.change", json!({"name":"w","expression":"25 mm"}));
+    let lines = link_lines(&s, sketch, &face, false);
+    assert!(on_x(&lines, 125.0).is_none() && on_x(&lines, 100.0).is_some(), "{lines:?}");
+}
+
+/// The link's round curves (the hole's boundary) in the evaluated sketch: centres.
+fn rounds(s: &Session, sketch: u64, link: &str) -> Vec<(String, Vec2)> {
+    let st = s.model.state();
+    let sk = &st.sketch(sketch).unwrap().sketch;
+    sk.link_curves(link)
+        .into_iter()
+        .filter_map(|c| match sk.curves[c].kind {
+            CurveKind::Circle { c: centre, .. } | CurveKind::Arc { c: centre, .. } => Some((sk.curves[c].id.clone(), sk.point(centre)?)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn half_a_hole_is_refused_and_the_whole_hole_stays_deleted_through_a_resize() {
+    let (mut s, _, sketch, face) = parametric_plate(true);
+    let hole: Vec<String> = rounds(&s, sketch, &face).into_iter().map(|(id, _)| id).collect();
+    assert_eq!(hole.len(), 2, "the hole comes as two halves, one per piece of its wall");
+    // One half: its wall's two pieces are told apart only by number, so it is refused.
+    let before = s.doc.to_json();
+    let e = s.execute("sketch.delete", &json!({"entities":[hole[0]]})).unwrap_err();
+    assert!(e.to_string().contains("delete them together"), "{e}");
+    assert_eq!(s.doc.to_json(), before);
+    // The whole hole: kept out by its wall's family, however far the plate grows.
+    let outer: Vec<String> = link_lines(&s, sketch, &face, true).into_iter().map(|(id, ..)| id).collect();
+    run(&mut s, "sketch.delete", json!({"entities":hole}));
+    assert_eq!(s.doc.sketch(sketch).unwrap().link(&face).unwrap().omit_edges.len(), 1, "one family");
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "parameters.change", json!({"name":"w","expression":"400 mm"}));
+    let r = run(&mut s, "sketch.update_references", json!({}));
+    assert_eq!(r["ok"], true, "{r}");
+    let check = |s: &Session| {
+        assert!(rounds(s, sketch, &face).is_empty(), "the hole stays deleted");
+        let mut ids: Vec<String> = link_lines(s, sketch, &face, false).into_iter().map(|(id, ..)| id).collect();
+        ids.sort();
+        let mut want = outer.clone();
+        want.sort();
+        assert_eq!(ids, want, "the four outer edges stay, with their ids");
+        assert!(on_x(&link_lines(s, sketch, &face, false), 500.0).is_some(), "the right edge moved with the width");
+    };
+    check(&s);
+    let mut reopened = Session { doc: solidcraft_doc::format::read(&s.doc.to_json()).unwrap().into(), ..Default::default() };
+    reopened.refresh();
+    check(&reopened);
+}
+
+#[test]
+fn a_deleted_member_whose_source_edge_is_gone_makes_the_projection_lost_not_shorter() {
+    let (mut s, _, sketch, face) = parametric_plate(true);
+    let hole: Vec<String> = rounds(&s, sketch, &face).into_iter().map(|(id, _)| id).collect();
+    run(&mut s, "sketch.delete", json!({"entities":hole}));
+    run(&mut s, "sketch.finish", json!({}));
+    let kept = link_lines(&s, sketch, &face, false);
+    // The hole is suppressed: its wall's edges, the deleted members, no longer exist.
+    let cylinder = s.doc.features.iter().find(|f| f.name.starts_with("Cylinder")).unwrap().id;
+    run(&mut s, "timeline.suppress", json!({"feature":cylinder,"suppressed":true}));
+    let st = s.model.state();
+    assert!(st.sketch(sketch).unwrap().sketch.link(&face).unwrap().lost, "lost, not quietly re-projected");
+    assert_eq!(link_lines(&s, sketch, &face, false), kept, "the last geometry stays");
+    let refs = run(&mut s, "sketch.references", json!({"sketch":sketch}));
+    assert_eq!(refs["references"][0]["status"], "lost");
+    assert!(refs["references"][0]["reason"].as_str().unwrap().contains("deleted projected edge"), "{refs}");
+    // Back again: the projection is whole minus its hole once more.
+    run(&mut s, "timeline.suppress", json!({"feature":cylinder,"suppressed":false}));
+    assert!(!s.model.state().sketch(sketch).unwrap().sketch.link(&face).unwrap().lost);
+    assert!(rounds(&s, sketch, &face).is_empty());
+}
+
+#[test]
+fn part_of_a_projection_without_source_edges_is_refused() {
+    let (mut s, a2, sketch, _) = parametric_plate(false);
+    // A body silhouette: no source edge per curve, so it is kept whole.
+    let r = run(&mut s, "sketch.project", json!({"refs":[{"body":"Plate","path":[a2]}]}));
+    let silhouette = r["links"][0]["curves"].as_array().unwrap().clone();
+    assert!(silhouette.len() > 1);
+    let before = s.doc.to_json();
+    let e = s.execute("sketch.delete", &json!({"entities":[silhouette[0]]})).unwrap_err();
+    assert!(e.to_string().contains("kept whole"), "{e}");
+    assert_eq!(s.doc.to_json(), before);
+    // Removing the whole projection, or all its curves, is fine.
+    run(&mut s, "sketch.delete", json!({"entities":silhouette}));
+    assert_eq!(s.doc.sketch(sketch).unwrap().links.len(), 1);
+}

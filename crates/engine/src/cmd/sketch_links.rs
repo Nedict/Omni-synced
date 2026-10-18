@@ -10,6 +10,7 @@
 //! geometry it had.
 
 use serde_json::{Value, json};
+use solidcraft_geom::Vec2;
 use solidcraft_sketch::{LinkGeom, LinkKind, Sketch};
 
 use super::sketch::{edit, target_sketch};
@@ -117,10 +118,94 @@ fn placement_json(s: &Session, path: &[u64]) -> Value {
     json!({"path": path, "name": solidcraft_doc::project::path_label(&s.doc, path)})
 }
 
+/// The links a deletion of `ids` (curve and point ids of `sk`) takes members from: the links
+/// owning them, and those owning curves on a point that goes.
+pub(super) fn touched_links(sk: &Sketch, ids: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut add = |link: Option<&String>| {
+        if let Some(link) = link
+            && !out.contains(link)
+        {
+            out.push(link.clone());
+        }
+    };
+    for id in ids.iter().take(10_000) {
+        if let Some(c) = sk.curves.iter().find(|c| c.id == *id) {
+            add(c.link.as_ref());
+        } else if let Some(q) = sk.point_index(id) {
+            add(sk.points.get(q).and_then(|p| p.link.as_ref()));
+            for c in sk.curves.iter().filter(|c| c.kind.point_ids().contains(&q)) {
+                add(c.link.as_ref());
+            }
+        }
+    }
+    out
+}
+
+/// Distance from `p` to the segment `a`–`b`.
+fn seg_dist(p: Vec2, a: Vec2, b: Vec2) -> f64 {
+    let ab = b - a;
+    let t = if ab.len2() > 0.0 { ((p - a).dot(ab) / ab.len2()).clamp(0.0, 1.0) } else { 0.0 };
+    p.dist(a + ab * t)
+}
+
+/// Is `p` on curve `ci` of `sk`, within `tol`: on a line's segment, on an arc between its
+/// ends (not elsewhere on its circle), on a circle; on the drawn path of any other curve.
+fn on_curve(sk: &Sketch, ci: usize, p: Vec2, tol: f64) -> bool {
+    match sk.curve_link_geom(ci) {
+        Some(LinkGeom::Line(a, b)) => seg_dist(p, a, b) <= tol,
+        Some(LinkGeom::Circle(c, r)) => (p.dist(c) - r).abs() <= tol,
+        Some(LinkGeom::Arc { c, a, b }) => {
+            let r = c.dist(a);
+            if (p.dist(c) - r).abs() > tol || r <= tol {
+                return false;
+            }
+            let tau = std::f64::consts::TAU;
+            let start = (a - c).angle();
+            let sweep = ((b - c).angle() - start).rem_euclid(tau);
+            let at = ((p - c).angle() - start).rem_euclid(tau);
+            let slack = tol / r;
+            at <= sweep + slack || at >= tau - slack
+        }
+        Some(_) => {
+            let path = sk.polyline(ci);
+            let size = path.iter().zip(path.iter().skip(1)).map(|(a, b)| a.dist(*b)).sum::<f64>();
+            path.windows(2).any(|w| matches!(w, [a, b] if seg_dist(p, *a, *b) <= tol.max(size * 1e-3)))
+        }
+        None => false,
+    }
+}
+
+/// Does piece `g` lie on curve `ci` of `sk` (its ends and middle within `tol` of it)?
+fn piece_on(sk: &Sketch, ci: usize, g: &LinkGeom, tol: f64) -> bool {
+    let mut probe = vec![g.spot()];
+    match g {
+        LinkGeom::Point(p) => probe.push(*p),
+        LinkGeom::Line(a, b) | LinkGeom::Arc { a, b, .. } | LinkGeom::Conic { a, b, .. } => probe.extend([*a, *b]),
+        LinkGeom::Circle(c, r) => probe.extend([*c - Vec2::X * *r, *c + Vec2::Y * *r]),
+        LinkGeom::Ellipse { major, .. } => probe.push(*major),
+        LinkGeom::Spline { pts, .. } => probe.extend(pts.first().into_iter().chain(pts.last()).copied()),
+    }
+    probe.iter().all(|p| on_curve(sk, ci, *p, tol))
+}
+
 /// Before curves and points of a sketch are deleted: each link that keeps some of its members
-/// records the ones going ([`solidcraft_sketch::Link::omit`], in `planes`' frames), so they stay
-/// deleted when it is next updated. A curve on a point that goes, goes too.
-pub(super) fn omit_removed(sk: &mut Sketch, planes: &std::collections::BTreeMap<String, solidcraft_geom::Plane>, curves: &[usize], points: &[usize]) {
+/// records the source edges of the members going ([`solidcraft_sketch::Link::omit_edges`], by
+/// their persistent names), so exactly those stay deleted when it is next updated, however
+/// its source moves or is resized. A curve on a point that goes, goes too.
+///
+/// Only whole source edges of a face's boundary can be told apart that way. Deleting part of a
+/// projection that is not, or cannot be (part of one source edge, one of several edges between
+/// the same two faces that are numbered by where they lie, an edge whose faces' names are not
+/// exact, a silhouette, a section, a mesh body), is refused: Remove Projection removes it
+/// whole, Break Link makes its geometry editable.
+pub(super) fn omit_removed(
+    sk: &mut Sketch,
+    pieces: &std::collections::BTreeMap<String, std::result::Result<Vec<solidcraft_doc::project::EdgePieces>, String>>,
+    curves: &[usize],
+    points: &[usize],
+    cmd: &str,
+) -> Result<()> {
     let going: std::collections::BTreeSet<usize> = sk
         .curves
         .iter()
@@ -128,35 +213,70 @@ pub(super) fn omit_removed(sk: &mut Sketch, planes: &std::collections::BTreeMap<
         .filter(|(i, c)| curves.contains(i) || c.kind.point_ids().iter().any(|q| points.contains(q)))
         .map(|(i, _)| i)
         .collect();
-    let mut add: Vec<(String, solidcraft_geom::Vec3)> = Vec::new();
+    let mut add: Vec<(String, String)> = Vec::new();
     for l in sk.links.iter().filter(|l| l.kind != LinkKind::Text) {
-        let Some(plane) = planes.get(&l.id) else { continue };
         let link_curves = sk.link_curves(&l.id);
         let on_curves: std::collections::BTreeSet<usize> =
             link_curves.iter().filter_map(|c| sk.curves.get(*c)).flat_map(|c| c.kind.point_ids()).collect();
         let lone: Vec<usize> = sk.link_points(&l.id).into_iter().filter(|q| !on_curves.contains(q)).collect();
+        let deleted: Vec<usize> = link_curves.iter().copied().filter(|c| going.contains(c)).collect();
+        let lone_gone = lone.iter().any(|q| points.contains(q));
         let survives = link_curves.iter().any(|c| !going.contains(c)) || lone.iter().any(|q| !points.contains(q));
-        if !survives {
+        if !survives || (deleted.is_empty() && !lone_gone) {
             continue;
         }
-        for c in link_curves.iter().filter(|c| going.contains(c)) {
-            if let Some(g) = sk.curve_link_geom(*c) {
-                add.push((l.id.clone(), plane.to_world(g.spot())));
+        let whole = |why: &str| {
+            bad(cmd, format!("the {} is kept whole ({why}): Remove Projection removes it, Break Link makes its curves editable", l.source.describe()))
+        };
+        if lone_gone {
+            return Err(whole("its points belong to it"));
+        }
+        let edges = match pieces.get(&l.id) {
+            Some(Ok(edges)) => edges,
+            Some(Err(why)) => return Err(whole(why)),
+            None => return Err(whole("its source edges are not known")),
+        };
+        let scale = sk.points.iter().fold(1.0_f64, |m, p| m.max(p.pos.x.abs()).max(p.pos.y.abs()));
+        let tol = scale * 1e-7;
+        // Which deleted curve each piece of each source edge lies on, if any.
+        let on: Vec<Vec<Option<usize>>> =
+            edges.iter().map(|e| e.geom.iter().map(|g| deleted.iter().copied().find(|c| piece_on(sk, *c, g, tol))).collect()).collect();
+        let covered = |i: usize| on.get(i).is_some_and(|pieces| !pieces.is_empty() && pieces.iter().all(Option::is_some));
+        for (i, pieces) in on.iter().enumerate() {
+            if pieces.iter().any(Option::is_some) && !covered(i) {
+                return Err(whole("one source edge gives more curves than the ones deleted: delete them together"));
             }
         }
-        for q in lone.iter().filter(|q| points.contains(q)) {
-            if let Some(at) = sk.point(*q) {
-                add.push((l.id.clone(), plane.to_world(at)));
+        for c in &deleted {
+            if !on.iter().enumerate().any(|(i, pieces)| covered(i) && pieces.contains(&Some(*c))) {
+                return Err(whole("a deleted curve is not one of its face's source edges"));
             }
+        }
+        for (i, e) in edges.iter().enumerate().filter(|(i, _)| covered(*i)) {
+            if !e.exact {
+                return Err(whole("its source edge's name is not exact"));
+            }
+            let family = solidcraft_doc::project::omit_name(&e.name);
+            // One of a family of edges told apart only by numbers (several edges between the same
+            // two faces, or the pieces of a split face, such as a hole's two halves): the numbers
+            // may pass between them, so only the whole family is kept out.
+            if edges.iter().enumerate().any(|(j, other)| j != i && solidcraft_doc::project::omit_name(&other.name) == family && !covered(j)) {
+                return Err(whole("its source edge is one of several told apart only by number: delete them together"));
+            }
+            add.push((l.id.clone(), family));
         }
     }
-    for (id, at) in add {
+    for (id, name) in add {
         if let Some(l) = sk.links.iter_mut().find(|l| l.id == id)
-            && l.omit.len() < solidcraft_sketch::MAX_LINK_OMIT
+            && !l.omit_edges.contains(&name)
         {
-            l.omit.push(at);
+            if l.omit_edges.len() >= solidcraft_sketch::MAX_LINK_OMIT {
+                return Err(bad(cmd, "too many deleted members of one projection"));
+            }
+            l.omit_edges.push(name);
         }
     }
+    Ok(())
 }
 
 fn references(s: &mut Session, p: &Value) -> Result<Value> {
@@ -200,7 +320,7 @@ fn references(s: &mut Session, p: &Value) -> Result<Value> {
                 "hidden": l.hidden,
                 "frozen": l.frozen,
                 "construction": construction,
-                "omitted": l.omit.len(),
+                "omitted": l.omit_edges,
                 "curves": curves,
                 "points": points,
             });
@@ -373,7 +493,8 @@ fn repair_link(s: &mut Session, p: &Value) -> Result<Value> {
         l.placement = new.placement;
         l.lost = false;
         l.frozen = false;
-        l.omit.clear();
+        // Deleted members were edges of the old source.
+        l.omit_edges.clear();
     }
     sk.set_link_wires(&link, &wires)?;
     let rebuilt = sk.update_link(&link, &geom)?;

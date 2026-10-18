@@ -411,17 +411,33 @@ pub(super) fn resolve_new_placed(
     Ok(NewLink { resolved: r, face_name, edge_name, seen: relative })
 }
 
-/// The sketch plane of sketch `id` in the frame each of its links reads its source in, by link
-/// id: where [`solidcraft_sketch::Link::omit`] keeps the members deleted from it.
-pub(super) fn link_planes(s: &Session, doc: &Document, id: u64) -> std::collections::BTreeMap<String, Plane> {
+/// The source edges each of `links` (of sketch `id`) is made of now, with the geometry each
+/// gives the sketch, by link id: what deleting some of a link's curves leaves out by identity
+/// ([`solidcraft_sketch::Link::omit_edges`]). An error says why a link is kept whole.
+pub(super) fn link_pieces(
+    s: &Session,
+    doc: &Document,
+    id: u64,
+    links: &[String],
+) -> std::collections::BTreeMap<String, std::result::Result<Vec<solidcraft_doc::project::EdgePieces>, String>> {
     let raw = s.model.state_before(id);
     let shown = placed_candidate(s, doc);
-    let (Ok(framed), Ok(sk)) = (state_for_sketch(s, &shown, id, &raw), doc.sketch(id)) else { return Default::default() };
-    let Ok(plane) = sketch_plane(&shown, id, &framed) else { return Default::default() };
+    let framed = state_for_sketch(s, &shown, id, &raw).map_err(|e| e.to_string());
+    let plane = framed.as_ref().map_err(Clone::clone).and_then(|framed| sketch_plane(&shown, id, framed).map_err(|e| e.to_string()));
     let placed = solidcraft_doc::project::Placed { raw: &raw, component: doc.feature(id).map(|f| f.component).unwrap_or(0) };
-    sk.links
+    let anchor = attachment(doc, id);
+    links
         .iter()
-        .filter_map(|l| solidcraft_doc::project::link_source_plane(doc, placed, &plane, l).ok().map(|plane| (l.id.clone(), plane)))
+        .filter_map(|l| doc.sketch(id).ok()?.link(l).cloned())
+        .map(|link| {
+            let pieces = match (&framed, &plane) {
+                (Ok(framed), Ok(plane)) => {
+                    solidcraft_doc::project::face_link_edges(doc, placed, framed, plane, &link, anchor).map_err(|e| e.to_string())
+                }
+                (Err(e), _) | (_, Err(e)) => Err(e.clone()),
+            };
+            (link.id, pieces)
+        })
         .collect()
 }
 

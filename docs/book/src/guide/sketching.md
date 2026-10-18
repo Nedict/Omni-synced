@@ -128,8 +128,13 @@ eye hides it without changing the sketch (it still bounds profiles), and its men
   (`sketch.resume_link`).
 - **Remove Projection** (`sketch.remove_link`) deletes the projection's curves and points and
   the constraints on them; **Break Link** keeps them as ordinary geometry instead. Deleting
-  some of a projection's curves keeps the rest linked; the deleted ones stay deleted when it
-  is updated.
+  some of a projected face's curves keeps the rest linked. The projection remembers the
+  source edges they came from by name, so exactly those stay deleted when it is updated, the
+  part moves or the face is resized. A curve made of part of a source edge, or one of edges
+  told apart only by number (the two halves of a hole), can only be deleted together with
+  the rest of them. A projection that is not made of a face's edges (a silhouette, a section,
+  a mesh body's face) is removed whole. If a deleted member's source edge no longer exists,
+  the projection is reported lost and keeps its last geometry until it is repaired or removed.
 
 A projection whose source is gone keeps the last geometry it was stored with (Update
 References stores it) and says it is lost; it is never moved onto another copy of the part

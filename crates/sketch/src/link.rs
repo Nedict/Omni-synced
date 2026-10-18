@@ -219,11 +219,12 @@ pub struct Link {
     /// bound profiles, keep their constraints and follow their source.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
-    /// Members of the link that were deleted, each by a point of it in the frame its source is
-    /// read in ([`Link::placement`]'s source frame, else the sketch component's), so the next
-    /// update leaves them out instead of bringing them back.
+    /// Members of a face link that were deleted, by the persistent names of the source edges
+    /// they came from: the next update leaves those edges out (and nothing else) instead of
+    /// bringing them back, wherever the edges went and however their faces were resized. A
+    /// name no edge has any more makes the link lost.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub omit: Vec<Vec3>,
+    pub omit_edges: Vec<String>,
 }
 
 /// Most members one link may leave out.
@@ -284,7 +285,7 @@ impl Link {
             placement: None,
             frozen: false,
             hidden: false,
-            omit: Vec::new(),
+            omit_edges: Vec::new(),
         }
     }
 }
@@ -308,33 +309,6 @@ impl LinkGeom {
             LinkGeom::Spline { pts, .. } => pts.get(pts.len() / 2).copied().unwrap_or_default(),
         }
     }
-}
-
-/// `geom` without the members `omit` names (points in the sketch plane, [`Link::omit`] mapped
-/// into it): each takes out the member whose [`LinkGeom::spot`] is nearest it, if one lies
-/// within a quarter of the geometry's size.
-pub fn omit_members(geom: &[LinkGeom], omit: &[Vec2]) -> Vec<LinkGeom> {
-    if omit.is_empty() || geom.len() > MAX_LINK_ENTITIES {
-        return geom.to_vec();
-    }
-    let spots: Vec<Vec2> = geom.iter().map(LinkGeom::spot).collect();
-    let lo = spots.iter().fold(Vec2::new(f64::INFINITY, f64::INFINITY), |m, p| Vec2::new(m.x.min(p.x), m.y.min(p.y)));
-    let hi = spots.iter().fold(Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY), |m, p| Vec2::new(m.x.max(p.x), m.y.max(p.y)));
-    let reach = (lo.dist(hi) * 0.25).max(1e-6);
-    let mut gone = vec![false; geom.len()];
-    for q in omit.iter().take(MAX_LINK_OMIT) {
-        let best = spots
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !gone.get(*i).copied().unwrap_or(true))
-            .map(|(i, p)| (i, p.dist(*q)))
-            .filter(|(_, d)| d.is_finite() && *d <= reach)
-            .min_by(|a, b| a.1.total_cmp(&b.1));
-        if let Some(slot) = best.and_then(|(i, _)| gone.get_mut(i)) {
-            *slot = true;
-        }
-    }
-    geom.iter().zip(gone).filter(|(_, g)| !g).map(|(g, _)| g.clone()).collect()
 }
 
 /// Geometry a link produces, in sketch coordinates.
@@ -818,8 +792,8 @@ impl Sketch {
         }
         let lay = layout(geom)?;
         // A face's whole boundary must be closed loops; one with members deleted on purpose
-        // (`omit`) is open, and is matched like any other geometry.
-        if self.link(id).is_some_and(|l| matches!(l.source, LinkSource::Face { .. }) && l.omit.is_empty())
+        // (`omit_edges`) is open, and is matched like any other geometry.
+        if self.link(id).is_some_and(|l| matches!(l.source, LinkSource::Face { .. }) && l.omit_edges.is_empty())
             && lay.lone.is_empty()
             && lay.curves.len() <= 512
             && lay.pts.len() <= 512
@@ -969,7 +943,7 @@ impl Sketch {
                 let hi = ps.iter().fold(Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY), |a, p| Vec2::new(a.x.max(p.x), a.y.max(p.y)));
                 ps.iter().map(|p| Vec2::new((p.x - lo.x) / (hi.x - lo.x).max(1e-9), (p.y - lo.y) / (hi.y - lo.y).max(1e-9))).collect()
             };
-            let loop_roles_required = self.link(id).is_some_and(|l| matches!(l.source, LinkSource::Face { .. }) && l.omit.is_empty())
+            let loop_roles_required = self.link(id).is_some_and(|l| matches!(l.source, LinkSource::Face { .. }) && l.omit_edges.is_empty())
                 && cur.iter().chain(&lay.curves).all(|c| matches!(c, LCurve::Line(..) | LCurve::Arc(..) | LCurve::Circle(..)))
                 && lay.lone.is_empty();
             let loop_roles = loop_roles_required.then(|| loops::roles(cur, &old, &lay.curves, &lay.pts)).flatten();
@@ -1100,7 +1074,7 @@ impl Sketch {
         // Equal topology alone does not identify a face boundary: an outer rim and a
         // hole can have identical point graphs. Never move saved curve ids between them
         // when the geometric match is ambiguous; the document reports a lost link.
-        if same && self.link(id).is_some_and(|l| matches!(l.source, LinkSource::Face { .. }) && l.omit.is_empty()) {
+        if same && self.link(id).is_some_and(|l| matches!(l.source, LinkSource::Face { .. }) && l.omit_edges.is_empty()) {
             self.set_link_lost(id, true);
             return Err(SketchError::Invalid("projected face boundary identity is ambiguous; last geometry retained".into()));
         }

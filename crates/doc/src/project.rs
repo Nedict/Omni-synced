@@ -74,14 +74,28 @@ fn cache_key(st: &ModelState, plane: &Plane, kind: LinkKind, src: &LinkSource) -
 
 /// Resolve a link source against the model state before the sketch.
 pub fn resolve(doc: &Document, vals: &BTreeMap<String, Value>, st: &ModelState, plane: &Plane, kind: LinkKind, src: &LinkSource) -> Result<Resolved> {
-    let key = cache_key(st, plane, kind, src);
+    resolve_omitting(doc, vals, st, plane, kind, src, &std::collections::BTreeSet::new())
+}
+
+/// [`resolve`] leaving out the face edges `skip` (indices in the source body's mesh): the
+/// members deleted from a face link ([`omitted_edges`]).
+pub fn resolve_omitting(
+    doc: &Document,
+    vals: &BTreeMap<String, Value>,
+    st: &ModelState,
+    plane: &Plane,
+    kind: LinkKind,
+    src: &LinkSource,
+    skip: &std::collections::BTreeSet<usize>,
+) -> Result<Resolved> {
+    let key = cache_key(st, plane, kind, src).map(|k| if skip.is_empty() { k } else { format!("{k}|omit{skip:?}") });
     if let Some(k) = &key
         && let Ok(c) = CACHE.lock()
         && let Some((_, r)) = c.iter().find(|(x, _)| x == k)
     {
         return Ok(r.clone());
     }
-    let r = resolve_uncached(doc, vals, st, plane, kind, src)?;
+    let r = resolve_uncached(doc, vals, st, plane, kind, src, skip)?;
     if let Some(k) = key
         && let Ok(mut c) = CACHE.lock()
     {
@@ -98,6 +112,7 @@ fn resolve_uncached(
     plane: &Plane,
     kind: LinkKind,
     src: &LinkSource,
+    skip: &std::collections::BTreeSet<usize>,
 ) -> Result<Resolved> {
     let lost = |what: &str| DocError::Invalid(format!("{what} no longer exists"));
     let mut moved = false;
@@ -135,7 +150,7 @@ fn resolve_uncached(
                 _ => {
                     let mut g = Vec::new();
                     let target = st.bodies.get(bi).ok_or_else(|| lost("the projection body"))?;
-                    for e in projection_face_edges(target, &mesh, f, plane)? {
+                    for e in projection_face_edges(target, &mesh, f, plane)?.into_iter().filter(|e| !skip.contains(e)) {
                         if let Some(pts) = mesh.edges.get(e) {
                             g.extend(fit_world(plane, pts));
                         }
@@ -339,7 +354,15 @@ fn resolve_named_edge(st: &ModelState, plane: &Plane, kind: LinkKind, body: &str
     Ok(Resolved { geom: merge_split_circles(geom), wires, source, moved: false, face_index: None, edge_index: Some(index) })
 }
 
-fn resolve_named_face(st: &ModelState, plane: &Plane, kind: LinkKind, body: &str, index: usize, at: Vec3) -> Result<Resolved> {
+fn resolve_named_face(
+    st: &ModelState,
+    plane: &Plane,
+    kind: LinkKind,
+    body: &str,
+    index: usize,
+    at: Vec3,
+    skip: &std::collections::BTreeSet<usize>,
+) -> Result<Resolved> {
     let target = st.body(body).ok_or_else(|| lost("named projection body"))?;
     let mesh = target.mesh();
     if mesh.triangles.len() > 2_000_000 || mesh.edges.len() > 2_000_000 {
@@ -351,7 +374,7 @@ fn resolve_named_face(st: &ModelState, plane: &Plane, kind: LinkKind, body: &str
         section(plane, &mesh, Some(index))
     } else {
         let mut geom = Vec::new();
-        for edge in projection_face_edges(target, &mesh, index, plane)? {
+        for edge in projection_face_edges(target, &mesh, index, plane)?.into_iter().filter(|e| !skip.contains(e)) {
             if let Some(points) = mesh.edges.get(edge) {
                 geom.extend(fit_world(plane, points));
             }
@@ -390,14 +413,36 @@ fn certified_planar_construction(body: &crate::ModelBody, index: usize) -> bool 
 }
 
 pub fn resolve_anchored_face(doc: &Document, st: &ModelState, plane: &Plane, kind: LinkKind, anchor: &crate::FaceAnchor) -> Result<Resolved> {
+    resolve_anchored_face_omitting(doc, st, plane, kind, anchor, &std::collections::BTreeSet::new())
+}
+
+fn resolve_anchored_face_omitting(
+    doc: &Document,
+    st: &ModelState,
+    plane: &Plane,
+    kind: LinkKind,
+    anchor: &crate::FaceAnchor,
+    skip: &std::collections::BTreeSet<usize>,
+) -> Result<Resolved> {
     let body = st.body(&anchor.target.body).ok_or_else(|| lost("anchored projection body"))?;
     let indices = doc.configuration_face_indices(body, &anchor.target)?;
-    resolve_face_indices(st, plane, kind, &body.name, &indices)
+    resolve_face_indices_omitting(st, plane, kind, &body.name, &indices, skip)
 }
 
 /// Project explicitly selected current face indices, without claiming persistent provenance.
 /// Callers retaining a link must supply their own replay identity policy.
 pub fn resolve_face_indices(st: &ModelState, plane: &Plane, kind: LinkKind, body_name: &str, indices: &[usize]) -> Result<Resolved> {
+    resolve_face_indices_omitting(st, plane, kind, body_name, indices, &std::collections::BTreeSet::new())
+}
+
+fn resolve_face_indices_omitting(
+    st: &ModelState,
+    plane: &Plane,
+    kind: LinkKind,
+    body_name: &str,
+    indices: &[usize],
+    skip: &std::collections::BTreeSet<usize>,
+) -> Result<Resolved> {
     let body = st.body(body_name).ok_or_else(|| lost("projection body"))?;
     let mesh = body.mesh();
     if mesh.triangles.len() > 2_000_000 || indices.len() > 10_000 {
@@ -425,7 +470,7 @@ pub fn resolve_face_indices(st: &ModelState, plane: &Plane, kind: LinkKind, body
         } else {
             order::family_edges(&mesh, &selected, plane)?
         };
-        for edge in edges {
+        for edge in edges.into_iter().filter(|e| !skip.contains(e)) {
             if let Some(points) = mesh.edges.get(edge) {
                 geometry.extend(fit_world(plane, points));
             }
@@ -745,16 +790,117 @@ fn in_plane_motion(seen: &Mat, now: &Mat, plane: &Plane) -> Option<Motion2> {
     ((det - 1.0).abs() < 1e-9).then_some(Motion2 { a, b: Vec2::new(shift.dot(plane.x), shift.dot(plane.y)) })
 }
 
-/// The sketch plane in the frame a link's source is read in (where [`solidcraft_sketch::Link::omit`]
-/// keeps its points): the source's own frame for a placed link, else `plane` itself.
-pub fn link_source_plane(doc: &Document, placed: Placed, plane: &Plane, link: &solidcraft_sketch::Link) -> Result<Plane> {
-    match &link.placement {
-        None => Ok(*plane),
+/// One source edge of a face link: its persistent name, whether the names of the faces it
+/// separates follow exact history (else the name is found again by geometry), and the
+/// geometry it gives the sketch. Edges whose names differ only by numbers (a position number
+/// among several edges between the same two faces, or the piece number of a split face) are
+/// one family: their [`omit_name`] is the same, and the numbers may pass between them.
+#[derive(Clone, Debug)]
+pub struct EdgePieces {
+    pub name: String,
+    pub exact: bool,
+    pub geom: Vec<LinkGeom>,
+}
+
+/// The name a deleted source edge is kept by in [`solidcraft_sketch::Link::omit_edges`]: its
+/// family's (its name without position and piece numbers). Only a whole family is ever left
+/// out, so numbers passing between its edges, or a later split of one of them, cannot leave out
+/// another edge instead.
+pub fn omit_name(name: &str) -> String {
+    crate::naming::strip_edge_piece(crate::piece_names::strip_edge_number(name))
+}
+
+/// The edges of `body` a face link leaves out: those of the families the `omit` names name. A
+/// family no edge belongs to any more is an error (the link is lost; nothing else is left out
+/// instead).
+pub fn omitted_edges(body: &crate::ModelBody, omit: &[String]) -> Result<std::collections::BTreeSet<usize>> {
+    if omit.len() > solidcraft_sketch::MAX_LINK_OMIT {
+        return Err(DocError::Invalid("too many deleted projection members".into()));
+    }
+    let keys: Vec<String> = crate::naming::edge_names(body).iter().map(|n| omit_name(n)).collect();
+    let mut skip = std::collections::BTreeSet::new();
+    for name in omit {
+        let key = omit_name(name);
+        let hits: Vec<usize> = keys.iter().enumerate().filter(|(_, k)| **k == key).map(|(i, _)| i).collect();
+        if hits.is_empty() {
+            return Err(DocError::Unknown(format!("deleted projected edge `{name}` no longer exists")));
+        }
+        skip.extend(hits);
+    }
+    Ok(skip)
+}
+
+/// The source edges a face link (Project or Include of a face) is made of now, each with its
+/// geometry in the sketch: what deleting some of the link's curves leaves out by identity.
+/// `st` and `plane` are as [`refresh_sketch_links`] takes them; `anchor` is the sketch's face
+/// attachment (an automatically projected face's edges are those of the attachment).
+pub fn face_link_edges(
+    doc: &Document,
+    placed: Placed,
+    st: &ModelState,
+    plane: &Plane,
+    link: &solidcraft_sketch::Link,
+    anchor: Option<&crate::FaceAnchor>,
+) -> Result<Vec<EdgePieces>> {
+    if link.kind == LinkKind::Intersect || !matches!(link.source, LinkSource::Face { .. }) {
+        return Err(DocError::Invalid(format!("the {} is kept whole", link.source.describe())));
+    }
+    let (st, plane, source) = match &link.placement {
+        None => (st, *plane, link.source.clone()),
         Some(placement) => {
-            let (_, relative) = placed_source(doc, placed, &link.source, link.edge_name.as_deref(), placement)?;
-            plane_in_source(&relative, plane)
+            let (source, relative) = placed_source(doc, placed, &link.source, None, placement)?;
+            (placed.raw, plane_in_source(&relative, plane)?, source)
+        }
+    };
+    let LinkSource::Face { body, at } = &source else { return Err(DocError::Invalid("not a face".into())) };
+    let target = st.body(body).ok_or_else(|| lost(&format!("body {body}")))?;
+    if target.body.is_mesh() {
+        return Err(DocError::Invalid("a mesh body's edges have no names to keep deleted members by".into()));
+    }
+    let mesh = target.mesh();
+    let index = |i: usize| u32::try_from(i).map_err(|_| DocError::Invalid("face index exceeds limit".into()));
+    let edges = match anchor.filter(|_| link.auto_face) {
+        Some(anchor) => {
+            let indices = doc.configuration_face_indices(target, &anchor.target)?;
+            match indices.as_slice() {
+                [i] => projection_face_edges(target, &mesh, index(*i)?, &plane)?,
+                _ => order::family_edges(&mesh, &indices.iter().copied().collect(), &plane)?,
+            }
+        }
+        None => {
+            let face = match &link.face_name {
+                Some(name) => crate::naming::face_on_body(target, name, *at).map(|(i, ..)| i),
+                None => nearest_face(&mesh, *at).and_then(|(f, ..)| usize::try_from(f).ok()),
+            }
+            .ok_or_else(|| lost("the projected face"))?;
+            projection_face_edges(target, &mesh, index(face)?, &plane)?
+        }
+    };
+    let names = crate::naming::edge_names(target);
+    // Each edge's pieces as the link has them: a circle whose two edges fit to the same half is
+    // made whole again across all of them (`merge_split_circles`), keeping which edge each is of.
+    let mut owner = Vec::new();
+    let mut flat = Vec::new();
+    for (k, e) in edges.iter().enumerate() {
+        for g in mesh.edges.get(*e).map(|pts| fit_world(&plane, pts)).unwrap_or_default() {
+            owner.push(k);
+            flat.push(g);
         }
     }
+    let mut out: Vec<EdgePieces> = edges
+        .iter()
+        .map(|e| {
+            let name = names.get(*e).cloned().unwrap_or_default();
+            let faces_exact = mesh.edge_faces.get(*e).is_some_and(|fs| fs.iter().all(|f| crate::naming::face_name_exact(target, *f as usize)));
+            EdgePieces { exact: !name.is_empty() && faces_exact, name, geom: Vec::new() }
+        })
+        .collect();
+    for (k, g) in owner.into_iter().zip(merge_split_circles(flat)) {
+        if let Some(edge) = out.get_mut(k) {
+            edge.geom.push(g);
+        }
+    }
+    Ok(out)
 }
 
 fn map_wires(wires: &mut [Vec<Vec3>], m: &Mat) {
@@ -844,6 +990,25 @@ pub fn refresh_sketch_links(
                 }
             }
         }
+        // Members deleted from a face link are left out by the persistent names of their source
+        // edges. A name no longer found makes the link lost: nothing else is left out instead.
+        let skip = if l.omit_edges.is_empty() {
+            std::collections::BTreeSet::new()
+        } else {
+            let body = match (&source, anchor.filter(|_| l.auto_face)) {
+                (_, Some(anchor)) => anchor.target.body.clone(),
+                (LinkSource::Face { body, .. }, None) => body.clone(),
+                _ => String::new(),
+            };
+            match st.body(&body).ok_or_else(|| lost("the projected face's body")).and_then(|b| omitted_edges(b, &l.omit_edges)) {
+                Ok(skip) => skip,
+                Err(e) => {
+                    sk.set_link_lost(&l.id, true);
+                    warn.push(format!("projected reference lost: {e}; last geometry retained (repair or remove the projection)"));
+                    continue;
+                }
+            }
+        };
         let resolved = if matches!(source, LinkSource::Text { .. }) {
             // A text needs nothing outside its sketch; one on a path follows a curve of it.
             sk.text_source_geometry(&source).map_err(DocError::from).and_then(|geom| {
@@ -858,13 +1023,13 @@ pub fn refresh_sketch_links(
                     l.face_name.as_ref() == Some(&anchor.target.name) && matches!(&l.source,LinkSource::Face {body,..} if *body==anchor.target.body)
                 })
                 .ok_or_else(|| lost("exact auto-projected attachment"))
-                .and_then(|anchor| resolve_anchored_face(doc, st, plane, l.kind, anchor))
+                .and_then(|anchor| resolve_anchored_face_omitting(doc, st, plane, l.kind, anchor, &skip))
         } else if let Some((body, index, at)) = named_face {
-            resolve_named_face(st, plane, l.kind, &body, index, at)
+            resolve_named_face(st, plane, l.kind, &body, index, at, &skip)
         } else if let Some((body, index, at)) = named_edge {
             resolve_named_edge(st, plane, l.kind, &body, index, at)
         } else {
-            resolve(doc, vals, st, plane, l.kind, &source)
+            resolve_omitting(doc, vals, st, plane, l.kind, &source, &skip)
         };
         match resolved {
             Ok(mut r) => {
@@ -881,9 +1046,7 @@ pub fn refresh_sketch_links(
                 }
                 sk.set_link_source(&l.id, r.source);
                 let _ = sk.set_link_wires(&l.id, &r.wires);
-                // Members deleted from the link stay deleted.
-                let omit: Vec<Vec2> = l.omit.iter().map(|p| plane.to_local(*p)).collect();
-                let mut geom = solidcraft_sketch::omit_members(&r.geom, &omit);
+                let mut geom = r.geom.clone();
                 // A source that turned or moved within the sketch plane since the link was read
                 // is matched where it was, then moved: its curves keep their ids.
                 let motion = relative.as_ref().and_then(|now| {
