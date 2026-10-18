@@ -393,6 +393,8 @@ fn bad_crossing_snaps_are_errors() {
         xsnap(&l1, &l2, "inf,10"),
         xsnap(&l1, &l2, "10"),
         xsnap(&l1, &far, "10,10"),
+        // The crossing is at 10,10, more than 1 mm away.
+        xsnap(&l1, &l2, "11.5,10"),
         format!("x:[\"{l1}\"]:10,10"),
         format!("x:[\"{l1}\",\"{l2}\",\"{l1}\"]:10,10"),
         "x:[1,2]:10,10".to_string(),

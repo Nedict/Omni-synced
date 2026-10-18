@@ -422,7 +422,7 @@ fn auto_project(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// Resolve `["<c1>","<c2>"]:x,y` to the id of a point on both curves at their crossing nearest
-/// x,y: an existing point there is reused, and only the missing `PointOnCurve`s are added.
+/// x,y (within 1 mm): an existing point there is reused, and only the missing `PointOnCurve`s are added.
 fn crossing_point(sk: &mut Sketch, t: &str) -> std::result::Result<String, String> {
     let (list, xy) = t.rsplit_once(':').ok_or("expected x:[\"c1\",\"c2\"]:x,y")?;
     let ids: Vec<String> = serde_json::from_str(list).map_err(|_| "expected two JSON-quoted curve ids")?;
@@ -441,7 +441,9 @@ fn crossing_point(sk: &mut Sketch, t: &str) -> std::result::Result<String, Strin
     let at = crate::crossings_of(sk, a, b)
         .into_iter()
         .min_by(|p, q| p.dist(near).total_cmp(&q.dist(near)))
-        .ok_or_else(|| format!("`{c1}` and `{c2}` do not cross"))?;
+        // The UI sends the crossing itself; 1 mm leaves room for rounding, not for guessing.
+        .filter(|p| p.dist(near) <= 1.0)
+        .ok_or_else(|| format!("`{c1}` and `{c2}` do not cross near {x},{y}"))?;
     let reuse = (0..sk.points.len())
         .filter_map(|i| Some((i, sk.point(i)?.dist(at))))
         .filter(|&(_, d)| d <= 1e-6)
