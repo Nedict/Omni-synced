@@ -10,7 +10,7 @@
 
 use std::collections::BTreeSet;
 
-use solidcraft_geom::{Mesh, Plane, Region2, Seg2, Vec2, Vec3};
+use solidcraft_geom::{Mesh, Plane, Region2, Seg2, Triangle, Vec2, Vec3};
 
 use crate::Result;
 use crate::body::Body;
@@ -37,7 +37,7 @@ fn face_tris(m: &Mesh) -> Vec<FaceTris> {
             area: 0.0,
         })
         .collect();
-    for (solidcraft_geom::Triangle(p), f) in m.face_tris() {
+    for (Triangle(p), f) in m.face_tris() {
         let Some(slot) = out.get_mut(f as usize) else { continue };
         let c = (p[1] - p[0]).cross(p[2] - p[0]);
         let Some(nrm) = c.normalized() else { continue };
@@ -57,7 +57,7 @@ fn on_face(f: &FaceTris, p: Vec3, n: Vec3, tol: f64) -> bool {
         return false;
     }
     // Either side: a cut's tool faces come out turned inside out.
-    f.tris.iter().any(|(t, tn)| tn.dot(n).abs() > 0.95 && solidcraft_geom::Triangle([t[0], t[1], t[2]]).closest_point(p).dist(p) <= tol)
+    f.tris.iter().any(|(t, tn)| tn.dot(n).abs() > 0.95 && Triangle([t[0], t[1], t[2]]).closest_point(p).dist(p) <= tol)
 }
 
 /// Sample points (triangle centroids, spread out) with normals of a result face.

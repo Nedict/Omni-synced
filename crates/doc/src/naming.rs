@@ -17,7 +17,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use solidcraft_geom::{Mesh, Seg2, Vec2, Vec3};
+use solidcraft_geom::{Mesh, Seg2, Triangle, Vec2, Vec3};
 
 use crate::history_names::Names;
 use crate::lineage::Lineage;
@@ -88,7 +88,7 @@ const SAMPLES: usize = 9;
 /// Unit normals of each face's triangles.
 fn normals(m: &Mesh, nf: usize) -> Vec<Vec<Vec3>> {
     let mut per: Vec<Vec<Vec3>> = vec![Vec::new(); nf];
-    for (solidcraft_geom::Triangle([a, b, c]), f) in m.face_tris() {
+    for (Triangle([a, b, c]), f) in m.face_tris() {
         if let Some(v) = per.get_mut(f as usize)
             && let Some(n) = (b - a).cross(c - a).normalized()
         {
@@ -101,7 +101,7 @@ fn normals(m: &Mesh, nf: usize) -> Vec<Vec<Vec3>> {
 /// Triangle centroids spread over each face: face → points.
 fn samples(m: &Mesh, nf: usize) -> Vec<Vec<Vec3>> {
     let mut per: Vec<Vec<Vec3>> = vec![Vec::new(); nf];
-    for (solidcraft_geom::Triangle([a, b, c]), f) in m.face_tris() {
+    for (Triangle([a, b, c]), f) in m.face_tris() {
         if let Some(v) = per.get_mut(f as usize) {
             v.push((a + b + c) * (1.0 / 3.0));
         }
@@ -126,7 +126,7 @@ impl FaceIndex {
     fn new(m: &Mesh, nf: usize) -> FaceIndex {
         let mut faces: Vec<(Vec3, Vec3, Vec<[Vec3; 3]>)> =
             vec![(Vec3::new(f64::MAX, f64::MAX, f64::MAX), Vec3::new(f64::MIN, f64::MIN, f64::MIN), Vec::new()); nf];
-        for (solidcraft_geom::Triangle(tri), f) in m.face_tris() {
+        for (Triangle(tri), f) in m.face_tris() {
             if let Some(slot) = faces.get_mut(f as usize) {
                 for p in tri {
                     slot.0 = Vec3::new(slot.0.x.min(p.x), slot.0.y.min(p.y), slot.0.z.min(p.z));
@@ -145,7 +145,7 @@ impl FaceIndex {
             if p.x < lo.x - tol || p.y < lo.y - tol || p.z < lo.z - tol || p.x > hi.x + tol || p.y > hi.y + tol || p.z > hi.z + tol {
                 continue;
             }
-            let d = tris.iter().map(|[a, b, c]| solidcraft_geom::Triangle([*a, *b, *c]).closest_point(p).dist(p)).fold(f64::MAX, f64::min);
+            let d = tris.iter().map(|[a, b, c]| Triangle([*a, *b, *c]).closest_point(p).dist(p)).fold(f64::MAX, f64::min);
             if d <= tol && best.is_none_or(|(bd, _)| d < bd) {
                 best = Some((d, i));
             }
@@ -736,7 +736,7 @@ fn roomiest(m: &Mesh, only: Option<usize>) -> Vec<Option<(f64, Vec3)>> {
         if only.is_some_and(|i| i != f) {
             continue;
         }
-        let Some(solidcraft_geom::Triangle([a, b, c])) = m.tri(t) else { continue };
+        let Some(Triangle([a, b, c])) = m.tri(t) else { continue };
         // The incentre weighs each corner by the side opposite it; the inradius is area / half the perimeter.
         let (la, lb, lc) = (b.dist(c), c.dist(a), a.dist(b));
         let perimeter = la + lb + lc;

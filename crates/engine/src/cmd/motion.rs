@@ -205,7 +205,7 @@ fn deepest(a: &solidcraft_geom::Mesh, b: &solidcraft_geom::Mesh, tol: f64) -> f6
     let tb = tris(b);
     let bx = b.bounds();
     let mut pts: Vec<Vec3> = a.positions.clone();
-    for solidcraft_geom::Triangle([p, q, r]) in tris(a) {
+    for Triangle([p, q, r]) in tris(a) {
         pts.extend([(p + q) * 0.5, (q + r) * 0.5, (r + p) * 0.5, (p + q + r) * (1.0 / 3.0)]);
     }
     let mut best = 0.0f64;
@@ -219,10 +219,7 @@ fn deepest(a: &solidcraft_geom::Mesh, b: &solidcraft_geom::Mesh, tol: f64) -> f6
         {
             continue;
         }
-        let d = tb
-            .iter()
-            .map(|solidcraft_geom::Triangle([a, b, c])| solidcraft_geom::Triangle([*a, *b, *c]).closest_point(p).dist(p))
-            .fold(f64::MAX, f64::min);
+        let d = tb.iter().map(|Triangle([a, b, c])| Triangle([*a, *b, *c]).closest_point(p).dist(p)).fold(f64::MAX, f64::min);
         if d > tol.max(best) && inside(p, &tb) {
             best = d;
         }
@@ -236,7 +233,7 @@ fn inside(p: Vec3, tris: &[Triangle]) -> bool {
     #[allow(clippy::approx_constant)]
     let dir = Vec3::new(0.577_215_664_9, 0.327_118_441_9, 0.751_891_438_7);
     let mut n = 0;
-    for solidcraft_geom::Triangle([a, b, c]) in tris {
+    for Triangle([a, b, c]) in tris {
         let (e1, e2) = (*b - *a, *c - *a);
         let h = dir.cross(e2);
         let det = e1.dot(h);

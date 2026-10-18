@@ -295,7 +295,7 @@ fn draft_walls(b: &Body, at: &[Vec3], neutral: &Plane, pull: Vec3, angle: f64) -
             .triangles
             .iter()
             .zip(&mesh.tri_face)
-            .filter_map(|(t, f)| mesh.tri(t).map(|solidcraft_geom::Triangle([x, y, z])| (point_tri(*p, x, y, z), *f as usize)))
+            .filter_map(|(t, f)| mesh.tri(t).map(|Triangle([x, y, z])| (point_tri(*p, x, y, z), *f as usize)))
             .min_by(|a, c| a.0.total_cmp(&c.0));
         match near {
             Some((d, f)) if d < size * 1e-3 + 1e-6 => {
@@ -470,7 +470,7 @@ fn shell_planar(b: &Body, open: &[Vec3], thickness: f64) -> Result<Body> {
             .triangles
             .iter()
             .zip(&mesh.tri_face)
-            .filter_map(|(t, f)| mesh.tri(t).map(|solidcraft_geom::Triangle([x, y, z])| (point_tri(*p, x, y, z), *f as usize)))
+            .filter_map(|(t, f)| mesh.tri(t).map(|Triangle([x, y, z])| (point_tri(*p, x, y, z), *f as usize)))
             .min_by(|a, c| a.0.total_cmp(&c.0));
         if let Some((d, f)) = near
             && d < size * 1e-3 + 1e-6
@@ -591,7 +591,7 @@ fn shell_opened(b: &Body, healed: &Body, open: &[Vec3], opened: &[usize], thickn
                     .triangles
                     .iter()
                     .zip(&raw.tri_face)
-                    .filter_map(|(t, f)| raw.tri(t).map(|solidcraft_geom::Triangle([x, y, z])| (point_tri(*p, x, y, z), *f as usize)))
+                    .filter_map(|(t, f)| raw.tri(t).map(|Triangle([x, y, z])| (point_tri(*p, x, y, z), *f as usize)))
                     .min_by(|a, c| a.0.total_cmp(&c.0));
                 if let Some((d, f)) = near
                     && d < size * 1e-3 + 1e-6
@@ -646,7 +646,7 @@ fn opening_overreach(healed: &Body, cavity: &Body, opened: &[usize], thickness: 
             let h = n.dot(q) - d;
             h > tol && {
                 let on = q - *n * h;
-                !tris.iter().any(|solidcraft_geom::Triangle([a, b, c])| point_tri(on, *a, *b, *c) < size * 1e-4 + 1e-6)
+                !tris.iter().any(|Triangle([a, b, c])| point_tri(on, *a, *b, *c) < size * 1e-4 + 1e-6)
             }
         })
     });
@@ -770,7 +770,7 @@ pub fn offset_faces(b: &Body, at: &[Vec3], distance: f64) -> Result<Body> {
             .triangles
             .iter()
             .zip(&mesh.tri_face)
-            .filter_map(|(t, f)| mesh.tri(t).map(|solidcraft_geom::Triangle([x, y, z])| (point_tri(*p, x, y, z), *f as usize)))
+            .filter_map(|(t, f)| mesh.tri(t).map(|Triangle([x, y, z])| (point_tri(*p, x, y, z), *f as usize)))
             .min_by(|a, c| a.0.total_cmp(&c.0));
         match near {
             Some((d, f)) if d < size * 1e-3 + 1e-6 => {

@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use solidcraft_geom::{Mesh, Vec3};
+use solidcraft_geom::{Mesh, Triangle, Vec3};
 
 use crate::body::Body;
 use crate::history::{Change, EdgeOrigin, FaceOrigin, History, Side};
@@ -22,7 +22,7 @@ pub(crate) fn to_face(m: &Mesh, f: usize, p: Vec3) -> f64 {
         .filter(|(_, x)| **x as usize == f)
         .map(|(t, _)| {
             let [a, b, c] = t.map(|i| m.positions[i as usize]);
-            solidcraft_geom::Triangle([a, b, c]).closest_point(p).dist(p)
+            Triangle([a, b, c]).closest_point(p).dist(p)
         })
         .fold(f64::INFINITY, f64::min)
 }

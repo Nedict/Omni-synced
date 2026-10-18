@@ -35,7 +35,7 @@ pub(super) fn face_normal_in(s: &Session, p: Vec3, body: Option<&str>) -> Option
         .zip(&m.tri_face)
         .filter(|(_, tf)| **tf == f)
         .filter_map(|(t, _)| m.tri(t))
-        .find_map(|solidcraft_geom::Triangle([a, b, c])| (b - a).cross(c - a).normalized())
+        .find_map(|Triangle([a, b, c])| (b - a).cross(c - a).normalized())
 }
 
 /// Is the body face at `p` planar (`None`: no face there)?
@@ -51,7 +51,7 @@ pub(super) fn face_is_planar(s: &Session, p: Vec3) -> Option<bool> {
         .zip(&m.tri_face)
         .filter(|(_, tf)| **tf == f)
         .filter_map(|(t, _)| m.tri(t))
-        .filter_map(|solidcraft_geom::Triangle([a, b, c])| (b - a).cross(c - a).normalized())
+        .filter_map(|Triangle([a, b, c])| (b - a).cross(c - a).normalized())
         .collect();
     let n0 = *ns.first()?;
     Some(ns.iter().all(|n| n.dot(n0) > 1.0 - 1e-6))
@@ -93,7 +93,7 @@ pub(super) fn face_at_state(st: &solidcraft_doc::ModelState, p: Vec3, only: Opti
     for b in st.bodies.iter().filter(|b| only.is_none_or(|n| b.name == n)) {
         let m = b.mesh();
         let mut near: Option<(u32, f64)> = None;
-        for (solidcraft_geom::Triangle([a, bb, c]), f) in m.face_tris() {
+        for (Triangle([a, bb, c]), f) in m.face_tris() {
             let d = point_triangle_dist(p, a, bb, c);
             if near.is_none_or(|(_, nd)| d < nd) {
                 near = Some((f, d));
@@ -169,10 +169,8 @@ pub(super) fn sketch_of_faces(s: &mut Session, points: &[Vec3], cmd: &str, face_
             .zip(&mesh.tri_face)
             .filter(|(_, face)| **face == index)
             .filter_map(|(triangle, _)| mesh.tri(triangle))
-            .max_by(|solidcraft_geom::Triangle([a, b, c]), solidcraft_geom::Triangle([x, y, z])| {
-                ((*b - *a).cross(*c - *a).len()).total_cmp(&((*y - *x).cross(*z - *x).len()))
-            })
-            .map(|solidcraft_geom::Triangle([a, b, c])| (a + b + c) / 3.0)
+            .max_by(|Triangle([a, b, c]), Triangle([x, y, z])| ((*b - *a).cross(*c - *a).len()).total_cmp(&((*y - *x).cross(*z - *x).len())))
+            .map(|Triangle([a, b, c])| (a + b + c) / 3.0)
             .ok_or_else(|| bad(cmd, "degenerate face"))?;
         picked.push((index as usize, inside));
     }
@@ -222,18 +220,15 @@ pub(super) fn sketch_of_face(s: &mut Session, point: Vec3, cmd: &str, face_body:
         return Err(none());
     }
     let tris: Vec<Triangle> = m.face_tris_of(f as usize).collect();
-    let normal = tris
-        .iter()
-        .find_map(|solidcraft_geom::Triangle([a, b, c])| (*b - *a).cross(*c - *a).normalized())
-        .ok_or_else(|| bad(cmd, "degenerate face"))?;
-    if tris.iter().any(|solidcraft_geom::Triangle([a, b, c])| (*b - *a).cross(*c - *a).normalized().is_some_and(|n| n.dot(normal) < 1.0 - 1e-6)) {
+    let normal = tris.iter().find_map(|Triangle([a, b, c])| (*b - *a).cross(*c - *a).normalized()).ok_or_else(|| bad(cmd, "degenerate face"))?;
+    if tris.iter().any(|Triangle([a, b, c])| (*b - *a).cross(*c - *a).normalized().is_some_and(|n| n.dot(normal) < 1.0 - 1e-6)) {
         return Err(bad(cmd, "only planar faces can be extruded"));
     }
     // A point well inside the face: the centroid of its largest triangle.
     let inside = tris
         .iter()
         .max_by(|x, y| (x[1] - x[0]).cross(x[2] - x[0]).len().total_cmp(&(y[1] - y[0]).cross(y[2] - y[0]).len()))
-        .map(|solidcraft_geom::Triangle([a, b, c])| (*a + *b + *c) / 3.0)
+        .map(|Triangle([a, b, c])| (*a + *b + *c) / 3.0)
         .unwrap_or(point);
     let edges: Vec<Vec<Vec3>> =
         m.face_edges(f).into_iter().filter(|e| !m.seams.get(*e).copied().unwrap_or(false)).filter_map(|e| m.edges.get(e).cloned()).collect();

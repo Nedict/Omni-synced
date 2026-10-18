@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use solidcraft_geom::{FaceHit, Mesh, Plane, Vec2, Vec3};
+use solidcraft_geom::{FaceHit, Mesh, Plane, Triangle, Vec2, Vec3};
 use solidcraft_sketch::{CurveKind, LinkGeom, LinkKind, LinkSource, Sketch};
 
 use crate::eval::ModelState;
@@ -439,7 +439,7 @@ pub fn resolve_face_indices(st: &ModelState, plane: &Plane, kind: LinkKind, body
         .iter()
         .zip(&mesh.tri_face)
         .find_map(|(triangle, face)| {
-            selected.contains(&(*face as usize)).then(|| mesh.tri(triangle)).flatten().map(|solidcraft_geom::Triangle([a, b, c])| (a + b + c) / 3.0)
+            selected.contains(&(*face as usize)).then(|| mesh.tri(triangle)).flatten().map(|Triangle([a, b, c])| (a + b + c) / 3.0)
         })
         .ok_or_else(|| lost("anchored projection face"))?;
     if geometry.is_empty() {
@@ -932,7 +932,7 @@ fn silhouette(plane: &Plane, m: &Mesh) -> Vec<LinkGeom> {
     // Undirected mesh edge → facing flags of the triangles using it.
     let mut edges: BTreeMap<((i64, i64, i64), (i64, i64, i64)), (Vec3, Vec3, Vec<bool>)> = BTreeMap::new();
     for t in &m.triangles {
-        let Some(solidcraft_geom::Triangle([a, b, c])) = m.tri(t) else { continue };
+        let Some(Triangle([a, b, c])) = m.tri(t) else { continue };
         let fnrm = (b - a).cross(c - a);
         let Some(un) = fnrm.normalized() else { continue };
         let front = un.dot(n) > 1e-6;

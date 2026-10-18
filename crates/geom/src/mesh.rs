@@ -289,7 +289,7 @@ impl Mesh {
         let xyz = |v: Vec3| [v.x, v.y, v.z];
         let (mut v6, mut first, mut second) = (0.0, Vec3::ZERO, [[0.0f64; 3]; 3]);
         for t in &self.triangles {
-            let crate::Triangle([a, b, c]) = self.tri(t)?;
+            let Triangle([a, b, c]) = self.tri(t)?;
             let det = a.dot(b.cross(c));
             v6 += det;
             first += (a + b + c) * det;
@@ -494,7 +494,7 @@ impl Mesh {
     pub fn measure(&self) -> MeshMeasure {
         let (mut v6, mut area, mut c) = (0.0, 0.0, Vec3::ZERO);
         for t in &self.triangles {
-            let Some(crate::Triangle([a, b, cc])) = self.tri(t) else { continue };
+            let Some(Triangle([a, b, cc])) = self.tri(t) else { continue };
             let d = a.dot(b.cross(cc));
             v6 += d;
             c += (a + b + cc) * d;
@@ -519,7 +519,7 @@ impl Mesh {
     pub fn ray_crossings(&self, o: Vec3, dir: Vec3) -> usize {
         let mut n = 0;
         for t in &self.triangles {
-            let Some(crate::Triangle([a, b, c])) = self.tri(t) else { continue };
+            let Some(Triangle([a, b, c])) = self.tri(t) else { continue };
             let (e1, e2) = (b - a, c - a);
             let p = dir.cross(e2);
             let det = e1.dot(p);
@@ -703,7 +703,7 @@ impl Mesh {
                     .triangles
                     .iter()
                     .map(|t| match self.tri(t) {
-                        Some(crate::Triangle([a, b, c])) => [(a.dot(u), a.dot(v)), (b.dot(u), b.dot(v)), (c.dot(u), c.dot(v))],
+                        Some(Triangle([a, b, c])) => [(a.dot(u), a.dot(v)), (b.dot(u), b.dot(v)), (c.dot(u), c.dot(v))],
                         None => [(0.0, 0.0); 3],
                     })
                     .collect();
@@ -759,7 +759,7 @@ impl InsideIndex<'_> {
         let mut n = 0;
         for &i in list {
             let Some(t) = self.mesh.triangles.get(i as usize) else { continue };
-            let Some(crate::Triangle([a, b, c])) = self.mesh.tri(t) else { continue };
+            let Some(Triangle([a, b, c])) = self.mesh.tri(t) else { continue };
             let (e1, e2) = (b - a, c - a);
             let p = dir.cross(e2);
             let det = e1.dot(p);

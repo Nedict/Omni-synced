@@ -1,4 +1,5 @@
 use super::*;
+use crate::Triangle;
 
 /// An axis-aligned box as a closed mesh (each side two triangles, counter-clockwise from outside).
 fn cuboid(lo: Vec3, hi: Vec3) -> Mesh {
@@ -48,12 +49,12 @@ fn the_tree_finds_the_nearest_point_as_a_search_of_every_triangle_does() {
             .triangles
             .iter()
             .filter_map(|t| m.tri(t))
-            .map(|crate::Triangle([a, b, c])| crate::Triangle([a, b, c]).closest_point(p).dist(p))
+            .map(|Triangle([a, b, c])| Triangle([a, b, c]).closest_point(p).dist(p))
             .fold(f64::INFINITY, f64::min);
         let (d, i) = tree.nearest(p).unwrap();
         assert!((d - brute).abs() < 1e-12, "{d} vs {brute}");
-        let crate::Triangle([a, b, c]) = m.tri(&m.triangles[i as usize]).unwrap();
-        assert!((crate::Triangle([a, b, c]).closest_point(p).dist(p) - d).abs() < 1e-12);
+        let Triangle([a, b, c]) = m.tri(&m.triangles[i as usize]).unwrap();
+        assert!((Triangle([a, b, c]).closest_point(p).dist(p) - d).abs() < 1e-12);
     }
     assert!(TriangleTree::new(&Mesh::default()).nearest(Vec3::ZERO).is_none());
 }

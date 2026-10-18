@@ -265,8 +265,8 @@ impl TriangleTree {
             }
             if node.leaf {
                 for k in node.a..node.b {
-                    let Some(crate::Triangle([a, b, c])) = self.tris.get(k as usize).copied() else { continue };
-                    let d2 = (crate::Triangle([a, b, c]).closest_point(p) - p).len2();
+                    let Some(Triangle([a, b, c])) = self.tris.get(k as usize).copied() else { continue };
+                    let d2 = (Triangle([a, b, c]).closest_point(p) - p).len2();
                     if d2 < best2 {
                         best2 = d2;
                         hit = self.ids.get(k as usize).copied();

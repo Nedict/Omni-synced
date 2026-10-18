@@ -639,7 +639,7 @@ pub fn build(before: &ModelState, after: &ModelState, c: Colors) -> Built {
 /// near-linear however many faces there are (a modeled thread has thousands).
 fn new_faces(m: &Mesh, nf: usize, old: &Mesh) -> Vec<bool> {
     let mut cents: Vec<Vec<Vec3>> = vec![Vec::new(); nf];
-    for (solidcraft_engine::geom::Triangle([a, b, c]), f) in m.face_tris() {
+    for (Triangle([a, b, c]), f) in m.face_tris() {
         if let Some(face) = cents.get_mut(f as usize) {
             face.push((a + b + c) / 3.0);
         }
@@ -979,7 +979,7 @@ mod tests {
     fn brute_force_on_surface(m: &Mesh, p: Vec3) -> bool {
         let bb = m.bounds();
         let tol = (bb.diagonal() * 2e-3).max(1e-4);
-        m.triangles.iter().filter_map(|t| m.tri(t)).any(|solidcraft_engine::geom::Triangle([a, b, c])| point_triangle_dist(p, a, b, c) < tol)
+        m.triangles.iter().filter_map(|t| m.tri(t)).any(|Triangle([a, b, c])| point_triangle_dist(p, a, b, c) < tol)
     }
 
     /// A flat sheet of `n × n` squares, two triangles and one face each, lifted by `z`.

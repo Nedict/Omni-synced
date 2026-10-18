@@ -238,7 +238,7 @@ fn face_slot(b: &solidcraft_doc::ModelBody, m: &Mesh, shape: &Shape, pts: &[Vec3
         return None;
     }
     let mut verts: Vec<Vec<Vec3>> = vec![Vec::new(); faces];
-    for (solidcraft_geom::Triangle(tri), f) in m.face_tris() {
+    for (Triangle(tri), f) in m.face_tris() {
         if let Some(v) = verts.get_mut(f as usize) {
             v.extend(tri);
         }
@@ -290,8 +290,8 @@ fn describe(s: &Session, sel: &Sel) -> Option<Item> {
             let m = b.mesh();
             let patch = m.surface_patch(*index);
             let tris = patch.iter().flat_map(|f| face_tris(&m, *f)).collect::<Vec<_>>();
-            let area: f64 = tris.iter().map(|solidcraft_geom::Triangle([a, b, c])| (*b - *a).cross(*c - *a).len() * 0.5).sum();
-            let normals: Vec<Vec3> = tris.iter().filter_map(|solidcraft_geom::Triangle([a, b, c])| (*b - *a).cross(*c - *a).normalized()).collect();
+            let area: f64 = tris.iter().map(|Triangle([a, b, c])| (*b - *a).cross(*c - *a).len() * 0.5).sum();
+            let normals: Vec<Vec3> = tris.iter().filter_map(|Triangle([a, b, c])| (*b - *a).cross(*c - *a).normalized()).collect();
             let planar = normals.first().copied().filter(|n0| normals.iter().all(|n| n.dot(*n0) > 1.0 - 1e-6));
             let mut json = json!({"type": "face", "area_mm2": area, "planar": planar.is_some()});
             let verts: Vec<Vec3> = tris.iter().flat_map(|t| t.iter().copied()).collect();
@@ -358,8 +358,8 @@ fn closest(a: &Geo, b: &Geo) -> Option<(Vec3, Vec3)> {
         let tris = sample(tris, MAX_TRIS);
         let mut best: Option<(f64, Vec3, Vec3)> = None;
         for p in &pts {
-            for solidcraft_geom::Triangle([x, y, z]) in &tris {
-                let q = solidcraft_geom::Triangle([*x, *y, *z]).closest_point(*p);
+            for Triangle([x, y, z]) in &tris {
+                let q = Triangle([*x, *y, *z]).closest_point(*p);
                 let d = p.dist(q);
                 if best.is_none_or(|(bd, _, _)| d < bd) {
                     best = Some((d, *p, q));

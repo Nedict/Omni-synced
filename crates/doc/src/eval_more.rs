@@ -5,7 +5,7 @@ use super::*;
 use crate::EmbossFace;
 use crate::apply_point;
 use crate::sheet;
-use solidcraft_geom::{Aabb3, Loop2, Seg2};
+use solidcraft_geom::{Aabb3, Loop2, Seg2, Triangle};
 
 pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut ModelState) -> Result<()> {
     match &f.kind {
@@ -169,9 +169,9 @@ fn planar_normal_at(b: &Body, p: Vec3) -> Option<Vec3> {
     let faces = b.faces(tol).ok()?;
     let mesh = b.tessellate(tol).ok()?;
     let mut near = vec![f64::INFINITY; faces.len()];
-    for (solidcraft_geom::Triangle([u, v, w]), f) in mesh.face_tris() {
+    for (Triangle([u, v, w]), f) in mesh.face_tris() {
         if let Some(d) = near.get_mut(f as usize) {
-            *d = d.min(solidcraft_geom::Triangle([u, v, w]).closest_point(p).dist(p));
+            *d = d.min(Triangle([u, v, w]).closest_point(p).dist(p));
         }
     }
     faces
@@ -1544,7 +1544,7 @@ fn plate_recesses(body: &Body, mesh: &Mesh, plane: &Plane, at: Vec3, n: Vec3, (l
     let level = |p: Vec3| (p - at).dot(n);
     let mut faces: BTreeMap<u32, Option<LevelFace>> = BTreeMap::new();
     for (tri, f) in mesh.triangles.iter().zip(&mesh.tri_face) {
-        let Some(solidcraft_geom::Triangle([a, b, c])) = mesh.tri(tri) else { continue };
+        let Some(Triangle([a, b, c])) = mesh.tri(tri) else { continue };
         let cr = (b - a).cross(c - a);
         let len = cr.len();
         if !(len > 1e-12) {

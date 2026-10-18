@@ -1,6 +1,6 @@
 use serde_json::json;
 use solidcraft_engine::Session;
-use solidcraft_engine::geom::Vec3;
+use solidcraft_engine::geom::{Triangle, Vec3};
 
 use super::*;
 use crate::Services;
@@ -32,7 +32,7 @@ fn wall(app: &SolveApp, p: Vec3) -> Sel {
     let mut best: Option<(f64, Sel)> = None;
     for b in &st.bodies {
         let m = b.mesh();
-        for (solidcraft_engine::geom::Triangle([a, bb, c]), f) in m.face_tris() {
+        for (Triangle([a, bb, c]), f) in m.face_tris() {
             let d = crate::preview::point_triangle_dist(p, a, bb, c);
             if best.as_ref().is_none_or(|(bd, _)| d < *bd) {
                 best = Some((d, Sel::Face { body: b.name.clone(), index: f as usize, point: p }));

@@ -112,7 +112,7 @@ impl TriangleSet {
     pub fn distance_to(&self, p: Vec3, tris: &[u32]) -> f64 {
         tris.iter()
             .filter_map(|&t| self.tris.get(t as usize))
-            .map(|crate::Triangle([a, b, c])| crate::Triangle([*a, *b, *c]).closest_point(p).dist(p))
+            .map(|Triangle([a, b, c])| Triangle([*a, *b, *c]).closest_point(p).dist(p))
             .fold(f64::INFINITY, f64::min)
     }
 }
@@ -193,10 +193,10 @@ pub fn triangle_distance(s: &[Vec3; 3], t: &[Vec3; 3]) -> (f64, Vec3, Vec3) {
         }
     };
     for p in s {
-        keep(*p, crate::Triangle([t[0], t[1], t[2]]).closest_point(*p));
+        keep(*p, Triangle([t[0], t[1], t[2]]).closest_point(*p));
     }
     for q in t {
-        keep(crate::Triangle([s[0], s[1], s[2]]).closest_point(*q), *q);
+        keep(Triangle([s[0], s[1], s[2]]).closest_point(*q), *q);
     }
     for (p0, p1) in edges(s) {
         for (q0, q1) in edges(t) {

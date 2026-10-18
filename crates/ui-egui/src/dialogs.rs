@@ -1169,7 +1169,7 @@ impl FaceSnap {
             return None;
         }
         let at = Aabb3 { min: p, max: p };
-        for (solidcraft_engine::geom::Triangle([a, b, c]), bb) in &self.tris {
+        for (Triangle([a, b, c]), bb) in &self.tris {
             let left = self.budget.get();
             if left == 0 {
                 return None;
@@ -4529,7 +4529,7 @@ pub(crate) fn face_sel(s: &Session, p0: Vec3) -> Option<Sel> {
     for b in &st.bodies {
         let p = stored_on(&frames, &b.name, p0);
         let m = b.mesh();
-        for (solidcraft_engine::geom::Triangle([a, bb, c]), f) in m.face_tris() {
+        for (Triangle([a, bb, c]), f) in m.face_tris() {
             let d = crate::preview::point_triangle_dist(p, a, bb, c);
             if best.as_ref().is_none_or(|(bd, _)| d < *bd) {
                 best = Some((d, Sel::Face { body: b.name.clone(), index: f as usize, point: p }));

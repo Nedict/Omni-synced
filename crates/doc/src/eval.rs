@@ -6,7 +6,7 @@ use std::sync::{Arc, OnceLock};
 
 use serde::Serialize;
 use solidcraft_geom::tess::TessPlan;
-use solidcraft_geom::{Mesh, Plane, Region2, Vec2, Vec3, regions_apart};
+use solidcraft_geom::{Mesh, Plane, Region2, Triangle, Vec2, Vec3, regions_apart};
 use solidcraft_kernel::{self as kernel, Body, BoolOp};
 use solidcraft_sketch::{CurveKind, Profile, SolveReport, find_profiles};
 
@@ -1962,8 +1962,7 @@ impl<'a> Surroundings<'a> {
     /// are drawn in, so that faces lying against them don't count).
     fn harmless(&self, plane: &Plane, pieces: &[[Vec2; 3]], margin: f64, lo: f64, hi: f64) -> bool {
         let n = plane.normal();
-        let faces: Vec<(solidcraft_geom::Triangle, f64)> =
-            pieces.iter().map(|t| (solidcraft_geom::Triangle(t.map(|p| plane.to_world(p))), margin)).collect();
+        let faces: Vec<(Triangle, f64)> = pieces.iter().map(|t| (Triangle(t.map(|p| plane.to_world(p))), margin)).collect();
         let mut space = solidcraft_geom::Aabb3::EMPTY;
         for p in faces.iter().flat_map(|(t, _)| t.iter()) {
             space.add(*p + n * lo);
@@ -2187,7 +2186,7 @@ fn extend_for_coplanar(sur: &Surroundings, plane: &Plane, r: &Region2, lo: f64, 
         .map(|(_, m, _)| m)
         .flat_map(|m| {
             m.triangles.iter().filter_map(|t| {
-                let solidcraft_geom::Triangle([a, b, c]) = m.tri(t)?;
+                let Triangle([a, b, c]) = m.tri(t)?;
                 let normal = (b - a).cross(c - a).normalized()?;
                 (normal.dot(n).abs() > 1.0 - 1e-9).then(|| (a - plane.origin).dot(n))
             })
@@ -2250,7 +2249,7 @@ fn trim_embedded_join_ends(sur: &Surroundings, plane: &Plane, r: &Region2, lo: f
         .iter()
         .flat_map(|(_, mesh, _)| {
             mesh.triangles.iter().filter_map(|t| {
-                let solidcraft_geom::Triangle([a, b, c]) = mesh.tri(t)?;
+                let Triangle([a, b, c]) = mesh.tri(t)?;
                 let normal = (b - a).cross(c - a).normalized()?;
                 (normal.dot(n).abs() > 1.0 - 1e-9).then(|| (a - plane.origin).dot(n))
             })
@@ -2313,7 +2312,7 @@ fn face_level_at(st: &ModelState, plane: &Plane, h: f64, targets: &[String]) -> 
         let m = b.mesh();
         let tol = (b.body.size() * 1e-7).max(1e-9);
         m.triangles.iter().any(|t| {
-            m.tri(t).is_some_and(|solidcraft_geom::Triangle([a, b, c])| {
+            m.tri(t).is_some_and(|Triangle([a, b, c])| {
                 (b - a).cross(c - a).normalized().is_some_and(|normal| normal.dot(n).abs() > 1.0 - 1e-9)
                     && ((a - plane.origin).dot(n) - h).abs() < tol
             })
@@ -2375,8 +2374,8 @@ fn faces_through(st: &ModelState, p: Vec3, reach: f64) -> Vec<(f64, Vec3, Option
         let m = b.mesh();
         // The nearest facet of each face of this body.
         let mut near: BTreeMap<u32, (f64, Vec3)> = BTreeMap::new();
-        for (solidcraft_geom::Triangle([a, bb, c]), f) in m.face_tris() {
-            let d = solidcraft_geom::Triangle([a, bb, c]).closest_point(p).dist(p);
+        for (Triangle([a, bb, c]), f) in m.face_tris() {
+            let d = Triangle([a, bb, c]).closest_point(p).dist(p);
             let Some(n) = (bb - a).cross(c - a).normalized() else { continue };
             if d <= reach && near.get(&f).is_none_or(|(x, _)| d < *x) {
                 near.insert(f, (d, n));
@@ -4497,7 +4496,7 @@ fn face_samples(b: &ModelBody) -> Vec<Vec3> {
         if out.len() <= f {
             out.resize(f + 1, None);
         }
-        if let (Some(slot @ None), Some(solidcraft_geom::Triangle([a, bb, c]))) = (out.get_mut(f), m.tri(t)) {
+        if let (Some(slot @ None), Some(Triangle([a, bb, c]))) = (out.get_mut(f), m.tri(t)) {
             *slot = Some((a + bb + c) * (1.0 / 3.0));
         }
     }
@@ -4653,7 +4652,7 @@ fn face_plane(st: &ModelState, picked: &Plane, at: Vec3, name: Option<&str>) -> 
                 .zip(&mesh.tri_face)
                 .filter(|(_, tf)| **tf as usize == f.index)
                 .filter_map(|(t, _)| mesh.tri(t))
-                .map(|solidcraft_geom::Triangle([a, bb, c])| solidcraft_geom::Triangle([a, bb, c]).closest_point(at).dist(at))
+                .map(|Triangle([a, bb, c])| Triangle([a, bb, c]).closest_point(at).dist(at))
                 .fold(f64::INFINITY, f64::min);
             if best.is_none_or(|x| d < x.0) {
                 best = Some((d, f.centroid.dot(n)));

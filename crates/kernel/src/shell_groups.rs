@@ -1,7 +1,7 @@
 //! Group disconnected material regions without moving a cavity to another enclosing shell.
 //! A valid shell hierarchy alternates material and void at every nesting level.
 
-use solidcraft_geom::{Aabb3, BoxedTriangle, Mesh, Vec3, find_close_pair};
+use solidcraft_geom::{Aabb3, BoxedTriangle, Mesh, Triangle, Vec3, find_close_pair};
 
 use crate::{KernelError, Result};
 
@@ -138,7 +138,7 @@ pub(super) fn groups(meshes: &[Mesh], volumes: &[f64], gap: f64) -> Result<Vec<V
             return Err(failed("cannot determine a closed shell's orientation"));
         }
         let tris: Vec<_> = mesh.triangles.iter().map(|t| mesh.tri(t).ok_or_else(|| failed("invalid shell triangle"))).collect::<Result<_>>()?;
-        if tris.iter().any(|solidcraft_geom::Triangle([a, b, c])| unit((*b - *a).cross(*c - *a)).is_none()) {
+        if tris.iter().any(|Triangle([a, b, c])| unit((*b - *a).cross(*c - *a)).is_none()) {
             return Err(failed("degenerate shell triangle"));
         }
         triangles.push(tris.into_iter().map(|t| (t, box_of(t.as_slice()))).collect::<Vec<BoxedTriangle>>());

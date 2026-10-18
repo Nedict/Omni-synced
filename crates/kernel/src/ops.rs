@@ -1,7 +1,7 @@
 //! Operations on bodies: booleans and rigid transforms.
 
 use serde::{Deserialize, Serialize};
-use solidcraft_geom::Vec3;
+use solidcraft_geom::{Triangle, Vec3};
 use truck_modeling as mt;
 
 use std::collections::HashMap;
@@ -286,7 +286,7 @@ fn under_surface(
     inside: bool,
     within: Option<&solidcraft_geom::Aabb3>,
 ) -> bool {
-    m.triangles.iter().filter_map(|t| m.tri(t)).any(|solidcraft_geom::Triangle([p, q, r])| {
+    m.triangles.iter().filter_map(|t| m.tri(t)).any(|Triangle([p, q, r])| {
         let Some(n) = (q - p).cross(r - p).normalized() else { return false };
         let c = (p + q + r) * (1.0 / 3.0) - n * depth;
         let near = within.is_none_or(|b| c.x >= b.min.x && c.x <= b.max.x && c.y >= b.min.y && c.y <= b.max.y && c.z >= b.min.z && c.z <= b.max.z);
@@ -1455,7 +1455,7 @@ fn sliver_faces(b: &Body, size: f64) -> usize {
     // Per face: its area, and how many of its triangles use each mesh edge (its boundary once).
     let mut area: HashMap<u32, f64> = HashMap::new();
     let mut sides: HashMap<(u32, (i64, i64, i64), (i64, i64, i64)), (u32, f64)> = HashMap::new();
-    for (solidcraft_geom::Triangle([a, b, c]), f) in m.face_tris() {
+    for (Triangle([a, b, c]), f) in m.face_tris() {
         *area.entry(f).or_default() += (b - a).cross(c - a).len() * 0.5;
         for (p, r) in [(a, b), (b, c), (c, a)] {
             let (kp, kr) = (key(p), key(r));
