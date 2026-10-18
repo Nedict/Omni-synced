@@ -73,7 +73,11 @@ mod measurement_ui_tests;
 #[cfg(test)]
 mod menu_tests;
 #[cfg(test)]
+mod pattern_arrow_tests;
+#[cfg(test)]
 mod surface_clamp_tests;
+#[cfg(test)]
+mod surface_errors_tests;
 #[cfg(test)]
 mod timeline_marks_tests;
 #[cfg(test)]
@@ -175,6 +179,7 @@ pub mod stand_up;
 #[cfg(test)]
 mod sweep_dialog_tests;
 pub mod theme;
+pub mod theme_files;
 #[cfg(test)]
 mod thin_extrude_tests;
 pub mod timeline;
@@ -264,6 +269,10 @@ pub struct Services {
     /// the picker's first filter (`&[]`: designs, CAD files and meshes, #1801).
     pub pick_open: Option<Box<dyn Fn(&[&str]) -> FilePickerFuture>>,
     pub pick_save: Option<Box<dyn Fn(&str, &[&str]) -> FilePickerFuture>>,
+    /// Open a dialog for one file of a kind (its name, its extensions): on macOS a dialog allows
+    /// only the types it names, so the agent chat's files need a dialog of their own. `None`: the
+    /// Open dialog.
+    pub pick_file: Option<Box<dyn Fn(&str, &[&str]) -> FilePickerFuture>>,
     /// Open a dialog asking for a program (a slicer); `None` when the host has no such dialog.
     pub pick_program: Option<Box<dyn Fn() -> FilePickerFuture>>,
     pub show_in_folder: Option<Box<dyn Fn(&str)>>,
@@ -1277,6 +1286,8 @@ impl SolveApp {
         recovery_ui::tick(self);
         update::tick(self, ctx);
         if self.issue_report.draft.is_none() && self.file_picker.is_none() {
+            // Files dropped on the agent chat attach to its next message instead.
+            agent_chat::take_drops(self, ctx);
             for f in ctx.input(|i| i.raw.dropped_files.clone()) {
                 let p = f.path().to_string_lossy().to_string();
                 if !p.is_empty() {
@@ -1378,7 +1389,9 @@ impl SolveApp {
             timeline::timeline(self, ui);
         }
         palette::palette_bar(self, ui);
-        if self.ui.show_browser {
+        // A floating browser keeps the workspace the whole width: it is drawn over the view below.
+        let browser_float = self.ui.show_browser && self.preferences.browser_float;
+        if self.ui.show_browser && !browser_float {
             if left_timeline {
                 browser::browser_below_timeline(self, ui);
             } else {
@@ -1392,6 +1405,11 @@ impl SolveApp {
         }
         agent_chat::show(self, ui);
         preview::update(self, ui.ctx());
+        if browser_float {
+            // The room the central view is about to take, before it takes it.
+            let viewport = ui.available_rect_before_wrap();
+            browser::floating(self, ui, viewport);
+        }
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
             if render_workspace::active(self) {
                 render_workspace::show(self, ui);
