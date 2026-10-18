@@ -627,7 +627,7 @@ jobs:
 
   # Preserve the existing check name for branch protection, including docs-only PRs.
   ci:
-    needs: [changes, checks, clippy, build-tests, tests, doc-tests, oracle, windows-fxc, windows-startup]
+    needs: [changes, checks, clippy, build-tests, tests, doc-tests, oracle, windows-fxc, windows-startup, linux-aarch64-gates]
     if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-light' || 'ubuntu-24.04' }}
     steps:
@@ -645,6 +645,7 @@ jobs:
           ORACLE: ${{ needs.oracle.result }}
           WINDOWS_FXC: ${{ needs.windows-fxc.result }}
           WINDOWS_STARTUP: ${{ needs.windows-startup.result }}
+          LINUX_AARCH64: ${{ needs.linux-aarch64-gates.result }}
         run: |
           test "$CHANGES" = success
           test "$CHECKS" = success
@@ -653,6 +654,7 @@ jobs:
             test "$BUILD" = success
             test "$TESTS" = success
             test "$DOCS" = success
+            test "$LINUX_AARCH64" = success
           fi
           if [ "$ORACLE_RUN" = true ]; then
             test "$ORACLE" = success
@@ -677,6 +679,27 @@ jobs:
           key: wasm
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo xtask wasm
+
+  linux-aarch64-gates:
+    name: Compile Linux ARM64 (native)
+    if: needs.changes.outputs.native == 'true'
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: linux-aarch64
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install build dependencies (C toolchain for zstd-sys, dev libs for tests)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential \
+            libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev \
+            libxrandr-dev libxi-dev libgl1-mesa-dev
+      - name: Cargo check on Linux ARM64
+        run: cargo check --workspace --all-targets --profile ci --locked
 
   riscv64-gates:
     name: Compile RISC-V (manual)
