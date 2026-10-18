@@ -198,13 +198,14 @@ const VIEW_AXES: [&str; 6] = [
 ];
 
 /// The label of axis row `row`: what it does to the view through `mapping`, the mapping
-/// navigation really uses, or "off" when that mapping leaves it out. Without a mapping yet, the
-/// row's own calibrated motion, rather than a guess at the view.
+/// navigation really uses, or "off" when that mapping leaves it out. Without a mapping (a build
+/// with no 3D mouse reader, since the apps run navigation every frame before drawing), the
+/// default mapping's: never a motion name, so a row and its dropdown don't say the same thing.
 pub fn row_label(mapping: Option<DriverMapping>, row: usize) -> &'static str {
     match mapping.and_then(|mapping| mapping.axes.get(row).copied()) {
         Some(rule) if rule.enabled => VIEW_AXES.get(rule.output).copied().unwrap_or("ui.space_mouse_view_off"),
         Some(_) => "ui.space_mouse_view_off",
-        None => MOTIONS.get(row).copied().unwrap_or_default(),
+        None => VIEW_AXES.get(row).copied().unwrap_or("ui.space_mouse_view_off"),
     }
 }
 
@@ -772,8 +773,8 @@ mod tests {
         let mut off = DriverMapping::default();
         off.axes[2].enabled = false;
         assert_eq!(row_label(Some(off), 2), "ui.space_mouse_view_off");
-        // Before navigation has run, each row is named for its own motion, not a guessed effect.
-        assert_eq!(labels(None), MOTIONS);
+        // Without a mapping, rows still name a view axis, never one of the dropdown's motions.
+        assert_eq!(labels(None), VIEW_AXES);
     }
 
     #[test]
