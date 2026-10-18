@@ -202,6 +202,10 @@ jobs:
         run: cargo xtask licences --check
       - name: Dependency layers
         run: cargo xtask layers
+      - name: Sorted lists
+        run: cargo xtask lists
+      - name: Design format pending changes
+        run: bash scripts/test-format-pending.sh
       - name: Web app offline use and updates (headless Chrome)
         run: cargo xtask web-offline-test
       - name: Affected-package selection self-test
