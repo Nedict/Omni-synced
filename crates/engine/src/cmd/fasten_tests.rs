@@ -481,3 +481,32 @@ fn a_fill_after_a_full_undo_history_is_one_step_and_keeps_the_history() {
     run(&mut s, "edit.redo", json!({}));
     assert_eq!(s.doc.parts.len(), 1);
 }
+
+#[test]
+fn a_stack_with_a_countersunk_top_plate_is_sized_by_its_whole_grip() {
+    let lib = Library::bolts();
+    let mut s = Session::default();
+    run(&mut s, "parts.library.load", json!({"path": lib.path()}));
+    run(&mut s, "parameters.add", json!({"name": "hx", "expression": "20 mm"}));
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 3, "corner": [0, 0, 0], "operation": "new", "body_name": "Lower"}));
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 4, "corner": [0, 0, 3], "operation": "new", "body_name": "Upper"}));
+    // Ø5.5 through both, a Ø9.5 x 90° countersink (2 mm deep) on top.
+    run(&mut s, "solid.hole", json!({"position": ["hx", 15, 7], "diameter": 5.5, "depth": 7}));
+    run(
+        &mut s,
+        "solid.hole",
+        json!({"position": ["hx", 15, 7], "diameter": 5.5, "depth": 4, "type": "countersink", "cs_diameter": 9.5, "cs_angle": "90 deg"}),
+    );
+    // The countersink (2 mm deep) counts in the grip: 7 mm, so M5 x 14 (5–9).
+    let r = run(&mut s, "parts.fasten", json!({"family": "hex_bolt_grip"}));
+    let p = &r["placed"][0];
+    assert_eq!((r["unfilled"].clone(), p["size"].as_str(), p["length_mm"].as_f64()), (json!([]), Some("M5"), Some(14.0)), "{r}");
+    assert!(near(p["grip_mm"].as_f64().unwrap_or(0.0), 7.0), "{r}");
+    // Seated on the top face over the countersink, jointed to the hole's wall below it.
+    let (lo, hi) = bbox(&s, occ(&p["occurrence"]));
+    assert!(near(hi.z, 7.0 + 3.5) && near(lo.z, 7.0 - 14.0), "{lo:?} {hi:?}");
+    // The joint keeps it there when the hole moves.
+    run(&mut s, "parameters.change", json!({"name": "hx", "expression": "26 mm"}));
+    let (lo, hi) = bbox(&s, occ(&p["occurrence"]));
+    assert!(near((lo.x + hi.x) / 2.0, 26.0) && near(hi.z, 7.0 + 3.5) && near(lo.z, 7.0 - 14.0), "{lo:?} {hi:?}");
+}
