@@ -26,12 +26,12 @@ fn streamed_text_joins_and_tool_updates_change_their_call() {
 #[test]
 fn a_sign_in_request_keeps_the_question_for_after_the_login() {
     let mut c = chat();
-    c.last = Some(("make a cube".into(), false));
+    c.last = Some(("make a cube".into(), false, None));
     c.state = Some(State::Busy);
     assert!(c.on_event(Event::TurnEnded { reason: "auth".into() }).is_some());
     c.on_event(Event::AuthRequired { methods: vec![] });
     assert_eq!(c.state(), State::NeedsAuth);
-    assert_eq!(c.queued, Some(("make a cube".into(), false)));
+    assert_eq!(c.queued, Some(("make a cube".into(), false, None)));
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn app_in_a_turn() -> (SolveApp, Sender<ControlRequest>) {
     let (tx, rx) = channel();
     app.agent_chat.tools_rx = Some(rx);
     app.agent_chat.state = Some(State::Busy);
-    start_turn(&mut app, "two boxes".into(), false);
+    start_turn(&mut app, "two boxes".into(), false, None);
     (app, tx)
 }
 
@@ -232,6 +232,109 @@ fn with_ai_features_off_nothing_of_the_chat_shows_or_runs() {
 fn ai_features_and_the_toolbar_button_are_on_by_default() {
     let p = crate::prefs::Prefs::default();
     assert!(p.ai_features && p.ai_toolbar_button);
+}
+
+/// Pop out puts the chat in its own window (a native window on the desktop, which can go to
+/// another screen; embedded here, where the test context has one viewport), and Dock puts it back
+/// in the side panel. The control channel does the same.
+#[test]
+fn the_chat_pops_out_into_its_own_window_and_docks_back() {
+    use crate::scenario::{handle_at, rect_of};
+    let mut h = crate::scenario::Harness::new();
+    h.call("ui.agent_chat", json!({"open": true}));
+    h.frames(3);
+    assert!(rect_of("agent_chat:panel").is_some() && rect_of("agent_chat:window").is_none(), "docked by default");
+    assert!(!h.app.preferences.agent_chat_popped);
+    let pop = handle_at("agent_chat:pop_out").expect("a pop-out button in the header");
+    h.call("ui.click", json!({"x": pop.x, "y": pop.y}));
+    h.frames(3);
+    assert!(h.app.preferences.agent_chat_popped);
+    assert!(rect_of("agent_chat:panel").is_none(), "the side panel is gone");
+    assert!(rect_of("agent_chat:window").is_some(), "the chat is in its own window");
+    assert_eq!(status(&h.app)["popped"], json!(true));
+    // A window has its own minimise; the strip and the side drag are the docked panel's.
+    assert!(handle_at("agent_chat:minimize").is_none() && handle_at("agent_chat:grip").is_none());
+    let dock = handle_at("agent_chat:dock").expect("a dock button in the popped-out header");
+    h.call("ui.click", json!({"x": dock.x, "y": dock.y}));
+    h.frames(3);
+    assert!(!h.app.preferences.agent_chat_popped);
+    assert!(rect_of("agent_chat:panel").is_some() && rect_of("agent_chat:window").is_none(), "back in the side panel");
+    h.call("ui.agent_chat", json!({"popped": true}));
+    h.frames(3);
+    assert!(rect_of("agent_chat:window").is_some() && rect_of("agent_chat:panel").is_none());
+    // Closing the chat keeps where it lives: it opens popped out again.
+    h.call("ui.agent_chat", json!({"open": false}));
+    h.frames(2);
+    assert!(rect_of("agent_chat:window").is_none());
+    h.call("ui.agent_chat", json!({"open": true}));
+    h.frames(3);
+    assert!(rect_of("agent_chat:window").is_some());
+}
+
+/// The saved place is given to the window once, when it opens; after that the system owns it.
+/// Given every frame, it chased the system's own rounding: a window that shook a pixel up and
+/// down (686, 687, 686…) on a Retina screen.
+#[test]
+fn the_window_place_is_given_once_when_it_opens() {
+    let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+    app.preferences.agent_chat_window = Some([1967.0, 160.0, 569.0, 686.0]);
+    let first = panel::window_builder(&app);
+    assert_eq!(first.position, Some(egui::pos2(1967.0, 160.0)));
+    assert_eq!(first.inner_size, Some(egui::vec2(569.0, 686.0)));
+    app.agent_chat.window_placed = true;
+    app.preferences.agent_chat_window = Some([1967.0, 160.0, 569.0, 687.0]);
+    let later = panel::window_builder(&app);
+    assert_eq!((later.position, later.inner_size), (None, None), "nothing to move or resize once it is open");
+    assert!(later.title.is_some());
+    // Docked or closed, the next pop-out opens at the saved place again.
+    let mut h = crate::scenario::Harness::new();
+    h.call("ui.agent_chat", json!({"open": true, "popped": true}));
+    h.frames(2);
+    assert!(h.app.agent_chat.window_placed);
+    h.call("ui.agent_chat", json!({"popped": false}));
+    h.frames(2);
+    assert!(!h.app.agent_chat.window_placed);
+    h.call("ui.agent_chat", json!({"popped": true}));
+    h.frames(2);
+    h.call("ui.agent_chat", json!({"open": false}));
+    h.frames(2);
+    assert!(!h.app.agent_chat.window_placed);
+}
+
+/// macOS shows the text cursor only in the active window: the chat's own window becomes active
+/// when the pointer comes over its text box from the app's main window, and never takes the focus
+/// from another app.
+#[test]
+fn the_chat_window_takes_the_focus_for_its_text_box_from_the_main_window_only() {
+    assert!(panel::take_focus_for_text(true, true, Some(false), Some(true)));
+    assert!(!panel::take_focus_for_text(true, true, Some(false), Some(false)), "another app is active");
+    assert!(!panel::take_focus_for_text(true, true, Some(true), Some(false)), "already active");
+    assert!(!panel::take_focus_for_text(true, false, Some(false), Some(true)), "not over the text box");
+    assert!(!panel::take_focus_for_text(false, true, Some(false), Some(true)), "docked: the main window shows it");
+    assert!(!panel::take_focus_for_text(true, true, None, Some(true)), "unknown: leave it");
+}
+
+/// Whether the chat is popped out, and its window's place and size, are preferences; ones saved
+/// before they existed load docked, and an unusable saved place is ignored.
+#[test]
+fn the_popped_out_window_and_its_place_are_remembered() {
+    use crate::prefs::Prefs;
+    let mut p = Prefs::default();
+    assert!(!p.agent_chat_popped && p.agent_chat_window.is_none());
+    p.agent_chat_popped = true;
+    p.agent_chat_window = Some([-1600.0, 80.0, 420.0, 700.0]);
+    let back: Prefs = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+    assert!(back.agent_chat_popped);
+    assert_eq!(back.agent_chat_window, Some([-1600.0, 80.0, 420.0, 700.0]), "a place on a screen left of the main one is kept");
+    let mut old = serde_json::to_value(Prefs::default()).unwrap();
+    old.as_object_mut().unwrap().remove("agent_chat_popped");
+    old.as_object_mut().unwrap().remove("agent_chat_window");
+    let old: Prefs = serde_json::from_value(old).unwrap();
+    assert!(!old.agent_chat_popped && old.agent_chat_window.is_none());
+    assert_eq!(panel::window_place(Some([10.0, 20.0, 400.0, 600.0])), Some(([10.0, 20.0], [400.0, 600.0])));
+    for bad in [[f32::NAN, 0.0, 400.0, 600.0], [0.0, 0.0, 10.0, 600.0], [0.0, 0.0, 400.0, f32::INFINITY], [1e9, 0.0, 400.0, 600.0]] {
+        assert_eq!(panel::window_place(Some(bad)), None, "{bad:?}");
+    }
 }
 
 /// "Ask every time": a modelling command waits for Allow; "Always allow" lets the same command
@@ -970,25 +1073,87 @@ fn a_messages_pictures_open_in_a_viewer() {
     assert!(h.app.agent_chat.gallery.is_none());
 }
 
-/// A message's picture is kept on the message the agent starts on, not on an earlier one.
+/// A message's picture is kept on exactly the message it was taken for: not an earlier one that
+/// also wanted a picture, not one that has it already, and nothing that isn't such a message.
 #[test]
-fn the_picture_goes_to_the_newest_message_that_wanted_one() {
+fn the_picture_goes_to_the_message_it_was_taken_for() {
     let mut chat = AgentChat::default();
     chat.push(Item::User { text: "no picture".into(), image: false, pictures: Vec::new(), context: Context::default() });
     chat.push(Item::User { text: "first".into(), image: true, pictures: vec![Picture::new(vec![1], "")], context: Context::default() });
     chat.push(Item::User { text: "second".into(), image: true, pictures: Vec::new(), context: Context::default() });
-    chat.keep_picture(vec![2, 3]);
-    let kept: Vec<usize> = chat
-        .items
-        .iter()
-        .filter_map(|i| match i {
-            Item::User { pictures, .. } => Some(pictures.iter().map(|p| p.png.len()).sum()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(kept, [0, 1, 2]);
-    chat.keep_picture(vec![0; super::MAX_PICTURE_BYTES + 1]);
-    assert!(matches!(chat.items.last(), Some(Item::User { pictures, .. }) if pictures.len() == 1), "an oversized picture is not kept");
+    chat.push(Item::User { text: "third".into(), image: true, pictures: Vec::new(), context: Context::default() });
+    let sizes = |chat: &AgentChat| -> Vec<usize> {
+        chat.items
+            .iter()
+            .filter_map(|i| match i {
+                Item::User { pictures, .. } => Some(pictures.iter().map(|p| p.png.len()).sum()),
+                _ => None,
+            })
+            .collect()
+    };
+    // The picture of the third message goes to the third, though the second still waits for one.
+    chat.keep_picture(Some(3), vec![2, 3]);
+    assert_eq!(sizes(&chat), [0, 1, 0, 2]);
+    // The same message again (it was sent again): nothing is added, nor moved to an older message.
+    chat.keep_picture(Some(3), vec![9; 5]);
+    assert_eq!(sizes(&chat), [0, 1, 0, 2]);
+    // A message that did not want one, no message, or a place that is gone.
+    chat.keep_picture(Some(0), vec![1]);
+    chat.keep_picture(None, vec![1]);
+    chat.keep_picture(Some(99), vec![1]);
+    assert_eq!(sizes(&chat), [0, 1, 0, 2]);
+    chat.keep_picture(Some(2), vec![0; super::MAX_PICTURE_BYTES + 1]);
+    assert_eq!(sizes(&chat), [0, 1, 0, 2], "an oversized picture is not kept");
+}
+
+/// A message sent again after a sign-in is still the message it was: its turn points at its own
+/// place in the conversation, so its picture is kept there, once, and never on an older message that
+/// wanted one (#2224 review). The picture itself can't be drawn without a renderer in a test, so the
+/// place a turn is started for is what is checked.
+#[test]
+fn a_message_sent_again_after_sign_in_stays_the_message_it_was() {
+    let (mut app, script, ctx) = app_with_script();
+    app.agent_chat.images = true;
+    // An older message that wanted a picture and has none.
+    app.agent_chat.push(Item::User { text: "older".into(), image: true, pictures: Vec::new(), context: Context::default() });
+    app.agent_chat.attach_view = true;
+    send(&mut app, &ctx, "the new one".into());
+    let place = app.agent_chat.items.len() - 1;
+    assert_eq!(app.agent_chat.last, Some(("the new one".into(), true, Some(place))), "the turn knows its message");
+    // The agent asked for a sign-in; after it the message goes again, as it is done on a sign-in.
+    ended(&script, "");
+    poll(&mut app, &ctx);
+    app.agent_chat.queued = app.agent_chat.last.take();
+    script.report(Event::Ready { agent: "fake".into(), images: true });
+    poll(&mut app, &ctx);
+    assert_eq!(app.agent_chat.last, Some(("the new one".into(), true, Some(place))), "sent again, still for the same message");
+    assert_eq!(app.agent_chat.items.iter().filter(|i| matches!(i, Item::User { .. })).count(), 2, "not a new message");
+    // Its picture goes there, once; the older message gets none.
+    app.agent_chat.keep_picture(Some(place), test_png([1, 2, 3, 255], 4));
+    app.agent_chat.keep_picture(Some(place), test_png([1, 2, 3, 255], 4));
+    let counts: Vec<usize> =
+        app.agent_chat.items.iter().filter_map(|i| if let Item::User { pictures, .. } = i { Some(pictures.len()) } else { None }).collect();
+    assert_eq!(counts, [0, 1]);
+}
+
+/// The picture viewer opens over the chat's own window too, not only over the docked panel (#1745).
+#[test]
+fn the_viewer_opens_in_the_popped_out_window() {
+    let mut h = crate::scenario::Harness::new();
+    h.call("ui.agent_chat", json!({"open": true}));
+    h.app.preferences.agent_chat_popped = true;
+    h.app.agent_chat.items.push(Item::User {
+        text: "look".into(),
+        image: true,
+        pictures: vec![Picture::new(test_png([200, 30, 30, 255], 8), "first view")],
+        context: Context::default(),
+    });
+    h.frames(4);
+    let at = crate::scenario::handle_at("agent_chat:picture:0:0").expect("the thumbnail is drawn in the window");
+    h.call("ui.click", json!({"x": at.x, "y": at.y}));
+    h.frames(4);
+    assert!(h.app.agent_chat.gallery.is_some(), "the click opened the viewer");
+    assert!(crate::scenario::rect_of("agent_chat:gallery_picture").is_some(), "and it is drawn");
 }
 
 // ---- Pick context (#2286) ----
