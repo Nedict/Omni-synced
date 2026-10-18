@@ -51,21 +51,26 @@ fn dist_to(sk: &Sketch, ci: usize, p: Vec2) -> f64 {
     }
 }
 
-/// Visible, non-tangent crossings of curves `a` and `b` (empty when a == b or either is unknown).
+/// Visible, non-tangent crossings of curves `a` and `b`, including corners and T-junctions where a
+/// curve end touches the other (empty when a == b or either is unknown).
 pub fn crossings_of(sk: &Sketch, a: usize, b: usize) -> Vec<Vec2> {
     if a == b || a >= sk.curves.len() || b >= sk.curves.len() {
         return Vec::new();
     }
     let pts: Vec<Vec2> = match (sk.shape(a), sk.shape(b)) {
-        (Some(sa), Some(sb)) => cut_pair(sk, &sa, infinite(sk, a), b, &sb, false).into_iter().map(|(_, q)| q).collect(),
+        (Some(sa), Some(sb)) => cut_pair(sk, &sa, infinite(sk, a), b, &sb, true).into_iter().map(|(_, q)| q).collect(),
         _ => {
             // Free-form pair: cut the free-form one (an infinite line runs on forever).
             let (ci, oi) = if sk.shape(a).is_none() { (a, b) } else { (b, a) };
             let segs = pieces(sk, ci);
-            cuts_pair(sk, ci, &sk.polyline(ci), &segs, oi, false, true).into_iter().map(|(_, q)| q).collect()
+            cuts_pair(sk, ci, &sk.polyline(ci), &segs, oi, true, true).into_iter().map(|(_, q)| q).collect()
         }
     };
+    // An infinite curve accepts any end point of the other, so check analytic curves pass through it
+    // (free-form hits are already refined onto both curves).
+    let on = |ci: usize, q: Vec2| sk.shape(ci).is_none() || dist_to(sk, ci, q) < 1e-6;
     pts.into_iter()
+        .filter(|&q| on(a, q) && on(b, q))
         .filter(|&q| match (tangent_at(sk, a, q), tangent_at(sk, b, q)) {
             (Some(ta), Some(tb)) => ta.cross(tb).abs() >= PARALLEL,
             _ => false,
@@ -204,6 +209,23 @@ mod tests {
         let b = line(&mut sk, (2.0, 0.0), (8.0, 0.0));
         assert!(crossings_of(&sk, a, b).is_empty());
         assert!(crossing_near(&sk, v(5.0, 0.0), 0.5).is_none());
+    }
+
+    #[test]
+    fn corners_and_t_junctions_count() {
+        let mut sk = Sketch::new();
+        let a = line(&mut sk, (0.0, 0.0), (10.0, 0.0));
+        let b = line(&mut sk, (10.0, 0.0), (10.0, 10.0));
+        let c = line(&mut sk, (5.0, 0.0), (5.0, 8.0));
+        let corner = crossings_of(&sk, a, b);
+        assert_eq!(corner.len(), 1);
+        assert!(corner[0].dist(v(10.0, 0.0)) < 1e-9);
+        let t = crossings_of(&sk, a, c);
+        assert_eq!(t.len(), 1);
+        assert!(t[0].dist(v(5.0, 0.0)) < 1e-9);
+        // End to end along one line is tangent, not a crossing.
+        let d = line(&mut sk, (10.0, 0.0), (20.0, 0.0));
+        assert!(crossings_of(&sk, a, d).is_empty());
     }
 
     #[test]
