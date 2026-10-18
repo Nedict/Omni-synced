@@ -61,10 +61,9 @@ pub fn parse_body(spec: &str) -> Result<BodyLook, String> {
                 look.opacity = Some(o);
             }
             "color" => {
-                if !(value.len() == 7 && value.starts_with('#') && value[1..].chars().all(|c| c.is_ascii_hexdigit())) {
-                    return Err(format!("--body {name}: color must be #rrggbb, not `{value}`"));
-                }
-                look.color = Some(value.to_ascii_lowercase());
+                let digits = value.strip_prefix('#').filter(|h| h.len() == 6 && h.chars().all(|c| c.is_ascii_hexdigit()));
+                let digits = digits.ok_or_else(|| format!("--body {name}: color must be #rrggbb, not `{value}`"))?;
+                look.color = Some(format!("#{}", digits.to_ascii_lowercase()));
             }
             other => return Err(format!("--body {name}: unknown key `{other}` (opacity, color)")),
         }
@@ -159,7 +158,7 @@ fn assign(s: &mut Session, look: &BodyLook) -> Result<(), String> {
         "color": look.color.clone().unwrap_or(hex),
         "opacity": look.opacity.unwrap_or(opacity),
     });
-    s.execute("appearance.assign", &params).map(|_| ()).map_err(|e| format!("--body {name}: {e}"))
+    s.execute("appearance.assign", &params).map(|_| ()).map_err(|e| format!("drawing `{name}`: {e}"))
 }
 
 /// The design's bodies, named, for an error message.
