@@ -217,15 +217,17 @@ impl FastenerFamily {
         if self.sizes.is_empty() {
             bad(format!("{at}.sizes"), "no sizes".into());
         }
-        for (i, s) in self.sizes.iter().enumerate() {
+        // `validate` has reported anything past the caps; the pairwise checks stay within them.
+        for (i, s) in self.sizes.iter().enumerate().take(MAX_SIZES) {
             let at = format!("{at}.sizes[{i}]");
-            if self.sizes.iter().take(i).any(|o| o.size == s.size) {
+            // `size()` finds a size whatever its case, so `M5` and `m5` are one size.
+            if self.sizes.iter().take(i).any(|o| o.size.trim().eq_ignore_ascii_case(s.size.trim())) {
                 bad(format!("{at}.size"), format!("size `{}` is listed twice", s.size));
             }
             if self.shape.has_lengths() && s.lengths.is_empty() {
                 bad(format!("{at}.lengths"), format!("size `{}` has no lengths", s.size));
             }
-            for (j, l) in s.lengths.iter().enumerate() {
+            for (j, l) in s.lengths.iter().enumerate().take(MAX_LENGTHS) {
                 if s.lengths.iter().take(j).any(|o| (o.length - l.length).abs() < 1e-9) {
                     bad(format!("{at}.lengths[{j}].length"), format!("length {} is listed twice", l.length));
                 }

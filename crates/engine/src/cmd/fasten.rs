@@ -373,13 +373,16 @@ fn across(axis: Vec3) -> Vec3 {
 }
 
 /// One face of a stack a part seats on: the point on the axis there, the way out of the stack,
-/// and the hole wall to joint to (none for a slot, which has no circle).
+/// and the hole wall to joint to (none for a slot, which has no circle), with how far out from
+/// that wall's end the face is (a countersink or chamfer between them; 0 when the wall reaches
+/// the face).
 struct Face {
     at: Vec3,
     out: Vec3,
     hole: Option<JointOrigin>,
     /// The hole's origin lands on this face (not only the first origin found round the hole).
     on_face: bool,
+    lift: f64,
 }
 
 /// The occurrence that holds `body` (the root's bodies: 0), or the one nearest `at`.
@@ -406,7 +409,7 @@ fn host(s: &Session, body: &str, at: Vec3) -> Option<u64> {
 /// first origin found is kept.
 fn face(s: &Session, at: Vec3, out: Vec3, layer: &Layer, cmd: &str) -> std::result::Result<Face, String> {
     if layer.slot.is_some() {
-        return Ok(Face { at, out, hole: None, on_face: false });
+        return Ok(Face { at, out, hole: None, on_face: false, lift: 0.0 });
     }
     let inset = ((layer.t1 - layer.t0) * 0.25).clamp(1e-3, 0.5);
     let (u, v) = (across(out), out.cross(across(out)));
@@ -429,7 +432,7 @@ fn face(s: &Session, at: Vec3, out: Vec3, layer: &Layer, cmd: &str) -> std::resu
                     )
                 });
                 if seat.is_some_and(|q| (q - at).dot(out).abs() <= near) {
-                    return Ok(Face { at, out, hole: Some(origin), on_face: true });
+                    return Ok(Face { at, out, hole: Some(origin), on_face: true, lift: 0.0 });
                 }
                 first.get_or_insert(origin);
             }
@@ -437,7 +440,28 @@ fn face(s: &Session, at: Vec3, out: Vec3, layer: &Layer, cmd: &str) -> std::resu
             Err(_) => {}
         }
     }
-    first.map(|origin| Face { at, out, hole: Some(origin), on_face: false }).ok_or(why)
+    if let Some(origin) = first {
+        return Ok(Face { at, out, hole: Some(origin), on_face: false, lift: 0.0 });
+    }
+    // A countersink or chamfer at the face leaves no wall just inside it: joint to the wall
+    // further in, and lift the part from that wall's end out to the face.
+    let t = layer.t1 - layer.t0;
+    for depth in [0.5, 0.7, 0.9].map(|x| x * t) {
+        let wall = at + u * (layer.d / 2.0) - out * depth;
+        let Some(occ) = host(s, &layer.body, wall) else { continue };
+        let Ok(origin) = joints::origin(s, &json!({"occurrence": occ, "circle": wall}), cmd) else { continue };
+        let Some(seat) = solidcraft_doc::joints::resolve_origin(&s.doc, &s.model.state(), &origin).ok().map(|f| {
+            solidcraft_doc::apply_point(&solidcraft_doc::joints::occurrence_world(&s.doc, origin.occurrence), Vec3::new(f[3][0], f[3][1], f[3][2]))
+        }) else {
+            continue;
+        };
+        let lift = (at - seat).dot(out);
+        if lift.is_finite() && (-1e-6..=t + 1e-6).contains(&lift) {
+            // Not on the face itself: a refresh keeps the joint (and its lift) it has.
+            return Ok(Face { at, out, hole: Some(origin), on_face: false, lift: lift.max(0.0) });
+        }
+    }
+    Err(why)
 }
 
 /// Its placement with +z along `out` at `at`.
@@ -495,6 +519,8 @@ impl Built {
         let Some((_, comp, fresh, name)) = self.parts.get_mut(i) else { return Err(bad("parts.fasten", "part")) };
         let (comp, name) = (*comp, name.clone());
         let m = placement(f.at + f.out * offset, f.out);
+        // The joint is on the hole wall's end; the part sits on the face, `lift` further out.
+        let offset = offset + f.lift;
         let occ = match fresh.take() {
             Some(o) => {
                 if let Some(x) = s.doc_mut().occurrences.iter_mut().find(|x| x.id == o) {
@@ -519,15 +545,18 @@ impl Built {
 }
 
 fn fasten(s: &mut Session, p: &Value) -> Result<Value> {
-    // The commands it runs push their own undo steps: drop them, so the whole fill (or a
-    // failed one, which leaves the design as it was) is the one step `Session::execute` keeps.
-    let depth = s.undo.len();
+    // The commands it runs push their own undo steps: set the user's history aside while they
+    // run and put it back after, so the whole fill (or a failed one, which leaves the design as
+    // it was) is the one step `Session::execute` keeps, and the nested steps never push the
+    // user's oldest steps out past the undo limit.
+    let (undo, redo) = (std::mem::take(&mut s.undo), std::mem::take(&mut s.redo));
     // The parts it builds would solve every joint of the design on each of their commands:
     // the joints are solved once, at the end.
     let deferred = std::mem::replace(&mut s.defer_joints, true);
     let r = fill(s, p);
     s.defer_joints = deferred;
-    s.undo.truncate(depth);
+    s.undo = undo;
+    s.redo = redo;
     r
 }
 
