@@ -304,7 +304,7 @@ fn grid_sphere_box_union_is_sound() {
 }
 
 /// A small sphere on the top of a thin box: a patch of the sphere sticks out of the box's side
-/// by less than the tolerance, a 0.35 mm² face that had no triangle when meshed at 1 % of the body.
+/// by less than the tolerance, a face of about 0.35 mm² that had no triangle when meshed at 1 % of the body.
 #[test]
 fn grid_small_sphere_thin_box_union_is_sound() {
     let a = Prim::Sph { at: [20.0, 10.0, 27.5], r: 3.75 };

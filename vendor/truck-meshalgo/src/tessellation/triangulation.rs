@@ -1042,6 +1042,20 @@ fn turn(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
     (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 }
 
+/// SolidCraft: whether two sides of the closed polygon that do not share a corner cross each other.
+/// Ears of a polygon that crosses itself overlap, so it is not triangulated.
+fn crosses_itself(points: &[[f64; 2]]) -> bool {
+    let n = points.len();
+    let side = |i: usize| (points[i], points[(i + 1) % n]);
+    (0..n).any(|i| {
+        let (a, b) = side(i);
+        (i + 2..n).filter(|&j| !(i == 0 && j == n - 1)).any(|j| {
+            let (c, d) = side(j);
+            turn(a, b, c) * turn(a, b, d) < 0.0 && turn(c, d, a) * turn(c, d, b) < 0.0
+        })
+    })
+}
+
 /// SolidCraft: the triangles of a simple polygon, as indices into its points, by clipping ears.
 /// `None` when no ear is left to clip (the polygon crosses itself) or it has no area.
 fn ear_clipping(points: &[[f64; 2]]) -> Option<Vec<[usize; 3]>> {
@@ -1050,7 +1064,7 @@ fn ear_clipping(points: &[[f64; 2]]) -> Option<Vec<[usize; 3]>> {
     }
     let next = points.iter().cycle().skip(1);
     let area2: f64 = points.iter().zip(next).map(|(p, q)| p[0] * q[1] - q[0] * p[1]).sum();
-    if area2 == 0.0 {
+    if area2 == 0.0 || crosses_itself(points) {
         return None;
     }
     // Every turn of an ear, and of a point inside it, is on the polygon's own side.
@@ -1654,5 +1668,19 @@ pub mod include_test_hooks {
     fn hook_passes() {
         let n = include_answers_as_before(0..120);
         assert!(matches!(n, Ok(n) if n > 100_000), "{n:?}");
+    }
+}
+
+/// SolidCraft: the fallback that triangulates a face's boundary loop when the face has no
+/// triangle, for kernel tests (the vendored crates' own tests do not run in CI).
+///
+/// Not part of the API. Built only for tests, or with the `test-hooks` feature.
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub mod loop_fill_test_hooks {
+    /// The triangles of a closed polygon, as indices into its points, or `None` when it has no
+    /// area, fewer than three points, or crosses itself.
+    pub fn ear_clipping(points: &[[f64; 2]]) -> Option<Vec<[usize; 3]>> {
+        super::ear_clipping(points)
     }
 }

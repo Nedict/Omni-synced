@@ -26,7 +26,7 @@ fn open_sides(mesh: &solidcraft_geom::Mesh) -> usize {
 
 /// The sphere's equator lies in the box's top and its circle on the box's side x = 22.5 dips to
 /// z = 24.7, while the edge of the sphere's bottom patch bulges 0.15 mm past that side: a
-/// 0.35 mm² face between the two. At 1 % of the body it had no triangle.
+/// face of about 0.35 mm² between the two. At 1 % of the body it had no triangle.
 #[test]
 fn a_lens_thinner_than_the_tolerance_is_meshed() {
     let a = sphere(Vec3::new(20.0, 10.0, 27.5), 3.75).unwrap();
