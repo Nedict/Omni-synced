@@ -3327,13 +3327,16 @@ fn targets_row(ui: &mut egui::Ui, s: &Session, inputs: &mut [SelInput], index: u
     row_label(ui, TARGETS);
     let mut remove = None;
     let mut activate = false;
-    ui.horizontal_wrapped(|ui| {
-        // As wide as the other fields: more bodies wrap onto more lines, not a wider dialog.
-        ui.set_max_width(FIELD_W);
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP).with_main_wrap(true), |ui| {
+        // About as wide as the other fields: more bodies wrap onto more lines, not a wider dialog.
+        ui.set_max_width(FIELD_W + 8.0);
         ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
         for (k, item) in inp.items.iter().enumerate() {
             let name = selection_label(s, item);
-            let pill = egui::Button::new(RichText::new(format!("{name}  ×")).color(Color32::WHITE)).fill(t.chip).min_size(vec2(0.0, 22.0));
+            let pill = egui::Button::new(RichText::new(format!("{name}  ×")).color(Color32::WHITE))
+                .wrap_mode(egui::TextWrapMode::Extend)
+                .fill(t.chip)
+                .min_size(vec2(0.0, 22.0));
             let r = ui.add(pill).on_hover_text(tr("Remove from Targets"));
             crate::scenario::publish_handle(&format!("dialog:target:{name}"), r.rect.center());
             if r.clicked() {
@@ -3345,8 +3348,11 @@ fn targets_row(ui: &mut egui::Ui, s: &Session, inputs: &mut [SelInput], index: u
         }
         let on = index == *active;
         let stroke = if on { Stroke::new(1.5, t.accent) } else { Stroke::new(1.0, t.dialog_border.gamma_multiply(1.6)) };
-        let chip =
-            egui::Button::new(RichText::new(tr("dialog.select")).color(t.text)).fill(Color32::TRANSPARENT).stroke(stroke).min_size(vec2(0.0, 22.0));
+        let chip = egui::Button::new(RichText::new(tr("dialog.select")).color(t.text))
+            .wrap_mode(egui::TextWrapMode::Extend)
+            .fill(Color32::TRANSPARENT)
+            .stroke(stroke)
+            .min_size(vec2(0.0, 22.0));
         let r = crate::frame::add_outlined(ui, chip, stroke.width);
         publish_row(&r);
         if r.on_hover_text(format!("{} (click to pick into this input)", hint(inp))).clicked() {
