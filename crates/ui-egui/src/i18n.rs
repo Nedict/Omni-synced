@@ -40,6 +40,7 @@ static GALICIAN: Catalog = Catalog::new("gl", "Galego", include_str!(concat!(env
 static ITALIAN: Catalog = Catalog::new("it", "Italiano", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/it.json")));
 static JAPANESE: Catalog = Catalog::new("ja", "日本語", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ja.json")));
 static KOREAN: Catalog = Catalog::new("ko", "한국어", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ko.json")));
+static POLISH: Catalog = Catalog::new("pl", "Polski", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/pl.json")));
 static PORTUGUESE_BR: Catalog =
     Catalog::new("pt-BR", "Português (Brasil)", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/pt-BR.json")));
 static RUSSIAN: Catalog = Catalog::new("ru", "Русский", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ru.json")));
@@ -59,6 +60,7 @@ pub const LOCALES: &[&Catalog] = &[
     &ITALIAN,
     &JAPANESE,
     &KOREAN,
+    &POLISH,
     &PORTUGUESE_BR,
     &RUSSIAN,
     &TURKISH,
@@ -597,6 +599,28 @@ mod tests {
         assert_eq!(tr.format("document.save_changes", &[("name", "My {design}")]), "My {design} içindeki değişiklikler kaydedilsin mi?");
         assert_eq!(tr.format("dialog.selected_count", &[("count", "2")]), "↖ 2 seçildi");
         assert_eq!(tr.label("NonExistentKey"), "NonExistentKey");
+    }
+
+    #[test]
+    fn polish_catalog_translates_keys_labels_and_browser_patterns() {
+        let pl = Locale::for_language("pl");
+        assert_eq!(pl.name(), "Polski");
+        assert!(is_supported("pl"));
+        assert_eq!(pl.text("ui.preferences"), "Preferencje");
+        assert_eq!(pl.label("Extrude"), "Wyciągnięcie");
+        assert_eq!(pl.label("Fillet"), "Zaokrąglenie");
+        assert_eq!(pl.label("CREATE SKETCH"), "UTWÓRZ SZKIC");
+        assert_eq!(pl.label("NonExistentKey"), "NonExistentKey");
+        assert_eq!(pl.format("document.save_changes", &[("name", "My {design}")]), "Zapisać zmiany w My {design}?");
+        assert_eq!(pl.format("dialog.selected_count", &[("count", "2")]), "↖ Wybrano: 2");
+        assert_eq!(pl.dynamic("Sketch1"), "Szkic1");
+        assert_eq!(pl.dynamic("Body2"), "Bryła2");
+        assert_eq!(pl.dynamic("Component12"), "Komponent12");
+        assert_eq!(pl.dynamic("Units: mm"), "Jednostki: mm");
+        assert_eq!(pl.dynamic("Precision: 3"), "Precyzja: 3");
+        assert_eq!(pl.dynamic("Parameters (5)"), "Parametry (5)");
+        assert_eq!(pl.dynamic("4 degrees of freedom"), "Stopni swobody: 4");
+        assert_eq!(pl.dynamic("Sketch of bracket"), "Sketch of bracket");
     }
 
     #[test]
