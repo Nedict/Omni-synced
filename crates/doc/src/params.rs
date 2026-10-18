@@ -280,6 +280,8 @@ impl FeatureKind {
             | FeatureKind::SheetBase { .. }
             | FeatureKind::SheetUnfold { .. }
             | FeatureKind::SheetConvert { .. }
+            | FeatureKind::SheetRip { .. }
+            | FeatureKind::SheetLoft { .. }
             | FeatureKind::Align { .. }
             | FeatureKind::Remove { .. }
             | FeatureKind::DeleteFace { .. }
@@ -293,6 +295,17 @@ impl FeatureKind {
             | FeatureKind::MeshCut { .. }
             | FeatureKind::MeshRepair { .. } => {}
             FeatureKind::MeshReduce { ratio, .. } => v.push(("Ratio", ratio, U)),
+            FeatureKind::SurfaceOffset { distance, .. } => v.push(("Distance", distance, L)),
+            FeatureKind::MeshRemesh { target, .. } => v.push(("Target", target, U)),
+            FeatureKind::MeshShell { thickness, .. } => v.push(("Thickness", thickness, L)),
+            FeatureKind::SurfaceRule { .. }
+            | FeatureKind::SurfaceFlatten { .. }
+            | FeatureKind::SurfaceReverse { .. }
+            | FeatureKind::MeshSmooth { .. }
+            | FeatureKind::MeshSeparate { .. }
+            | FeatureKind::MeshCombine { .. }
+            | FeatureKind::MeshMergeGroups { .. }
+            | FeatureKind::MeshReverse { .. } => {}
             FeatureKind::Form { length, width, thickness, .. } => {
                 v.push(("Length", length, L));
                 v.push(("Width", width, L));

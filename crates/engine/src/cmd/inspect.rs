@@ -346,6 +346,24 @@ fn appearance(s: &mut Session, p: &Value) -> Result<Value> {
             Some(Look::custom(c, o))
         }
     };
+    let look = match look {
+        Some(mut look) => {
+            if let Some(m) = p.get("metalness").and_then(Value::as_f64) {
+                if !(m.is_finite() && (0.0..=1.0).contains(&m)) {
+                    return Err(bad(cmd, "`metalness` must be 0…1"));
+                }
+                look.metalness = m;
+            }
+            if let Some(r) = p.get("roughness").and_then(Value::as_f64) {
+                if !(r.is_finite() && (0.0..=1.0).contains(&r)) {
+                    return Err(bad(cmd, "`roughness` must be 0…1"));
+                }
+                look.roughness = r;
+            }
+            Some(look)
+        }
+        None => None,
+    };
     let bodies = string_list(p, "bodies");
     let st = s.model.state();
     if bodies.iter().any(|b| st.body(b).is_none()) {

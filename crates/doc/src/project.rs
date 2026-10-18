@@ -262,7 +262,8 @@ fn resolve_uncached(
         LinkSource::SketchAxis { name } => {
             vec![solidcraft_sketch::sketch_axis_geom(name).ok_or_else(|| DocError::Unknown(format!("sketch axis `{name}`")))?]
         }
-        LinkSource::Text { text, at, height, angle } => solidcraft_sketch::text_geometry(text, *at, *height, *angle)?,
+        LinkSource::Text { text, at, height, angle, path: None } => solidcraft_sketch::text_geometry(text, *at, *height, *angle)?,
+        LinkSource::Text { path: Some(_), .. } => Vec::new(),
         LinkSource::Plane { name } => {
             let pr =
                 if Plane::named(name).is_some() { PlaneRef::Origin { name: name.clone() } } else { PlaneRef::Construction { name: name.clone() } };
@@ -518,6 +519,23 @@ fn refresh_links_in(
                 warn.push(format!("projected face `{name}` no longer exists"));
                 continue;
             }
+        }
+        if let LinkSource::Text { text, height, path: Some(path_id), .. } = &source {
+            let geom = sk.curve_index(path_id).map(|index| sk.polyline(index)).ok_or_else(|| format!("text path `{path_id}` is missing"));
+            match geom.and_then(|poly| solidcraft_sketch::text_on_path(text, *height, &poly).map_err(|e| e.to_string())) {
+                Ok(geom) => {
+                    sk.set_link_lost(&l.id, false);
+                    if let Err(e) = sk.update_link(&l.id, &geom) {
+                        sk.set_link_lost(&l.id, true);
+                        warn.push(format!("text on `{path_id}`: {e}"));
+                    }
+                }
+                Err(e) => {
+                    sk.set_link_lost(&l.id, true);
+                    warn.push(format!("text on `{path_id}`: {e}"));
+                }
+            }
+            continue;
         }
         let resolved = if l.auto_face {
             anchor

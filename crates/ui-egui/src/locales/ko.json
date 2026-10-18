@@ -414,6 +414,8 @@
   "view.nav.perspective": "원근 또는 직교",
   "view.nav.style": "표시 스타일",
   "view.nav.settings": "뷰 설정",
+  "view.grid": "격자",
+  "view.ground_shadow": "지면 그림자",
   "timeline.status.error": "오류",
   "timeline.status.warning": "경고",
   "timeline.status.suppressed": "억제됨",

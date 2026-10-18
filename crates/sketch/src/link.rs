@@ -78,6 +78,9 @@ pub enum LinkSource {
         height: f64,
         #[serde(default)]
         angle: f64,
+        /// When set, the outlines follow this sketch curve instead of a straight baseline.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
     },
 }
 

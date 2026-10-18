@@ -43,7 +43,9 @@ pub use decompose::Budget;
 pub use dims::{DimFrame, DimLayout, chain_centres, default_text, dim_frame, dim_layout, encode_text};
 pub use freeform_offset::{FreeformOffset, OFFSET_TOLERANCE};
 pub use link::{Link, LinkGeom, LinkKind, LinkSource, MAX_LINK_ENTITIES, SKETCH_AXIS_HALF, sketch_axis_geom};
-pub use model::{Constraint, ConstraintKind, Curve, CurveKind, MAX_CONSTRAINTS, MAX_CURVES, MAX_POINTS, SPoint, Sketch, SketchError, SketchView};
+pub use model::{
+    Constraint, ConstraintKind, Curve, CurveKind, MAX_CONSTRAINTS, MAX_CURVES, MAX_POINTS, PathPattern, SPoint, Sketch, SketchError, SketchView,
+};
 pub use offset::OffsetChain;
 pub use offset_topology::{OffsetCreated, OffsetRole, OffsetRoleFlags, OffsetRoleKind, OffsetTopology};
 pub use periodic::periodic_beziers;
@@ -55,7 +57,7 @@ pub use shape::{Shape, intersections};
 pub use solver::{
     Analysis, DrivingValues, Hold, SolveReport, SolveStatus, measure_dimension, solve, solve_after_value_edit, solve_holding, solve_with,
 };
-pub use text::{MAX_TEXT_CHARS, text_geometry};
+pub use text::{MAX_TEXT_CHARS, text_geometry, text_on_path};
 pub use wire::{MAX_FIT_POINTS, MAX_WIRE_POINTS, Wire, WireSpace, fit_polyline};
 
 #[cfg(test)]

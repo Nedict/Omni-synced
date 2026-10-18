@@ -33,6 +33,9 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .doc_only()
         .params("mode: box|lasso|paint"),
+    CommandSpec::new("view.visual_style", "Visual Style", visual_style).noundo().doc_only().params(
+        "style: shaded|shaded_edges|hidden_edges|wireframe. A view setting: it does not change the design",
+    ),
     CommandSpec::new("view.fit", "Fit View", fit).noundo().doc_only().params(
         "camera: {target, yaw, pitch, roll, distance, fov?, up?}; aspect: number > 0 (width ÷ height); selection?: bool (frame selected bodies instead of the model). Returns {camera, changed}. An empty scene returns the camera unchanged and changed:false",
     ),
@@ -82,6 +85,19 @@ pub fn orient(mut cam: Camera, name: &str) -> Camera {
 fn component_colors(s: &mut Session, p: &Value) -> Result<Value> {
     s.component_colors = p.get("enabled").and_then(Value::as_bool).unwrap_or(!s.component_colors);
     Ok(json!({"enabled": s.component_colors}))
+}
+
+fn visual_style(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "view.visual_style";
+    let style = p.get("style").and_then(Value::as_str).unwrap_or("shaded_edges");
+    s.visual_style = match style {
+        "shaded_edges" => 0,
+        "shaded" => 1,
+        "wireframe" => 2,
+        "hidden_edges" => 3,
+        other => return Err(bad(cmd, format!("unknown visual style `{other}`"))),
+    };
+    Ok(json!({"style": style}))
 }
 
 fn select_mode(s: &mut Session, p: &Value) -> Result<Value> {

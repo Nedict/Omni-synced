@@ -266,6 +266,8 @@ impl FeatureKind {
             FeatureKind::SheetFlange { edges, .. } => edges.iter_mut().for_each(|e| pt(&mut e.point)),
             FeatureKind::SheetHem { edges, .. } => edges.iter_mut().for_each(pt),
             FeatureKind::SheetConvert { face, .. } => pt(face),
+            FeatureKind::SheetRip { at, .. } => pt(at),
+            FeatureKind::SheetLoft { .. } => {}
             FeatureKind::SheetFold { a, b, fixed, .. } => {
                 pt(a);
                 pt(b);
@@ -335,6 +337,17 @@ impl FeatureKind {
             | FeatureKind::MeshCut { .. }
             | FeatureKind::MeshRepair { .. }
             | FeatureKind::MeshReduce { .. }
+            | FeatureKind::SurfaceOffset { .. }
+            | FeatureKind::SurfaceRule { .. }
+            | FeatureKind::SurfaceFlatten { .. }
+            | FeatureKind::SurfaceReverse { .. }
+            | FeatureKind::MeshRemesh { .. }
+            | FeatureKind::MeshSmooth { .. }
+            | FeatureKind::MeshSeparate { .. }
+            | FeatureKind::MeshCombine { .. }
+            | FeatureKind::MeshMergeGroups { .. }
+            | FeatureKind::MeshShell { .. }
+            | FeatureKind::MeshReverse { .. }
             | FeatureKind::Form { .. }
             | FeatureKind::BodyTransfer { .. } => {}
             FeatureKind::Patch { edges, .. } | FeatureKind::SurfaceExtend { edges, .. } => edges.iter_mut().for_each(pt),

@@ -362,6 +362,9 @@ pub enum FeatureKind {
         /// Target body names for join/cut/intersect (empty = all bodies).
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         targets: Vec<String>,
+        /// Keep the side walls as a zero-thickness surface.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        open: bool,
     },
     Revolve {
         sketch: u64,
@@ -384,6 +387,9 @@ pub enum FeatureKind {
         /// To Object: turn until the face, vertex or point here.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to: Option<Vec3>,
+        /// Keep the revolved wall as a zero-thickness surface.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        open: bool,
     },
     Fillet {
         /// Reference points on the edges to round (each re-finds the nearest edge).
@@ -533,6 +539,12 @@ pub enum FeatureKind {
         /// A guide curve the sections scale out to meet.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rails: Option<LoftRail>,
+        /// A second guide, scaled on its own direction when it is not parallel to `rails`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        guide: Option<LoftRail>,
+        /// Keep the loft wall as a zero-thickness surface.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        open: bool,
     },
     /// Sweep profiles along a chain of sketch curves.
     Sweep {
@@ -544,6 +556,9 @@ pub enum FeatureKind {
         operation: Operation,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         targets: Vec<String>,
+        /// Keep the swept wall as a zero-thickness surface.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        open: bool,
     },
     /// Hollow a body leaving walls of `thickness`, removing the faces at the given points.
     Shell {
@@ -671,12 +686,15 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         web: bool,
     },
-    /// Move planar faces (at the given points) onto a target plane parallel to them.
+    /// Move planar faces onto a parallel plane, or one cylindrical face onto a coaxial cylinder.
     ReplaceFace {
         faces: Vec<Vec3>,
         target: PlaneRef,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<String>,
+        /// A point on the coaxial cylindrical target. Absent for a planar replace.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target_at: Option<Vec3>,
     },
     /// Move bodies so that `from` lands on `to` (and, with normals, the faces meet face to face).
     Align {
@@ -806,6 +824,19 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rule: Option<String>,
     },
+    /// Open a closed sheet-metal corner so the sheet can unfold.
+    SheetRip {
+        at: Vec3,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        gap: String,
+    },
+    /// A sheet between two open profiles. Thickness and K-factor come from the active rule.
+    SheetLoft {
+        sketch_a: u64,
+        curves_a: Vec<String>,
+        sketch_b: u64,
+        curves_b: Vec<String>,
+    },
     /// Plastic boss: a round post on a face (draft, root fillet, hole, ribs).
     Boss {
         position: Vec3,
@@ -919,6 +950,9 @@ pub enum FeatureKind {
         body: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         edges: Vec<Vec3>,
+        /// A guide curve, as world points. Empty keeps a plain patch.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        guide: Vec<Vec3>,
     },
     /// Surface bodies sewn along shared edges into the first one (a solid when they close).
     Stitch {
@@ -950,6 +984,11 @@ pub enum FeatureKind {
         plane: PlaneRef,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tool: Option<FaceAt>,
+        /// A sketch curve used as a trim tool (a line becomes the plane through it and the sketch normal).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        curve_sketch: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        curve: Option<String>,
         keep: Vec3,
     },
     Move {
@@ -1014,7 +1053,78 @@ pub enum FeatureKind {
         thickness: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         pulls: Vec<FormPull>,
+        /// Cage edits replayed after `pulls`.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        edits: Vec<FormEdit>,
+        /// `yz`, `xz` or `xy`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        symmetry: Option<String>,
+        /// Control points kept sharp.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        creases: Vec<u32>,
+        /// `solid` or `surface`. Absent keeps the thickness field.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        finished: Option<String>,
     },
+    /// A parallel copy of a surface, or a planar body moved along its normal.
+    SurfaceOffset {
+        body: String,
+        distance: String,
+    },
+    /// A ruled sheet between two sketch curves.
+    SurfaceRule {
+        sketch: u64,
+        curve_a: String,
+        curve_b: String,
+    },
+    /// A developable face laid onto a plane. A non-developable body is refused.
+    SurfaceFlatten {
+        body: String,
+    },
+    /// Reflects a body through the YZ plane, which reverses its normals.
+    SurfaceReverse {
+        body: String,
+    },
+    MeshRemesh {
+        body: String,
+        target: String,
+    },
+    MeshSmooth {
+        body: String,
+        iterations: u32,
+    },
+    MeshSeparate {
+        body: String,
+    },
+    MeshCombine {
+        a: String,
+        b: String,
+        operation: String,
+    },
+    MeshMergeGroups {
+        body: String,
+    },
+    MeshShell {
+        body: String,
+        thickness: String,
+    },
+    MeshReverse {
+        body: String,
+    },
+}
+
+/// One recorded edit of a form cage.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FormEdit {
+    MovePoint { index: u32, delta: Vec3 },
+    InsertEdge { index: u32 },
+    InsertPoint { index: u32 },
+    Subdivide { level: u32 },
+    Bridge { a: u32, b: u32 },
+    Weld { index: u32 },
+    Crease { index: u32 },
+    ExtrudeFace { index: u32, delta: Vec3 },
 }
 
 /// One control-point move on a form grid.
@@ -1271,10 +1381,22 @@ impl FeatureKind {
             | K::Rib { sketch, .. }
             | K::SheetBase { sketch, .. }
             | K::SheetContour { sketch, .. } => vec![*sketch],
+            K::SheetLoft { sketch_a, sketch_b, .. } => vec![*sketch_a, *sketch_b],
             K::Sweep { sketch, path_sketch, .. } => vec![*sketch, *path_sketch],
             K::Pipe { path_sketch, .. } | K::Pattern { pattern: PatternKind::Path { path_sketch, .. }, .. } => vec![*path_sketch],
-            K::Loft { sections, .. } => sections.iter().map(|s| s.sketch).collect(),
+            K::Loft { sections, rails, guide, .. } => {
+                let mut ids: Vec<u64> = sections.iter().map(|s| s.sketch).collect();
+                if let Some(rail) = rails {
+                    ids.push(rail.sketch);
+                }
+                if let Some(rail) = guide {
+                    ids.push(rail.sketch);
+                }
+                ids
+            }
             K::SheetFold { sketch, .. } | K::SplitFace { sketch, .. } | K::Patch { sketch, .. } => sketch.iter().copied().collect(),
+            K::SurfaceTrim { curve_sketch, .. } => curve_sketch.iter().copied().collect(),
+            K::SurfaceRule { sketch, .. } => vec![*sketch],
             K::Hole { points, .. } => points.iter().map(|p| p.sketch).collect(),
             K::Sketch { .. }
             | K::Pattern { .. }
@@ -1304,6 +1426,7 @@ impl FeatureKind {
             | K::SheetHem { .. }
             | K::SheetUnfold { .. }
             | K::SheetConvert { .. }
+            | K::SheetRip { .. }
             | K::Boss { .. }
             | K::Lip { .. }
             | K::SnapFit { .. }
@@ -1313,7 +1436,6 @@ impl FeatureKind {
             | K::Stitch { .. }
             | K::Thicken { .. }
             | K::SurfaceExtend { .. }
-            | K::SurfaceTrim { .. }
             | K::Move { .. }
             | K::Import { .. }
             | K::MeshImport { .. }
@@ -1323,6 +1445,16 @@ impl FeatureKind {
             | K::MeshRepair { .. }
             | K::MeshReduce { .. }
             | K::Form { .. }
+            | K::SurfaceOffset { .. }
+            | K::SurfaceFlatten { .. }
+            | K::SurfaceReverse { .. }
+            | K::MeshRemesh { .. }
+            | K::MeshSmooth { .. }
+            | K::MeshSeparate { .. }
+            | K::MeshCombine { .. }
+            | K::MeshMergeGroups { .. }
+            | K::MeshShell { .. }
+            | K::MeshReverse { .. }
             | K::BodyTransfer { .. } => Vec::new(),
         }
     }
@@ -1342,6 +1474,8 @@ impl FeatureKind {
                 | FeatureKind::SheetFold { .. }
                 | FeatureKind::SheetUnfold { .. }
                 | FeatureKind::SheetConvert { .. }
+                | FeatureKind::SheetRip { .. }
+                | FeatureKind::SheetLoft { .. }
         )
     }
 
@@ -1395,6 +1529,8 @@ impl FeatureKind {
             FeatureKind::SheetUnfold { refold: false, .. } => "UnfoldFeature",
             FeatureKind::SheetUnfold { .. } => "RefoldFeature",
             FeatureKind::SheetConvert { .. } => "ConvertToSheetMetalFeature",
+            FeatureKind::SheetRip { .. } => "RipFeature",
+            FeatureKind::SheetLoft { .. } => "LoftedFlangeFeature",
             FeatureKind::Coil { .. } => "CoilFeature",
             FeatureKind::Rib { web: false, .. } => "RibFeature",
             FeatureKind::Rib { .. } => "WebFeature",
@@ -1414,6 +1550,17 @@ impl FeatureKind {
             FeatureKind::MeshRepair { .. } => "MeshRepairFeature",
             FeatureKind::MeshReduce { .. } => "MeshReduceFeature",
             FeatureKind::Form { .. } => "FormFeature",
+            FeatureKind::SurfaceOffset { .. } => "SurfaceOffsetFeature",
+            FeatureKind::SurfaceRule { .. } => "SurfaceRuleFeature",
+            FeatureKind::SurfaceFlatten { .. } => "SurfaceFlattenFeature",
+            FeatureKind::SurfaceReverse { .. } => "SurfaceReverseFeature",
+            FeatureKind::MeshRemesh { .. } => "MeshRemeshFeature",
+            FeatureKind::MeshSmooth { .. } => "MeshSmoothFeature",
+            FeatureKind::MeshSeparate { .. } => "MeshSeparateFeature",
+            FeatureKind::MeshCombine { .. } => "MeshCombineFeature",
+            FeatureKind::MeshMergeGroups { .. } => "MeshMergeGroupsFeature",
+            FeatureKind::MeshShell { .. } => "MeshShellFeature",
+            FeatureKind::MeshReverse { .. } => "MeshReverseFeature",
         }
     }
     /// Default name prefix (`Extrude` → `Extrude1`).
@@ -1466,6 +1613,8 @@ impl FeatureKind {
             FeatureKind::SheetUnfold { refold: false, .. } => "Unfold",
             FeatureKind::SheetUnfold { .. } => "Refold",
             FeatureKind::SheetConvert { .. } => "ConvertToSheetMetal",
+            FeatureKind::SheetRip { .. } => "Rip",
+            FeatureKind::SheetLoft { .. } => "LoftedFlange",
             FeatureKind::Coil { .. } => "Coil",
             FeatureKind::Rib { web: false, .. } => "Rib",
             FeatureKind::Rib { .. } => "Web",
@@ -1485,6 +1634,17 @@ impl FeatureKind {
             FeatureKind::MeshRepair { .. } => "MeshRepair",
             FeatureKind::MeshReduce { .. } => "MeshReduce",
             FeatureKind::Form { .. } => "Form",
+            FeatureKind::SurfaceOffset { .. } => "OffsetSurface",
+            FeatureKind::SurfaceRule { .. } => "RuledSurface",
+            FeatureKind::SurfaceFlatten { .. } => "Flatten",
+            FeatureKind::SurfaceReverse { .. } => "ReverseNormal",
+            FeatureKind::MeshRemesh { .. } => "Remesh",
+            FeatureKind::MeshSmooth { .. } => "SmoothMesh",
+            FeatureKind::MeshSeparate { .. } => "SeparateMesh",
+            FeatureKind::MeshCombine { .. } => "CombineMesh",
+            FeatureKind::MeshMergeGroups { .. } => "MergeGroups",
+            FeatureKind::MeshShell { .. } => "ShellMesh",
+            FeatureKind::MeshReverse { .. } => "ReverseMesh",
         }
     }
     /// Every expression the feature uses.
@@ -1526,8 +1686,14 @@ impl FeatureKind {
             | FeatureKind::Draft { faces, .. }
             | FeatureKind::OffsetFace { faces, .. }
             | FeatureKind::DeleteFace { faces, .. }
-            | FeatureKind::SplitFace { faces, .. }
-            | FeatureKind::ReplaceFace { faces, .. } => faces.iter_mut().collect(),
+            | FeatureKind::SplitFace { faces, .. } => faces.iter_mut().collect(),
+            FeatureKind::ReplaceFace { faces, target_at, .. } => {
+                let mut points: Vec<&mut Vec3> = faces.iter_mut().collect();
+                if let Some(at) = target_at {
+                    points.push(at);
+                }
+                points
+            }
             FeatureKind::Hole { position, points: None, to, .. } => std::iter::once(position).chain(to.iter_mut()).collect(),
             FeatureKind::Hole { to: Some(t), .. } => vec![t],
             FeatureKind::Extrude { extent, .. } => extent.to.iter_mut().chain(extent.from.iter_mut()).collect(),
@@ -1685,7 +1851,11 @@ impl FeatureKind {
                 v.push(length);
                 v.extend(gap.iter().map(String::as_str));
             }
-            FeatureKind::SheetBase { .. } | FeatureKind::SheetUnfold { .. } | FeatureKind::SheetConvert { .. } => {}
+            FeatureKind::SheetBase { .. }
+            | FeatureKind::SheetUnfold { .. }
+            | FeatureKind::SheetConvert { .. }
+            | FeatureKind::SheetRip { .. }
+            | FeatureKind::SheetLoft { .. } => {}
             FeatureKind::Coil { diameter, pitch, turns, section_size, start_angle, base, .. } => {
                 v.extend([diameter.as_str(), pitch, turns, section_size]);
                 v.extend(start_angle.iter().map(String::as_str));
@@ -1707,6 +1877,15 @@ impl FeatureKind {
             FeatureKind::SheetWalls { .. } | FeatureKind::MeshCut { .. } | FeatureKind::MeshRepair { .. } => {}
             FeatureKind::MeshReduce { ratio, .. } => v.push(ratio),
             FeatureKind::Form { length, width, thickness, .. } => v.extend([length.as_str(), width.as_str(), thickness.as_str()]),
+            FeatureKind::SurfaceOffset { distance, .. } => v.push(distance),
+            FeatureKind::SurfaceRule { .. } | FeatureKind::SurfaceFlatten { .. } | FeatureKind::SurfaceReverse { .. } => {}
+            FeatureKind::MeshRemesh { target, .. } => v.push(target),
+            FeatureKind::MeshShell { thickness, .. } => v.push(thickness),
+            FeatureKind::MeshSmooth { .. }
+            | FeatureKind::MeshSeparate { .. }
+            | FeatureKind::MeshCombine { .. }
+            | FeatureKind::MeshMergeGroups { .. }
+            | FeatureKind::MeshReverse { .. } => {}
         }
         v
     }
@@ -1784,6 +1963,19 @@ pub struct DrawingView {
     pub kind: String,
     pub direction: Vec3,
     pub origin: [f64; 2],
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub scale: String,
+    #[serde(default)]
+    pub hidden: bool,
+    /// Projected model extent on the sheet, recomputed when the model changes.
+    #[serde(default)]
+    pub outline: f64,
+    /// Body names that were on the view and are no longer in the model.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lost: Vec<String>,
+    /// Body names the view was created against.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bodies: Vec<String>,
 }
 
 /// A note or dimension on a drawing sheet.
@@ -1802,6 +1994,87 @@ pub struct DrawingSheet {
     /// SVG of the views, filled when the sheet is exported.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub svg: String,
+    /// `first_angle` or `third_angle`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub standard: String,
+}
+
+/// A tool in a machining setup.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CamTool {
+    pub name: String,
+    pub kind: String,
+    pub diameter: f64,
+    pub flute: f64,
+    pub corner: f64,
+}
+
+/// Work coordinates, stock and tools. Contour jobs in `Document::cam` still load on their own.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CamSetup {
+    pub name: String,
+    pub origin: [f64; 3],
+    pub stock: [f64; 3],
+    pub bodies: Vec<String>,
+    pub tools: Vec<CamTool>,
+}
+
+/// A study. `tip` is the reported deflection in millimetres for a static beam.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Study {
+    pub name: String,
+    pub kind: String,
+    pub body: String,
+    pub force: f64,
+    pub modulus: f64,
+    pub tip: Option<f64>,
+    pub method: String,
+    pub stale: bool,
+}
+
+/// Keyed occurrence poses. They are not the assembly's real placements.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Storyboard {
+    pub name: String,
+    pub keys: Vec<StoryKey>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StoryKey {
+    pub time: f64,
+    pub occurrence: u64,
+    pub translate: [f64; 3],
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RenderScene {
+    pub color: [f64; 3],
+    pub intensity: f64,
+    pub focal: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Schematic {
+    pub parts: Vec<String>,
+    pub wires: Vec<(String, String)>,
+    /// Board size in millimetres. Zero means no board yet.
+    #[serde(default)]
+    pub board_width: f64,
+    #[serde(default)]
+    pub board_height: f64,
+    /// Copper segments in board coordinates: x0, y0, x1, y1, width.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub traces: Vec<[f64; 5]>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GenerativeStudy {
+    pub name: String,
+    pub preserve: Vec<String>,
+    pub obstacle: Vec<String>,
+    pub objective: String,
+    pub method: String,
+    pub candidate: Option<String>,
 }
 
 /// A 2D contour toolpath.
@@ -1812,6 +2085,12 @@ pub struct CamJob {
     pub tool_diameter: f64,
     pub depth: f64,
     pub gcode: String,
+    /// `contour`, `pocket`, or another operation. Empty means the original contour job.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub kind: String,
+    /// Profile area used by stock simulation, square millimetres.
+    #[serde(default)]
+    pub area: f64,
 }
 
 /// The document.
@@ -1862,6 +2141,24 @@ pub struct Document {
     /// Toolpaths generated from sketches.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cam: Vec<CamJob>,
+    /// A local note stored with the design. Not a cloud version history.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub version_note: String,
+    /// Machining setups. Old contour jobs stay in `cam`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cam_setups: Vec<CamSetup>,
+    /// Structural and other studies. Solving one does not change the solid.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub studies: Vec<Study>,
+    /// Animation keys. Playback does not move the real occurrences.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stories: Vec<Storyboard>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_scene: Option<RenderScene>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schematic: Option<Schematic>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub generative: Vec<GenerativeStudy>,
     /// Comments of feature-input parameters (by name).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub param_comments: std::collections::BTreeMap<String, String>,
@@ -1957,6 +2254,13 @@ impl Document {
             named_views: Vec::new(),
             drawings: Vec::new(),
             cam: Vec::new(),
+            version_note: String::new(),
+            cam_setups: Vec::new(),
+            studies: Vec::new(),
+            stories: Vec::new(),
+            render_scene: None,
+            schematic: None,
+            generative: Vec::new(),
         }
     }
 

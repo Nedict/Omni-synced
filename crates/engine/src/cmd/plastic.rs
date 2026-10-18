@@ -35,6 +35,15 @@ pub static COMMANDS: &[CommandSpec] = &[
         "bodies: [names]; rule: name (empty: no rule) — plastic features on these bodies take its draft and clearance as defaults",
     ),
     CommandSpec::new("plastic.rules", "List Plastic Rules", list_rules).noundo().params("→ rules with their expressions and values, the active rule and the rules assigned to bodies"),
+    CommandSpec::new("plastic.rib", "Rib", plastic_rib)
+        .at("PLASTIC", "CREATE")
+        .icon("extrude")
+        .params("same as solid.rib; thickness and the stored rule draft come from the active plastic rule when omitted"),
+    CommandSpec::new("plastic.web", "Web", plastic_web).at("PLASTIC", "CREATE").icon("extrude").params("same as solid.web; thickness comes from the active plastic rule when omitted"),
+    CommandSpec::new("plastic.draft", "Draft", plastic_draft)
+        .at("PLASTIC", "MODIFY")
+        .icon("draft")
+        .params("same as solid.draft; angle comes from the active plastic rule when omitted"),
 ];
 
 fn rule_json(s: &Session, r: &PlasticRule) -> Value {
@@ -139,6 +148,44 @@ fn assign_rule(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.refresh();
     Ok(json!({"bodies": bodies, "rule": if rule.is_empty() { Value::Null } else { json!(rule) }}))
+}
+
+fn active_plastic(s: &Session, cmd: &str) -> Result<PlasticRule> {
+    let name = s.doc.plastic.active.clone().unwrap_or_else(|| "ABS (1.5mm)".into());
+    s.doc.plastic_rules().into_iter().find(|r| r.name == name).ok_or_else(|| bad(cmd, format!("no plastic rule `{name}`")))
+}
+
+fn with_rule_thickness(s: &Session, p: &Value, cmd: &str) -> Result<Value> {
+    let mut q = p.clone();
+    if q.get("thickness").is_none() {
+        let rule = active_plastic(s, cmd)?;
+        if let Some(obj) = q.as_object_mut() {
+            obj.insert("thickness".into(), json!(rule.thickness));
+        }
+    }
+    Ok(q)
+}
+
+fn plastic_rib(s: &mut Session, p: &Value) -> Result<Value> {
+    let q = with_rule_thickness(s, p, "plastic.rib")?;
+    s.execute("solid.rib", &q)
+}
+
+fn plastic_web(s: &mut Session, p: &Value) -> Result<Value> {
+    let q = with_rule_thickness(s, p, "plastic.web")?;
+    s.execute("solid.web", &q)
+}
+
+fn plastic_draft(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "plastic.draft";
+    let mut q = p.clone();
+    if q.get("angle").is_none() {
+        let rule = active_plastic(s, cmd)?;
+        if let Some(obj) = q.as_object_mut() {
+            obj.insert("angle".into(), json!(rule.draft));
+        }
+    }
+    s.execute("solid.draft", &q)
 }
 
 fn list_rules(s: &mut Session, _p: &Value) -> Result<Value> {

@@ -977,3 +977,145 @@ fn periodic_offset_extrusion_survives_post_extrude_span_changes_and_cold_reopen(
         run(&mut s, "edit.undo", json!({}));
     }
 }
+
+#[test]
+fn text_on_a_path_reflows_when_the_path_changes_and_undoes_in_one_step() {
+    let mut s = new_sketch();
+    let path = ids(&run(&mut s, "sketch.line", json!({"points": [[0, 0], [40, 0]], "connect": false, "infer": false}))["curves"])[0].clone();
+    let err = s.execute("sketch.text.on_path", &json!({"text": " ", "path": &path, "height": 4})).unwrap_err();
+    assert!(err.to_string().contains("empty"), "{err}");
+    let made = run(&mut s, "sketch.text.on_path", json!({"text": "Hi", "path": &path, "height": 4}));
+    assert!(!ids(&made["curves"]).is_empty(), "{made}");
+    let top = |s: &Session| sketch(s).points.iter().map(|p| p.pos.y).fold(0.0, f64::max);
+    let flat = top(&s);
+    let saved = s.doc.to_json();
+    run(&mut s, "sketch.move_point", json!({"point": format!("{path}.end"), "to": [40, 20]}));
+    let sloped = top(&s);
+    assert!(sloped > flat + 1.0, "outlines should follow the raised path end: {flat} -> {sloped}");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.doc.to_json(), saved);
+    assert!((top(&s) - flat).abs() < 1e-3, "{}", top(&s));
+}
+
+#[test]
+fn path_pattern_follows_a_distance_parameter_and_refuses_a_huge_count() {
+    let mut s = new_sketch();
+    run(&mut s, "parameters.add", json!({"name": "copies", "expression": "3", "unit": ""}));
+    run(&mut s, "parameters.add", json!({"name": "step", "expression": "10 mm"}));
+    let seed = ids(&run(&mut s, "sketch.line", json!({"points": [[0, 0], [4, 0]], "connect": false, "infer": false}))["curves"])[0].clone();
+    let path = ids(&run(&mut s, "sketch.line", json!({"points": [[0, -5], [40, -5]], "connect": false, "infer": false}))["curves"])[0].clone();
+    let before = s.doc.to_json();
+    let err = s.execute("sketch.pattern.path", &json!({"curves": [&seed], "path": &path, "count": 501, "distance": "step"})).unwrap_err();
+    assert!(err.to_string().contains("500"), "{err}");
+    assert_eq!(s.doc.to_json(), before);
+    let made = ids(&run(&mut s, "sketch.pattern.path", json!({"curves": [&seed], "path": &path, "count": "copies", "distance": "step"}))["curves"]);
+    assert_eq!(made.len(), 2, "{made:?}");
+    let start_x = |s: &Session, id: &str| {
+        let sk = sketch(s);
+        let index = sk.curve_index(id).unwrap();
+        let points = sk.curves[index].kind.point_ids();
+        sk.point(points[0]).unwrap().x.min(sk.point(points[1]).unwrap().x)
+    };
+    let xs: Vec<f64> = made.iter().map(|id| start_x(&s, id)).collect();
+    assert!(xs.iter().any(|x| (*x - 10.0).abs() < 1e-3) && xs.iter().any(|x| (*x - 20.0).abs() < 1e-3), "{xs:?}");
+    run(&mut s, "parameters.change", json!({"name": "step", "expression": "15 mm"}));
+    let xs: Vec<f64> = made.iter().map(|id| start_x(&s, id)).collect();
+    assert!(xs.iter().any(|x| (*x - 15.0).abs() < 1e-3) && xs.iter().any(|x| (*x - 30.0).abs() < 1e-3), "{xs:?}");
+}
+
+/// A legacy 3D wire with no frame stays where it was saved. A lost include link is reported
+/// by sketch.inspect and does not move the wire.
+#[test]
+fn legacy_wire_without_provenance_stays_put_and_inspect_reports_the_lost_link() {
+    use solidcraft_geom::Vec3;
+    use solidcraft_sketch::{LinkKind, LinkSource, Sketch};
+    let mut sketch = Sketch::new();
+    sketch.add_drawn_wire(&[Vec3::new(4.0, 5.0, 6.0), Vec3::new(4.0, 5.0, 8.0)]).unwrap();
+    let link = sketch
+        .add_link_with_wires(
+            LinkKind::Include,
+            LinkSource::Edge { body: "Gone".into(), at: Vec3::ZERO },
+            &[],
+            &[vec![Vec3::new(1.0, 2.0, 3.0), Vec3::new(1.0, 2.0, 5.0)]],
+        )
+        .unwrap();
+    sketch.set_link_lost(&link, true);
+    let mut doc = solidcraft_doc::Document::new("legacy wires");
+    doc.add_feature(solidcraft_doc::FeatureKind::Sketch { plane: solidcraft_doc::PlaneRef::Origin { name: "XY".into() }, sketch }, Some("Path"))
+        .unwrap();
+    let mut raw: serde_json::Value = serde_json::from_str(&doc.to_json()).unwrap();
+    raw["format"] = serde_json::json!("solidcraft/9");
+    for wire in raw["features"][0]["sketch"]["wires"].as_array_mut().unwrap() {
+        wire.as_object_mut().unwrap().remove("space");
+    }
+    let doc = solidcraft_doc::format::read(&raw.to_string()).unwrap();
+    let mut s = Session::new(doc);
+    let info = run(&mut s, "sketch.inspect", json!({"sketch": "Path"}));
+    let loaded = s.doc.find_feature("Path").unwrap();
+    let solidcraft_doc::FeatureKind::Sketch { sketch, .. } = &loaded.kind else { panic!("sketch") };
+    assert_eq!(sketch.wires[0].pts, vec![Vec3::new(4.0, 5.0, 6.0), Vec3::new(4.0, 5.0, 8.0)]);
+    assert_eq!(sketch.wires[1].pts, vec![Vec3::new(1.0, 2.0, 3.0), Vec3::new(1.0, 2.0, 5.0)]);
+    let reported = info["links"].as_array().unwrap().iter().any(|row| row["id"] == link && row["lost"] == true);
+    assert!(reported, "{info}");
+}
+
+/// A line that crosses an ellipse, a degree-3 fit spline, and a conic at two points splits each.
+/// A tangent touch is refused and leaves the sketch unchanged.
+#[test]
+fn transverse_cuts_split_ellipse_spline_and_conic_and_a_tangent_is_refused() {
+    let split = |command: &str, params: Value, cutter: [[f64; 2]; 2], at: [f64; 2]| {
+        let mut s = new_sketch();
+        let id = ids(&run(&mut s, command, params)["curves"])[0].clone();
+        run(&mut s, "sketch.line", json!({"points": cutter}));
+        let before = sketch(&s).curves.len();
+        let out = run(&mut s, "sketch.break", json!({"curve": id, "at": at}));
+        assert!(ids(&out["curves"]).len() >= 2, "{command} {out}");
+        assert!(sketch(&s).curves.len() > before, "{command}");
+    };
+    split("sketch.ellipse", json!({"center": [0, 0], "major": [10, 0], "minor_radius": 4}), [[-15.0, 0.0], [15.0, 0.0]], [10.0, 0.0]);
+    split("sketch.spline.fit_point", json!({"points": [[0, 0], [10, 10], [20, 0], [30, 5]]}), [[15.0, -10.0], [15.0, 20.0]], [15.0, 5.0]);
+    split("sketch.conic", json!({"start": [0, 0], "end": [20, 0], "apex": [10, 16], "rho": 0.5}), [[-2.0, 4.0], [22.0, 4.0]], [10.0, 8.0]);
+
+    let mut s = new_sketch();
+    let id = ids(&run(&mut s, "sketch.ellipse", json!({"center": [0, 0], "major": [10, 0], "minor_radius": 4}))["curves"])[0].clone();
+    run(&mut s, "sketch.line", json!({"points": [[-15, 4], [15, 4]]}));
+    let before = s.doc.to_json();
+    let err = s.execute("sketch.break", &json!({"curve": id, "at": [0, 4]})).unwrap_err();
+    assert!(err.to_string().contains("tangent"), "{err}");
+    assert_eq!(s.doc.to_json(), before);
+}
+
+/// A rectangle with two rounded corners, offset inward, keeps the surviving line ids
+/// when the width dimension changes.
+#[test]
+fn rounded_rectangle_offset_keeps_line_ids_through_a_width_edit() {
+    let mut s = new_sketch();
+    let lines = ids(&run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [40, 20]}))["curves"]);
+    let fillet = run(&mut s, "sketch.fillet", json!({"a": &lines[0], "b": &lines[1], "radius": 3}));
+    run(&mut s, "sketch.fillet", json!({"a": &lines[2], "b": &lines[3], "radius": 3}));
+    let made = ids(&run(&mut s, "sketch.offset", json!({"curves": [&lines[0]], "distance": 2, "side": [20, 10]}))["curves"]);
+    let sk = sketch(&s);
+    let surviving: Vec<String> =
+        made.iter().filter(|id| sk.curve_index(id).is_some_and(|i| matches!(sk.curves[i].kind, CurveKind::Line { .. }))).cloned().collect();
+    assert!(surviving.len() >= 2, "expected offset lines, got {made:?}");
+    let before = {
+        let sk = sketch(&s);
+        let index = sk.curve_index(&lines[0]).unwrap();
+        let ends = sk.curves[index].kind.point_ids();
+        sk.point(ends[0]).unwrap().dist(sk.point(ends[1]).unwrap())
+    };
+    let radius = fillet["param"].as_str().unwrap();
+    run(&mut s, "parameters.change", json!({"name": radius, "expression": "6 mm"}));
+    let after = {
+        let sk = sketch(&s);
+        let index = sk.curve_index(&lines[0]).unwrap();
+        let ends = sk.curves[index].kind.point_ids();
+        sk.point(ends[0]).unwrap().dist(sk.point(ends[1]).unwrap())
+    };
+    assert!(after < before - 1.0, "a larger corner should shorten the straight side: {before} -> {after}");
+    let sk = sketch(&s);
+    for id in &surviving {
+        let index = sk.curve_index(id).unwrap_or_else(|| panic!("offset line {id} was not kept"));
+        assert!(matches!(sk.curves[index].kind, CurveKind::Line { .. }), "{id} is no longer a line");
+    }
+}

@@ -48,6 +48,83 @@ fn modelled_external_threads_m3_to_m20() {
 }
 
 #[test]
+fn modelled_thread_section_shows_iso_flank_and_pitch() {
+    let mut s = Session::default();
+    let (d, p) = (8.0, 1.25);
+    let len = 2.0 * p;
+    run(&mut s, "solid.cylinder", json!({"radius": d / 2.0, "height": len + 2.0, "body_name": "Shaft"}));
+    run(&mut s, "solid.thread", json!({"face": [d / 2.0, 0.0, 1.0], "length": len, "modeled": true}));
+    let body = s.model.state().bodies.iter().find(|b| b.name == "Shaft").unwrap().body.clone();
+    let mesh = body.tessellate(0.15).unwrap();
+    // Unwrap the screw: radius against (height − pitch · angle) is the axial profile.
+    // The ISO flank is 30° to the plane normal to the axis, and it repeats every pitch.
+    let profile = |pitch: f64, sign: f64| -> Vec<f64> {
+        let n = 16;
+        let mut best = vec![f64::NAN; n];
+        let mut cnt = vec![0u32; n];
+        for q in &mesh.positions {
+            if q.z < 0.5 || q.z > 2.2 {
+                continue;
+            }
+            let r = (q.x * q.x + q.y * q.y).sqrt();
+            if !(r > 2.8 && r < 4.15) {
+                continue;
+            }
+            let s = (q.z - sign * pitch * q.y.atan2(q.x) / std::f64::consts::TAU).rem_euclid(pitch);
+            let i = ((s / pitch) * n as f64) as usize % n;
+            let slot = best.get_mut(i).and_then(|b| cnt.get_mut(i).map(|c| (b, c)));
+            if let Some((b, c)) = slot {
+                *b = if c == &0 { r } else { b.min(r) };
+                *c += 1;
+            }
+        }
+        best
+    };
+    let spread = |bins: &[f64]| {
+        let v: Vec<f64> = bins.iter().copied().filter(|r| r.is_finite()).collect();
+        v.iter().fold((f64::MAX, 0.0_f64), |(lo, hi), r| (lo.min(*r), hi.max(*r))).1 - v.iter().fold(f64::MAX, |lo, r| lo.min(*r))
+    };
+    let right = profile(p, 1.0);
+    let left = profile(p, -1.0);
+    let bins = if spread(&right) >= spread(&left) { right } else { left };
+    let depth = spread(&bins);
+    assert!(depth > 0.45, "profile depth {depth}, bins {bins:?}");
+    let mut steep: f64 = 0.0;
+    let ds = p / bins.len() as f64;
+    for w in bins.windows(2) {
+        if let [a, b] = w
+            && a.is_finite()
+            && b.is_finite()
+        {
+            steep = steep.max(((b - a) / ds).abs());
+        }
+    }
+    // One flank rises √3 radially per unit along the axis (60° included angle).
+    let flank = 3f64.sqrt();
+    assert!((steep - flank).abs() < 0.25, "flank slope {steep} vs {flank}, bins {bins:?}");
+    let muddy = spread(&profile(p * 1.7, 1.0)).max(spread(&profile(p * 1.7, -1.0)));
+    assert!(depth > muddy * 1.4, "pitch {p} stands out ({depth}, muddy {muddy})");
+}
+
+#[test]
+fn cosmetic_thread_does_not_cut_and_an_oversize_modelled_thread_is_refused() {
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius": 4.0, "height": 12.0, "body_name": "Shaft"}));
+    let before = volume(&mut s, "Shaft");
+    let th = run(&mut s, "solid.thread", json!({"face": [4.0, 0.0, 2.0], "length": 6.0}));
+    assert!(th["thread"].is_object(), "{th}");
+    assert!((volume(&mut s, "Shaft") - before).abs() < 1e-6);
+    let features = s.doc.features.len();
+    let err = s.execute("solid.thread", &json!({"face": [4.0, 0.0, 2.0], "designation": "M24", "modeled": true})).unwrap_err();
+    assert!(err.to_string().contains("not supported yet"), "{err}");
+    assert_eq!(s.doc.features.len(), features);
+    assert!((volume(&mut s, "Shaft") - before).abs() < 1e-6);
+    let err = s.execute("solid.thread", &json!({"face": [0.0, 0.0, 12.0], "modeled": true})).unwrap_err();
+    assert!(err.to_string().contains("not supported yet"), "{err}");
+    assert_eq!(s.doc.features.len(), features);
+}
+
+#[test]
 fn modelled_internal_threads_m3_to_m20() {
     let h = |p: f64| p * 3f64.sqrt() / 2.0;
     let slope = (PI / 6.0).tan();

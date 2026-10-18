@@ -33,7 +33,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.replace_face", "Replace Face", replace_face)
         .at("SOLID", "MODIFY")
         .icon("offset_face")
-        .params("faces: [[x,y,z] points on planar faces]; target: plane (XY|XZ|YZ|construction plane|{origin, normal}) | target_face: [x,y,z] on a parallel planar face; body?"),
+        .params("faces: [[x,y,z] points on planar faces or one complete exterior cylinder]; target: plane (XY|XZ|YZ|construction plane|{origin, normal}) | target_face: [x,y,z] on a parallel planar face or a coaxial cylinder; body?"),
     CommandSpec::new("solid.align", "Align", align)
         .at("SOLID", "MODIFY")
         .icon("move")
@@ -317,10 +317,34 @@ fn face_points(p: &Value, k: &str, cmd: &str) -> Result<Vec<Vec3>> {
 fn replace_face(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.replace_face";
     let faces = face_points(p, "faces", cmd)?;
-    for f in &faces {
-        if super::face::face_normal(s, *f).is_none() {
-            return Err(bad(cmd, "not supported yet: replacing a face that is not planar"));
+    let mut curved = false;
+    for face in &faces {
+        match super::face::face_is_planar(s, *face) {
+            Some(true) => {}
+            Some(false) => curved = true,
+            None => return Err(bad(cmd, "not supported yet: replacing a face that is not a plane or a cylinder")),
         }
+    }
+    let body = str_(p, "body").map(str::to_string);
+    if curved {
+        if faces.len() != 1 {
+            return Err(bad(cmd, "not supported yet: replacing more than one curved face"));
+        }
+        let at = *faces.first().ok_or_else(|| bad(cmd, "no face"))?;
+        let source = cylinder_pick(s, at).map_err(|e| bad(cmd, e))?;
+        if source.internal {
+            return Err(bad(cmd, "not supported yet: replacing an interior cylindrical face"));
+        }
+        let tp = p.get("target_face").and_then(vec3).ok_or_else(|| bad(cmd, "a curved face needs `target_face` on a coaxial cylinder"))?;
+        let target_cyl = cylinder_pick(s, tp).map_err(|_| bad(cmd, "not supported yet: replacing a face that is not a plane or a cylinder"))?;
+        if !coaxial(&source, &target_cyl) {
+            return Err(bad(cmd, "not supported yet: a target that is not parallel to the face"));
+        }
+        if !(target_cyl.radius.is_finite() && target_cyl.radius > 1e-6 && target_cyl.radius < 1e6) {
+            return Err(bad(cmd, "the target cylinder radius is out of range"));
+        }
+        let target = solidcraft_doc::PlaneRef::Origin { name: "XY".into() };
+        return add_feature(s, p, FeatureKind::ReplaceFace { faces, target, body, target_at: Some(tp) });
     }
     let target = match p.get("target_face").and_then(vec3) {
         Some(tp) => {
@@ -330,8 +354,36 @@ fn replace_face(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => plane_param(s, p.get("target"), cmd)?,
     };
-    let body = str_(p, "body").map(str::to_string);
-    add_feature(s, p, FeatureKind::ReplaceFace { faces, target, body })
+    add_feature(s, p, FeatureKind::ReplaceFace { faces, target, body, target_at: None })
+}
+
+/// The cylindrical face under `at`, when the pick is on that wall.
+fn cylinder_pick(s: &Session, at: Vec3) -> std::result::Result<solidcraft_kernel::CylinderFace, String> {
+    let st = s.model.state();
+    let mut found = None;
+    for body in &st.bodies {
+        let Some(face) = solidcraft_kernel::cylinder_face_at(&body.body, at) else { continue };
+        let along = (at - face.axis_point).dot(face.axis);
+        let radial = at - face.axis_point - face.axis * along;
+        let gap = (radial.len() - face.radius).abs();
+        let tol = (body.body.size() * 0.02).max(0.5);
+        let on_span = along + tol >= face.start.min(face.end) && along - tol <= face.start.max(face.end);
+        if gap < tol && on_span {
+            if found.is_some() {
+                return Err("the point lies on more than one cylinder".into());
+            }
+            found = Some(face);
+        }
+    }
+    found.ok_or_else(|| "not supported yet: replacing a face that is not a plane or a cylinder".into())
+}
+
+fn coaxial(a: &solidcraft_kernel::CylinderFace, b: &solidcraft_kernel::CylinderFace) -> bool {
+    if a.axis.dot(b.axis).abs() < 1.0 - 1e-6 {
+        return false;
+    }
+    let offset = b.axis_point - a.axis_point;
+    a.axis.cross(offset).len() < 1e-3
 }
 
 fn align(s: &mut Session, p: &Value) -> Result<Value> {

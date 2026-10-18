@@ -438,6 +438,7 @@ mod tests {
                         },
                         operation: crate::Operation::NewBody,
                         targets: vec![],
+                        open: false,
                     },
                     None,
                 )

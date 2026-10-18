@@ -213,6 +213,12 @@ pub struct Session {
     pub component_colors: bool,
     /// 0 window, 1 freeform lasso, 2 paint across what the pointer crosses.
     pub select_mode: u8,
+    /// 0 shaded with edges, 1 shaded, 2 wireframe, 3 shaded with hidden edges.
+    pub visual_style: u8,
+    /// Bit mask of pick kinds. 0 means every kind. Bits: face, edge, vertex, sketch curve, body, component.
+    pub select_filter: u32,
+    /// The last command that ran, so it can be repeated.
+    pub last_command: Option<(String, Value)>,
     /// The placement used when authoring shared component geometry.
     pub active_occurrence_path: Option<Vec<u64>>,
     /// Occurrence moves not captured yet (Capture Position keeps them, a recompute drops them).
@@ -326,6 +332,9 @@ impl Session {
             active_component: 0,
             component_colors: false,
             select_mode: 0,
+            visual_style: 0,
+            select_filter: 0,
+            last_command: None,
             active_occurrence_path: None,
             pending_moves: Default::default(),
             world_cache: Default::default(),
@@ -340,6 +349,23 @@ impl Session {
             evaluations: 0,
             crash_journal: false,
         }
+    }
+
+    /// Whether a pick of `kind` is allowed. A zero filter allows every kind.
+    pub fn allows_pick(&self, kind: &str) -> bool {
+        if self.select_filter == 0 {
+            return true;
+        }
+        let bit = match kind {
+            "face" | "faces" => 1,
+            "edge" | "edges" => 2,
+            "vertex" | "vertices" => 4,
+            "sketch_curve" | "sketch" | "sketch_curves" | "sketch_points" => 8,
+            "body" | "bodies" => 16,
+            "component" | "components" => 32,
+            _ => 0,
+        };
+        bit != 0 && self.select_filter & bit != 0
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -456,6 +482,7 @@ impl Session {
         {
             self.active_sketch = None;
         }
+        cmd::sync_drawings(self);
     }
 
     /// Show the sketch a live frame changed, leaving the features after it as they were last
@@ -576,6 +603,9 @@ impl Session {
                         None => self.refresh(),
                     }
                 }
+                if spec.id != "ui.repeat_last" {
+                    self.last_command = Some((spec.id.to_string(), given.clone()));
+                }
                 Ok(v)
             }
             Err(e) => {
@@ -671,6 +701,9 @@ impl Session {
             active_component: self.active_component,
             component_colors: self.component_colors,
             select_mode: self.select_mode,
+            visual_style: self.visual_style,
+            select_filter: self.select_filter,
+            last_command: self.last_command.clone(),
             active_occurrence_path: self.active_occurrence_path.clone(),
             pending_moves: self.pending_moves.clone(),
             world_cache: std::sync::Mutex::new(self.world_cache.lock().ok().and_then(|cache| cache.clone())),

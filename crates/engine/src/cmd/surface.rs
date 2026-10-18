@@ -50,21 +50,45 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SURFACE", "MODIFY")
         .icon("trim")
         .params("body: surface name. Removes the latest trim of that body"),
+    CommandSpec::new("surface.offset", "Offset Surface", offset)
+        .at("SURFACE", "CREATE")
+        .icon("offset")
+        .params("body: planar surface or face body; distance: expr"),
+    CommandSpec::new("surface.rule", "Ruled Surface", rule)
+        .at("SURFACE", "CREATE")
+        .icon("loft")
+        .params("sketch: id|name; curve_a, curve_b: curve ids"),
+    CommandSpec::new("surface.flatten", "Flatten", flatten)
+        .at("SURFACE", "MODIFY")
+        .icon("unfold")
+        .params("body: a cylindrical body. A non-cylinder is refused"),
+    CommandSpec::new("surface.reverse", "Reverse Normal", reverse)
+        .at("SURFACE", "MODIFY")
+        .icon("mirror")
+        .params("body: name. Reflects it through the YZ plane"),
 ];
 
 fn patch(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "surface.patch";
     let edges: Vec<solidcraft_geom::Vec3> = p.get("edges").and_then(Value::as_array).map(|a| a.iter().filter_map(vec3).collect()).unwrap_or_default();
-    if !edges.is_empty() {
-        if edges.len() > 10_000 {
-            return Err(bad(cmd, "too many edges"));
-        }
-        let body = str_(p, "body").map(str::to_string);
-        return add_feature(s, p, FeatureKind::Patch { sketch: None, profiles: ProfileSel::All, body, edges });
+    if edges.len() > 10_000 {
+        return Err(bad(cmd, "too many edges"));
     }
-    let sketch = feature_sketch(s, p, cmd)?;
-    let profiles = profiles(p, cmd)?;
-    add_feature(s, p, FeatureKind::Patch { sketch: Some(sketch), profiles, body: None, edges: Vec::new() })
+    if !edges.is_empty() && edges.len() < 3 {
+        return Err(bad(cmd, "a patch boundary does not close"));
+    }
+    let guide: Vec<solidcraft_geom::Vec3> = p.get("guide").and_then(Value::as_array).map(|a| a.iter().filter_map(vec3).collect()).unwrap_or_default();
+    if !guide.is_empty() && (guide.len() < 2 || guide.len() > 10_000) {
+        return Err(bad(cmd, "a guide curve needs 2…10000 points"));
+    }
+    let want_sketch = p.get("sketch").is_some() || edges.is_empty();
+    let sketch = if want_sketch { Some(feature_sketch(s, p, cmd)?) } else { None };
+    let profiles = if sketch.is_some() { profiles(p, cmd)? } else { ProfileSel::All };
+    let body = str_(p, "body").map(str::to_string);
+    if sketch.is_none() && edges.is_empty() {
+        return Err(bad(cmd, "a patch needs a sketch region or a loop of edges"));
+    }
+    add_feature(s, p, FeatureKind::Patch { sketch, profiles, body, edges, guide })
 }
 
 fn bodies_param(s: &Session, p: &Value, cmd: &str) -> Result<Vec<String>> {
@@ -84,7 +108,16 @@ fn stitch(s: &mut Session, p: &Value) -> Result<Value> {
     let bodies = bodies_param(s, p, cmd)?;
     let tolerance = expr(p, "tolerance").unwrap_or_else(|| "0".into());
     check_expr(s, &tolerance, Kind::Length, cmd, "tolerance")?;
-    add_feature(s, p, FeatureKind::Stitch { bodies, tolerance })
+    let made = add_feature(s, p, FeatureKind::Stitch { bodies: bodies.clone(), tolerance })?;
+    let st = s.model.state();
+    let gaps =
+        st.body(bodies.first().map(String::as_str).unwrap_or("")).and_then(|b| solidcraft_kernel::gap_points(&b.body).ok()).unwrap_or_default();
+    let mut made = made;
+    if let Some(obj) = made.as_object_mut() {
+        obj.insert("gaps".into(), serde_json::json!(gaps.iter().map(|g| [g.x, g.y, g.z]).collect::<Vec<_>>()));
+        obj.insert("closed".into(), serde_json::json!(gaps.is_empty()));
+    }
+    Ok(made)
 }
 
 fn thicken(s: &mut Session, p: &Value) -> Result<Value> {
@@ -124,46 +157,50 @@ fn trim(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, format!("no body `{body}`")));
     }
     let keep = p.get("keep").and_then(vec3).ok_or_else(|| bad(cmd, "`keep` must be [x, y, z] on the side to keep"))?;
-    let (plane, tool) = match p.get("tool").filter(|t| !t.is_null()) {
-        Some(t) => {
-            let tb = t.get("body").and_then(Value::as_str).ok_or_else(|| bad(cmd, "`tool.body` must name a body"))?.to_string();
-            let point = t.get("point").and_then(vec3).ok_or_else(|| bad(cmd, "`tool.point` must be [x, y, z] on the tool face"))?;
-            (PlaneRef::Origin { name: "XY".into() }, Some(FaceAt { body: tb, point }))
+    let (curve_sketch, curve) = match str_(p, "curve") {
+        Some(id) if !id.is_empty() => {
+            let sk = super::features::sketch_id(s, p.get("sketch").or_else(|| p.get("curve_sketch")), cmd, "sketch")?;
+            (Some(sk), Some(id.to_string()))
         }
-        None => (plane_param(s, p.get("plane"), cmd)?, None),
+        _ => (None, None),
     };
-    add_feature(s, p, FeatureKind::SurfaceTrim { body, plane, tool, keep })
+    let (plane, tool) = if curve.is_some() {
+        (PlaneRef::Origin { name: "XY".into() }, None)
+    } else {
+        match p.get("tool").filter(|t| !t.is_null()) {
+            Some(t) => {
+                let tb = t.get("body").and_then(Value::as_str).ok_or_else(|| bad(cmd, "`tool.body` must name a body"))?.to_string();
+                let point = t.get("point").and_then(vec3).ok_or_else(|| bad(cmd, "`tool.point` must be [x, y, z] on the tool face"))?;
+                (PlaneRef::Origin { name: "XY".into() }, Some(FaceAt { body: tb, point }))
+            }
+            None => (plane_param(s, p.get("plane"), cmd)?, None),
+        }
+    };
+    add_feature(s, p, FeatureKind::SurfaceTrim { body, plane, tool, keep, curve_sketch, curve })
 }
 
-fn walls_after(s: &mut Session, p: &Value, command: &str, axis: solidcraft_geom::Vec3) -> Result<Value> {
-    let made = s.execute(command, p)?;
-    let id = made.get("feature").and_then(Value::as_u64).ok_or_else(|| bad(command, "the solid feature was not created"))?;
-    let body = s
-        .model
-        .state()
-        .bodies
-        .iter()
-        .find(|b| b.feature == id)
-        .map(|b| b.name.clone())
-        .ok_or_else(|| bad(command, "the solid feature made no body"))?;
-    let axis = p.get("axis").and_then(vec3).unwrap_or(axis);
-    add_feature(s, p, FeatureKind::SheetWalls { body, axis })
+fn as_surface(p: &Value) -> Value {
+    let mut q = p.clone();
+    if let Some(obj) = q.as_object_mut() {
+        obj.insert("surface".into(), Value::Bool(true));
+    }
+    q
 }
 
 fn extrude_surface(s: &mut Session, p: &Value) -> Result<Value> {
-    walls_after(s, p, "solid.extrude", solidcraft_geom::Vec3::Z)
+    super::features::extrude(s, &as_surface(p))
 }
 
 fn revolve_surface(s: &mut Session, p: &Value) -> Result<Value> {
-    walls_after(s, p, "solid.revolve", solidcraft_geom::Vec3::Z)
+    super::features::revolve(s, &as_surface(p))
 }
 
 fn sweep_surface(s: &mut Session, p: &Value) -> Result<Value> {
-    walls_after(s, p, "solid.sweep", solidcraft_geom::Vec3::Z)
+    super::features::sweep(s, &as_surface(p))
 }
 
 fn loft_surface(s: &mut Session, p: &Value) -> Result<Value> {
-    walls_after(s, p, "solid.loft", solidcraft_geom::Vec3::Z)
+    super::features::loft(s, &as_surface(p))
 }
 
 fn untrim(s: &mut Session, p: &Value) -> Result<Value> {
@@ -178,6 +215,34 @@ fn untrim(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|f| f.id)
         .ok_or_else(|| bad(cmd, format!("`{body}` has no trim to remove")))?;
     s.execute("timeline.delete", &serde_json::json!({"features": [id.to_string()]}))
+}
+
+fn offset(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "surface.offset";
+    let body = str_(p, "body").filter(|b| !b.is_empty()).ok_or_else(|| bad(cmd, "`body` is required"))?.to_string();
+    let distance = crate::params::req_expr(cmd, p, "distance")?;
+    check_expr(s, &distance, Kind::Length, cmd, "distance")?;
+    add_feature(s, p, FeatureKind::SurfaceOffset { body, distance })
+}
+
+fn rule(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "surface.rule";
+    let sketch = super::features::sketch_id(s, p.get("sketch"), cmd, "sketch")?;
+    let curve_a = str_(p, "curve_a").filter(|c| !c.is_empty()).ok_or_else(|| bad(cmd, "`curve_a` is required"))?.to_string();
+    let curve_b = str_(p, "curve_b").filter(|c| !c.is_empty()).ok_or_else(|| bad(cmd, "`curve_b` is required"))?.to_string();
+    add_feature(s, p, FeatureKind::SurfaceRule { sketch, curve_a, curve_b })
+}
+
+fn flatten(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "surface.flatten";
+    let body = str_(p, "body").filter(|b| !b.is_empty()).ok_or_else(|| bad(cmd, "`body` is required"))?.to_string();
+    add_feature(s, p, FeatureKind::SurfaceFlatten { body })
+}
+
+fn reverse(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "surface.reverse";
+    let body = str_(p, "body").filter(|b| !b.is_empty()).ok_or_else(|| bad(cmd, "`body` is required"))?.to_string();
+    add_feature(s, p, FeatureKind::SurfaceReverse { body })
 }
 
 #[cfg(test)]
@@ -237,6 +302,81 @@ mod tests {
     }
 
     #[test]
+    fn an_open_line_extrudes_as_one_surface_feature() {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "S"}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], [10, 0]]}));
+        run(&mut s, "sketch.finish", json!({}));
+        let before = s.doc.features.len();
+        run(&mut s, "surface.extrude", json!({"sketch": "S", "distance": 10, "body_name": "Wall"}));
+        assert_eq!(s.doc.features.len(), before + 1);
+        assert!(matches!(s.doc.features.last().map(|f| &f.kind), Some(FeatureKind::Extrude { open: true, .. })));
+        let st = s.world_state();
+        let wall = st.body("Wall").unwrap();
+        assert!(wall.body.is_surface());
+        let m = solidcraft_kernel::measure(&wall.body).unwrap();
+        assert!(m.volume.abs() < 1e-4, "{}", m.volume);
+        assert!((m.area - 100.0).abs() < 1e-2, "{}", m.area);
+        let saved = s.doc.to_json();
+        let mut cold = Session::new(solidcraft_doc::Document::from_json(&saved).unwrap());
+        cold.refresh();
+        let cold_st = cold.world_state();
+        assert!(cold_st.body("Wall").unwrap().body.is_surface());
+        assert_eq!(cold.doc.features.iter().filter(|f| matches!(f.kind, FeatureKind::Extrude { open: true, .. })).count(), 1);
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [40, 0, 0], "body_name": "Box"}));
+        s.doc_mut().add_feature(FeatureKind::SheetWalls { body: "Box".into(), axis: solidcraft_geom::Vec3::Z }, Some("Legacy")).unwrap();
+        s.refresh();
+        let again = s.world_state();
+        let legacy = again.bodies.iter().find(|b| b.name != "Wall" && b.name != "Box" && b.body.is_surface());
+        assert!(legacy.is_some(), "an old SheetWalls feature still evaluates");
+    }
+
+    #[test]
+    fn open_revolve_sweep_and_loft_are_one_surface_each() {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Turn"}));
+        run(&mut s, "sketch.line", json!({"points": [[20, 0], [20, 10]]}));
+        run(&mut s, "sketch.finish", json!({}));
+        let n = s.doc.features.len();
+        run(&mut s, "surface.revolve", json!({"sketch": "Turn", "axis": "y", "angle": "90 deg", "body_name": "Band"}));
+        assert_eq!(s.doc.features.len(), n + 1);
+        let band = s.world_state().body("Band").unwrap().body.clone();
+        assert!(band.is_surface());
+        let area = solidcraft_kernel::measure(&band).unwrap().area;
+        let want = std::f64::consts::FRAC_PI_2 * 20.0 * 10.0;
+        assert!((area - want).abs() < 0.02 * want, "{area} vs {want}");
+
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Prof"}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], [8, 0]]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Path"}));
+        let path = run(&mut s, "sketch.line", json!({"points": [[0, 0], [0, 12]]}))["curves"][0].as_str().unwrap().to_string();
+        run(&mut s, "sketch.finish", json!({}));
+        let n = s.doc.features.len();
+        run(&mut s, "surface.sweep", json!({"sketch": "Prof", "path_sketch": "Path", "path": [path], "body_name": "Ribbon"}));
+        assert_eq!(s.doc.features.len(), n + 1);
+        let ribbon = s.world_state().body("Ribbon").unwrap().body.clone();
+        assert!(ribbon.is_surface());
+        let area = solidcraft_kernel::measure(&ribbon).unwrap().area;
+        assert!((area - 96.0).abs() < 1.0, "{area}");
+
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "A"}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], [10, 0]]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "B"}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 6], [10, 6]]}));
+        run(&mut s, "sketch.finish", json!({}));
+        let n = s.doc.features.len();
+        run(&mut s, "surface.loft", json!({"sections": [{"sketch": "A"}, {"sketch": "B"}], "body_name": "Ruled"}));
+        assert_eq!(s.doc.features.len(), n + 1);
+        let ruled = s.world_state().body("Ruled").unwrap().body.clone();
+        assert!(ruled.is_surface());
+        let m = solidcraft_kernel::measure(&ruled).unwrap();
+        assert!(m.volume.abs() < 1e-3, "{}", m.volume);
+        assert!((m.area - 60.0).abs() < 1.0, "{}", m.area);
+    }
+
+    #[test]
     fn untrim_drops_the_latest_trim() {
         let mut s = Session::default();
         run(&mut s, "sketch.create", json!({"plane": "XY", "name": "S"}));
@@ -248,5 +388,79 @@ mod tests {
         run(&mut s, "surface.untrim", json!({"body": "Sheet"}));
         assert!(!s.doc.features.iter().any(|f| matches!(f.kind, FeatureKind::SurfaceTrim { .. })));
         assert!(s.world_state().body("Sheet").unwrap().body.is_surface());
+    }
+
+    #[test]
+    fn patch_trim_stitch_thicken_and_the_new_surface_commands() {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Pad"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [10, 10]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "surface.patch", json!({"sketch": "Pad", "body_name": "Sheet"}));
+        let sheet = s.world_state().body("Sheet").unwrap().body.clone();
+        let area = solidcraft_kernel::measure(&sheet).unwrap().area;
+        assert!((area - 100.0).abs() < 1e-4, "planar patch area {area}");
+        let before = s.doc.features.len();
+        assert!(s.execute("surface.patch", &json!({"sketch": "Pad", "guide": [[5, 5, 4], [6, 5, 4]]})).is_err());
+        assert_eq!(s.doc.features.len(), before, "a guide off the plane adds no feature");
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [40, 0, 0], "body_name": "Block"}));
+        assert!(s.execute("surface.patch", &json!({"body": "Block", "edges": [[45, 0, 10], [50, 5, 10]]})).is_err());
+        assert_eq!(s.doc.features.len(), before + 1);
+        run(&mut s, "surface.patch", json!({"sketch": "Pad", "body": "Block", "edges": [[45, 0, 10], [50, 5, 10], [45, 10, 10], [40, 5, 10]]}));
+        assert!(matches!(
+            s.doc.features.last().map(|f| &f.kind),
+            Some(FeatureKind::Patch { sketch: Some(_), edges, .. }) if !edges.is_empty()
+        ));
+
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Cut"}));
+        let curve = run(&mut s, "sketch.line", json!({"points": [[4, 0], [4, 10]]}))["curves"][0].as_str().unwrap().to_string();
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "surface.trim", json!({"body": "Sheet", "sketch": "Cut", "curve": curve, "keep": [8, 5, 0]}));
+        let trimmed = s.world_state().body("Sheet").unwrap().body.clone();
+        let trimmed_area = solidcraft_kernel::measure(&trimmed).unwrap().area;
+        assert!((trimmed_area - 60.0).abs() < 1.0, "curve trim area {trimmed_area}");
+        run(&mut s, "surface.untrim", json!({"body": "Sheet"}));
+        let back = s.world_state().body("Sheet").unwrap().body.clone();
+        assert!((solidcraft_kernel::measure(&back).unwrap().area - 100.0).abs() < 1e-3);
+
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Other"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [30, 0], "p1": [40, 10]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "surface.patch", json!({"sketch": "Other", "body_name": "Sheet2"}));
+        run(&mut s, "surface.thicken", json!({"bodies": ["Sheet2"], "thickness": "2 mm", "body_name": "Slab"}));
+        let stitched = run(&mut s, "surface.stitch", json!({"bodies": ["Sheet", "Sheet2"]}));
+        assert_eq!(stitched["closed"], json!(false));
+        assert!(stitched["gaps"].as_array().is_some_and(|g| !g.is_empty()), "{stitched}");
+        assert!(s.world_state().body("Sheet").unwrap().body.is_surface());
+
+        let slab = s.world_state().body("Slab").unwrap().body.clone();
+        let volume = solidcraft_kernel::measure(&slab).unwrap().volume.abs();
+        assert!((volume - 200.0).abs() < 1e-3, "thicken volume {volume}");
+
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Rails"}));
+        let a = run(&mut s, "sketch.line", json!({"points": [[0, 0], [12, 0]]}))["curves"][0].as_str().unwrap().to_string();
+        let b = run(&mut s, "sketch.line", json!({"points": [[0, 4], [12, 4]]}))["curves"][0].as_str().unwrap().to_string();
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "surface.rule", json!({"sketch": "Rails", "curve_a": a, "curve_b": b, "body_name": "Ruled"}));
+        let ruled = s.world_state().body("Ruled").unwrap().body.clone();
+        assert!(ruled.is_surface());
+        let ruled_area = solidcraft_kernel::measure(&ruled).unwrap().area;
+        assert!((ruled_area - 48.0).abs() < 2.0, "{ruled_area}");
+
+        run(&mut s, "solid.cylinder", json!({"radius": 5, "height": 10, "body_name": "Can"}));
+        run(&mut s, "surface.flatten", json!({"body": "Can", "body_name": "Flat"}));
+        let flat = s.world_state().body("Flat").unwrap().body.clone();
+        let flat_area = solidcraft_kernel::measure(&flat).unwrap().area;
+        let want = std::f64::consts::PI * 10.0 * 10.0;
+        assert!((flat_area - want).abs() < 1.0, "{flat_area} vs {want}");
+        let n = s.doc.features.len();
+        assert!(s.execute("surface.flatten", &json!({"body": "Slab"})).is_err());
+        assert_eq!(s.doc.features.len(), n);
+
+        let z0 = s.world_state().body("Sheet").unwrap().body.tessellate(0.2).unwrap().bounds().max.z;
+        run(&mut s, "surface.reverse", json!({"body": "Sheet"}));
+        run(&mut s, "surface.thicken", json!({"bodies": ["Sheet"], "thickness": "2 mm", "operation": "new", "body_name": "Flipped"}));
+        let flipped = s.world_state().body("Flipped").unwrap().body.clone();
+        assert!(flipped.tessellate(0.2).unwrap().bounds().min.z < z0 - 0.5, "reversing the normal thickens the other way");
     }
 }

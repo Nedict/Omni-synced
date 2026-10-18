@@ -414,6 +414,8 @@
   "view.nav.perspective": "透視または平行投影",
   "view.nav.style": "表示スタイル",
   "view.nav.settings": "ビュー設定",
+  "view.grid": "グリッド",
+  "view.ground_shadow": "地面の影",
   "timeline.status.error": "エラー",
   "timeline.status.warning": "警告",
   "timeline.status.suppressed": "抑制",

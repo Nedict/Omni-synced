@@ -431,6 +431,7 @@ mod tests {
                     extent,
                     operation: crate::Operation::NewBody,
                     targets: vec![],
+                    open: false,
                 },
                 None,
             )
@@ -535,7 +536,14 @@ mod tests {
         let extent = serde_json::from_value(serde_json::json!({"distance":"2"})).unwrap();
         let boss = doc
             .add_feature(
-                FeatureKind::Extrude { sketch: sk, profiles: crate::ProfileSel::All, extent, operation: crate::Operation::NewBody, targets: vec![] },
+                FeatureKind::Extrude {
+                    sketch: sk,
+                    profiles: crate::ProfileSel::All,
+                    extent,
+                    operation: crate::Operation::NewBody,
+                    targets: vec![],
+                    open: false,
+                },
                 Some("Boss"),
             )
             .unwrap();

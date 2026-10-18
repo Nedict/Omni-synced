@@ -9,10 +9,12 @@ macro_rules! created_doc {
     };
 }
 
+pub(super) fn sync_drawings(s: &mut crate::Session) {
+    drawing::sync(s);
+}
+
 mod browser;
 mod cam;
-mod drawing;
-mod form;
 mod clipboard;
 mod component;
 mod component_clone;
@@ -20,10 +22,13 @@ mod component_clone_assembly;
 mod construct;
 mod delete;
 mod diagnostics;
+mod downstream;
+mod drawing;
 mod edit;
 mod face;
 mod features;
 mod features_more;
+mod form;
 pub use features::auto_operation;
 mod config;
 mod file;
@@ -210,6 +215,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(form::COMMANDS.iter());
     v.extend(drawing::COMMANDS.iter());
     v.extend(cam::COMMANDS.iter());
+    v.extend(downstream::COMMANDS.iter());
     v.extend(construct::COMMANDS.iter());
     v.extend(sheet::COMMANDS.iter());
     v.extend(plastic::COMMANDS.iter());
@@ -231,6 +237,14 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(view::COMMANDS.iter());
     v
 }
+
+#[cfg(test)]
+#[path = "backlog_tests.rs"]
+mod backlog_tests;
+
+#[cfg(test)]
+#[path = "rest_tests.rs"]
+mod rest_tests;
 
 pub fn find_command(id: &str) -> Option<&'static CommandSpec> {
     let all = command_specs();

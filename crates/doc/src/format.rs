@@ -926,6 +926,7 @@ mod tests {
                     },
                     operation: Operation::NewBody,
                     targets: vec![],
+                    open: false,
                 },
                 None,
             )

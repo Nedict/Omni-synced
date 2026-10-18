@@ -423,6 +423,18 @@ fn edit(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(value(s, v, true, cmd)?),
         None => None,
     };
+    let path_occurrence = if let Some(path) = p.get("path").and_then(Value::as_array) {
+        if path.is_empty() || path.len() > 64 {
+            return Err(bad(cmd, "`path` must list 1…64 occurrence ids"));
+        }
+        let occurrence = path.last().and_then(Value::as_u64).ok_or_else(|| bad(cmd, "`path` must end with an occurrence id"))?;
+        if s.doc.occurrences.iter().all(|item| item.id != occurrence) {
+            return Err(bad(cmd, "no occurrence on that path"));
+        }
+        Some((str_(p, "side").unwrap_or("a").to_string(), occurrence))
+    } else {
+        None
+    };
     let doc = s.doc_mut();
     let Some(j) = doc.assembly.joints.iter_mut().find(|j| j.id == id) else { return Err(bad(cmd, "joint")) };
     if let Some(k) = kind {
@@ -444,6 +456,13 @@ fn edit(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if let Some(n) = str_(p, "name").map(str::trim).filter(|n| !n.is_empty() && n.len() <= 128) {
         j.name = n.to_string();
+    }
+    if let Some((side, occurrence)) = &path_occurrence {
+        match side.as_str() {
+            "a" => j.a.occurrence = *occurrence,
+            "b" => j.b.occurrence = *occurrence,
+            _ => return Err(bad(cmd, "`side` must be a or b")),
+        }
     }
     let sol = resolve(s);
     Ok(sol_json(&sol))

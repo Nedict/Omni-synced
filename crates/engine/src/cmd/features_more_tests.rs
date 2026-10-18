@@ -408,6 +408,68 @@ fn replace_face_align_remove() {
 }
 
 #[test]
+fn replace_face_moves_a_coaxial_cylinder_and_refuses_a_skew_target() {
+    let vol = |s: &Session, name: &str| s.model.state().body(name).unwrap().body.tessellate_with(1e-4, true).unwrap().measure().volume;
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius": 10, "height": 20, "body_name": "Hub"}));
+    run(&mut s, "solid.cylinder", json!({"radius": 16, "height": 10, "base": [0, 0, 40], "body_name": "Gauge"}));
+    let gauge = vol(&s, "Gauge");
+    let features = s.doc.features.len();
+    run(&mut s, "solid.replace_face", json!({"faces": [[10, 0, 10]], "target_face": [16, 0, 45], "body": "Hub"}));
+    assert_eq!(s.doc.features.len(), features + 1);
+    let want = std::f64::consts::PI * 256.0 * 20.0;
+    assert!((vol(&s, "Hub") - want).abs() < want * 1e-3, "{}", vol(&s, "Hub"));
+    assert!((vol(&s, "Gauge") - gauge).abs() < 1e-3);
+
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius": 10, "height": 20, "body_name": "Hub"}));
+    run(&mut s, "solid.cylinder", json!({"radius": 12, "height": 20, "base": [40, 0, 0], "body_name": "Aside"}));
+    let before = s.doc.to_json();
+    let err = s.execute("solid.replace_face", &json!({"faces": [[10, 0, 10]], "target_face": [52, 0, 10]})).unwrap_err();
+    assert!(err.to_string().contains("not supported yet"), "{err}");
+    assert_eq!(s.doc.to_json(), before);
+
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius": 10, "height": 20, "body_name": "Hub"}));
+    run(&mut s, "solid.cylinder", json!({"radius": 12, "height": 20, "base": [40, 0, 0], "axis": "X", "body_name": "Cross"}));
+    let before = s.doc.to_json();
+    let err = s.execute("solid.replace_face", &json!({"faces": [[10, 0, 10]], "target_face": [50, 12, 0]})).unwrap_err();
+    assert!(err.to_string().contains("parallel") || err.to_string().contains("not supported yet"), "{err}");
+    assert_eq!(s.doc.to_json(), before);
+}
+
+/// A sketch on a shell's inner wall follows a thickness edit through save and reopen.
+/// Suppressing the shell warns and leaves the sketch off every remaining face.
+#[test]
+fn shelled_wall_sketch_follows_thickness_and_a_lost_face_does_not_retarget() {
+    let plane_x = |s: &Session| s.model.state().sketches.iter().find(|k| k.name == "OnWall").map(|k| k.plane.origin.x);
+    let note = |s: &Session| {
+        let id = s.doc.find_feature("OnWall").map(|f| f.id)?;
+        s.model.result(id).and_then(|r| r.warning.clone().or(r.error.clone()))
+    };
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 20, "body_name": "Box"}));
+    run(&mut s, "solid.shell", json!({"faces": [[20, 15, 20]], "thickness": "2 mm", "name": "Hollow"}));
+    run(&mut s, "sketch.create", json!({"plane": {"face": [38, 15, 10]}, "name": "OnWall"}));
+    run(&mut s, "sketch.finish", json!({}));
+    let x = plane_x(&s).unwrap();
+    assert!((x - 38.0).abs() < 1e-3, "inner wall at {x}");
+    run(&mut s, "timeline.edit", json!({"feature": "Hollow", "set": {"thickness": "4 mm"}}));
+    let x = plane_x(&s).unwrap();
+    assert!((x - 36.0).abs() < 1e-3, "thicker wall moves the sketch to {x}");
+    let reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    let x = plane_x(&reopened).unwrap();
+    assert!((x - 36.0).abs() < 1e-3, "reopen keeps the sketch at {x}");
+    run(&mut s, "timeline.suppress", json!({"feature": "Hollow", "suppressed": true}));
+    let said = note(&s).unwrap_or_default();
+    assert!(
+        said.contains("no longer") || said.contains("lost") || said.contains("stays") || said.contains("certificate") || said.contains("missing"),
+        "{said}"
+    );
+    assert_ne!(plane_x(&s), Some(40.0), "a lost inner wall must not attach to the outer face");
+}
+
+#[test]
 fn coil_and_loft_to_a_point() {
     use std::f64::consts::{PI, TAU};
     let mut s = Session::default();
@@ -601,6 +663,65 @@ fn cylinder_auto_inference_refuses_ambiguity_curves_and_seam_crossing_atomically
         assert_eq!(s.doc.to_json(), before);
         assert_eq!(exact_cylinder_volume(&s), volume);
     }
+}
+
+#[test]
+fn emboss_refuses_a_seam_a_step_and_a_freeform_without_retargeting() {
+    let neighbor_volume = |s: &Session, name: &str| s.model.state().body(name).unwrap().body.tessellate_with(1e-3, true).unwrap().measure().volume;
+    // A profile that crosses the seam must not wrap the nearby intact cylinder instead.
+    let mut s = cylinder_badge();
+    run(&mut s, "solid.cylinder", json!({"radius":10,"height":20,"base":[0,0,40],"body_name":"Neighbor"}));
+    run(&mut s, "sketch.create", json!({"plane":{"origin":[0,10,0],"x_dir":[-1,0,0],"y_dir":[0,0,1]},"name":"Across"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0":[-20,5],"p1":[20,10]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let features = s.doc.features.len();
+    let near = neighbor_volume(&s, "Neighbor");
+    let err = s.execute("solid.emboss", &json!({"sketch":"Across","depth":1})).unwrap_err();
+    assert!(err.to_string().contains("seam"), "{err}");
+    assert_eq!(s.doc.features.len(), features);
+    assert!((neighbor_volume(&s, "Neighbor") - near).abs() < 1e-6);
+
+    // A stepped wall is an error, not a hop to the neighboring full cylinder.
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius":10,"height":10,"body_name":"Step"}));
+    run(&mut s, "solid.cylinder", json!({"radius":6,"height":10,"base":[0,0,10],"operation":"join","targets":["Step"]}));
+    run(&mut s, "solid.cylinder", json!({"radius":10,"height":20,"base":[0,0,40],"body_name":"Neighbor"}));
+    run(&mut s, "sketch.create", json!({"plane":{"origin":[0,10,0],"x_dir":[-1,0,0],"y_dir":[0,0,1]},"name":"Badge"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0":[-2,2],"p1":[2,6]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let features = s.doc.features.len();
+    let (step, near) = (neighbor_volume(&s, "Step"), neighbor_volume(&s, "Neighbor"));
+    let err = s.execute("solid.emboss", &json!({"sketch":"Badge","depth":1})).unwrap_err();
+    assert!(err.to_string().contains("stepped"), "{err}");
+    assert_eq!(s.doc.features.len(), features);
+    assert!((neighbor_volume(&s, "Step") - step).abs() < 1e-6);
+    assert!((neighbor_volume(&s, "Neighbor") - near).abs() < 1e-6);
+
+    // A picked free-form face is refused. The intact cylinder beside it is not a substitute.
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane":"XY","name":"Bottom"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0":[-4,-4],"p1":[4,4]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "sketch.create", json!({"plane":"XY","offset":12,"name":"Top"}));
+    run(&mut s, "sketch.circle.center", json!({"center":[0,0],"radius":2}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.loft", json!({"sections":[{"sketch":"Bottom"},{"sketch":"Top"}],"body_name":"Blob"}));
+    run(&mut s, "solid.cylinder", json!({"radius":10,"height":20,"base":[40,0,0],"body_name":"Neighbor"}));
+    let pick = {
+        let st = s.model.state();
+        let mesh = st.body("Blob").unwrap().mesh();
+        mesh.positions.iter().copied().find(|p| p.z > 2.0 && p.z < 10.0 && p.y > 0.5).unwrap()
+    };
+    run(&mut s, "sketch.create", json!({"plane":{"origin":[0,4,6],"x_dir":[1,0,0],"y_dir":[0,0,1]},"name":"Mark"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0":[-1,-1],"p1":[1,1]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let features = s.doc.features.len();
+    let near = neighbor_volume(&s, "Neighbor");
+    let err = s.execute("solid.emboss", &json!({"sketch":"Mark","face":[pick.x, pick.y, pick.z],"depth":1})).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("cylindrical") || msg.contains("planar") || msg.contains("free"), "{msg}");
+    assert_eq!(s.doc.features.len(), features);
+    assert!((neighbor_volume(&s, "Neighbor") - near).abs() < 1e-6);
 }
 
 /// A cone that takes only a 1 mm chamfer off a cylinder's top edge leaves nearly all of the

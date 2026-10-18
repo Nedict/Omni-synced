@@ -64,7 +64,7 @@ fn source(app: &SolveApp, sketch: u64, link: &str) -> Option<(String, [f64; 4])>
     }
     let sk = app.session.doc.sketch(sketch).ok()?;
     let source = sk.link(link).filter(|source| source.kind == LinkKind::Text)?;
-    let LinkSource::Text { text, at, height, angle } = &source.source else { return None };
+    let LinkSource::Text { text, at, height, angle, .. } = &source.source else { return None };
     Some((text.clone(), [at.x, at.y, *height, *angle]))
 }
 
@@ -247,6 +247,7 @@ mod tests {
             at: solidcraft_engine::geom::Vec2::new(25.0, 12.0),
             height: 20.0,
             angle: std::f64::consts::FRAC_PI_2,
+            path: None,
         };
         assert_eq!(sk.link(&link).unwrap().source, expected);
         assert!(!h.app.session.world_state().sketch(sid).unwrap().profiles.is_empty());
@@ -272,7 +273,10 @@ mod tests {
         replace(&mut h, "dialog:Text", "O");
         ok(&mut h);
         let LinkSource::Text { at, height, angle, .. } = original else { panic!("text source") };
-        assert_eq!(h.app.session.doc.sketch(sid).unwrap().link(&link).unwrap().source, LinkSource::Text { text: "O".into(), at, height, angle });
+        assert_eq!(
+            h.app.session.doc.sketch(sid).unwrap().link(&link).unwrap().source,
+            LinkSource::Text { text: "O".into(), at, height, angle, path: None }
+        );
         h.app.session.selection = vec![Sel::SketchCurve { id: h.app.session.doc.sketch(sid).unwrap().curves[0].id.clone() }];
         h.app.start("sketch.edit_text");
         h.frames(3);

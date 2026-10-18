@@ -49,6 +49,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .params("items: [{type: body|edge|face|feature|sketch_curve|sketch_point|profile, …}], add?: bool"),
     CommandSpec::new("select.clear", "Clear Selection", select_clear).noundo(),
+    CommandSpec::new("select.loop", "Select Loop", select_loop).noundo().params("edge?: index on the first body. The face loop through that edge"),
+    CommandSpec::new("select.ring", "Select Ring", select_ring).noundo().params("edge?: index. Edges parallel to that edge"),
+    CommandSpec::new("select.grow", "Grow Selection", select_grow).noundo().params("adds edges that share an end with the selection"),
+    CommandSpec::new("select.shrink", "Shrink Selection", select_shrink).noundo(),
+    CommandSpec::new("select.invert", "Invert Selection", select_invert).noundo().params("edges of the first body that are not selected"),
 ];
 
 fn undo(s: &mut Session, _p: &Value) -> Result<Value> {
@@ -608,6 +613,160 @@ fn dependents(s: &mut Session, p: &Value) -> Result<Value> {
     let names = |ids: &[u64]| -> Vec<String> { ids.iter().filter(|x| **x != id).filter_map(|x| s.doc.feature(*x).map(|f| f.name.clone())).collect() };
     let broken: Vec<String> = newly_broken(&s.model, &after).into_iter().map(|(n, _)| n).collect();
     Ok(json!({"deleted_with_it": names(&gone), "would_fail": broken}))
+}
+
+fn first_body_edges(s: &Session, cmd: &str) -> Result<(String, Vec<solidcraft_kernel::EdgeInfo>)> {
+    let body = s.model.state().bodies.first().cloned().ok_or_else(|| bad(cmd, "the design has no body"))?;
+    let edges = body.body.edges(0.05).map_err(|e| bad(cmd, e.to_string()))?;
+    if edges.is_empty() || edges.len() > 10_000 {
+        return Err(bad(cmd, "the body has no edges, or too many"));
+    }
+    Ok((body.name, edges))
+}
+
+fn edge_ends(edge: &solidcraft_kernel::EdgeInfo) -> Option<(solidcraft_geom::Vec3, solidcraft_geom::Vec3)> {
+    Some((*edge.points.first()?, *edge.points.last()?))
+}
+
+fn ends_touch(a: solidcraft_geom::Vec3, b: solidcraft_geom::Vec3) -> bool {
+    a.dist(b) < 1e-3
+}
+
+fn edge_neighbors(edges: &[solidcraft_kernel::EdgeInfo], index: usize) -> Vec<usize> {
+    let Some((a, b)) = edges.get(index).and_then(edge_ends) else { return Vec::new() };
+    edges
+        .iter()
+        .enumerate()
+        .filter(|(other, edge)| {
+            *other != index && edge_ends(edge).is_some_and(|(c, d)| ends_touch(a, c) || ends_touch(a, d) || ends_touch(b, c) || ends_touch(b, d))
+        })
+        .map(|(other, _)| other)
+        .collect()
+}
+
+fn face_loop(edges: &[solidcraft_kernel::EdgeInfo], start: usize) -> Vec<usize> {
+    fn walk(edges: &[solidcraft_kernel::EdgeInfo], start: usize, path: &mut Vec<usize>) -> bool {
+        if path.len() > 4 {
+            return false;
+        }
+        if path.len() == 4 {
+            return edge_neighbors(edges, *path.last().unwrap_or(&start)).contains(&start);
+        }
+        let here = *path.last().unwrap_or(&start);
+        for next in edge_neighbors(edges, here) {
+            if path.contains(&next) {
+                continue;
+            }
+            path.push(next);
+            if walk(edges, start, path) {
+                return true;
+            }
+            path.pop();
+        }
+        false
+    }
+    let mut path = vec![start];
+    if walk(edges, start, &mut path) { path } else { vec![start] }
+}
+
+fn remember_edges(s: &mut Session, body: &str, edges: &[solidcraft_kernel::EdgeInfo], indexes: &[usize]) {
+    s.selection = indexes
+        .iter()
+        .filter_map(|index| {
+            let edge = edges.get(*index)?;
+            Some(Sel::Edge { body: body.to_string(), index: edge.index, point: edge.mid })
+        })
+        .collect();
+}
+
+fn select_loop(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "select.loop";
+    let (name, edges) = first_body_edges(s, cmd)?;
+    let start = p.get("edge").and_then(Value::as_u64).unwrap_or(0) as usize;
+    if start >= edges.len() {
+        return Err(bad(cmd, "that edge is not on the body"));
+    }
+    let indexes = face_loop(&edges, start);
+    let count = indexes.len();
+    remember_edges(s, &name, &edges, &indexes);
+    Ok(json!({"count": count}))
+}
+
+fn select_ring(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "select.ring";
+    let (name, edges) = first_body_edges(s, cmd)?;
+    let start = p.get("edge").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let Some(edge) = edges.get(start) else { return Err(bad(cmd, "that edge is not on the body")) };
+    let Some((a, b)) = edge_ends(edge) else { return Err(bad(cmd, "that edge has no ends")) };
+    let dir = (b - a).normalized().ok_or_else(|| bad(cmd, "that edge has no direction"))?;
+    let mut indexes = vec![start];
+    for (i, other) in edges.iter().enumerate() {
+        if i == start {
+            continue;
+        }
+        let Some((c, d)) = edge_ends(other) else { continue };
+        let Some(other_dir) = (d - c).normalized() else { continue };
+        if other_dir.dot(dir).abs() > 0.98 {
+            indexes.push(i);
+        }
+        if indexes.len() >= 64 {
+            break;
+        }
+    }
+    let count = indexes.len();
+    remember_edges(s, &name, &edges, &indexes);
+    Ok(json!({"count": count}))
+}
+
+fn selected_edge_indexes(s: &Session, edges: &[solidcraft_kernel::EdgeInfo]) -> Vec<usize> {
+    s.selection
+        .iter()
+        .filter_map(|item| match item {
+            Sel::Edge { index, .. } => edges.iter().position(|edge| edge.index == *index),
+            _ => None,
+        })
+        .collect()
+}
+
+fn select_grow(s: &mut Session, _p: &Value) -> Result<Value> {
+    let cmd = "select.grow";
+    let (name, edges) = first_body_edges(s, cmd)?;
+    let mut indexes = selected_edge_indexes(s, &edges);
+    if indexes.is_empty() {
+        return Err(bad(cmd, "nothing is selected"));
+    }
+    let extra: Vec<usize> = indexes.iter().flat_map(|index| edge_neighbors(&edges, *index)).collect();
+    for index in extra {
+        if !indexes.contains(&index) && indexes.len() < 10_000 {
+            indexes.push(index);
+        }
+    }
+    let count = indexes.len();
+    remember_edges(s, &name, &edges, &indexes);
+    Ok(json!({"count": count}))
+}
+
+fn select_shrink(s: &mut Session, _p: &Value) -> Result<Value> {
+    let cmd = "select.shrink";
+    let (name, edges) = first_body_edges(s, cmd)?;
+    let mut indexes = selected_edge_indexes(s, &edges);
+    if indexes.is_empty() {
+        return Err(bad(cmd, "nothing is selected"));
+    }
+    indexes.pop();
+    let count = indexes.len();
+    remember_edges(s, &name, &edges, &indexes);
+    Ok(json!({"count": count}))
+}
+
+fn select_invert(s: &mut Session, _p: &Value) -> Result<Value> {
+    let cmd = "select.invert";
+    let (name, edges) = first_body_edges(s, cmd)?;
+    let chosen = selected_edge_indexes(s, &edges);
+    let indexes: Vec<usize> = (0..edges.len()).filter(|index| !chosen.contains(index)).take(10_000).collect();
+    let count = indexes.len();
+    remember_edges(s, &name, &edges, &indexes);
+    Ok(json!({"count": count}))
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ use solidcraft_sketch::{ConstraintKind, Curve, CurveKind, Shape, Sketch, interse
 
 use super::sketch::{add_c, edit, ids_of, solve_current};
 use super::{CommandSpec, in_sketch};
-use crate::params::{bad, bool_, expr, num, req_vec2, str_, string_list, vec2, vec2_list};
+use crate::params::{bad, bool_, expr, num, req_expr, req_vec2, str_, string_list, vec2, vec2_list};
 use crate::{Result, Session};
 
 #[path = "sketch_support.rs"]
@@ -80,6 +80,14 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("sketch_circ_pattern")
         .enabled(in_sketch)
         .params(concat!("entities: [ids], center: [x,y] or point ref, count: 2…500, angle?: total deg (default 360)", created_doc!())),
+    CommandSpec::new("sketch.pattern.path", "Pattern on Path", pattern_path)
+        .at("SKETCH", "CREATE")
+        .icon("sketch_rect_pattern")
+        .enabled(in_sketch)
+        .params(concat!(
+            "curves: [ids], path: curve id, count: expression (1…500), distance: length expression along the path",
+            created_doc!()
+        )),
     CommandSpec::new("sketch.pattern.rectangular", "Rectangular Pattern", pattern_rect)
         .at("SKETCH", "CREATE")
         .icon("sketch_rect_pattern")
@@ -1403,6 +1411,58 @@ fn pattern_circular(s: &mut Session, p: &Value) -> Result<Value> {
             let (m, _) = copy_through(sk, &cs, &ps, &f, false, &|_| false, 1.0)?;
             made.extend(m);
         }
+        Ok(ids_of(sk, &made))
+    })?;
+    Ok(json!({"curves": out, "sketch": info}))
+}
+
+fn pattern_path(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "sketch.pattern.path";
+    let count_expr = req_expr(cmd, p, "count")?;
+    let distance_expr = req_expr(cmd, p, "distance")?;
+    let count_v = s.doc.eval(&count_expr, solidcraft_doc::expr::Kind::Unitless).map_err(|e| bad(cmd, e.to_string()))?;
+    let distance = s
+        .doc
+        .eval(&s.doc.with_design_unit(&distance_expr, solidcraft_doc::expr::Kind::Length), solidcraft_doc::expr::Kind::Length)
+        .map_err(|e| bad(cmd, e.to_string()))?;
+    if !count_v.is_finite() || count_v < 1.0 || count_v > 500.0 || (count_v - count_v.round()).abs() > 1e-6 {
+        return Err(bad(cmd, "count must be a whole number from 1 to 500"));
+    }
+    if !distance.is_finite() || distance.abs() < 1e-9 || distance.abs() > 1e6 {
+        return Err(bad(cmd, "distance must be a finite nonzero length"));
+    }
+    let count = count_v.round() as usize;
+    let path_id = str_(p, "path").filter(|id| !id.is_empty()).ok_or_else(|| bad(cmd, "`path` is a sketch curve id"))?.to_string();
+    let sources = string_list(p, "curves");
+    if sources.is_empty() || sources.len() > 1000 {
+        return Err(bad(cmd, "`curves` must list 1…1000 sketch curves"));
+    }
+    if sources.iter().any(|id| id == &path_id) {
+        return Err(bad(cmd, "the path curve cannot be one of the patterned curves"));
+    }
+    let (out, info) = edit(s, p, cmd, false, |sk, _| {
+        let path = sk.curve_index(&path_id).ok_or_else(|| bad(cmd, format!("unknown curve `{path_id}`")))?;
+        let cs: Vec<usize> =
+            sources.iter().map(|id| sk.curve_index(id).ok_or_else(|| bad(cmd, format!("unknown curve `{id}`")))).collect::<Result<_>>()?;
+        let _ = path;
+        let mut copies = Vec::new();
+        let mut made = Vec::new();
+        for _ in 1..count {
+            let (curves, map) = copy_through(sk, &cs, &[], &|q| q, false, &|_| false, 1.0)?;
+            let pairs =
+                map.iter().filter_map(|(src, dst)| Some((sk.points.get(*src)?.id.clone(), sk.points.get(*dst)?.id.clone()))).collect::<Vec<_>>();
+            copies.push(pairs);
+            made.extend(curves);
+        }
+        sk.path_patterns.push(solidcraft_sketch::PathPattern {
+            sources: sources.clone(),
+            path: path_id.clone(),
+            count: count_expr.clone(),
+            distance: distance_expr.clone(),
+            copies,
+        });
+        let index = sk.path_patterns.len() - 1;
+        sk.place_path_copies(index, count, distance).map_err(|e| bad(cmd, e.to_string()))?;
         Ok(ids_of(sk, &made))
     })?;
     Ok(json!({"curves": out, "sketch": info}))

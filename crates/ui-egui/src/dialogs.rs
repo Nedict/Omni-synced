@@ -3316,7 +3316,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
     let st = s.world_state();
     let start = |cmd: &str| Dialog::for_command(app, cmd);
     let mut d = match &f.kind {
-        FeatureKind::Extrude { sketch, profiles, extent, operation, targets } => {
+        FeatureKind::Extrude { sketch, profiles, extent, operation, targets, open } => {
             let mut d = start("solid.extrude")?;
             d.kind = Kind::Extrude {
                 distance: extent.distance.clone(),
@@ -3353,9 +3353,12 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             if !targets.is_empty() {
                 d.extra.insert("targets".into(), json!(targets));
             }
+            if *open {
+                d.extra.insert("surface".into(), json!(true));
+            }
             d
         }
-        FeatureKind::Revolve { sketch, profiles, axis, angle, operation, targets, angle2, symmetric, convention, to } => {
+        FeatureKind::Revolve { sketch, profiles, axis, angle, operation, targets, angle2, symmetric, convention, to, open } => {
             let mut d = start("solid.revolve")?;
             let frame = feature_frame(s, f.component);
             let stored_axis = match axis {
@@ -3394,6 +3397,9 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             }
             if !targets.is_empty() {
                 d.extra.insert("targets".into(), json!(targets));
+            }
+            if *open {
+                d.extra.insert("surface".into(), json!(true));
             }
             d
         }
@@ -3684,7 +3690,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             }
             d
         }
-        FeatureKind::Loft { sections, operation, targets, .. } => {
+        FeatureKind::Loft { sections, operation, targets, open, .. } => {
             let mut d = start("solid.loft")?;
             d.kind = Kind::Loft { operation: op_index(operation) };
             if let Some(inp) = d.inputs.first_mut() {
@@ -3699,9 +3705,12 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             if !targets.is_empty() {
                 d.extra.insert("targets".into(), json!(targets));
             }
+            if *open {
+                d.extra.insert("surface".into(), json!(true));
+            }
             d
         }
-        FeatureKind::Sweep { sketch, profiles, path, operation, targets, .. } => {
+        FeatureKind::Sweep { sketch, profiles, path, operation, targets, open, .. } => {
             let mut d = start("solid.sweep")?;
             d.kind = Kind::Sweep { operation: op_index(operation) };
             let items = st.sketch(*sketch).map(|ss| profile_indices(ss, profiles)).unwrap_or_default();
@@ -3713,6 +3722,9 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             }
             if !targets.is_empty() {
                 d.extra.insert("targets".into(), json!(targets));
+            }
+            if *open {
+                d.extra.insert("surface".into(), json!(true));
             }
             d
         }
@@ -3851,7 +3863,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             }
             d
         }
-        FeatureKind::ReplaceFace { faces, target, body } => {
+        FeatureKind::ReplaceFace { faces, target, body, target_at } => {
             let mut d = start("solid.replace_face")?;
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = faces.iter().filter_map(|p| face_sel(s, *p)).collect();
@@ -3861,6 +3873,9 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             }
             if let Some(b) = body {
                 d.extra.insert("body".into(), json!(b));
+            }
+            if let Some(at) = target_at {
+                d.extra.insert("target_at".into(), json!([at.x, at.y, at.z]));
             }
             d
         }

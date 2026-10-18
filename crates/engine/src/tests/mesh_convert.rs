@@ -71,6 +71,38 @@ fn failed_mesh_conversions_leave_the_design_unchanged() {
 }
 
 #[test]
+fn a_tessellated_cylinder_becomes_one_wall_and_two_caps() {
+    let source = solidcraft_kernel::cylinder(Vec3::ZERO, Vec3::Z, 8.0, 20.0).unwrap();
+    let mesh = source.tessellate(0.02).unwrap();
+    let mut doc = Document::default();
+    doc.add_feature(
+        FeatureKind::MeshImport {
+            file: "public-safe-cylinder.stl".into(),
+            meshes: vec![MeshData {
+                name: "Can".into(),
+                positions: mesh.positions.iter().flat_map(|p| [p.x, p.y, p.z]).collect(),
+                triangles: mesh.triangles.iter().flatten().copied().collect(),
+                color: None,
+            }],
+        },
+        Some("Imported cylinder"),
+    )
+    .unwrap();
+    let mut s = Session::new(doc);
+    let section = run(&mut s, "mesh.section", json!({"body": "Can", "origin": [0, 0, 10], "normal": [0, 0, 1]}));
+    assert!(section["loops"].as_u64().unwrap() >= 1, "{section}");
+    let groups = run(&mut s, "mesh.face_groups", json!({"body": "Can"}));
+    let triangles: u64 = groups["groups"].as_array().unwrap().iter().map(|g| g["triangles"].as_u64().unwrap()).sum();
+    let count = s.model.state().body("Can").unwrap().body.triangle_mesh().unwrap().1.len() as u64;
+    assert_eq!(triangles, count);
+    run(&mut s, "mesh.convert", json!({"body": "Can", "tolerance": "0.05 mm", "mode": "prismatic"}));
+    let body = s.model.state().body("Can").unwrap().body.clone();
+    let kinds = solidcraft_kernel::measure(&body).unwrap().merged.face_types;
+    assert_eq!(kinds.get("cylinder").copied(), Some(1), "{kinds:?}");
+    assert!(kinds.get("plane").copied().unwrap_or(0) >= 2, "{kinds:?}");
+}
+
+#[test]
 fn exported_binary_stl_with_a_bore_reconstructs_analytic_faces() {
     let mut s = Session::default();
     run(&mut s, "sketch.create", json!({"plane":"XY","name":"Section"}));

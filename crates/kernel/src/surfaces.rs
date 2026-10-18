@@ -618,17 +618,449 @@ pub fn extend(body: &Body, at: &[Vec3], distance: f64) -> Result<Body> {
     })
 }
 
+/// A ruled sheet through `stations`, with no caps. Each station is a polyline. Stations of
+/// different lengths are resampled onto the longest one (at most 64 points). `close_profile`
+/// joins the last profile point to the first. `close_path` joins the last station to the first
+/// (a full turn). An open profile is a station that is not closed.
+pub fn open_sweep(stations: &[Vec<Vec3>], close_profile: bool, close_path: bool) -> Result<Body> {
+    if stations.len() < 2 || stations.len() > 256 {
+        return Err(KernelError::Invalid("an open surface needs 2…256 stations".into()));
+    }
+    let stations = unify_stations(stations, close_profile)?;
+    let n = stations.first().map(|s| s.len()).unwrap_or(0);
+    if n < 2 {
+        return Err(KernelError::Invalid("an open profile needs at least two points".into()));
+    }
+    let profile_steps = if close_profile { n } else { n - 1 };
+    let path_steps = stations.len() - 1 + usize::from(close_path);
+    if profile_steps == 0 || profile_steps.saturating_mul(path_steps) > 20_000 {
+        return Err(KernelError::Invalid("the open surface has too many faces".into()));
+    }
+    guard("open surface", || {
+        let mut faces = Vec::new();
+        let emit = |ia: usize, ib: usize, faces: &mut Vec<mt::Face>| -> Result<()> {
+            let (Some(sa), Some(sb)) = (stations.get(ia), stations.get(ib)) else {
+                return Err(KernelError::Invalid("open surface station".into()));
+            };
+            for i in 0..profile_steps {
+                let j = (i + 1) % n;
+                let (Some(&a), Some(&b), Some(&d), Some(&c)) = (sa.get(i), sa.get(j), sb.get(i), sb.get(j)) else {
+                    return Err(KernelError::Invalid("open surface point".into()));
+                };
+                faces.extend(ruled_quad(a, b, c, d)?);
+            }
+            Ok(())
+        };
+        for i in 0..stations.len().saturating_sub(1) {
+            emit(i, i + 1, &mut faces)?;
+        }
+        if close_path {
+            emit(stations.len() - 1, 0, &mut faces)?;
+        }
+        if faces.is_empty() {
+            return Err(KernelError::Invalid("the open surface has no area".into()));
+        }
+        let mut rec = Rebuild::default();
+        for face in &faces {
+            rec.made(face, Vec::new());
+        }
+        Ok(rebuilt_body(surface_body(faces), &[], &rec))
+    })
+}
+
+/// Carry an open or closed profile along a 3D polyline and build the sheet. No caps.
+pub fn open_sweep_along(profile: &[Vec3], closed: bool, path: &[Vec3]) -> Result<Body> {
+    let path = clean_open_path(path)?;
+    if crosses_open_path(&path)? {
+        return Err(KernelError::Failed("not supported yet: a sweep path that crosses itself".into()));
+    }
+    let stations = carry_profile(profile, &path)?;
+    let closed_path = path.first().zip(path.last()).is_some_and(|(a, b)| a.dist(*b) <= 1e-6);
+    open_sweep(&stations, closed, closed_path && path.len() > 2)
+}
+
+fn clean_open_path(path: &[Vec3]) -> Result<Vec<Vec3>> {
+    if path.len() < 2 || path.len() > 8_192 {
+        return Err(KernelError::Invalid("a sweep path needs 2…8192 points".into()));
+    }
+    let mut out = Vec::with_capacity(path.len());
+    for p in path {
+        if !(p.is_finite() && p.x.abs() < 1e7 && p.y.abs() < 1e7 && p.z.abs() < 1e7) {
+            return Err(KernelError::Invalid("the sweep path has a bad point".into()));
+        }
+        if out.last().is_none_or(|last: &Vec3| last.dist(*p) > 1e-9) {
+            out.push(*p);
+        }
+    }
+    if out.len() < 2 {
+        return Err(KernelError::Invalid("the sweep path has no length".into()));
+    }
+    Ok(out)
+}
+
+fn crosses_open_path(pts: &[Vec3]) -> Result<bool> {
+    let segs = pts.len().saturating_sub(1);
+    if segs < 3 {
+        return Ok(false);
+    }
+    if segs > 512 {
+        return Err(KernelError::Failed("not supported yet: a sweep path longer than 512 samples".into()));
+    }
+    for i in 0..segs {
+        for j in i + 2..segs {
+            if i == 0 && j + 1 == segs {
+                continue;
+            }
+            let (Some(a), Some(b), Some(c), Some(d)) = (pts.get(i), pts.get(i + 1), pts.get(j), pts.get(j + 1)) else { continue };
+            if segments_meet(*a, *b, *c, *d) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn segments_meet(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> bool {
+    let u = b - a;
+    let v = d - c;
+    let w = a - c;
+    let uu = u.dot(u);
+    let vv = v.dot(v);
+    let uv = u.dot(v);
+    let denom = uu * vv - uv * uv;
+    let tol = (uu.sqrt() + vv.sqrt()) * 1e-6 + 1e-5;
+    if denom.abs() < 1e-18 {
+        return false;
+    }
+    let uw = u.dot(w);
+    let vw = v.dot(w);
+    let s = ((uv * vw - vv * uw) / denom).clamp(0.0, 1.0);
+    let t = if vv > 1e-18 { ((uv * s + vw) / vv).clamp(0.0, 1.0) } else { 0.0 };
+    let interior = s > 1e-3 && s < 0.999 && t > 1e-3 && t < 0.999;
+    interior && (w + u * s - v * t).len() <= tol
+}
+
+fn carry_profile(profile: &[Vec3], path: &[Vec3]) -> Result<Vec<Vec<Vec3>>> {
+    if profile.len() < 2 || profile.len() > 10_000 {
+        return Err(KernelError::Invalid("an open profile needs 2…10000 points".into()));
+    }
+    for p in profile {
+        if !(p.is_finite() && p.x.abs() < 1e7 && p.y.abs() < 1e7 && p.z.abs() < 1e7) {
+            return Err(KernelError::Invalid("an open surface point is not finite".into()));
+        }
+    }
+    let origin = path.first().copied().ok_or_else(|| KernelError::Invalid("sweep path".into()))?;
+    let offsets: Vec<Vec3> = profile.iter().map(|p| *p - origin).collect();
+    let tangents = open_tangents(path)?;
+    let frames = open_frames(path, &tangents).ok_or_else(|| KernelError::Invalid("the sweep path doubles back".into()))?;
+    let f0 = *frames.first().ok_or_else(|| KernelError::Invalid("sweep path".into()))?;
+    let mut stations = Vec::with_capacity(path.len());
+    for (i, fi) in frames.iter().enumerate() {
+        let at = path.get(i).copied().ok_or_else(|| KernelError::Invalid("sweep path".into()))?;
+        let map = |v: Vec3| fi[0] * f0[0].dot(v) + fi[1] * f0[1].dot(v) + fi[2] * f0[2].dot(v);
+        stations.push(offsets.iter().map(|v| at + map(*v)).collect());
+    }
+    Ok(stations)
+}
+
+fn open_tangents(p: &[Vec3]) -> Result<Vec<Vec3>> {
+    let n = p.len();
+    (0..n)
+        .map(|i| {
+            let prev = p.get(i.saturating_sub(1)).copied().unwrap_or(Vec3::ZERO);
+            let next = p.get((i + 1).min(n.saturating_sub(1))).copied().unwrap_or(Vec3::ZERO);
+            (next - prev).normalized().ok_or_else(|| KernelError::Invalid("the sweep path has no direction".into()))
+        })
+        .collect()
+}
+
+fn open_frames(pts: &[Vec3], tangents: &[Vec3]) -> Option<Vec<[Vec3; 3]>> {
+    let t0 = *tangents.first()?;
+    let helper = if t0.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+    let mut r = t0.cross(helper).normalized()?;
+    let mut out = vec![[t0, r, t0.cross(r)]];
+    for i in 0..pts.len().saturating_sub(1) {
+        let (x0, x1, ti, tn) = (*pts.get(i)?, *pts.get(i + 1)?, *tangents.get(i)?, *tangents.get(i + 1)?);
+        let v1 = x1 - x0;
+        let c1 = v1.dot(v1);
+        let (rl, tl) = if c1 > 1e-24 { (r - v1 * (2.0 / c1 * v1.dot(r)), ti - v1 * (2.0 / c1 * v1.dot(ti))) } else { (r, ti) };
+        let v2 = tn - tl;
+        let c2 = v2.dot(v2);
+        r = if c2 > 1e-24 { rl - v2 * (2.0 / c2 * v2.dot(rl)) } else { rl };
+        r = (r - tn * r.dot(tn)).normalized()?;
+        out.push([tn, r, tn.cross(r)]);
+    }
+    Some(out)
+}
+
+fn unify_stations(stations: &[Vec<Vec3>], closed: bool) -> Result<Vec<Vec<Vec3>>> {
+    let n = stations.iter().map(|s| s.len()).fold(0, usize::max);
+    if !(2..=10_000).contains(&n) {
+        return Err(KernelError::Invalid("an open profile needs 2…10000 points".into()));
+    }
+    let target = if stations.iter().all(|s| s.len() == n) { n } else { n.clamp(2, 64) };
+    stations
+        .iter()
+        .map(|s| {
+            for p in s {
+                if !(p.is_finite() && p.x.abs() < 1e7 && p.y.abs() < 1e7 && p.z.abs() < 1e7) {
+                    return Err(KernelError::Invalid("an open surface point is not finite".into()));
+                }
+            }
+            if s.len() == target { Ok(s.clone()) } else { sample_station(s, target, closed) }
+        })
+        .collect()
+}
+
+fn sample_station(pts: &[Vec3], n: usize, closed: bool) -> Result<Vec<Vec3>> {
+    if pts.len() < 2 || n < 2 {
+        return Err(KernelError::Invalid("an open profile needs at least two points".into()));
+    }
+    let mut cum = vec![0.0];
+    for w in pts.windows(2) {
+        let (Some(a), Some(b)) = (w.first(), w.get(1)) else { continue };
+        let last = cum.last().copied().unwrap_or(0.0);
+        cum.push(last + a.dist(*b));
+    }
+    if closed && let (Some(a), Some(b)) = (pts.first(), pts.last()) {
+        let last = cum.last().copied().unwrap_or(0.0);
+        cum.push(last + a.dist(*b));
+    }
+    let total = cum.last().copied().unwrap_or(0.0);
+    if total < 1e-9 {
+        return Err(KernelError::Invalid("the open profile has no length".into()));
+    }
+    let span = if closed { n } else { n - 1 };
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let s = total * i as f64 / span as f64;
+        let k = cum.iter().position(|c| *c >= s - 1e-12).unwrap_or(cum.len().saturating_sub(1)).saturating_sub(1);
+        let (ca, cb) = (cum.get(k).copied().unwrap_or(0.0), cum.get(k + 1).copied().unwrap_or(total));
+        let t = if cb - ca > 1e-15 { ((s - ca) / (cb - ca)).clamp(0.0, 1.0) } else { 0.0 };
+        let a = if closed && k >= pts.len() { pts.last().copied() } else { pts.get(k).copied() };
+        let b = if closed && k + 1 >= pts.len() { pts.first().copied() } else { pts.get(k + 1).copied() };
+        let (Some(a), Some(b)) = (a, b) else { return Err(KernelError::Invalid("open surface point".into())) };
+        out.push(a * (1.0 - t) + b * t);
+    }
+    Ok(out)
+}
+
+fn ruled_quad(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> Result<Vec<mt::Face>> {
+    let area = (b - a).cross(d - a).len() + (c - b).cross(d - b).len();
+    if area < 1e-8 {
+        return Ok(Vec::new());
+    }
+    match planar_loop(&[a, b, c, d]) {
+        Ok(face) => Ok(vec![face]),
+        Err(_) => {
+            let mut faces = Vec::new();
+            if let Ok(face) = planar_loop(&[a, b, c]) {
+                faces.push(face);
+            }
+            if let Ok(face) = planar_loop(&[a, c, d]) {
+                faces.push(face);
+            }
+            Ok(faces)
+        }
+    }
+}
+
+fn planar_loop(pts: &[Vec3]) -> Result<mt::Face> {
+    let build = |pts: &[Vec3]| -> Result<mt::Face> {
+        let verts: Vec<mt::Vertex> = pts.iter().copied().map(|p| mt::Vertex::new(p3(p))).collect();
+        let mut edges = Vec::with_capacity(pts.len());
+        for i in 0..pts.len() {
+            let (Some(a), Some(b)) = (verts.get(i), verts.get((i + 1) % pts.len())) else { continue };
+            if a.point().distance(b.point()) < 1e-9 {
+                return Err(KernelError::Invalid("a zero-length surface edge".into()));
+            }
+            edges.push(mt::builder::line(a, b));
+        }
+        if edges.len() != pts.len() {
+            return Err(KernelError::Invalid("open surface face".into()));
+        }
+        let wire: mt::Wire = edges.into();
+        mt::builder::try_attach_plane(&[wire]).map_err(|e| KernelError::Failed(format!("open surface: {e}")))
+    };
+    match build(pts) {
+        Ok(face) => Ok(face),
+        Err(_) => {
+            let mut rev: Vec<Vec3> = pts.to_vec();
+            rev.reverse();
+            build(&rev)
+        }
+    }
+}
+
+/// One face on a closed polyline. Planar input keeps the shoelace area. A guide whose ends
+/// meet the boundary splits it into two ruled sheets; a guide that misses is refused.
+pub fn patch_guided(boundary: &[Vec3], guide: Option<&[Vec3]>) -> Result<Body> {
+    if boundary.len() < 3 || boundary.len() > 10_000 {
+        return Err(KernelError::Invalid("a patch boundary does not close".into()));
+    }
+    for p in boundary {
+        if !(p.is_finite() && p.x.abs() < 1e7 && p.y.abs() < 1e7 && p.z.abs() < 1e7) {
+            return Err(KernelError::Invalid("a patch point is not finite".into()));
+        }
+    }
+    let mut loop_pts = boundary.to_vec();
+    let closed = loop_pts.first().zip(loop_pts.last()).is_some_and(|(a, b)| a.dist(*b) < 1e-4);
+    if closed {
+        loop_pts.pop();
+    }
+    if loop_pts.len() < 3 {
+        return Err(KernelError::Invalid("a patch boundary does not close".into()));
+    }
+    let Some(guide) = guide.filter(|g| !g.is_empty()) else {
+        return patch_polygon(&loop_pts);
+    };
+    if guide.len() < 2 || guide.len() > 10_000 || guide.iter().any(|p| !p.is_finite()) {
+        return Err(KernelError::Invalid("a guide curve needs 2…10000 finite points".into()));
+    }
+    let size = loop_pts.iter().fold(0.0_f64, |s, p| s.max(p.len()));
+    let tol = (size * 0.05).max(0.5);
+    let (Some(&g0), Some(&g1)) = (guide.first(), guide.last()) else {
+        return Err(KernelError::Invalid("a guide curve needs two ends".into()));
+    };
+    if dist_to_loop(&loop_pts, g0) > tol || dist_to_loop(&loop_pts, g1) > tol {
+        return Err(KernelError::Invalid("the guide does not meet the boundary".into()));
+    }
+    if let Some(plane) = polygon_plane(&loop_pts)
+        && guide.iter().all(|p| plane.height(*p).abs() < 1e-3)
+    {
+        return patch_polygon(&loop_pts);
+    }
+    let i = nearest_index(&loop_pts, g0);
+    let j = nearest_index(&loop_pts, g1);
+    if i == j {
+        return Err(KernelError::Invalid("the guide meets the boundary at one point".into()));
+    }
+    let a = chain_between(&loop_pts, i, j);
+    let b = chain_between(&loop_pts, j, i);
+    let left = open_sweep(&[a, guide.to_vec()], false, false)?;
+    let right = open_sweep(&[b, guide.to_vec()], false, false)?;
+    stitch(&[&left, &right], 0.0)
+}
+
+fn patch_polygon(pts: &[Vec3]) -> Result<Body> {
+    let plane = polygon_plane(pts).ok_or_else(|| KernelError::Invalid("the patch boundary is not planar".into()))?;
+    if pts.iter().any(|p| plane.height(*p).abs() > 1e-3) {
+        return Err(KernelError::Invalid("not supported yet: a patch boundary that is not planar".into()));
+    }
+    let local: Vec<solidcraft_geom::Vec2> = pts.iter().map(|p| plane.to_local(*p)).collect();
+    let region = solidcraft_geom::Region2 { outer: solidcraft_geom::Loop2::polygon(&local), holes: Vec::new() };
+    patch_region(&plane, &region)
+}
+
+fn polygon_plane(pts: &[Vec3]) -> Option<solidcraft_geom::Plane> {
+    let mut n = Vec3::ZERO;
+    let m = pts.len();
+    for i in 0..m {
+        let (Some(a), Some(b)) = (pts.get(i), pts.get((i + 1) % m)) else { continue };
+        n.x += (a.y - b.y) * (a.z + b.z);
+        n.y += (a.z - b.z) * (a.x + b.x);
+        n.z += (a.x - b.x) * (a.y + b.y);
+    }
+    let origin = pts.first().copied()?;
+    solidcraft_geom::Plane::from_normal(origin, n)
+}
+
+fn nearest_index(pts: &[Vec3], p: Vec3) -> usize {
+    pts.iter().enumerate().min_by(|(_, a), (_, b)| a.dist(p).total_cmp(&b.dist(p))).map(|(i, _)| i).unwrap_or(0)
+}
+
+fn chain_between(pts: &[Vec3], i: usize, j: usize) -> Vec<Vec3> {
+    let mut out = Vec::new();
+    let mut k = i;
+    for _ in 0..=pts.len() {
+        if let Some(p) = pts.get(k) {
+            out.push(*p);
+        }
+        if k == j {
+            break;
+        }
+        k = (k + 1) % pts.len().max(1);
+    }
+    out
+}
+
+fn dist_to_loop(pts: &[Vec3], p: Vec3) -> f64 {
+    let n = pts.len();
+    let mut best = f64::MAX;
+    for i in 0..n {
+        let (Some(a), Some(b)) = (pts.get(i), pts.get((i + 1) % n)) else { continue };
+        best = best.min(dist_to_seg(*a, *b, p));
+    }
+    best
+}
+
+fn dist_to_seg(a: Vec3, b: Vec3, p: Vec3) -> f64 {
+    let d = b - a;
+    let dd = d.dot(d);
+    let t = if dd > 1e-18 { ((p - a).dot(d) / dd).clamp(0.0, 1.0) } else { 0.0 };
+    (a + d * t).dist(p)
+}
+
+/// Midpoints of edges that belong to only one face. Empty when the body is closed.
+pub fn gap_points(body: &Body) -> Result<Vec<Vec3>> {
+    if !body.is_surface() {
+        return Ok(Vec::new());
+    }
+    body.require_brep("stitch gaps")?;
+    guard("stitch gaps", || {
+        let mut counts: HashMap<mt::EdgeID, (mt::Edge, usize)> = HashMap::new();
+        let mut seen = 0usize;
+        for face in body.solid.face_iter() {
+            for edge in face.edge_iter() {
+                seen += 1;
+                if seen > 80_000 {
+                    return Err(KernelError::Invalid("too many edges to report gaps".into()));
+                }
+                counts.entry(edge.id()).and_modify(|(_, n)| *n += 1).or_insert((edge, 1));
+            }
+        }
+        let mut out = Vec::new();
+        for (edge, n) in counts.values() {
+            if *n != 1 {
+                continue;
+            }
+            let curve = edge.curve();
+            let (t0, t1) = curve.range_tuple();
+            let mid = from_p3(curve.subs(t0 + (t1 - t0) * 0.5));
+            if mid.is_finite() {
+                out.push(mid);
+            }
+            if out.len() > 10_000 {
+                return Err(KernelError::Invalid("too many gap edges".into()));
+            }
+        }
+        Ok(out)
+    })
+}
+
+/// Reverse every face so the next thicken steps the other way.
+pub fn flip_normals(body: &Body) -> Result<Body> {
+    body.require_brep("reverse")?;
+    guard("surface.reverse", || {
+        let faces: Vec<mt::Face> = body.solid.face_iter().map(|face| face.inverse()).collect();
+        if faces.is_empty() {
+            return Err(KernelError::Invalid("nothing to reverse".into()));
+        }
+        let mut rec = Rebuild::default();
+        for face in &faces {
+            rec.made(face, Vec::new());
+        }
+        Ok(rebuilt_body(surface_body(faces), &[&body.solid], &rec))
+    })
+}
+
 /// Faces that are not caps along `axis` (their plane is not square to it, or they are curved),
 /// copied out as a surface body.
 pub fn side_skin(body: &Body, axis: Vec3) -> Result<Body> {
     let axis = axis.normalized().ok_or_else(|| KernelError::Invalid("the surface direction is zero".into()))?;
     let tol = (body.size() * 2e-3).max(1e-3);
     let faces = body.faces(tol)?;
-    let pts: Vec<Vec3> = faces
-        .iter()
-        .filter(|f| f.plane_normal.map(|n| n.dot(axis).abs() < 0.85).unwrap_or(true))
-        .map(|f| f.centroid)
-        .collect();
+    let pts: Vec<Vec3> = faces.iter().filter(|f| f.plane_normal.map(|n| n.dot(axis).abs() < 0.85).unwrap_or(true)).map(|f| f.centroid).collect();
     if pts.is_empty() {
         return Err(KernelError::Invalid("that solid has no side faces to turn into a surface".into()));
     }
@@ -701,6 +1133,8 @@ mod tests {
         // Five faces leave an open box; patching the top's edges closes it again.
         let open = stitch(&[refs[0], refs[2], refs[3], refs[4], refs[5]], 0.0).unwrap();
         assert!(open.is_surface());
+        assert!(gap_points(&s).unwrap().is_empty());
+        assert!(!gap_points(&open).unwrap().is_empty(), "five faces leave a gap loop");
         let lid =
             patch_edges(&open, &[Vec3::new(5.0, 0.0, 30.0), Vec3::new(10.0, 10.0, 30.0), Vec3::new(5.0, 20.0, 30.0), Vec3::new(0.0, 10.0, 30.0)])
                 .unwrap();
@@ -721,6 +1155,19 @@ mod tests {
         let e = extend(&s, &[Vec3::new(10.0, 5.0, 0.0), Vec3::new(5.0, 10.0, 0.0)], 5.0).unwrap();
         assert!(rel(measure(&e).unwrap().area, 225.0) < 1e-9);
         assert!(extend(&s, &[Vec3::new(10.0, 5.0, 0.0)], -1.0).is_err());
+    }
+
+    #[test]
+    fn an_extruded_line_is_a_sheet_with_no_volume() {
+        let a = vec![Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0)];
+        let b = vec![Vec3::new(0.0, 0.0, 10.0), Vec3::new(10.0, 0.0, 10.0)];
+        let sheet = open_sweep(&[a, b], false, false).unwrap();
+        assert!(sheet.is_surface());
+        let m = measure(&sheet).unwrap();
+        assert!(m.volume.abs() < 1e-6, "{}", m.volume);
+        assert!((m.area - 100.0).abs() < 1e-3, "{}", m.area);
+        assert!(open_sweep(&[], false, false).is_err());
+        assert!(open_sweep(&[vec![Vec3::new(f64::NAN, 0.0, 0.0), Vec3::X], vec![Vec3::ZERO, Vec3::X]], false, false).is_err());
     }
 
     #[test]

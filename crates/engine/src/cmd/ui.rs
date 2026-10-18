@@ -24,6 +24,15 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .doc_only()
         .params("(steps?: number). Returns {enabled, index, dismissed, completed, steps} without changing anything"),
+    CommandSpec::new("ui.select_filter", "Selection Filter", select_filter)
+        .noundo()
+        .doc_only()
+        .params("kinds: [face|edge|vertex|sketch_curve|body|component]. Empty allows every kind"),
+    CommandSpec::new("ui.quick_toolbox", "Quick Toolbox", quick_toolbox)
+        .noundo()
+        .doc_only()
+        .params("query?: text. Returns matching command ids. The shell opens the command palette"),
+    CommandSpec::new("ui.repeat_last", "Repeat Last Command", repeat_last).noundo().params("runs the previous command again"),
 ];
 
 fn steps_of(cmd: &str, p: &Value, required: bool) -> Result<usize> {
@@ -62,6 +71,57 @@ fn dismiss(s: &mut Session, p: &Value) -> Result<Value> {
 fn state(s: &mut Session, p: &Value) -> Result<Value> {
     let steps = steps_of("ui.coaching.state", p, false)?;
     Ok(coaching_state(&s.coaching, steps))
+}
+
+fn select_filter(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "ui.select_filter";
+    let Some(kinds) = p.get("kinds").and_then(Value::as_array) else {
+        return Err(bad(cmd, "`kinds` must be a list"));
+    };
+    if kinds.len() > 32 {
+        return Err(bad(cmd, "too many kinds"));
+    }
+    let mut mask = 0u32;
+    for kind in kinds {
+        let Some(name) = kind.as_str() else { return Err(bad(cmd, "a kind is text")) };
+        let bit = match name {
+            "face" | "faces" => 1,
+            "edge" | "edges" => 2,
+            "vertex" | "vertices" => 4,
+            "sketch_curve" | "sketch_curves" => 8,
+            "body" | "bodies" => 16,
+            "component" | "components" => 32,
+            other => return Err(bad(cmd, format!("unknown kind `{other}`"))),
+        };
+        mask |= bit;
+    }
+    s.select_filter = mask;
+    Ok(serde_json::json!({"kinds": kinds}))
+}
+
+fn quick_toolbox(s: &mut Session, p: &Value) -> Result<Value> {
+    let query = crate::params::str_(p, "query").unwrap_or("").to_ascii_lowercase();
+    if query.len() > 200 {
+        return Err(bad("ui.quick_toolbox", "the query is too long"));
+    }
+    let mut ids = Vec::new();
+    for spec in super::command_specs() {
+        if query.is_empty() || spec.id.contains(&query) || spec.label.to_ascii_lowercase().contains(&query) {
+            ids.push(spec.id);
+        }
+        if ids.len() >= 50 {
+            break;
+        }
+    }
+    let _ = s;
+    Ok(serde_json::json!({"commands": ids}))
+}
+
+fn repeat_last(s: &mut Session, _p: &Value) -> Result<Value> {
+    let Some((id, params)) = s.last_command.clone() else {
+        return Err(bad("ui.repeat_last", "there is no command to repeat"));
+    };
+    s.execute(&id, &params)
 }
 
 #[cfg(test)]

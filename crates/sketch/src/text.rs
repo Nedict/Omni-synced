@@ -102,6 +102,51 @@ pub fn text_geometry(text: &str, at: Vec2, height: f64, angle: f64) -> Result<Ve
     Ok(out)
 }
 
+fn along(path: &[Vec2], distance: f64) -> Option<(Vec2, Vec2)> {
+    if path.is_empty() || !distance.is_finite() {
+        return None;
+    }
+    let mut left = distance.max(0.0);
+    for window in path.windows(2) {
+        let (Some(a), Some(b)) = (window.first().copied(), window.get(1).copied()) else { continue };
+        let step = b - a;
+        let len = step.len();
+        if len < 1e-9 {
+            continue;
+        }
+        if left <= len {
+            let dir = step * (1.0 / len);
+            return Some((a + dir * left, dir));
+        }
+        left -= len;
+    }
+    let (a, b) = (path[path.len() - 2], path[path.len() - 1]);
+    let step = b - a;
+    step.normalized().map(|dir| (b, dir))
+}
+
+/// Place straight text outlines so each baseline point follows `path`.
+pub fn text_on_path(text: &str, height: f64, path: &[Vec2]) -> Result<Vec<LinkGeom>> {
+    if path.len() < 2 {
+        return Err(SketchError::Invalid("text needs a path curve".into()));
+    }
+    let flat = text_geometry(text, Vec2::ZERO, height, 0.0)?;
+    let map = |p: Vec2| -> Vec2 {
+        let Some((at, dir)) = along(path, p.x) else { return p };
+        let normal = Vec2::new(-dir.y, dir.x);
+        at + normal * p.y
+    };
+    Ok(flat
+        .into_iter()
+        .map(|geom| match geom {
+            LinkGeom::Line(a, b) => LinkGeom::Line(map(a), map(b)),
+            LinkGeom::Conic { a, apex, b, rho } => LinkGeom::Conic { a: map(a), apex: map(apex), b: map(b), rho },
+            LinkGeom::Point(p) => LinkGeom::Point(map(p)),
+            other => other,
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

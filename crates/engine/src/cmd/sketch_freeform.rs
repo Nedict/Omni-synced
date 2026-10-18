@@ -108,6 +108,43 @@ pub(super) fn analytic_cut_points(sk: &Sketch, ci: usize) -> Vec<(Vec2, usize)> 
     cuts(sk, ci, &pieces(sk, ci), true).into_iter().map(|(_, q, oi)| (q, oi)).collect()
 }
 
+fn segment_dir(segs: &[Seg2], u: f64) -> Option<Vec2> {
+    let i = (u.floor() as usize).min(segs.len().saturating_sub(1));
+    let seg = segs.get(i)?;
+    let t = (u - i as f64).clamp(0.0, 1.0);
+    let dt = 1e-3;
+    let (t0, t1) = ((t - dt).clamp(0.0, 1.0), (t + dt).clamp(0.0, 1.0));
+    if t1 - t0 < 1e-6 {
+        return (seg.end() - seg.start()).normalized();
+    }
+    (seg.point_at(t1) - seg.point_at(t0)).normalized()
+}
+
+/// Every hit of a cutter runs along this curve, so the touch does not cross it.
+fn tangent_only(sk: &Sketch, _ci: usize, segs: &[Seg2], cuts: &[(f64, Vec2, Option<usize>)]) -> bool {
+    let mut seen = Vec::new();
+    for (_, _, cutter) in cuts {
+        if let Some(cutter) = cutter
+            && !seen.contains(cutter)
+        {
+            seen.push(*cutter);
+        }
+    }
+    if seen.is_empty() {
+        return false;
+    }
+    seen.iter().any(|cutter| {
+        let hits: Vec<_> = cuts.iter().filter(|(_, _, c)| *c == Some(*cutter)).collect();
+        !hits.is_empty()
+            && hits.iter().all(|(u, q, _)| {
+                let Some(mine) = segment_dir(segs, *u) else { return false };
+                let other = pieces(sk, *cutter);
+                let (uo, dist) = locate(&other, *q);
+                dist < 1e-3 && segment_dir(&other, uo).is_some_and(|theirs| mine.dot(theirs).abs() > 0.98)
+            })
+    })
+}
+
 /// Exact sub-pieces between positions `ua` < `ub` (positions may run past the end on closed
 /// curves; they wrap).
 fn span(segs: &[Seg2], ua: f64, ub: f64) -> Vec<Seg2> {
@@ -219,6 +256,9 @@ fn modify(sk: &mut Sketch, ci: usize, at: Vec2, remove: bool, points: Option<&[V
     } else {
         cuts(sk, ci, &segs, false).into_iter().filter(|c| closed || (c.0 > 1e-9 && c.0 < n - 1e-9)).map(|(u, q, c)| (u, q, Some(c))).collect()
     };
+    if points.is_none() && tangent_only(sk, ci, &segs, &cs) {
+        return Err(bad(cmd, "a tangent touch is not a crossing"));
+    }
     let (uq, _) = locate(&segs, at);
     let ends = sk.curves.get(ci).and_then(|c| c.kind.ends());
     let construction = sk.curves.get(ci).is_some_and(|c| c.construction);

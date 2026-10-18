@@ -878,9 +878,14 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
         4 => {
             ui.label("Visual style");
             let styles = ["Shaded with edges", "Shaded", "Wireframe", "Shaded with hidden edges"];
+            let ids = ["shaded_edges", "shaded", "wireframe", "hidden_edges"];
             egui::ComboBox::from_id_salt("pref_style").selected_text(styles[usize::from(app.ui.visual_style.min(3))]).show_ui(ui, |ui| {
                 for (i, s) in styles.iter().enumerate() {
-                    ui.selectable_value(&mut app.ui.visual_style, i as u8, *s);
+                    if ui.selectable_label(app.ui.visual_style == i as u8, *s).clicked()
+                        && app.run("view.visual_style", serde_json::json!({"style": ids[i]})).is_ok()
+                    {
+                        app.ui.visual_style = app.session.visual_style;
+                    }
                 }
             });
             ui.end_row();

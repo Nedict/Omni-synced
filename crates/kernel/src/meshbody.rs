@@ -328,13 +328,7 @@ pub fn mesh_reduce(body: &Body, ratio: f64) -> Result<Body> {
     }
     let (positions, triangles) = body.triangle_mesh().ok_or_else(|| KernelError::Invalid("select a mesh body".into()))?;
     let cell = (body.size() * (1.0 - ratio).max(0.01)).max(1e-4);
-    let key = |p: Vec3| {
-        (
-            (p.x / cell).round() as i64,
-            (p.y / cell).round() as i64,
-            (p.z / cell).round() as i64,
-        )
-    };
+    let key = |p: Vec3| ((p.x / cell).round() as i64, (p.y / cell).round() as i64, (p.z / cell).round() as i64);
     let mut map: std::collections::HashMap<(i64, i64, i64), u32> = std::collections::HashMap::new();
     let mut remap = vec![0u32; positions.len()];
     let mut out_pos = Vec::new();
@@ -364,31 +358,66 @@ pub fn mesh_reduce(body: &Body, ratio: f64) -> Result<Body> {
     Ok(reduced)
 }
 
-/// Group triangles by which way their normal points (the six axis directions).
+/// Group triangles by growing regions whose normals stay within about 30 degrees.
+/// Every triangle belongs to one group. Names follow the group's average axis.
 pub fn mesh_face_groups(body: &Body) -> Result<Vec<(String, usize)>> {
     let (positions, triangles) = body.triangle_mesh().ok_or_else(|| KernelError::Invalid("select a mesh body".into()))?;
-    let mut counts = [0usize; 6];
-    for t in triangles {
-        let (Some(a), Some(b), Some(c)) =
-            (positions.get(t[0] as usize), positions.get(t[1] as usize), positions.get(t[2] as usize))
-        else {
-            continue;
-        };
-        let n = (*b - *a).cross(*c - *a);
-        let (ax, i) = [n.x.abs(), n.y.abs(), n.z.abs()].into_iter().enumerate().max_by(|u, v| u.1.total_cmp(&v.1)).unwrap_or((2, 0.0));
-        let _ = i;
-        let sign = match ax {
-            0 => n.x >= 0.0,
-            1 => n.y >= 0.0,
-            _ => n.z >= 0.0,
-        };
-        let slot = ax * 2 + usize::from(!sign);
-        if let Some(c) = counts.get_mut(slot) {
-            *c += 1;
-        }
+    if triangles.len() > 4_000 {
+        return Err(KernelError::Invalid("face groups are limited to 4000 triangles".into()));
     }
-    let names = ["+X", "-X", "+Y", "-Y", "+Z", "-Z"];
-    Ok(names.into_iter().zip(counts).filter(|(_, n)| *n > 0).map(|(n, c)| (n.to_string(), c)).collect())
+    let normals: Vec<Vec3> = triangles
+        .iter()
+        .map(|t| {
+            let (Some(a), Some(b), Some(c)) = (positions.get(t[0] as usize), positions.get(t[1] as usize), positions.get(t[2] as usize)) else {
+                return Vec3::Z;
+            };
+            (*b - *a).cross(*c - *a).normalized().unwrap_or(Vec3::Z)
+        })
+        .collect();
+    let mut seen = vec![false; triangles.len()];
+    let mut groups = Vec::new();
+    for start in 0..triangles.len() {
+        if seen.get(start).copied().unwrap_or(true) {
+            continue;
+        }
+        let mut stack = vec![start];
+        seen[start] = true;
+        let mut count = 0usize;
+        let mut acc = Vec3::ZERO;
+        while let Some(i) = stack.pop() {
+            count += 1;
+            let n = normals.get(i).copied().unwrap_or(Vec3::Z);
+            acc += n;
+            let tri = triangles.get(i).copied().unwrap_or([0, 0, 0]);
+            for (j, other) in triangles.iter().enumerate() {
+                if seen.get(j).copied().unwrap_or(true) {
+                    continue;
+                }
+                let shares = tri.iter().any(|v| other.contains(v));
+                let other_n = normals.get(j).copied().unwrap_or(Vec3::Z);
+                if shares && n.dot(other_n) > 0.866 {
+                    seen[j] = true;
+                    stack.push(j);
+                }
+            }
+        }
+        let (ax, _) = [acc.x.abs(), acc.y.abs(), acc.z.abs()].into_iter().enumerate().max_by(|u, v| u.1.total_cmp(&v.1)).unwrap_or((2, 0.0));
+        let sign = match ax {
+            0 => acc.x >= 0.0,
+            1 => acc.y >= 0.0,
+            _ => acc.z >= 0.0,
+        };
+        let name = match (ax, sign) {
+            (0, true) => "+X",
+            (0, false) => "-X",
+            (1, true) => "+Y",
+            (1, false) => "-Y",
+            (_, true) => "+Z",
+            (_, false) => "-Z",
+        };
+        groups.push((name.to_string(), count));
+    }
+    Ok(groups)
 }
 
 /// One planar B-rep face per triangle. The mesh must be a closed triangle solid small enough to sew.
@@ -408,11 +437,7 @@ pub fn mesh_faceted(body: &Body) -> Result<Body> {
             continue;
         }
         faces.push(crate::FaceSpec {
-            loops: vec![vec![
-                crate::EdgeSpec::Line { a, b },
-                crate::EdgeSpec::Line { a: b, b: c },
-                crate::EdgeSpec::Line { a: c, b: a },
-            ]],
+            loops: vec![vec![crate::EdgeSpec::Line { a, b }, crate::EdgeSpec::Line { a: b, b: c }, crate::EdgeSpec::Line { a: c, b: a }]],
             surface: crate::SurfSpec::Plane,
             probe: None,
         });
@@ -423,6 +448,192 @@ pub fn mesh_faceted(body: &Body) -> Result<Body> {
     let mut solid = crate::sew(&faces)?;
     solid = solid.with_color(body.color());
     Ok(solid)
+}
+
+fn owned_mesh(body: &Body) -> Result<TriMesh> {
+    let (positions, triangles) = body.triangle_mesh().ok_or_else(|| KernelError::Invalid("select a mesh body".into()))?;
+    Ok(TriMesh { positions: positions.to_vec(), triangles: triangles.to_vec() })
+}
+
+fn painted(body: &Body, mesh: TriMesh) -> Result<Body> {
+    let mut out = mesh_body(&mesh.positions, &mesh.triangles)?;
+    out.color = body.color();
+    Ok(out)
+}
+
+/// Flip every triangle so the opposite side faces out.
+pub fn mesh_reverse(body: &Body) -> Result<Body> {
+    let mut mesh = owned_mesh(body)?;
+    for tri in &mut mesh.triangles {
+        tri.swap(1, 2);
+    }
+    painted(body, mesh)
+}
+
+/// Move vertices toward the average of their neighbours. At most 50 passes.
+pub fn mesh_smooth(body: &Body, iterations: u32) -> Result<Body> {
+    if iterations > 50 {
+        return Err(KernelError::Invalid("smooth iterations are at most 50".into()));
+    }
+    let mut mesh = owned_mesh(body)?;
+    for _ in 0..iterations {
+        let src = mesh.positions.clone();
+        let mut acc = vec![Vec3::ZERO; src.len()];
+        let mut count = vec![0.0_f64; src.len()];
+        for tri in &mesh.triangles {
+            for pair in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
+                let (ia, ib) = (pair.0 as usize, pair.1 as usize);
+                let (Some(pa), Some(pb)) = (src.get(ia).copied(), src.get(ib).copied()) else { continue };
+                if let Some(slot) = acc.get_mut(ia) {
+                    *slot += pb;
+                }
+                if let Some(slot) = count.get_mut(ia) {
+                    *slot += 1.0;
+                }
+                if let Some(slot) = acc.get_mut(ib) {
+                    *slot += pa;
+                }
+                if let Some(slot) = count.get_mut(ib) {
+                    *slot += 1.0;
+                }
+            }
+        }
+        for (i, point) in mesh.positions.iter_mut().enumerate() {
+            let (Some(src_i), Some(sum), Some(n)) = (src.get(i).copied(), acc.get(i).copied(), count.get(i).copied()) else { continue };
+            if n > 0.0 {
+                *point = src_i * 0.5 + sum * (0.5 / n);
+            }
+        }
+    }
+    painted(body, mesh)
+}
+
+/// Reduce the triangle count toward `target`. A target at or above the current count is a copy.
+pub fn mesh_remesh(body: &Body, target: usize) -> Result<Body> {
+    let count = body.triangle_mesh().map(|(_, tris)| tris.len()).unwrap_or(0);
+    if target == 0 || target > MAX_TRIANGLES {
+        return Err(KernelError::Invalid("remesh target is out of range".into()));
+    }
+    if target >= count || count == 0 {
+        return Ok(body.clone());
+    }
+    mesh_reduce(body, (target as f64 / count as f64).clamp(0.01, 1.0))
+}
+
+/// Offset vertices along their averaged normals.
+pub fn mesh_shell(body: &Body, thickness: f64) -> Result<Body> {
+    if !(thickness.is_finite() && thickness.abs() > 1e-9 && thickness.abs() < 1e5) {
+        return Err(KernelError::Invalid("mesh shell thickness must be finite".into()));
+    }
+    let mut mesh = owned_mesh(body)?;
+    let mut normals = vec![Vec3::ZERO; mesh.positions.len()];
+    for tri in &mesh.triangles {
+        let (Some(a), Some(b), Some(c)) = (
+            mesh.positions.get(tri[0] as usize).copied(),
+            mesh.positions.get(tri[1] as usize).copied(),
+            mesh.positions.get(tri[2] as usize).copied(),
+        ) else {
+            continue;
+        };
+        let n = (b - a).cross(c - a);
+        for index in tri {
+            if let Some(slot) = normals.get_mut(*index as usize) {
+                *slot += n;
+            }
+        }
+    }
+    for (point, normal) in mesh.positions.iter_mut().zip(&normals) {
+        if let Some(unit) = normal.normalized() {
+            *point += unit * thickness;
+        }
+    }
+    painted(body, mesh)
+}
+
+/// Join two meshes into one body.
+pub fn mesh_combine(a: &Body, b: &Body) -> Result<Body> {
+    let (pa, ta) = a.triangle_mesh().ok_or_else(|| KernelError::Invalid("select a mesh body".into()))?;
+    let (pb, tb) = b.triangle_mesh().ok_or_else(|| KernelError::Invalid("select a mesh body".into()))?;
+    let shift = u32::try_from(pa.len()).map_err(|_| KernelError::Invalid("too many vertices".into()))?;
+    let mut positions = pa.to_vec();
+    positions.extend_from_slice(pb);
+    let mut triangles = ta.to_vec();
+    for tri in tb {
+        triangles.push([tri[0].saturating_add(shift), tri[1].saturating_add(shift), tri[2].saturating_add(shift)]);
+    }
+    mesh_body(&positions, &triangles)
+}
+
+/// Split disconnected triangle groups. One shell is an error.
+pub fn mesh_separate(body: &Body) -> Result<Vec<Body>> {
+    let mesh = owned_mesh(body)?;
+    let n = mesh.triangles.len();
+    if n == 0 {
+        return Err(KernelError::Invalid("the mesh has no triangles".into()));
+    }
+    let mut owner = vec![None; mesh.positions.len()];
+    let mut groups: Vec<Vec<[u32; 3]>> = Vec::new();
+    for tri in &mesh.triangles {
+        let found = tri.iter().filter_map(|i| owner.get(*i as usize).copied().flatten()).next();
+        let slot = if let Some(g) = found {
+            g
+        } else {
+            groups.push(Vec::new());
+            groups.len() - 1
+        };
+        if let Some(group) = groups.get_mut(slot) {
+            group.push(*tri);
+        }
+        for index in tri {
+            if let Some(mark) = owner.get_mut(*index as usize) {
+                *mark = Some(slot);
+            }
+        }
+    }
+    if groups.len() < 2 {
+        return Err(KernelError::Invalid("the mesh is one shell".into()));
+    }
+    let mut out = Vec::new();
+    for group in groups {
+        out.push(mesh_body(&mesh.positions, &group)?);
+    }
+    Ok(out)
+}
+
+/// Maximum and mean distance from mesh vertices to the solid's tessellation.
+pub fn mesh_deviation(solid: &Body, mesh: &Body) -> Result<(f64, f64)> {
+    let (positions, _) = mesh.triangle_mesh().ok_or_else(|| KernelError::Invalid("select a mesh body".into()))?;
+    if positions.len() > 200_000 {
+        return Err(KernelError::Invalid("deviation is limited to 200000 vertices".into()));
+    }
+    let tess = solid.tessellate(0.2)?;
+    if tess.triangles.is_empty() {
+        return Err(KernelError::Invalid("the solid has no surface to compare".into()));
+    }
+    let mut max: f64 = 0.0;
+    let mut sum = 0.0;
+    let mut count = 0.0;
+    for point in positions {
+        let mut best = f64::MAX;
+        for tri in &tess.triangles {
+            let Some([a, b, c]) = tess.tri(tri) else { continue };
+            let normal = (b - a).cross(c - a);
+            let len = normal.len();
+            if len < 1e-12 {
+                continue;
+            }
+            best = best.min((*point - a).dot(normal * (1.0 / len)).abs());
+        }
+        if best.is_finite() {
+            max = max.max(best);
+            sum += best;
+            count += 1.0;
+        }
+    }
+    if count == 0.0 {
+        return Err(KernelError::Invalid("the mesh has no vertices".into()));
+    }
+    Ok((max, sum / count))
 }
 
 #[cfg(test)]

@@ -1228,9 +1228,13 @@ pub fn candidates(app: &SolveApp, hits: &[Hit]) -> Vec<(Hit, Sel)> {
     hits.iter().filter(|h| pick_allowed(app, h)).filter_map(|h| hit_candidate(app, h)).collect()
 }
 
+fn pick_kind_off(app: &SolveApp, kind: &str) -> bool {
+    if app.session.select_filter != 0 { !app.session.allows_pick(kind) } else { app.ui.pick_off.iter().any(|item| item == kind) }
+}
+
 /// What the selection filter lets a click pick with no dialog.
 fn pick_allowed(app: &SolveApp, h: &Hit) -> bool {
-    let off = |k: &str| app.ui.pick_off.iter().any(|x| x == k);
+    let off = |k: &str| pick_kind_off(app, k);
     match h {
         Hit::SketchCurve { .. } => !off("sketch") && !off("sketch_curves"),
         Hit::SketchPoint { .. } => !off("sketch") && !off("sketch_points"),
@@ -2097,7 +2101,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
             } else {
                 // Dimensions and constraint glyphs sit on top of the geometry.
-                let off = |k: &str| app.ui.pick_off.iter().any(|x| x == k);
+                let off = |k: &str| pick_kind_off(app, k);
                 let sketching = app.session.active_sketch.is_some();
                 // A dimension's text wins; its lines only where no sketch point or curve is (a
                 // diameter's line runs through the centre point).
@@ -2301,7 +2305,10 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         {
             app.viewport.boxsel = Some(BoxSel::from_drag(a, b));
         }
-        if mode == 1 && resp.dragged_by(egui::PointerButton::Primary) && let Some(p) = hover.filter(|p| rect.contains(*p)) {
+        if mode == 1
+            && resp.dragged_by(egui::PointerButton::Primary)
+            && let Some(p) = hover.filter(|p| rect.contains(*p))
+        {
             app.viewport.lasso.push(p);
         }
         if mode == 2
@@ -2311,14 +2318,20 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         {
             select(app, Some(sel), true);
         }
-        if resp.drag_stopped() && mode == 0 && let Some(bx) = app.viewport.boxsel.take() {
+        if resp.drag_stopped()
+            && mode == 0
+            && let Some(bx) = app.viewport.boxsel.take()
+        {
             box_select(app, &proj, bx, add);
         }
         if resp.drag_stopped() && mode == 1 {
             let stroke = std::mem::take(&mut app.viewport.lasso);
             lasso_select(app, &proj, &stroke, add);
         }
-        if resp.clicked() && ui.input(|i| i.modifiers.alt) && let Some(p) = hover {
+        if resp.clicked()
+            && ui.input(|i| i.modifiers.alt)
+            && let Some(p) = hover
+        {
             match pick(app, &proj, p).first() {
                 Some(Hit::Vertex { point, .. }) => app.viewport.orbit_pivot = Some(*point),
                 Some(Hit::Edge { mid, .. }) => app.viewport.orbit_pivot = Some(*mid),
@@ -2540,7 +2553,7 @@ fn box_select(app: &mut SolveApp, proj: &Proj, bx: BoxSel, add: bool) {
         && let Some(ss) = app.session.active_sketch.and_then(|sid| st.sketch(sid))
     {
         // What the selection filter lets through (window: wholly inside; crossing: touching).
-        let off = |k: &str| app.ui.pick_off.iter().any(|x| x == k);
+        let off = |k: &str| pick_kind_off(app, k);
         for (i, c) in ss.sketch.curves.iter().enumerate().filter(|_| !off("sketch") && !off("sketch_curves")) {
             if c.link.is_some() && ss.sketch.view.hide_projected {
                 continue;
@@ -3158,7 +3171,13 @@ fn nav_bar(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
                 }
                 "home" => app.animate_view("home"),
                 "lookat" => look_at_selection(app),
-                "style" => app.ui.visual_style = (app.ui.visual_style + 1) % 4,
+                "style" => {
+                    let names = ["shaded_edges", "shaded", "wireframe", "hidden_edges"];
+                    let next = names[usize::from(app.ui.visual_style.wrapping_add(1) % 4)];
+                    if app.run("view.visual_style", serde_json::json!({"style": next})).is_ok() {
+                        app.ui.visual_style = app.session.visual_style;
+                    }
+                }
                 "perspective" => app.ui.perspective = !app.ui.perspective,
                 _ => menu_open = !menu_open,
             }
@@ -3184,8 +3203,10 @@ fn view_menu(app: &mut SolveApp, ui: &mut egui::Ui, button: Rect) -> bool {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_width(220.0);
             ui.label(egui::RichText::new("VIEW").strong().size(11.5));
-            ui.checkbox(&mut app.ui.show_grid, "Grid");
-            ui.checkbox(&mut app.ui.ground_shadow, "Ground shadow");
+            let grid = app.tr("view.grid").to_string();
+            let ground = app.tr("view.ground_shadow").to_string();
+            ui.checkbox(&mut app.ui.show_grid, grid);
+            ui.checkbox(&mut app.ui.ground_shadow, ground);
             ui.separator();
             let s = &mut app.ui.agent_cursor;
             let show = ui.checkbox(&mut s.show, "Show Agent Cursor");

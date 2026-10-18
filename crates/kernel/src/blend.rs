@@ -1366,4 +1366,32 @@ mod tests {
             assert!(rounded.validity().is_empty());
         }
     }
+
+    /// A general curved edge (square lofted to a circle) and a chamfer that cannot fit either
+    /// meet the blend or come back as `not supported yet` with the source body untouched.
+    #[test]
+    fn open_blend_cases_succeed_or_leave_the_body() {
+        let square = Loop2::polygon(&[Vec2::new(-10.0, -10.0), Vec2::new(10.0, -10.0), Vec2::new(10.0, 10.0), Vec2::new(-10.0, 10.0)]);
+        let circle = Loop2::circle(Vec2::ZERO, 6.0);
+        let body = crate::loft(&[(Plane::XY, square), (Plane::XY.offset(20.0), circle)]).unwrap();
+        let before = crate::step_export(&[&body], "source").unwrap();
+        match crate::fillet(&body, &[Vec3::new(10.0, 0.0, 0.0)], 1.5) {
+            Ok(result) => {
+                assert!(result.validity().is_empty(), "{:?}", result.validity());
+                let (v0, v1) = (crate::measure(&body).unwrap().volume, crate::measure(&result).unwrap().volume);
+                assert!(v1.is_finite() && v1 > 0.0 && (v1 - v0).abs() < v0);
+            }
+            Err(e) => {
+                assert!(e.to_string().contains("not supported yet"), "{e}");
+                assert_eq!(crate::step_export(&[&body], "source").unwrap(), before);
+            }
+        }
+        let region =
+            Region2 { outer: Loop2::polygon(&[Vec2::ZERO, Vec2::new(40.0, 0.0), Vec2::new(30.0, 20.0), Vec2::new(10.0, 20.0)]), holes: vec![] };
+        let sloped = crate::extrude(&Plane::XY, &[region], 0.0, 20.0).unwrap().pop().unwrap();
+        let saved = crate::step_export(&[&sloped], "sloped").unwrap();
+        let err = blend(&sloped, &[Vec3::new(20.0, 0.0, 20.0)], 25.0, Shape::Flat, "chamfer").unwrap_err();
+        assert!(err.to_string().contains("not supported yet"), "{err}");
+        assert_eq!(crate::step_export(&[&sloped], "sloped").unwrap(), saved);
+    }
 }

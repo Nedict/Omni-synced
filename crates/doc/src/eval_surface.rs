@@ -4,16 +4,33 @@ use super::*;
 
 pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut ModelState) -> Result<()> {
     match &f.kind {
-        FeatureKind::Patch { sketch, profiles, body, edges } => {
+        FeatureKind::Patch { sketch, profiles, body, edges, guide } => {
             let mut made = Vec::new();
+            if !guide.is_empty() && (guide.len() < 2 || guide.len() > 10_000 || guide.iter().any(|p| !p.is_finite())) {
+                return Err(DocError::Invalid("a guide curve needs 2…10000 finite points".into()));
+            }
             if let Some(sk) = sketch {
                 let ss = st.sketch(*sk).ok_or_else(|| DocError::Unknown(format!("sketch {sk} (it must come earlier in the timeline)")))?;
                 let regions = solidcraft_sketch::merge_regions(&select_profiles(ss, profiles)?);
-                for r in &regions {
-                    made.push(kernel::patch_region(&ss.plane, r)?);
+                if !guide.is_empty() {
+                    let Some(region) = regions.first() else { return Err(DocError::Invalid("the patch boundary does not close".into())) };
+                    let mut boundary: Vec<Vec3> = region.outer.polyline(0.05).into_iter().map(|q| ss.plane.to_world(q)).collect();
+                    if let Some(first) = boundary.first().copied()
+                        && boundary.last().is_none_or(|last| last.dist(first) > 1e-4)
+                    {
+                        boundary.push(first);
+                    }
+                    if !edges.is_empty() && edges.iter().any(|p| !near_loop(&boundary, *p, 1.0)) {
+                        return Err(DocError::Invalid("the boundary does not close".into()));
+                    }
+                    made.push(kernel::patch_guided(&boundary, Some(guide.as_slice()))?);
+                } else {
+                    for r in &regions {
+                        made.push(kernel::patch_region(&ss.plane, r)?);
+                    }
                 }
             }
-            if !edges.is_empty() {
+            if !edges.is_empty() && guide.is_empty() {
                 let i = body_at(st, body, edges)?;
                 let b = st.bodies.get(i).ok_or_else(|| DocError::Invalid("body".into()))?;
                 made.push(kernel::patch_edges(&b.body, edges)?);
@@ -57,17 +74,43 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             }
             apply_op(st, f, tools, *operation, targets)
         }
-        FeatureKind::SurfaceTrim { body, plane, tool, keep } => {
+        FeatureKind::SurfaceTrim { body, plane, tool, keep, curve_sketch, curve } => {
             let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
-            let trimmed = match tool {
-                Some(t) => {
-                    let tb = st.body(&t.body).ok_or_else(|| DocError::Unknown(format!("body `{}`", t.body)))?;
-                    let face = crate::appearance::face_index_at(tb, t.point)
-                        .ok_or_else(|| DocError::Invalid(format!("no face of `{}` at the tool point", t.body)))?;
-                    kernel::trim(&mb.body, &kernel::SplitTool::Face { body: &tb.body, face }, *keep)?
+            let curve_plane = match (curve_sketch, curve) {
+                (Some(sk), Some(id)) => {
+                    let ss = st.sketch(*sk).ok_or_else(|| DocError::Unknown(format!("sketch {sk}")))?;
+                    let curve = ss.sketch.curves.iter().find(|c| &c.id == id).ok_or_else(|| DocError::Unknown(format!("curve `{id}`")))?;
+                    let solidcraft_sketch::CurveKind::Line { a, b } = curve.kind else {
+                        return Err(DocError::Invalid("not supported yet: trimming with a curve that is not a line".into()));
+                    };
+                    let (Some(p), Some(q)) = (ss.sketch.point(a), ss.sketch.point(b)) else {
+                        return Err(DocError::Invalid("the trim curve has no ends".into()));
+                    };
+                    let origin = ss.plane.to_world(p);
+                    let dir = ss.plane.dir_to_world(q - p);
+                    let _normal =
+                        dir.cross(ss.plane.normal()).normalized().ok_or_else(|| DocError::Invalid("the trim curve has no direction".into()))?;
+                    let x = dir.normalized().ok_or_else(|| DocError::Invalid("the trim curve has no direction".into()))?;
+                    Some(
+                        solidcraft_geom::Plane::new(origin, x, ss.plane.normal())
+                            .ok_or_else(|| DocError::Invalid("the trim curve does not define a plane".into()))?,
+                    )
                 }
-                None => kernel::trim(&mb.body, &kernel::SplitTool::Plane(doc.resolve_plane_in(vals, plane, 0, Some(st))?), *keep)?,
+                _ => None,
+            };
+            let trimmed = if let Some(plane) = curve_plane {
+                kernel::trim(&mb.body, &kernel::SplitTool::Plane(plane), *keep)?
+            } else {
+                match tool {
+                    Some(t) => {
+                        let tb = st.body(&t.body).ok_or_else(|| DocError::Unknown(format!("body `{}`", t.body)))?;
+                        let face = crate::appearance::face_index_at(tb, t.point)
+                            .ok_or_else(|| DocError::Invalid(format!("no face of `{}` at the tool point", t.body)))?;
+                        kernel::trim(&mb.body, &kernel::SplitTool::Face { body: &tb.body, face }, *keep)?
+                    }
+                    None => kernel::trim(&mb.body, &kernel::SplitTool::Plane(doc.resolve_plane_in(vals, plane, 0, Some(st))?), *keep)?,
+                }
             };
             if let Some(slot) = st.bodies.get_mut(i) {
                 *slot = ModelBody::new(mb.name, trimmed, mb.feature);
@@ -86,4 +129,21 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
         }
         _ => Err(DocError::Invalid("not a surface feature".into())),
     }
+}
+
+fn near_loop(loop_pts: &[Vec3], p: Vec3, tol: f64) -> bool {
+    let n = loop_pts.len();
+    if n == 0 {
+        return false;
+    }
+    for i in 0..n {
+        let (Some(a), Some(b)) = (loop_pts.get(i), loop_pts.get((i + 1) % n)) else { continue };
+        let d = *b - *a;
+        let dd = d.dot(d);
+        let t = if dd > 1e-18 { ((p - *a).dot(d) / dd).clamp(0.0, 1.0) } else { 0.0 };
+        if (*a + d * t).dist(p) <= tol {
+            return true;
+        }
+    }
+    false
 }

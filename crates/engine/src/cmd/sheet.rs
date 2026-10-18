@@ -52,6 +52,14 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("sheet.export_bend_table", "Export Bend Table", export_bend_table)
         .noundo()
         .params("body?, format?: csv|json (default csv), path? → bend table in mm and degrees, including rule and flat centre-line coordinates"),
+    CommandSpec::new("sheet.rip", "Rip", rip)
+        .at("SHEET METAL", "MODIFY")
+        .icon("unfold")
+        .params("at: [x,y,z] on the closed corner; gap?: length from the sheet rule"),
+    CommandSpec::new("sheet.lofted_flange", "Lofted Flange", lofted)
+        .at("SHEET METAL", "CREATE")
+        .icon("loft")
+        .params("sketch_a, curves_a, sketch_b, curves_b: two open profiles. Thickness comes from the active sheet rule"),
 ];
 
 fn points(p: &Value, k: &str, cmd: &str) -> Result<Vec<Vec3>> {
@@ -127,6 +135,24 @@ fn flange(s: &mut Session, p: &Value) -> Result<Value> {
             }
             let distance = req_expr(cmd, p, "distance")?;
             check_expr(s, &distance, Kind::Length, cmd, "distance")?;
+            {
+                let st = s.model.state();
+                let ss = st.sketch(sketch).ok_or_else(|| bad(cmd, "the sketch is not evaluated"))?;
+                let mut chain: Vec<solidcraft_geom::Vec2> = Vec::new();
+                for id in &curves {
+                    let ci = ss.sketch.curve_index(id).ok_or_else(|| bad(cmd, format!("no curve `{id}`")))?;
+                    for seg in ss.sketch.segs(ci) {
+                        for q in seg.polyline(0.05) {
+                            if chain.last().is_none_or(|p: &solidcraft_geom::Vec2| p.dist(q) > 1e-6) {
+                                chain.push(q);
+                            }
+                        }
+                    }
+                }
+                if chain.first().zip(chain.last()).is_some_and(|(a, b)| a.dist(*b) < 1e-3) && chain.len() > 2 {
+                    return Err(bad(cmd, "a closed path is not a contour flange"));
+                }
+            }
             let rule = rule_param(s, p, cmd)?;
             add_feature(
                 s,
@@ -527,6 +553,56 @@ fn export_bend_table(s: &mut Session, p: &Value) -> Result<Value> {
         return Ok(json!({"path": path, "format": format, "bends": sh.bends().len()}));
     }
     Ok(json!({"format": format, "text": text, "bends": sh.bends().len()}))
+}
+
+fn rip(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "sheet.rip";
+    let at = p.get("at").and_then(vec3).ok_or_else(|| bad(cmd, "`at` must be [x, y, z] on the corner"))?;
+    let gap = expr(p, "gap").unwrap_or_default();
+    if !gap.is_empty() {
+        check_expr(s, &gap, Kind::Length, cmd, "gap")?;
+    }
+    add_feature(s, p, FeatureKind::SheetRip { at, gap })
+}
+
+fn lofted(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "sheet.lofted_flange";
+    let sketch_a = sketch_id(s, p.get("sketch_a"), cmd, "sketch_a")?;
+    let sketch_b = sketch_id(s, p.get("sketch_b"), cmd, "sketch_b")?;
+    let curves_a = string_list(p, "curves_a");
+    let curves_b = string_list(p, "curves_b");
+    if curves_a.is_empty() || curves_b.is_empty() || curves_a.len() > 1000 || curves_b.len() > 1000 {
+        return Err(bad(cmd, "curves_a and curves_b must list 1…1000 curve ids"));
+    }
+    let length = |sketch, ids: &[String]| -> Result<f64> {
+        let st = s.model.state();
+        let ss = st.sketch(sketch).ok_or_else(|| bad(cmd, "the sketch is not evaluated"))?;
+        let mut pts = Vec::new();
+        for id in ids {
+            let ci = ss.sketch.curve_index(id).ok_or_else(|| bad(cmd, format!("no curve `{id}`")))?;
+            for seg in ss.sketch.segs(ci) {
+                for q in seg.polyline(0.05) {
+                    if pts.last().is_none_or(|p: &Vec2| p.dist(q) > 1e-6) {
+                        pts.push(q);
+                    }
+                }
+            }
+        }
+        if pts.len() < 2 {
+            return Err(bad(cmd, "a lofted flange needs an open profile"));
+        }
+        if pts.first().zip(pts.last()).is_some_and(|(a, b)| a.dist(*b) < 1e-3) {
+            return Err(bad(cmd, "a lofted flange profile must be open"));
+        }
+        Ok(pts.windows(2).map(|w| w[0].dist(w[1])).sum())
+    };
+    let developed = (length(sketch_a, &curves_a)? + length(sketch_b, &curves_b)?) * 0.5;
+    let made = add_feature(s, p, FeatureKind::SheetLoft { sketch_a, curves_a, sketch_b, curves_b })?;
+    let mut made = made;
+    if let Some(obj) = made.as_object_mut() {
+        obj.insert("developed_length".into(), json!(developed));
+    }
+    Ok(made)
 }
 
 #[cfg(test)]

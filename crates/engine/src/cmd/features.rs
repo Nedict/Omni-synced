@@ -22,7 +22,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "CREATE")
         .icon("sweep")
         .params("sketch: profile sketch; profiles?; path_sketch: sketch; path: [curve ids in order]; operation?, targets?, name?, body_name?"),
-    CommandSpec::new("solid.loft", "Loft", loft).at("SOLID", "CREATE").icon("loft").params("sections: [{sketch, profiles?} | {sketch, point: id} (an apex)] (2 or more, in order); rails?: {sketch, curves: [ids]} (a guide the two profiles scale out to meet); operation?, targets?, name?, body_name?"),
+    CommandSpec::new("solid.loft", "Loft", loft).at("SOLID", "CREATE").icon("loft").params("sections: [{sketch, profiles?} | {sketch, point: id} (an apex)] (2 or more, in order); rails?: {sketch, curves: [ids]} | [{sketch, curves}, {sketch, curves}] (one or two guides the profiles scale out to meet); operation?, targets?, name?, body_name?"),
     CommandSpec::new("solid.box", "Box", prim_box).at("SOLID", "CREATE").icon("box").params("length, width, height: expr; corner?: [x,y,z] | center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?, targets?: [body], name?, body_name?"),
     CommandSpec::new("solid.cylinder", "Cylinder", prim_cylinder).at("SOLID", "CREATE").icon("cylinder").params("radius | diameter, height: expr; base?: [x,y,z] (centre of the bottom: numbers in mm or length expressions; default: the origin); axis?: X|Y|Z|[x,y,z] (default Z); operation?, targets?: [body], name?, body_name?"),
     CommandSpec::new("solid.sphere", "Sphere", prim_sphere).at("SOLID", "CREATE").icon("sphere").params("radius | diameter: expr; center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?, targets?: [body], name?, body_name?"),
@@ -489,7 +489,7 @@ fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) ->
     Ok(json!({"feature": id, "name": fname, "bodies": bodies, "ms": r.map(|r| r.ms)}))
 }
 
-fn extrude(s: &mut Session, p: &Value) -> Result<Value> {
+pub(super) fn extrude(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.extrude";
     // A new solid is a later feature. Inserting it before an existing Join would let that
     // Join absorb the new solid back into Body1 as soon as the timeline runs forward.
@@ -555,11 +555,12 @@ fn extrude(s: &mut Session, p: &Value) -> Result<Value> {
             _ => operation(p, cmd)?,
         },
         targets: string_list(p, "targets"),
+        open: bool_(p, "surface").unwrap_or(false),
     };
     add_feature(s, p, kind)
 }
 
-fn revolve(s: &mut Session, p: &Value) -> Result<Value> {
+pub(super) fn revolve(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.revolve";
     // A planar body face revolves like a profile (its edges projected into a sketch on it).
     let (sketch, face_profile) = match p.get("face").and_then(vec3) {
@@ -613,6 +614,7 @@ fn revolve(s: &mut Session, p: &Value) -> Result<Value> {
         symmetric,
         convention,
         to,
+        open: bool_(p, "surface").unwrap_or(false),
     };
     add_feature(s, p, kind)
 }
@@ -1038,11 +1040,7 @@ fn mirror(s: &mut Session, p: &Value) -> Result<Value> {
     let features = if bodies.is_empty() && faces.is_empty() { source_features(s, p, cmd)? } else { Vec::new() };
     let plane = plane_param(s, p.get("plane"), cmd)?;
     let combine = bool_(p, "combine").unwrap_or(false);
-    add_feature(
-        s,
-        p,
-        FeatureKind::Mirror { features, plane, bodies, combine, faces, face_body: str_(p, "body").map(str::to_string) },
-    )
+    add_feature(s, p, FeatureKind::Mirror { features, plane, bodies, combine, faces, face_body: str_(p, "body").map(str::to_string) })
 }
 
 /// The other name of an origin plane (`Top` for `XY`, `XY` for `Top`...), if `name` is one.
@@ -1344,18 +1342,7 @@ fn hole(s: &mut Session, p: &Value) -> Result<Value> {
     add_feature(
         s,
         p,
-        FeatureKind::Hole {
-            position,
-            direction,
-            diameter,
-            depth,
-            hole: kind,
-            points: points.map(|x| x.0),
-            thread,
-            thread_offset,
-            thread_length,
-            to,
-        },
+        FeatureKind::Hole { position, direction, diameter, depth, hole: kind, points: points.map(|x| x.0), thread, thread_offset, thread_length, to },
     )
 }
 
@@ -1430,7 +1417,7 @@ pub(super) fn sketch_id(s: &Session, v: Option<&Value>, cmd: &str, what: &str) -
     }
 }
 
-fn sweep(s: &mut Session, p: &Value) -> Result<Value> {
+pub(super) fn sweep(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.sweep";
     let sketch = feature_sketch(s, p, cmd)?;
     let path_sketch = sketch_id(s, p.get("path_sketch"), cmd, "path_sketch")?;
@@ -1448,11 +1435,21 @@ fn sweep(s: &mut Session, p: &Value) -> Result<Value> {
             path,
             operation: operation(p, cmd)?,
             targets: string_list(p, "targets"),
+            open: bool_(p, "surface").unwrap_or(false),
         },
     )
 }
 
-fn loft(s: &mut Session, p: &Value) -> Result<Value> {
+fn one_rail(s: &Session, r: &Value, cmd: &str) -> Result<solidcraft_doc::LoftRail> {
+    let sketch = sketch_id(s, r.get("sketch"), cmd, "rails.sketch")?;
+    let curves = string_list(r, "curves");
+    if curves.is_empty() || curves.len() > 1000 {
+        return Err(bad(cmd, "rails.curves must list 1…1000 curve ids"));
+    }
+    Ok(solidcraft_doc::LoftRail { sketch, curves })
+}
+
+pub(super) fn loft(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.loft";
     let list = p.get("sections").and_then(Value::as_array).ok_or_else(|| bad(cmd, "`sections` must be a list"))?;
     if list.len() < 2 || list.len() > 50 {
@@ -1472,18 +1469,30 @@ fn loft(s: &mut Session, p: &Value) -> Result<Value> {
         }
         sections.push(solidcraft_doc::LoftSection { sketch, profiles: profiles(sec, cmd)?, point: None });
     }
-    let rails = match p.get("rails") {
-        None => None,
-        Some(r) => {
-            let sketch = sketch_id(s, r.get("sketch"), cmd, "rails.sketch")?;
-            let curves = string_list(r, "curves");
-            if curves.is_empty() || curves.len() > 1000 {
-                return Err(bad(cmd, "rails.curves must list 1…1000 curve ids"));
+    let (rails, guide) = match p.get("rails") {
+        None => (None, None),
+        Some(Value::Array(rails)) => {
+            if rails.is_empty() || rails.len() > 2 {
+                return Err(bad(cmd, "a loft takes one or two guide rails"));
             }
-            Some(solidcraft_doc::LoftRail { sketch, curves })
+            let first = rails.first().map(|r| one_rail(s, r, cmd)).transpose()?;
+            let second = rails.get(1).map(|r| one_rail(s, r, cmd)).transpose()?;
+            (first, second)
         }
+        Some(r) => (Some(one_rail(s, r, cmd)?), None),
     };
-    add_feature(s, p, FeatureKind::Loft { sections, operation: operation(p, cmd)?, targets: string_list(p, "targets"), rails })
+    add_feature(
+        s,
+        p,
+        FeatureKind::Loft {
+            sections,
+            operation: operation(p, cmd)?,
+            targets: string_list(p, "targets"),
+            rails,
+            guide,
+            open: bool_(p, "surface").unwrap_or(false),
+        },
+    )
 }
 
 fn thread(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1603,3 +1612,15 @@ mod offset_plane_face_tests;
 #[cfg(test)]
 #[path = "stacked_face_tests.rs"]
 mod stacked_face_tests;
+
+#[cfg(test)]
+#[path = "blind_pocket_tests.rs"]
+mod blind_pocket_tests;
+
+#[cfg(test)]
+#[path = "sweep_smooth_tests.rs"]
+mod sweep_smooth_tests;
+
+#[cfg(test)]
+#[path = "loft_rail_tests.rs"]
+mod loft_rail_tests;

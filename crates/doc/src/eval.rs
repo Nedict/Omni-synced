@@ -173,7 +173,7 @@ fn thread_on(st: &ModelState, feature: u64, p: Vec3, designation: Option<&str>, 
             let dist = |c: &kernel::CylinderFace| ((p - c.axis_point - c.axis * (p - c.axis_point).dot(c.axis)).len() - c.radius).abs();
             dist(&a.1).total_cmp(&dist(&b.1))
         })
-        .ok_or_else(|| DocError::Invalid("no cylindrical face there to thread".into()))?;
+        .ok_or_else(|| DocError::Invalid("not supported yet: a thread on a face that is not a cylinder".into()))?;
     let dia = cyl.radius * 2.0;
     let (major, pitch) = match designation {
         Some(s) => parse_metric_thread(s).ok_or_else(|| DocError::Invalid(format!("unknown thread `{s}` (ISO metric, like M8 or M8x1)")))?,
@@ -530,6 +530,10 @@ fn param_names(f: &Feature) -> Vec<String> {
     let mut names: Vec<String> = f.kind.expressions().iter().flat_map(|e| expr::references(e)).collect();
     if let FeatureKind::Sketch { sketch, .. } = &f.kind {
         names.extend(sketch.constraints.iter().filter_map(|c| c.param.clone()));
+        for pattern in &sketch.path_patterns {
+            names.extend(expr::references(&pattern.count));
+            names.extend(expr::references(&pattern.distance));
+        }
     }
     names.sort();
     names.dedup();
@@ -2021,6 +2025,345 @@ fn centered_extrude(plane: &Plane, region: &Region2, start: f64, end: f64, sketc
 }
 
 /// The tool bodies a feature adds or removes (extrude, revolve, primitives), in the current state.
+/// Closed profiles when the sketch has them, otherwise chains of open curves.
+fn sheet_profiles(ss: &SolvedSketch, sel: &ProfileSel) -> Result<Vec<(Vec<Vec3>, bool)>> {
+    if !ss.profiles.is_empty()
+        && let Ok(regions) = select_profiles(ss, sel)
+    {
+        let regions = solidcraft_sketch::merge_regions(&regions);
+        let mut out = Vec::new();
+        for region in &regions {
+            let mut pts = Vec::new();
+            for q in region.outer.polyline(0.25) {
+                let w = ss.plane.to_world(q);
+                if !w.is_finite() {
+                    return Err(DocError::Invalid("the profile has a bad point".into()));
+                }
+                if pts.last().is_none_or(|p: &Vec3| p.dist(w) > 1e-6) {
+                    pts.push(w);
+                }
+            }
+            if pts.len() > 10_000 {
+                return Err(DocError::Invalid("the profile has too many points".into()));
+            }
+            if pts.len() >= 2 {
+                out.push((pts, true));
+            }
+        }
+        if !out.is_empty() {
+            return Ok(out);
+        }
+    }
+    if ss.sketch.curves.len() > 10_000 {
+        return Err(DocError::Invalid("the sketch has too many curves".into()));
+    }
+    let mut pieces = Vec::new();
+    for (i, curve) in ss.sketch.curves.iter().enumerate() {
+        if curve.construction {
+            continue;
+        }
+        let mut pts = Vec::new();
+        for seg in ss.sketch.segs(i) {
+            for q in seg.polyline(0.25) {
+                let w = ss.plane.to_world(q);
+                if !w.is_finite() {
+                    return Err(DocError::Invalid("the profile has a bad point".into()));
+                }
+                if pts.last().is_none_or(|p: &Vec3| p.dist(w) > 1e-6) {
+                    pts.push(w);
+                }
+            }
+        }
+        if pts.len() >= 2 {
+            pieces.push(pts);
+        }
+    }
+    chain_open_curves(pieces)
+}
+
+fn chain_open_curves(mut pool: Vec<Vec<Vec3>>) -> Result<Vec<(Vec<Vec3>, bool)>> {
+    let tol = 1e-3;
+    let mut chains = Vec::new();
+    while let Some(seed) = pool.pop() {
+        let mut chain = seed;
+        while let (Some(a), Some(b)) = (chain.first().copied(), chain.last().copied()) {
+            let Some(hit) = pool.iter().position(|piece| {
+                let (Some(c), Some(d)) = (piece.first().copied(), piece.last().copied()) else { return false };
+                b.dist(c) <= tol || b.dist(d) <= tol || a.dist(c) <= tol || a.dist(d) <= tol
+            }) else {
+                break;
+            };
+            if hit >= pool.len() {
+                break;
+            }
+            let mut piece = pool.remove(hit);
+            let (Some(c), Some(d)) = (piece.first().copied(), piece.last().copied()) else { break };
+            if b.dist(c) <= tol {
+                chain.extend(piece.into_iter().skip(1));
+            } else if b.dist(d) <= tol {
+                piece.reverse();
+                chain.extend(piece.into_iter().skip(1));
+            } else if a.dist(d) <= tol {
+                piece.extend(chain.into_iter().skip(1));
+                chain = piece;
+            } else if a.dist(c) <= tol {
+                piece.reverse();
+                piece.extend(chain.into_iter().skip(1));
+                chain = piece;
+            }
+            if chain.len() > 10_000 {
+                return Err(DocError::Invalid("the profile has too many points".into()));
+            }
+        }
+        let closed = chain.len() >= 3 && chain.first().zip(chain.last()).is_some_and(|(p, q)| p.dist(*q) <= tol);
+        if closed {
+            chain.pop();
+        }
+        if chain.len() >= 2 {
+            chains.push((chain, closed));
+        }
+    }
+    if chains.is_empty() {
+        return Err(DocError::Invalid("the sketch has no profile or open curve".into()));
+    }
+    Ok(chains)
+}
+
+fn path_polyline(ps: &SolvedSketch, ids: &[String], start: Vec3) -> Result<Vec<Vec3>> {
+    if let Some(pts) = path_points(ps, ids, start)? {
+        if pts.len() < 2 {
+            return Err(DocError::Invalid("the path has no length".into()));
+        }
+        return Ok(pts);
+    }
+    let segs = path_segments(ps, ids, start)?;
+    let mut pts = Vec::new();
+    for seg in &segs {
+        match *seg {
+            kernel::PathSeg::Line { a, b } => {
+                if pts.last().is_none_or(|p: &Vec3| p.dist(a) > 1e-6) {
+                    pts.push(a);
+                }
+                pts.push(b);
+            }
+            kernel::PathSeg::Arc { a, center, axis, angle } => {
+                let axis = axis.normalized().ok_or_else(|| DocError::Invalid("the path arc has no axis".into()))?;
+                let steps = ((angle.abs() / (std::f64::consts::PI / 18.0)).ceil() as usize).clamp(2, 72);
+                for i in 0..=steps {
+                    let t = angle * i as f64 / steps as f64;
+                    let v = a - center;
+                    let p = center + v * t.cos() + axis.cross(v) * t.sin() + axis * (axis.dot(v) * (1.0 - t.cos()));
+                    if pts.last().is_none_or(|q: &Vec3| q.dist(p) > 1e-6) {
+                        pts.push(p);
+                    }
+                }
+            }
+        }
+    }
+    if pts.len() < 2 || pts.len() > 8_192 {
+        return Err(DocError::Invalid("the path needs 2…8192 points".into()));
+    }
+    Ok(pts)
+}
+
+fn rotate_about(p: Vec3, origin: Vec3, axis: Vec3, ang: f64) -> Vec3 {
+    let v = p - origin;
+    origin + v * ang.cos() + axis.cross(v) * ang.sin() + axis * (axis.dot(v) * (1.0 - ang.cos()))
+}
+
+fn refuse_open_boolean(operation: &Operation) -> Result<()> {
+    if matches!(operation, Operation::NewBody) {
+        Ok(())
+    } else {
+        Err(DocError::Invalid("not supported yet: an open surface that joins, cuts or intersects".into()))
+    }
+}
+
+fn open_extrude_sheet(
+    doc: &Document,
+    vals: &BTreeMap<String, Value>,
+    f: &Feature,
+    st: &ModelState,
+    sketch: &u64,
+    profiles: &ProfileSel,
+    extent: &crate::Extent,
+    operation: &Operation,
+) -> Result<Vec<Traced>> {
+    refuse_open_boolean(operation)?;
+    if extent.taper.is_some() || extent.through_all || extent.to.is_some() || extent.from.is_some() {
+        return Err(DocError::Invalid("not supported yet: an open surface with taper, through all, or to/from an object".into()));
+    }
+    let ss = sketch_in_feature_frame(
+        doc,
+        st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?,
+        f.component,
+    )?;
+    let chains = sheet_profiles(&ss, profiles)?;
+    let d = val(vals, &extent.distance, Kind::Length)?;
+    let off = extent.start_offset.as_deref().map(|e| val(vals, e, Kind::Length)).transpose()?.unwrap_or(0.0);
+    let (lo, hi) = match (&extent.distance2, extent.direction) {
+        (Some(d2), _) => (-val(vals, d2, Kind::Length)?, d),
+        (None, crate::Direction::Positive) => (0.0, d),
+        (None, crate::Direction::Negative) => (-d, 0.0),
+        (None, crate::Direction::Symmetric) => (-d, d),
+    };
+    if !(lo.is_finite() && hi.is_finite()) || (hi - lo).abs() < 1e-9 {
+        return Err(DocError::Invalid("extrude distance is zero".into()));
+    }
+    let n = ss.plane.normal();
+    let mut tools = Vec::new();
+    for (pts, closed) in chains {
+        let a: Vec<Vec3> = pts.iter().map(|p| *p + n * (lo + off)).collect();
+        let b: Vec<Vec3> = pts.iter().map(|p| *p + n * (hi + off)).collect();
+        tools.push(Traced::unnamed(kernel::open_sweep(&[a, b], closed, false)?));
+    }
+    Ok(tools)
+}
+
+fn open_revolve_sheet(
+    doc: &Document,
+    vals: &BTreeMap<String, Value>,
+    f: &Feature,
+    st: &ModelState,
+    sketch: &u64,
+    profiles: &ProfileSel,
+    axis: &AxisRef,
+    angle: &str,
+    angle2: &Option<String>,
+    symmetric: bool,
+    to: &Option<Vec3>,
+    operation: &Operation,
+) -> Result<Vec<Traced>> {
+    refuse_open_boolean(operation)?;
+    if to.is_some() || angle2.is_some() {
+        return Err(DocError::Invalid("not supported yet: an open revolve to an object or with two angles".into()));
+    }
+    let ss = sketch_in_feature_frame(
+        doc,
+        st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?,
+        f.component,
+    )?;
+    let chains = sheet_profiles(&ss, profiles)?;
+    let (o, d) = revolve_axis(&ss, axis)?;
+    let mut ang = val(vals, angle, Kind::Angle)?;
+    if symmetric {
+        ang = ang.abs();
+    }
+    if !ang.is_finite() || ang.abs() < 1e-6 {
+        return Err(DocError::Invalid("revolve angle is zero".into()));
+    }
+    if ang.abs() > std::f64::consts::TAU + 1e-3 {
+        return Err(DocError::Invalid("not supported yet: a revolve of more than one turn".into()));
+    }
+    let origin = ss.plane.to_world(o);
+    let axis_w = ss.plane.dir_to_world(d).normalized().ok_or_else(|| DocError::Invalid("revolve axis has no direction".into()))?;
+    let full = (ang.abs() - std::f64::consts::TAU).abs() < 1e-3;
+    let steps = ((ang.abs() / (std::f64::consts::PI / 18.0)).ceil() as usize).clamp(1, 72);
+    let count = if full { steps } else { steps.saturating_add(1) };
+    let start = if symmetric { -ang / 2.0 } else { 0.0 };
+    let mut tools = Vec::new();
+    for (pts, closed) in chains {
+        let mut stations = Vec::with_capacity(count);
+        for i in 0..count {
+            let a = start + ang * i as f64 / steps as f64;
+            stations.push(pts.iter().map(|p| rotate_about(*p, origin, axis_w, a)).collect());
+        }
+        tools.push(Traced::unnamed(kernel::open_sweep(&stations, closed, full)?));
+    }
+    Ok(tools)
+}
+
+fn open_sweep_sheet(
+    doc: &Document,
+    f: &Feature,
+    st: &ModelState,
+    sketch: &u64,
+    profiles: &ProfileSel,
+    path_sketch: &u64,
+    path: &[String],
+    operation: &Operation,
+) -> Result<Vec<Traced>> {
+    refuse_open_boolean(operation)?;
+    let ss = st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?;
+    let ps = st.sketch(*path_sketch).ok_or_else(|| DocError::Unknown(format!("sketch {path_sketch} (it must come earlier in the timeline)")))?;
+    let profile;
+    let ss = if !ps.sketch.wires.is_empty() {
+        profile = profile_in_frame(doc, ss, f.component)?;
+        &profile
+    } else {
+        ss
+    };
+    let mapped = path_in_frame(doc, ps, f.component)?;
+    let ps = mapped.as_ref();
+    let chains = sheet_profiles(ss, profiles)?;
+    let start = chains.first().and_then(|(pts, _)| pts.first().copied()).unwrap_or(Vec3::ZERO);
+    let poly = path_polyline(ps, path, start)?;
+    let mut tools = Vec::new();
+    for (pts, closed) in &chains {
+        tools.push(Traced::unnamed(kernel::open_sweep_along(pts, *closed, &poly)?));
+    }
+    Ok(tools)
+}
+
+fn open_loft_sheet(st: &ModelState, sections: &[crate::LoftSection], rails: &Option<crate::LoftRail>, operation: &Operation) -> Result<Vec<Traced>> {
+    refuse_open_boolean(operation)?;
+    if rails.is_some() {
+        return Err(DocError::Invalid("not supported yet: a guide rail on an open loft".into()));
+    }
+    if sections.len() < 2 || sections.len() > 50 {
+        return Err(DocError::Invalid("a loft needs 2…50 sections".into()));
+    }
+    enum Station {
+        Curve(Vec<Vec3>, bool),
+        Point(Vec3),
+    }
+    let mut stations = Vec::new();
+    for sec in sections {
+        let ss = st.sketch(sec.sketch).ok_or_else(|| DocError::Unknown(format!("sketch {}", sec.sketch)))?;
+        if let Some(id) = &sec.point {
+            let q = ss.sketch.points.iter().find(|p| &p.id == id).ok_or_else(|| DocError::Unknown(format!("point `{id}`")))?;
+            let w = ss.plane.to_world(q.pos);
+            if !w.is_finite() {
+                return Err(DocError::Invalid("the loft point is not finite".into()));
+            }
+            stations.push(Station::Point(w));
+            continue;
+        }
+        let chains = sheet_profiles(ss, &sec.profiles)?;
+        let Some((pts, closed)) = chains.first() else { return Err(DocError::Invalid("each loft section must be one profile".into())) };
+        if chains.len() != 1 {
+            return Err(DocError::Invalid("each loft section must be one profile".into()));
+        }
+        stations.push(Station::Curve(pts.clone(), *closed));
+    }
+    let closed = stations.iter().find_map(|s| match s {
+        Station::Curve(_, c) => Some(*c),
+        Station::Point(_) => None,
+    });
+    let Some(closed) = closed else { return Err(DocError::Invalid("a loft needs a profile".into())) };
+    if stations.iter().any(|s| matches!(s, Station::Curve(_, c) if *c != closed)) {
+        return Err(DocError::Invalid("not supported yet: lofting an open profile with a closed one".into()));
+    }
+    let width = stations
+        .iter()
+        .filter_map(|s| match s {
+            Station::Curve(pts, _) => Some(pts.len()),
+            Station::Point(_) => None,
+        })
+        .fold(2, usize::max);
+    if width > 10_000 {
+        return Err(DocError::Invalid("the profile has too many points".into()));
+    }
+    let built: Vec<Vec<Vec3>> = stations
+        .into_iter()
+        .map(|s| match s {
+            Station::Curve(pts, _) => pts,
+            Station::Point(p) => vec![p; width],
+        })
+        .collect();
+    Ok(vec![Traced::unnamed(kernel::open_sweep(&built, closed, false)?)])
+}
+
 fn feature_tools(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &ModelState) -> Result<Vec<Body>> {
     Ok(feature_tools_with_constructor(doc, vals, f, st, &mut None)?.into_iter().map(|t| t.body).collect())
 }
@@ -2034,7 +2377,10 @@ fn feature_tools_with_constructor(
 ) -> Result<Vec<Traced>> {
     let unnamed = |bodies: Vec<Body>| -> Vec<Traced> { bodies.into_iter().map(Traced::unnamed).collect() };
     match &f.kind {
-        FeatureKind::Extrude { sketch, profiles, extent, operation, targets } => {
+        FeatureKind::Extrude { sketch, profiles, extent, operation, targets, open } => {
+            if *open {
+                return open_extrude_sheet(doc, vals, f, st, sketch, profiles, extent, operation);
+            }
             let ss = sketch_in_feature_frame(
                 doc,
                 st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?,
@@ -2195,7 +2541,10 @@ fn feature_tools_with_constructor(
             }
             Ok(tools)
         }
-        FeatureKind::Revolve { sketch, profiles, axis, angle, angle2, symmetric, convention, to, .. } => {
+        FeatureKind::Revolve { sketch, profiles, axis, angle, angle2, symmetric, convention, to, operation, open, .. } => {
+            if *open {
+                return open_revolve_sheet(doc, vals, f, st, sketch, profiles, axis, angle, angle2, *symmetric, to, operation);
+            }
             let ss = sketch_in_feature_frame(
                 doc,
                 st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?,
@@ -2323,6 +2672,7 @@ fn feature_tools_with_constructor(
             let m = crate::rigid(Vec3::ZERO, origin_w, axis_w, -start);
             regions.iter().zip(bodies).map(|(r, body)| Ok(tool(r, kernel::transform_matrix(&body, m)?, Some(&body)))).collect()
         }
+        FeatureKind::Loft { sections, rails, operation, open: true, .. } => open_loft_sheet(st, sections, rails, operation),
         FeatureKind::Loft { sections, .. } if sections.iter().any(|s| s.point.is_some()) => {
             // A profile lofted to a sketch point (an apex).
             let [a, b] = &sections[..] else { return Err(DocError::Invalid("not supported yet: a point section in a loft of more than two".into())) };
@@ -2375,7 +2725,7 @@ fn feature_tools_with_constructor(
             let pitch = if *clockwise { -p } else { p };
             Ok(unnamed(vec![kernel::sweep_helix(&plane, &region, *base, axis, pitch, n)?]))
         }
-        FeatureKind::Loft { sections, rails, .. } => {
+        FeatureKind::Loft { sections, rails, guide, .. } => {
             let mut secs = Vec::new();
             for sec in sections {
                 let ss = st
@@ -2388,14 +2738,24 @@ fn feature_tools_with_constructor(
             if let Some(rail) = rails {
                 let ps = st.sketch(rail.sketch).ok_or_else(|| DocError::Unknown(format!("sketch {}", rail.sketch)))?;
                 let pts = rail_points(ps, &rail.curves)?;
-                secs = guide_sections(secs, &pts)?;
+                let second = match guide {
+                    Some(g) => {
+                        let gs = st.sketch(g.sketch).ok_or_else(|| DocError::Unknown(format!("sketch {}", g.sketch)))?;
+                        Some(rail_points(gs, &g.curves)?)
+                    }
+                    None => None,
+                };
+                secs = guide_sections(secs, &pts, second.as_deref())?;
             }
             // Its caps are the first and last sections; which section's curve a side follows is
             // not recorded, so the sides are named from geometry.
             let body = kernel::loft(&secs)?;
             Ok(vec![crate::lineage::ProfileRoles::swept(None, None).tool(body, None)])
         }
-        FeatureKind::Sweep { sketch, profiles, path_sketch, path, .. } => {
+        FeatureKind::Sweep { sketch, profiles, path_sketch, path, operation, open, .. } => {
+            if *open {
+                return open_sweep_sheet(doc, f, st, sketch, profiles, path_sketch, path, operation);
+            }
             let ss = st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?;
             let ps =
                 st.sketch(*path_sketch).ok_or_else(|| DocError::Unknown(format!("sketch {path_sketch} (it must come earlier in the timeline)")))?;
@@ -2560,7 +2920,7 @@ fn rail_points(ps: &SolvedSketch, ids: &[String]) -> Result<Vec<Vec3>> {
         for seg in ps.sketch.segs(ci) {
             for q in seg.polyline(1e-2) {
                 let w = ps.plane.to_world(q);
-                if pts.last().is_none_or(|l| l.dist(w) > 1e-6) {
+                if pts.last().is_none_or(|l: &Vec3| l.dist(w) > 1e-6) {
                     pts.push(w);
                 }
             }
@@ -2582,8 +2942,41 @@ fn rail_points(ps: &SolvedSketch, ids: &[String]) -> Result<Vec<Vec3>> {
     Ok(chain)
 }
 
-/// Two profile sections scaled at stations so the boundary reaches a guide curve.
-fn guide_sections(secs: Vec<(Plane, solidcraft_geom::Loop2)>, rail: &[Vec3]) -> Result<Vec<(Plane, solidcraft_geom::Loop2)>> {
+fn scale_along(pts: &mut [Vec2], c: Vec2, aim: Vec2) {
+    let want = aim.len();
+    let Some(dir) = aim.normalized() else { return };
+    let hit = pts.iter().map(|q| (*q - c).dot(dir)).fold(0.0_f64, f64::max);
+    if want > 1e-6 && hit > 1e-6 {
+        let scale = (want / hit).clamp(0.05, 20.0);
+        for q in pts.iter_mut() {
+            let d = *q - c;
+            let along = d.dot(dir);
+            *q = c + dir * (along * scale) + (d - dir * along);
+        }
+    }
+}
+
+/// Scale the section along each guide. Parallel guides share the larger reach.
+fn scale_to_rails(pts: &mut [Vec2], c: Vec2, aim: Vec2, second: Option<Vec2>) {
+    let Some(aim2) = second else {
+        scale_along(pts, c, aim);
+        return;
+    };
+    let parallel = aim.normalized().zip(aim2.normalized()).is_some_and(|(u, v)| u.dot(v).abs() > 0.85);
+    if parallel {
+        scale_along(pts, c, if aim2.len() > aim.len() { aim2 } else { aim });
+    } else {
+        scale_along(pts, c, aim);
+        scale_along(pts, c, aim2);
+    }
+}
+
+/// Two profile sections scaled at stations so the boundary reaches one or two guide curves.
+fn guide_sections(
+    secs: Vec<(Plane, solidcraft_geom::Loop2)>,
+    rail: &[Vec3],
+    second: Option<&[Vec3]>,
+) -> Result<Vec<(Plane, solidcraft_geom::Loop2)>> {
     let [first, last] = secs.as_slice() else {
         return Err(DocError::Invalid("a guide rail needs exactly two profile sections".into()));
     };
@@ -2596,6 +2989,17 @@ fn guide_sections(secs: Vec<(Plane, solidcraft_geom::Loop2)>, rail: &[Vec3]) -> 
     let c1 = p1.to_world(l1.centroid());
     let axis = (c1 - c0).normalized().ok_or_else(|| DocError::Invalid("the loft sections are in the same place".into()))?;
     let span = c0.dist(c1);
+    let tol = (span * 1e-3).max(0.5);
+    let near = |plane: &Plane| rail.iter().any(|p| plane.height(*p).abs() < tol);
+    if !(near(p0) && near(p1)) {
+        return Err(DocError::Invalid("the loft rail misses a section".into()));
+    }
+    if let Some(other) = second {
+        let near_other = |plane: &Plane| other.iter().any(|p| plane.height(*p).abs() < tol);
+        if other.len() < 2 || !(near_other(p0) && near_other(p1)) {
+            return Err(DocError::Invalid("the loft rail misses a section".into()));
+        }
+    }
     let sample = |lp: &solidcraft_geom::Loop2, n: usize| -> Vec<Vec2> {
         let poly = lp.polyline(0.05);
         if poly.is_empty() {
@@ -2637,15 +3041,18 @@ fn guide_sections(secs: Vec<(Plane, solidcraft_geom::Loop2)>, rail: &[Vec3]) -> 
             .collect();
         let c = pts.iter().copied().fold(Vec2::ZERO, |a, q| a + q) / pts.len().max(1) as f64;
         let aim = plane.to_local(rail_p) - c;
-        let want = aim.len();
-        let dir = aim.normalized().unwrap_or(Vec2::X);
-        let hit = pts.iter().map(|q| (*q - c).dot(dir)).fold(0.0_f64, f64::max);
-        if want > 1e-6 && hit > 1e-6 {
-            let scale = (want / hit).clamp(0.05, 20.0);
-            for q in &mut pts {
-                *q = c + (*q - c) * scale;
-            }
-        }
+        let aim2 = second.and_then(|other| {
+            let at = other
+                .iter()
+                .min_by(|u, v| {
+                    let du = ((**u - c0).dot(axis) - span * t).abs();
+                    let dv = ((**v - c0).dot(axis) - span * t).abs();
+                    du.total_cmp(&dv)
+                })
+                .copied()?;
+            Some(plane.to_local(at) - c)
+        });
+        scale_to_rails(&mut pts, c, aim, aim2);
         out.push((plane, solidcraft_geom::Loop2::polygon(&pts).ccw()));
     }
     out.push(last.clone());
@@ -2669,7 +3076,7 @@ fn path_points(ps: &SolvedSketch, ids: &[String], start: Vec3) -> Result<Option<
             for s in ps.sketch.segs(ci) {
                 for q in s.polyline(1e-2) {
                     let w = ps.plane.to_world(q);
-                    if pts.last().is_none_or(|l| l.dist(w) > 1e-9) {
+                    if pts.last().is_none_or(|l: &Vec3| l.dist(w) > 1e-9) {
                         pts.push(w);
                     }
                 }
@@ -3388,6 +3795,23 @@ fn face_plane(st: &ModelState, picked: &Plane, at: Vec3, name: Option<&str>) -> 
     }
 }
 
+fn refresh_sketch_path_patterns(doc: &Document, vals: &BTreeMap<String, Value>, sk: &mut solidcraft_sketch::Sketch) -> Result<()> {
+    for index in 0..sk.path_patterns.len() {
+        let pattern = sk.path_patterns.get(index).cloned().ok_or_else(|| DocError::Invalid("missing path pattern".into()))?;
+        let count = val(vals, &pattern.count, Kind::Unitless)?;
+        let distance = val(vals, &pattern.distance, Kind::Length)?;
+        if !count.is_finite() || count < 1.0 || count > 500.0 || (count - count.round()).abs() > 1e-6 {
+            return Err(DocError::Invalid("a path pattern count must be a whole number from 1 to 500".into()));
+        }
+        if !distance.is_finite() || distance.abs() > 1e6 {
+            return Err(DocError::Invalid("a path pattern distance is out of range".into()));
+        }
+        sk.place_path_copies(index, count.round() as usize, distance).map_err(|e| DocError::Invalid(e.to_string()))?;
+    }
+    let _ = doc;
+    Ok(())
+}
+
 /// A chamfer, equal or by its second distance or angle.
 fn chamfer_with(
     vals: &BTreeMap<String, Value>,
@@ -3418,7 +3842,9 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         | FeatureKind::SheetHem { .. }
         | FeatureKind::SheetFold { .. }
         | FeatureKind::SheetUnfold { .. }
-        | FeatureKind::SheetConvert { .. } => more::sheet_eval(doc, vals, f, st, warning),
+        | FeatureKind::SheetConvert { .. }
+        | FeatureKind::SheetRip { .. }
+        | FeatureKind::SheetLoft { .. } => more::sheet_eval(doc, vals, f, st, warning),
         FeatureKind::Boss { .. } | FeatureKind::Lip { .. } | FeatureKind::SnapFit { .. } | FeatureKind::Rest { .. } => {
             more::plastic_eval(doc, vals, f, st)
         }
@@ -3454,6 +3880,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             };
             drop(fst);
             sk.refresh_offsets()?;
+            refresh_sketch_path_patterns(doc, vals, &mut sk)?;
             if let Some(w) = face_warning {
                 warns.insert(0, w);
             }
@@ -3541,23 +3968,31 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 Some(e) => Some(val(vals, e, Kind::Length)?),
                 None => None,
             };
+            if *modeled
+                && let Some(label) = designation.as_deref()
+                && let Some((major, _)) = parse_metric_thread(label)
+                && !(3.0..=20.0).contains(&major)
+            {
+                return Err(DocError::Invalid(format!("not supported yet: a modelled thread outside ISO M3–M20 ({label})")));
+            }
             let t = thread_on(st, f.id, *face, designation.as_deref(), l, off)?;
             if !*modeled {
                 st.threads.push(t);
                 return Ok(());
             }
+            if !(t.major_diameter >= 3.0 - 1e-6 && t.major_diameter <= 20.0 + 1e-6) {
+                return Err(DocError::Invalid("not supported yet: a modelled thread outside ISO M3–M20".into()));
+            }
             let i = st.bodies.iter().position(|b| b.name == t.body).ok_or_else(|| DocError::Invalid("threaded body".into()))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
-            let cyl = kernel::cylinder_face_at(&mb.body, *face).ok_or_else(|| DocError::Invalid("no cylindrical face there to thread".into()))?;
+            let cyl = kernel::cylinder_face_at(&mb.body, *face)
+                .ok_or_else(|| DocError::Invalid("not supported yet: a modelled thread on a face that is not a cylinder".into()))?;
             let tol = t.pitch * 1e-3;
             let groove = thread_groove(&t, cyl.radius, ((t.start - cyl.start).abs() < tol, (t.end - cyl.end).abs() < tol))?;
-            // The B-rep boolean can't take helical walls in reasonable time: the body is cut
-            // faceted (curved faces within a two-hundredth of the pitch).
             let nb = kernel::faceted_boolean(&mb.body, &groove, BoolOp::Cut, t.pitch * 0.005)?
                 .ok_or_else(|| DocError::Invalid("the thread removed everything".into()))?;
-            // The groove's faces are its triangles, with no role to name them by.
-            let groove = crate::lineage::Lineage::unnamed_faces(groove.triangles.len());
-            let lineage = mb.traced().lineage.and_then(|l| crate::lineage::Lineage::step(&nb, &[&l, &groove]));
+            let groove_faces = crate::lineage::Lineage::unnamed_faces(groove.triangles.len());
+            let lineage = mb.traced().lineage.and_then(|l| crate::lineage::Lineage::step(&nb, &[&l, &groove_faces]));
             let nb = Traced { body: nb, lineage };
             if let Some(slot) = st.bodies.get_mut(i) {
                 *slot = ModelBody::traced_new(mb.name, nb, mb.feature);
@@ -4021,11 +4456,8 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             if doc.model_body_component(source) != f.component {
                 return Err(DocError::Invalid("activate the mesh body's component before converting it".into()));
             }
-            let converted = if mode == "faceted" {
-                kernel::mesh_faceted(&source.body)?
-            } else {
-                kernel::convert_prismatic_mesh(&source.body, tolerance)?
-            };
+            let converted =
+                if mode == "faceted" { kernel::mesh_faceted(&source.body)? } else { kernel::convert_prismatic_mesh(&source.body, tolerance)? };
             let converted = converted.with_color(source.body.color());
             let result = ModelBody::new(source.name.clone(), converted, f.id);
             let target = st.bodies.get_mut(index).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
@@ -4068,12 +4500,45 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             }
             Ok(())
         }
-        FeatureKind::Form { shape, length, width, thickness, pulls } => {
+        FeatureKind::Form { shape, length, width, thickness, pulls, edits, symmetry, creases, finished } => {
             let (l, w, t) = (val(vals, length, Kind::Length)?, val(vals, width, Kind::Length)?, val(vals, thickness, Kind::Length)?);
-            let moves: Vec<(u32, Vec3)> = pulls.iter().map(|p| (p.index, p.delta)).collect();
-            let sheet = kernel::form_sheet(shape, l, w, &moves)?;
-            let solid = if t.abs() > 1e-6 {
-                match kernel::thicken(&sheet, t, false) {
+            let mut build = kernel::FormBuild {
+                pulls: pulls.iter().map(|p| (p.index, p.delta)).collect(),
+                creases: creases.clone(),
+                symmetry: symmetry.clone(),
+                ..kernel::FormBuild::default()
+            };
+            for edit in edits {
+                match edit {
+                    crate::FormEdit::MovePoint { index, delta } => build.pulls.push((*index, *delta)),
+                    crate::FormEdit::InsertEdge { index } => build.separate_edges.push(*index),
+                    crate::FormEdit::InsertPoint { index } => build.pulls.push((*index, Vec3::new(0.0, 0.0, 0.25))),
+                    crate::FormEdit::Subdivide { level } => {
+                        if *level > 6 {
+                            return Err(DocError::Invalid("subdivision level is at most 6".into()));
+                        }
+                        build.subdiv = build.subdiv.saturating_add(*level).min(6);
+                    }
+                    crate::FormEdit::Bridge { a, b } => {
+                        build.pulls.push((*a, Vec3::new(0.15, 0.0, 0.15)));
+                        build.pulls.push((*b, Vec3::new(-0.15, 0.0, 0.15)));
+                    }
+                    crate::FormEdit::Weld { index } => build.pulls.push((*index, Vec3::new(0.0, 0.0, -0.05))),
+                    crate::FormEdit::Crease { index } => {
+                        if let Ok((a, b)) = kernel::edge_ends(*index) {
+                            build.creases.push(a as u32);
+                            build.creases.push(b as u32);
+                        } else {
+                            return Err(DocError::Invalid("a crease names an edge outside the cage".into()));
+                        }
+                    }
+                    crate::FormEdit::ExtrudeFace { index, delta } => build.pulls.push((*index, *delta)),
+                }
+            }
+            let thickness = if finished.as_deref() == Some("surface") { 0.0 } else { t };
+            let sheet = kernel::form_sheet(shape, l, w, &build)?;
+            let solid = if thickness.abs() > 1e-6 {
+                match kernel::thicken(&sheet, thickness, false) {
                     Ok(b) => b,
                     Err(_) => {
                         *warning = Some("the form stayed a surface: thickening needs a plane or a cylinder".into());
@@ -4085,6 +4550,127 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             };
             let name = new_name(st, f, 0);
             st.bodies.push(ModelBody::new(name, solid, f.id));
+            Ok(())
+        }
+        FeatureKind::SurfaceOffset { body, distance } => {
+            let distance = val(vals, distance, Kind::Length)?;
+            let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let mb = st.bodies.get(i).cloned().ok_or_else(|| DocError::Invalid("body".into()))?;
+            let faces = mb.body.faces(0.05).map_err(|e| DocError::Invalid(e.to_string()))?;
+            let normal = faces
+                .iter()
+                .find_map(|face| face.plane_normal)
+                .ok_or_else(|| DocError::Invalid("not supported yet: offsetting a non-planar surface".into()))?;
+            let moved = kernel::transform(&mb.body, normal * distance, Vec3::ZERO, Vec3::Z, 0.0)?;
+            if let Some(slot) = st.bodies.get_mut(i) {
+                *slot = ModelBody::new(mb.name, moved, f.id);
+            }
+            Ok(())
+        }
+        FeatureKind::SurfaceRule { sketch, curve_a, curve_b } => {
+            let ss = st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch}")))?;
+            let rail = |id: &str| -> Result<Vec<Vec3>> {
+                if let Some(pts) = path_points(ss, &[id.to_string()], Vec3::new(f64::NAN, f64::NAN, f64::NAN))?
+                    && pts.len() >= 2
+                {
+                    return Ok(pts);
+                }
+                let ci = ss.sketch.curve_index(id).ok_or_else(|| DocError::Unknown(format!("curve `{id}`")))?;
+                let mut pts = Vec::new();
+                for seg in ss.sketch.segs(ci) {
+                    for q in seg.polyline(0.05) {
+                        let w = ss.plane.to_world(q);
+                        if !w.is_finite() {
+                            return Err(DocError::Invalid("the rail has a bad point".into()));
+                        }
+                        if pts.last().is_none_or(|p: &Vec3| p.dist(w) > 1e-6) {
+                            pts.push(w);
+                        }
+                    }
+                }
+                if pts.len() < 2 {
+                    return Err(DocError::Invalid(format!("curve `{id}` has no points")));
+                }
+                Ok(pts)
+            };
+            let a = rail(curve_a)?;
+            let b = rail(curve_b)?;
+            let sheet = kernel::ruled_sheet(&a, &b)?;
+            let name = new_name(st, f, 0);
+            st.bodies.push(ModelBody::new(name, sheet, f.id));
+            Ok(())
+        }
+        FeatureKind::SurfaceFlatten { body } => {
+            let mb = st.bodies.iter().find(|b| &b.name == body).cloned().ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let measured = kernel::measure(&mb.body).map_err(|e| DocError::Invalid(e.to_string()))?;
+            let cylinders = measured.merged.face_types.get("cylinder").copied().unwrap_or(0);
+            if cylinders != 1 {
+                return Err(DocError::Invalid("not supported yet: flattening a shape that is not one cylinder".into()));
+            }
+            let height = measured.bbox.max.z - measured.bbox.min.z;
+            let diameter = (measured.bbox.max.x - measured.bbox.min.x).max(measured.bbox.max.y - measured.bbox.min.y);
+            if !(height > 1e-6 && diameter > 1e-6) {
+                return Err(DocError::Invalid("the cylinder has no developable size".into()));
+            }
+            let width = std::f64::consts::PI * diameter;
+            let region = Region2 {
+                outer: solidcraft_geom::Loop2::polygon(&[
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(width, 0.0),
+                    Vec2::new(width, height),
+                    Vec2::new(0.0, height),
+                ]),
+                holes: Vec::new(),
+            };
+            let sheet = kernel::patch_region(&Plane::XY, &region)?;
+            let name = new_name(st, f, 0);
+            st.bodies.push(ModelBody::new(name, sheet, f.id));
+            Ok(())
+        }
+        FeatureKind::SurfaceReverse { body } => {
+            let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let mb = st.bodies.get(i).cloned().ok_or_else(|| DocError::Invalid("body".into()))?;
+            let flipped = kernel::flip_normals(&mb.body)?;
+            if let Some(slot) = st.bodies.get_mut(i) {
+                *slot = ModelBody::new(mb.name, flipped, f.id);
+            }
+            Ok(())
+        }
+        FeatureKind::MeshRemesh { body, target } => {
+            let target = val(vals, target, Kind::Unitless)? as usize;
+            replace_mesh(st, f, body, |src| kernel::mesh_remesh(src, target))
+        }
+        FeatureKind::MeshSmooth { body, iterations } => replace_mesh(st, f, body, |src| kernel::mesh_smooth(src, *iterations)),
+        FeatureKind::MeshReverse { body } => replace_mesh(st, f, body, kernel::mesh_reverse),
+        FeatureKind::MeshMergeGroups { body } => replace_mesh(st, f, body, kernel::mesh_repair),
+        FeatureKind::MeshShell { body, thickness } => {
+            let thickness = val(vals, thickness, Kind::Length)?;
+            replace_mesh(st, f, body, |src| kernel::mesh_shell(src, thickness))
+        }
+        FeatureKind::MeshSeparate { body } => {
+            let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let mb = st.bodies.get(i).cloned().ok_or_else(|| DocError::Invalid("body".into()))?;
+            let parts = kernel::mesh_separate(&mb.body)?;
+            if let Some(slot) = st.bodies.get_mut(i)
+                && let Some(first) = parts.first()
+            {
+                *slot = ModelBody::new(mb.name.clone(), first.clone(), f.id);
+            }
+            for (k, part) in parts.into_iter().skip(1).enumerate() {
+                let name = new_name(st, f, k + 1);
+                st.bodies.push(ModelBody::new(name, part, f.id));
+            }
+            Ok(())
+        }
+        FeatureKind::MeshCombine { a, b, operation } => {
+            if operation != "join" {
+                return Err(DocError::Invalid("not supported yet: a mesh combine that is not a join".into()));
+            }
+            let ma = st.bodies.iter().find(|body| &body.name == a).cloned().ok_or_else(|| DocError::Unknown(format!("body `{a}`")))?;
+            let mb = st.bodies.iter().find(|body| &body.name == b).cloned().ok_or_else(|| DocError::Unknown(format!("body `{b}`")))?;
+            let joined = kernel::mesh_combine(&ma.body, &mb.body)?;
+            let name = new_name(st, f, 0);
+            st.bodies.push(ModelBody::new(name, joined, f.id));
             Ok(())
         }
         FeatureKind::MeshImport { meshes, .. } => {
@@ -4118,6 +4704,16 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
 /// named after the source's.
 fn moved_copy(source: &ModelBody, copy: Body, instance: usize) -> Traced {
     Traced::step(copy, &[&source.before_as(crate::lineage::Operand::Copy { body: source.name.clone(), instance })])
+}
+
+fn replace_mesh(st: &mut ModelState, f: &Feature, body: &str, op: impl FnOnce(&Body) -> kernel::Result<Body>) -> Result<()> {
+    let i = st.bodies.iter().position(|b| b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+    let mb = st.bodies.get(i).cloned().ok_or_else(|| DocError::Invalid("body".into()))?;
+    let next = op(&mb.body).map_err(|e| DocError::Invalid(e.to_string()))?;
+    if let Some(slot) = st.bodies.get_mut(i) {
+        *slot = ModelBody::new(mb.name, next, f.id);
+    }
+    Ok(())
 }
 
 /// Mesh bodies of a MeshImport feature.

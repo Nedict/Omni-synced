@@ -53,15 +53,20 @@ impl FeatureKind {
             | FeatureKind::SheetContour { sketch, .. }
             | FeatureKind::Rib { sketch, .. } => sk(sketch),
             FeatureKind::Patch { sketch: Some(s), .. } => sk(s),
+            FeatureKind::SurfaceTrim { curve_sketch: Some(s), .. } => sk(s),
+            FeatureKind::SurfaceRule { sketch, .. } => sk(sketch),
             FeatureKind::Sweep { sketch, path_sketch, .. } => {
                 sk(sketch);
                 sk(path_sketch);
             }
             FeatureKind::Pipe { path_sketch, .. } => sk(path_sketch),
             FeatureKind::SheetFold { sketch: Some(s), .. } => sk(s),
-            FeatureKind::Loft { sections, rails, .. } => {
+            FeatureKind::Loft { sections, rails, guide, .. } => {
                 sections.iter_mut().for_each(|s| sk(&mut s.sketch));
                 if let Some(r) = rails {
+                    sk(&mut r.sketch);
+                }
+                if let Some(r) = guide {
                     sk(&mut r.sketch);
                 }
             }

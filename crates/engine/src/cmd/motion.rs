@@ -717,11 +717,7 @@ fn explode_frames(s: &mut Session, p: &Value) -> Result<Value> {
     let mut frames = Vec::new();
     for k in 0..=steps {
         let t = k as f64 / steps as f64;
-        let moves: Vec<Value> = v
-            .moves
-            .iter()
-            .map(|(o, d)| json!({"occurrence": o, "translate": [d.x * t, d.y * t, d.z * t]}))
-            .collect();
+        let moves: Vec<Value> = v.moves.iter().map(|(o, d)| json!({"occurrence": o, "translate": [d.x * t, d.y * t, d.z * t]})).collect();
         frames.push(json!({"t": t, "moves": moves}));
     }
     Ok(json!({"view": v.name, "frames": frames}))

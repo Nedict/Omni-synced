@@ -44,6 +44,7 @@ fn plate_doc() -> (Document, u64) {
             },
             operation: Operation::NewBody,
             targets: vec![],
+            open: false,
         },
         None,
     )
@@ -135,6 +136,7 @@ fn box_fillet_cut_timeline() {
             },
             operation: Operation::Cut,
             targets: vec![],
+            open: false,
         },
         None,
     )
@@ -168,6 +170,7 @@ fn errors_are_reported_not_fatal() {
             symmetric: false,
             convention: Default::default(),
             to: None,
+            open: false,
         },
         None,
     )

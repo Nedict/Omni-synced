@@ -79,14 +79,17 @@ pub use boolean_diagnostics::{BooleanDiagnostics, BooleanFallback, BooleanStrate
 pub use build::{PathSeg, box_solid, canonical_revolve_axis, cylinder, extrude, extrude_tapered, loft, revolve, sphere, sweep, torus};
 pub use delete_face::delete_faces;
 pub use emboss::{cylinder_emboss_anchor, emboss_cylinder, emboss_cylinder_at, has_cylinder_emboss_wall, infer_cylinder_emboss};
+pub use formbody::{FormBuild, cage_points, edge_ends, form_sheet, ruled_sheet};
 pub use helix::{loft_to_point, sweep_helix, sweep_helix_mesh};
 pub use iges_in::{MAX_IGES_BYTES, iges_import, iges_to_step};
 pub use iges_out::iges_export_bodies;
 pub use lip::raise_band;
 pub use measure::{BodyMeasure, measure};
 pub use mesh_convert::convert_prismatic_mesh;
-pub use formbody::form_sheet;
-pub use meshbody::{MAX_TRIANGLES, mesh_body, mesh_face_groups, mesh_faceted, mesh_plane_cut, mesh_reduce, mesh_repair};
+pub use meshbody::{
+    MAX_TRIANGLES, mesh_body, mesh_combine, mesh_deviation, mesh_face_groups, mesh_faceted, mesh_plane_cut, mesh_reduce, mesh_remesh, mesh_repair,
+    mesh_reverse, mesh_separate, mesh_shell, mesh_smooth,
+};
 pub use native::{decode_native_body, encode_native_body};
 pub use offset::with_same_surface;
 pub use ops::{BoolOp, boolean, can_join_touching_faces, split_by_plane, transform, transform_matrix, union_apart};
@@ -100,7 +103,10 @@ pub use step::step_export;
 pub use step_in::{ImportedBody, StepImport, StepNode, step_import, step_import_shared, step_orientation_errors, step_validate};
 pub use step_out::{ExportBody, ExportProduct, StepHeader, step_export_bodies, step_export_products};
 pub use surface_kind::{FaceSurface, face_surface};
-pub use surfaces::{copy_faces, extend, patch_edges, patch_region, side_skin, stitch, thicken, trim};
+pub use surfaces::{
+    copy_faces, extend, flip_normals, gap_points, open_sweep, open_sweep_along, patch_edges, patch_guided, patch_region, side_skin, stitch, thicken,
+    trim,
+};
 pub use sweep_path::sweep_path;
 pub use topo::{CylinderFace, cylinder_face_at};
 pub use topo::{TopoCounts, merged_topology, seam_flags};

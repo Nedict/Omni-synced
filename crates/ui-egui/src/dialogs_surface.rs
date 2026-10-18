@@ -254,7 +254,7 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
         FeatureKind::SurfaceExtend { edges, distance, .. } => {
             (Surf::Extend { distance: distance.clone() }, vec![edges.iter().filter_map(edge).collect()])
         }
-        FeatureKind::SurfaceTrim { body, plane, tool, keep } => (
+        FeatureKind::SurfaceTrim { body, plane, tool, keep, .. } => (
             Surf::Trim,
             vec![
                 vec![Sel::Body { name: body.clone() }],

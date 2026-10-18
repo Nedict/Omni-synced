@@ -81,6 +81,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         "text: string (\\n breaks lines), at: baseline start [x,y], height?: capital height mm (default 5), angle?: deg",
         created_doc!()
     )),
+    CommandSpec::new("sketch.text.on_path", "Text on Path", text_on_path)
+        .at("SKETCH", "CREATE")
+        .icon("text")
+        .enabled(in_sketch)
+        .params(concat!("text: string, path: curve id, height?: capital height mm (default 5). The outlines follow the curve", created_doc!())),
     CommandSpec::new("sketch.edit_text", "Edit Text", edit_text)
         .enabled(in_sketch)
         .params(concat!("link: the text's link id (or entity: one of its curves), text?, at?, height?, angle?: deg", created_doc!())),
@@ -101,7 +106,7 @@ fn text_source(p: &Value, cmd: &str, old: Option<(String, Vec2, f64, f64)>) -> R
         return Err(bad(cmd, "`height` must be positive"));
     }
     let angle = num(p, "angle").map(f64::to_radians).unwrap_or(a0);
-    Ok(LinkSource::Text { text, at, height, angle })
+    Ok(LinkSource::Text { text, at, height, angle, path: None })
 }
 
 fn text(s: &mut Session, p: &Value) -> Result<Value> {
@@ -120,6 +125,36 @@ fn text(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"link": l, "curves": curves}))
 }
 
+fn text_on_path(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "sketch.text.on_path";
+    let text = str_(p, "text").unwrap_or("").trim().to_string();
+    if text.is_empty() {
+        return Err(bad(cmd, "`text` must not be empty"));
+    }
+    if text.chars().count() > solidcraft_sketch::MAX_TEXT_CHARS {
+        return Err(bad(cmd, "text too long"));
+    }
+    let path = str_(p, "path").filter(|id| !id.is_empty()).ok_or_else(|| bad(cmd, "`path` is a sketch curve id"))?.to_string();
+    let height = num(p, "height").unwrap_or(5.0);
+    if !(height.is_finite() && height > 1e-6 && height < 1e5) {
+        return Err(bad(cmd, "`height` must be positive"));
+    }
+    let id = s.active_sketch.ok_or_else(|| bad(cmd, "no sketch is being edited"))?;
+    let mut doc = (*s.doc).clone();
+    let mut sk = doc.sketch(id)?.clone();
+    let curve = sk.curve_index(&path).ok_or_else(|| bad(cmd, format!("unknown curve `{path}`")))?;
+    let geom = solidcraft_sketch::text_on_path(&text, height, &sk.polyline(curve)).map_err(|e| bad(cmd, e.to_string()))?;
+    if geom.is_empty() {
+        return Err(bad(cmd, "the text produced no outlines"));
+    }
+    let src = LinkSource::Text { text, at: Vec2::ZERO, height, angle: 0.0, path: Some(path) };
+    let link = sk.add_link_with_wires(LinkKind::Text, src, &geom, &[])?;
+    let curves = ids_of(&sk, &sk.link_curves(&link));
+    *doc.sketch_mut(id)? = sk;
+    *s.doc_mut() = doc;
+    Ok(json!({"link": link, "curves": curves}))
+}
+
 fn edit_text(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sketch.edit_text";
     let id = s.active_sketch.ok_or_else(|| bad(cmd, "no sketch is being edited"))?;
@@ -131,11 +166,11 @@ fn edit_text(s: &mut Session, p: &Value) -> Result<Value> {
         _ => return Err(bad(cmd, "give `link` or `entity`")),
     };
     let old = match sk.link(&l).map(|x| (x.kind, x.source.clone())) {
-        Some((LinkKind::Text, LinkSource::Text { text, at, height, angle })) => (text, at, height, angle),
+        Some((LinkKind::Text, LinkSource::Text { text, at, height, angle, path: None })) => (text, at, height, angle),
         _ => return Err(bad(cmd, format!("`{l}` is not text"))),
     };
     let src = text_source(p, cmd, Some(old))?;
-    let LinkSource::Text { text, at, height, angle } = &src else { return Err(bad(cmd, "text")) };
+    let LinkSource::Text { text, at, height, angle, .. } = &src else { return Err(bad(cmd, "text")) };
     let geom = solidcraft_sketch::text_geometry(text, *at, *height, *angle)?;
     sk.set_link_source(&l, src.clone());
     sk.update_link(&l, &geom)?;

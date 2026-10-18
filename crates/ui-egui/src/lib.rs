@@ -472,6 +472,9 @@ impl SolveApp {
         if let Ok(v) = &r {
             // Curves drawn in construction (or centerline) mode take that line type.
             sketch_palette::apply_mode(self, id, v);
+            if id == "ui.quick_toolbox" {
+                self.ui.palette_open = true;
+            }
         }
         match &r {
             Ok(_) => {

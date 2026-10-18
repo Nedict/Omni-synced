@@ -414,6 +414,8 @@
   "view.nav.perspective": "Perspective or orthographic",
   "view.nav.style": "Visual style",
   "view.nav.settings": "View settings",
+  "view.grid": "Grid",
+  "view.ground_shadow": "Ground shadow",
   "timeline.status.error": "Error",
   "timeline.status.warning": "Warning",
   "timeline.status.suppressed": "Suppressed",

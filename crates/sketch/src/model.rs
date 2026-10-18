@@ -512,6 +512,41 @@ pub struct SketchView {
     pub three_d: bool,
 }
 
+/// Copies of sketch curves placed along a path. `copies[k]` is instance `k + 1`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PathPattern {
+    pub sources: Vec<String>,
+    pub path: String,
+    pub count: String,
+    pub distance: String,
+    /// `(source point id, copy point id)` for that instance.
+    pub copies: Vec<Vec<(String, String)>>,
+}
+
+fn point_along(poly: &[Vec2], distance: f64) -> Option<Vec2> {
+    if !distance.is_finite() || distance < -1e-9 {
+        return None;
+    }
+    let first = poly.first().copied()?;
+    if distance <= 1e-9 {
+        return Some(first);
+    }
+    let mut left = distance;
+    for window in poly.windows(2) {
+        let (Some(a), Some(b)) = (window.first().copied(), window.get(1).copied()) else { continue };
+        let step = b - a;
+        let len = step.len();
+        if len < 1e-12 {
+            continue;
+        }
+        if left <= len + 1e-9 {
+            return Some(a + step * (left / len));
+        }
+        left -= len;
+    }
+    None
+}
+
 /// A 2D sketch. Point 0 is always the fixed sketch origin (id `origin`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Sketch {
@@ -529,6 +564,9 @@ pub struct Sketch {
     /// 3D curves (world coordinates) carried by the sketch.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub wires: Vec<crate::wire::Wire>,
+    /// Copies of sketch curves spaced along a path. Count and distance are expressions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path_patterns: Vec<PathPattern>,
     /// Next number per id prefix (`l` → l1, l2…).
     #[serde(default)]
     counters: std::collections::BTreeMap<String, u64>,
@@ -557,6 +595,7 @@ impl Sketch {
             offsets: Vec::new(),
             freeform_offsets: Vec::new(),
             wires: Vec::new(),
+            path_patterns: Vec::new(),
             counters: Default::default(),
             view: SketchView::default(),
         }
@@ -615,6 +654,35 @@ impl Sketch {
             || self.links.iter().any(|l| l.id == id)
             || self.wires.iter().any(|w| w.id == id)
             || self.offsets.iter().filter_map(|r| r.topology.as_ref()).any(|r| r.id == id || r.roles.iter().any(|role| role.output == id))
+    }
+
+    /// Move each stored copy so it sits `distance * instance` along the path.
+    /// The original curves stay put. A path that is too short is an error.
+    pub fn place_path_copies(&mut self, index: usize, count: usize, distance: f64) -> Result<()> {
+        if !(1..=500).contains(&count) || !distance.is_finite() || distance.abs() > 1e6 {
+            return Err(SketchError::Invalid("path pattern count or distance".into()));
+        }
+        let pattern = self.path_patterns.get(index).cloned().ok_or_else(|| SketchError::Invalid("missing path pattern".into()))?;
+        if pattern.copies.len() + 1 != count {
+            return Err(SketchError::Invalid("not supported yet: changing a path pattern's count".into()));
+        }
+        let path = self.curve_index(&pattern.path).ok_or_else(|| SketchError::Invalid("the path curve is missing".into()))?;
+        let poly = self.polyline(path);
+        let start = point_along(&poly, 0.0).ok_or_else(|| SketchError::Invalid("the path has no length".into()))?;
+        for (k, pairs) in pattern.copies.iter().enumerate() {
+            let at =
+                point_along(&poly, distance * (k as f64 + 1.0)).ok_or_else(|| SketchError::Invalid("the path is shorter than the pattern".into()))?;
+            let delta = at - start;
+            for (src, dst) in pairs {
+                let src_i = self.point_index(src).ok_or_else(|| SketchError::Invalid("a pattern source point is missing".into()))?;
+                let pos = self.point(src_i).ok_or_else(|| SketchError::Invalid("a pattern source point is missing".into()))?;
+                let dst_i = self.point_index(dst).ok_or_else(|| SketchError::Invalid("a pattern copy point is missing".into()))?;
+                if let Some(point) = self.points.get_mut(dst_i) {
+                    point.pos = pos + delta;
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn point_index(&self, id: &str) -> Option<usize> {

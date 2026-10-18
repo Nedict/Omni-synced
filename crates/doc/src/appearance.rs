@@ -17,6 +17,16 @@ pub struct Look {
     pub color: [u8; 3],
     #[serde(default = "opaque")]
     pub opacity: f64,
+    /// 0 dielectric, 1 metal. Missing values in older files stay dielectric.
+    #[serde(default)]
+    pub metalness: f64,
+    /// 0 smooth, 1 rough.
+    #[serde(default = "half")]
+    pub roughness: f64,
+}
+
+fn half() -> f64 {
+    0.5
 }
 
 fn opaque() -> f64 {
@@ -25,7 +35,7 @@ fn opaque() -> f64 {
 
 impl Look {
     pub fn custom(color: [u8; 3], opacity: f64) -> Look {
-        Look { name: "Custom".into(), color, opacity: opacity.clamp(0.0, 1.0) }
+        Look { name: "Custom".into(), color, opacity: opacity.clamp(0.0, 1.0), metalness: 0.0, roughness: 0.5 }
     }
     /// Colour as 0–1 fractions.
     pub fn rgb(&self) -> [f32; 3] {
@@ -128,14 +138,20 @@ pub const LIBRARY: [(&str, [u8; 3], f64); 20] = [
 
 /// A library appearance by name (case-insensitive).
 pub fn library(name: &str) -> Option<Look> {
-    LIBRARY.iter().find(|(n, _, _)| n.eq_ignore_ascii_case(name.trim())).map(|(n, c, o)| Look { name: n.to_string(), color: *c, opacity: *o })
+    LIBRARY.iter().find(|(n, _, _)| n.eq_ignore_ascii_case(name.trim())).map(|(n, c, o)| Look {
+        name: n.to_string(),
+        color: *c,
+        opacity: *o,
+        metalness: 0.0,
+        roughness: 0.5,
+    })
 }
 
 /// The look a physical material gives a body that has no appearance of its own.
 pub fn material_look(material: &str) -> Option<Look> {
     let color = crate::material_color(material)?;
     let opacity = if material == "Glass" { 0.25 } else { 1.0 };
-    Some(Look { name: material.to_string(), color, opacity })
+    Some(Look { name: material.to_string(), color, opacity, metalness: 0.0, roughness: 0.5 })
 }
 
 impl Document {

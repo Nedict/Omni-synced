@@ -92,11 +92,19 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             }
             apply_op(st, f, tools, Operation::Join, &[])
         }
-        FeatureKind::ReplaceFace { faces, target, body } => {
-            let tp = doc.resolve_plane_in(vals, target, 0, Some(st))?;
-            let tn = tp.normal();
+        FeatureKind::ReplaceFace { faces, target, body, target_at } => {
             let i = body_at(st, body, faces)?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+            if let Some(at) = target_at {
+                let source = faces.first().copied().ok_or_else(|| DocError::Invalid("no face".into()))?;
+                let b = replace_coaxial_cylinder(st, &mb.body, source, *at)?;
+                if let Some(slot) = st.bodies.get_mut(i) {
+                    *slot = ModelBody::new(mb.name, b, mb.feature);
+                }
+                return Ok(());
+            }
+            let tp = doc.resolve_plane_in(vals, target, 0, Some(st))?;
+            let tn = tp.normal();
             let mut b = mb.body.clone();
             for p in faces {
                 let n = planar_normal_at(&b, *p).ok_or_else(|| DocError::Invalid("not supported yet: replacing a face that is not planar".into()))?;
@@ -155,6 +163,44 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
         }
         _ => Err(DocError::Invalid(format!("{} is not evaluated here", f.name))),
     }
+}
+
+/// Rebuild a complete exterior cylinder so its wall lies on a coaxial target cylinder.
+fn replace_coaxial_cylinder(st: &ModelState, body: &kernel::Body, source: Vec3, target: Vec3) -> Result<kernel::Body> {
+    let src = kernel::cylinder_face_at(body, source)
+        .ok_or_else(|| DocError::Invalid("not supported yet: replacing a face that is not a plane or a cylinder".into()))?;
+    if src.internal {
+        return Err(DocError::Invalid("not supported yet: replacing an interior cylindrical face".into()));
+    }
+    let measured = kernel::measure(body)?;
+    let cylinders = measured.merged.face_types.get("cylinder").copied().unwrap_or(0);
+    let planes = measured.merged.face_types.get("plane").copied().unwrap_or(0);
+    if cylinders != 1 || planes != 2 || measured.merged.face_types.len() != 2 {
+        return Err(DocError::Invalid("not supported yet: a curved replace on a body that is not a complete cylinder".into()));
+    }
+    let mut want = None;
+    for other in &st.bodies {
+        if let Some(face) = kernel::cylinder_face_at(&other.body, target) {
+            let along = (target - face.axis_point).dot(face.axis);
+            let radial = target - face.axis_point - face.axis * along;
+            if (radial.len() - face.radius).abs() < (other.body.size() * 0.05).max(0.5) {
+                want = Some(face);
+                break;
+            }
+        }
+    }
+    let want = want.ok_or_else(|| DocError::Invalid("not supported yet: replacing a face that is not a plane or a cylinder".into()))?;
+    let offset = want.axis_point - src.axis_point;
+    if src.axis.dot(want.axis).abs() < 1.0 - 1e-6 || src.axis.cross(offset).len() > 1e-3 {
+        return Err(DocError::Invalid("not supported yet: a target that is not parallel to the face".into()));
+    }
+    if !(want.radius.is_finite() && want.radius > 1e-6 && want.radius < 1e6) {
+        return Err(DocError::Invalid("the target cylinder radius is out of range".into()));
+    }
+    let start = src.start.min(src.end);
+    let height = (src.end - src.start).abs();
+    let base = src.axis_point + src.axis * start;
+    kernel::cylinder(base, src.axis, want.radius, height).map_err(|e| DocError::Invalid(e.to_string()))
 }
 
 /// Unit outward normal of the planar face through `p`.
@@ -520,6 +566,54 @@ pub(super) fn sheet_eval(
                 sh.flat = !*refold;
             }
             rebuild_sheet(st, i)
+        }
+        FeatureKind::SheetRip { gap, .. } => {
+            if !gap.is_empty() {
+                let g = val(vals, gap, Kind::Length)?;
+                if !(g.is_finite() && g >= 0.0) {
+                    return Err(DocError::Invalid("the rip gap must be a positive length".into()));
+                }
+            }
+            Ok(())
+        }
+        FeatureKind::SheetLoft { sketch_a, curves_a, sketch_b, curves_b } => {
+            let rail = |sketch: u64, ids: &[String]| -> Result<Vec<Vec3>> {
+                let ss = st.sketch(sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch}")))?;
+                let mut pts = Vec::new();
+                for id in ids {
+                    let ci = ss.sketch.curve_index(id).ok_or_else(|| DocError::Unknown(format!("curve `{id}`")))?;
+                    for seg in ss.sketch.segs(ci) {
+                        for q in seg.polyline(0.05) {
+                            let w = ss.plane.to_world(q);
+                            if !w.is_finite() {
+                                return Err(DocError::Invalid("the loft profile has a bad point".into()));
+                            }
+                            if pts.last().is_none_or(|p: &Vec3| p.dist(w) > 1e-6) {
+                                pts.push(w);
+                            }
+                        }
+                    }
+                }
+                if pts.len() < 2 {
+                    return Err(DocError::Invalid("a lofted flange needs an open profile".into()));
+                }
+                if pts.first().zip(pts.last()).is_some_and(|(a, b)| a.dist(*b) < 1e-3) {
+                    return Err(DocError::Invalid("a lofted flange profile must be open".into()));
+                }
+                Ok(pts)
+            };
+            let a = rail(*sketch_a, curves_a)?;
+            let b = rail(*sketch_b, curves_b)?;
+            let length = a.windows(2).map(|w| w[0].dist(w[1])).sum::<f64>() + b.windows(2).map(|w| w[0].dist(w[1])).sum::<f64>();
+            let sheet = kernel::open_sweep(&[a, b], false, false)?;
+            let rule = doc.rule_values(vals, &doc.sheet_rule(None))?;
+            let solid = kernel::thicken(&sheet, rule.thickness, false)?;
+            let name = new_name(st, f, 0);
+            st.bodies.push(ModelBody::new(name, solid, f.id));
+            if length <= 0.0 {
+                return Err(DocError::Invalid("the lofted flange has no developed length".into()));
+            }
+            Ok(())
         }
         FeatureKind::SheetConvert { body, face, rule } => {
             let mb = st.body(body).cloned().ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;

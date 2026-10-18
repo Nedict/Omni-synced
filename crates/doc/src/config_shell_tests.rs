@@ -123,6 +123,7 @@ fn shell_planar_anchor_rebuild_cold_geometry_and_missing_source_errors() {
                 extent: serde_json::from_value(json!({"distance":"2"})).unwrap(),
                 operation: crate::Operation::NewBody,
                 targets: vec![],
+                open: false,
             },
             Some("Face boss"),
         )
@@ -284,6 +285,7 @@ fn saved_former_strip_projection_reports_lost_without_expanding_healthy_material
                 extent: serde_json::from_value(json!({"distance":"1"})).unwrap(),
                 operation: crate::Operation::NewBody,
                 targets: vec![],
+                open: false,
             },
             Some("Saved strip profile material"),
         )
@@ -432,6 +434,7 @@ fn saved_curved_strip_projection_is_lost_after_exact_wall_coalescence() {
                 extent: serde_json::from_value(json!({"distance":"1"})).unwrap(),
                 operation: crate::Operation::NewBody,
                 targets: vec![],
+                open: false,
             },
             Some("Retained strip material"),
         )
@@ -555,6 +558,7 @@ fn saved_stepped_tab_cut_piece_projection_is_lost_without_expanding_material() {
                 extent: serde_json::from_value(json!({"distance":"1"})).unwrap(),
                 operation: crate::Operation::NewBody,
                 targets: vec![],
+                open: false,
             },
             Some("Saved band stock"),
         )

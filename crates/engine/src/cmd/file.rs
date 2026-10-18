@@ -28,6 +28,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .key("Ctrl+S")
         .noundo()
         .params("path? (default: current file); format?: container|json (default: json for .json, otherwise container); compression?: fast|compact (default: fast); preview?: bool (experimental saved picture, default: false)"),
+    CommandSpec::new("file.projects", "Local Projects", projects)
+        .noundo()
+        .doc_only()
+        .params("dir: folder of .solidcraft designs → files"),
+    CommandSpec::new("file.version_note", "Version Note", version_note).params("text: a note kept in the design, at most 4000 characters"),
+    CommandSpec::new("file.history", "Design Notes", history).noundo().doc_only().params("→ the design's version note"),
     CommandSpec::new("file.save_as", "Save As", save_as)
         .icon("save")
         .noundo()
@@ -336,6 +342,41 @@ fn recovery_discard(_s: &mut Session, p: &Value) -> Result<Value> {
         crate::recovery::remove(&dir, id);
     }
     Ok(json!({"discarded": ids}))
+}
+
+fn projects(_s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "file.projects";
+    let dir = str_(p, "dir").filter(|d| !d.is_empty()).ok_or_else(|| bad(cmd, "`dir` is required"))?;
+    if dir.len() > 4096 {
+        return Err(bad(cmd, "the folder path is too long"));
+    }
+    let read = std::fs::read_dir(dir).map_err(|e| bad(cmd, e.to_string()))?;
+    let mut files = Vec::new();
+    for entry in read.take(10_000) {
+        let Ok(entry) = entry else { continue };
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("solidcraft")
+            && let Some(text) = path.to_str()
+        {
+            files.push(text.to_string());
+        }
+    }
+    files.sort();
+    Ok(json!({"files": files}))
+}
+
+fn version_note(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "file.version_note";
+    let text = str_(p, "text").ok_or_else(|| bad(cmd, "`text` is required"))?;
+    if text.len() > 4_000 {
+        return Err(bad(cmd, "a version note is at most 4000 characters"));
+    }
+    s.doc_mut().version_note = text.to_string();
+    Ok(json!({"text": text}))
+}
+
+fn history(s: &mut Session, _p: &Value) -> Result<Value> {
+    Ok(json!({"notes": [s.doc.version_note.clone()]}))
 }
 
 #[cfg(test)]

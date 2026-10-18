@@ -16,7 +16,7 @@ to leave the bodies just short of penetration, within the tessellated contact to
 Motion links and limits participate in the trajectory checks. Moving a body between
 components preserves its placement for contact checks through its body offset.
 
-The trajectory uses bounded samples of cached tessellated geometry. Spacing accounts for
+The trajectory uses at most 4096 samples of cached tessellated geometry. Spacing accounts for
 effective joint travel, angular motion, distance from joint pivots and whole-body widths
 along sampled face directions. This handles tilted thin plates while keeping curved bodies
 practical to drive. It is not exact continuous collision detection: locally thin walls in

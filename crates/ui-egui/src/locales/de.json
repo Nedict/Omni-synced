@@ -414,6 +414,8 @@
   "view.nav.perspective": "Perspektive oder parallel",
   "view.nav.style": "Darstellung",
   "view.nav.settings": "Ansichtseinstellungen",
+  "view.grid": "Raster",
+  "view.ground_shadow": "Bodenschatten",
   "timeline.status.error": "Fehler",
   "timeline.status.warning": "Warnung",
   "timeline.status.suppressed": "Unterdrückt",

@@ -1,0 +1,373 @@
+# Implementation Plan: Fusion 360 Feature Parity
+
+## Overview
+
+This plan deepens SolidCraft's existing Fusion-workspace seeds toward functional parity. It is
+**seed-first and additive**: every task preserves existing command ids (`surface.*`, `form.*`,
+`mesh.*`, `drawing.*`, `cam.contour`) and keeps `solidcraft-container/1` designs loading, by
+adding `#[serde(default)]` fields to existing `FeatureKind` variants or adding sibling commands
+with new dotted ids — never a greenfield rewrite.
+
+Stage 1 (Surface depth, Form/T-splines, Mesh reverse-engineering, UI-shell parity) is broken into
+granular, immediately-actionable tasks because it is the near-term shippable alpha. Stages 2–6 are
+present but coarse-grained and marked **later-phase**.
+
+Every task names the crate(s)/files it touches, references the requirement/acceptance-criteria and
+design section it implements, and carries its test obligation. Work is Rust. Each task must land a
+CI-green increment (`cargo xtask ci`: fmt, clippy -D warnings, tests, assets, layers, wasm). Every
+kernel call routes through `solidcraft_kernel::guard`; input-derived numbers are treated as
+hostile (finite checks, `get()`, explicit caps); no panics in non-test code.
+
+**Required vs optional:** tasks with no `*` are **required for the Stage 1 alpha**. Sub-tasks
+marked `*` are **optional** (extra tests, or later-phase Stages 2–6 scaffolding) and may be
+skipped for a faster alpha. All property/unit/oracle/fuzz test sub-tasks are marked `*` per the
+test-optional convention; the hostile-param fuzz and oracle checks are strongly recommended before
+shipping since the never-crash rule outranks feature work.
+
+Property tags: each property test references its design property as
+`Feature: fusion360-feature-parity, Property {n}: {text}` and uses ≥100 generated inputs.
+
+---
+
+## Tasks
+
+### Stage 1A — Surface workspace depth (Requirement 3 · design §1A)
+
+- [ ] 1. Deepen surface create-as-surface fidelity
+  - [ ] 1.1 Add `open_sweep` kernel helper for true open surface bodies
+    - Add `pub fn open_sweep(profile, ...) -> Result<Body>` in `crates/kernel/src/surfaces.rs`
+      next to `surface_body`, producing a zero-thickness open body (open profiles allowed, no
+      implicit cap); route the `truck` work through `solidcraft_kernel::guard("surface.open_sweep", …)`
+    - _Requirements: 3.1, 3.7 · design §1A.1_
+  - [ ] 1.2 Drive `surface.extrude/revolve/sweep/loft` through the open-body path
+    - In `crates/engine/src/cmd/surface.rs`, make surface-create produce a first-class open body
+      via the existing `operation`/`extent` fields instead of running the solid command and
+      discarding caps via `SheetWalls`; keep the command ids unchanged
+    - _Requirements: 3.1 · design §1A.1_
+  - [ ]* 1.3 Property test: surface-create yields a surface + one timeline feature
+    - **Property 3: Surface-create yields a zero-thickness surface and one timeline feature**
+    - **Validates: Requirements 3.1** (≥100 inputs; generate valid closed profiles)
+  - [ ]* 1.4 Oracle case: thickened-surface volume = area × thickness (analytic)
+    - Add `tests/oracle/surface_thicken_volume/` with `recipe.json` + analytic `expected.json`;
+      wire into `cargo xtask oracle`
+    - _Requirements: 3.5 · design testing strategy_
+
+- [ ] 2. Deepen patch, trim/untrim, stitch, thicken
+  - [ ] 2.1 Deepen `surface.patch` boundary handling
+    - In `crates/engine/src/cmd/surface.rs` + `crates/kernel/src/surfaces.rs`, accept mixed
+      edge+sketch boundaries and guide curves for one smooth B-spline face; no new id
+    - _Requirements: 3.2 · design §1A.2_
+  - [ ] 2.2 Deepen `surface.trim` to accept surface/curve tools
+    - Extend `surface.trim` in `crates/engine/src/cmd/surface.rs` to accept a surface/curve tool in
+      addition to a plane, preserving `keep` semantics; keep `surface.untrim` restoring the latest
+      `SurfaceTrim`
+    - _Requirements: 3.3 · design §1A.3_
+  - [ ] 2.3 Deepen tolerant stitch with gap reporting
+    - Add/deepen `stitch_tolerant(bodies, tol) -> Result<Stitched>` in `crates/kernel/src/sew.rs`
+      (solid when faces close, else joined surface) and report the gap edges that prevented closure;
+      surface by it in `surface.stitch`
+    - _Requirements: 3.4 · design §1A.4_
+  - [ ] 2.4 Deepen `surface.thicken` to multi-body / non-planar
+    - Extend thicken in `crates/engine/src/cmd/surface.rs` + `crates/kernel/src/offset.rs` to
+      multi-body and non-planar surfaces (symmetric/signed, new/join/cut/intersect)
+    - _Requirements: 3.5 · design §1A.5_
+  - [ ]* 2.5 Property tests for patch/trim/stitch/thicken
+    - **Property 4: Planar patch area equals the enclosed area** — **Validates: 3.2**
+    - **Property 5: Trim then untrim restores the surface** — **Validates: 3.3**
+    - **Property 6: Stitch closes to a solid exactly when faces bound a volume** — **Validates: 3.4**
+    - **Property 7: Thicken volume equals area times thickness** — **Validates: 3.5** (each ≥100 inputs)
+  - [ ]* 2.6 Oracle cases: patch area (shoelace), stitched-solid volume, extend existing unit tests
+    - Add analytic oracle cases; extend co-located `patch_trim_thicken_and_stitch` /
+      `untrim_drops_the_latest_trim` unit tests in `crates/engine/src/cmd/surface.rs`
+    - _Requirements: 3.2, 3.3, 3.4_
+
+- [ ] 3. Add `surface.offset` and `surface.rule` sibling commands
+  - [ ] 3.1 Add `surface_offset` kernel helper + `FeatureKind::SurfaceOffset`
+    - Add `pub fn surface_offset(body, distance) -> Result<Body>` in `crates/kernel/src/offset.rs`
+      (guarded); add `FeatureKind::SurfaceOffset` variant in `crates/doc/src/document.rs` with all
+      new fields `#[serde(default)]`
+    - _Requirements: 3.1, 3.6 · design §1A.6, Components table_
+  - [ ] 3.2 Register `surface.offset` and `surface.rule` commands
+    - Register both as new dotted ids in `crates/engine/src/cmd/surface.rs` via `CommandSpec`
+      (`.at("SURFACE", "CREATE")`, code-drawn icon in `crates/ui-egui/src/icons.rs`); add
+      `FeatureKind::SurfaceRule`; unsupported configs return `bad(cmd, "not supported yet: …")`
+    - _Requirements: 3.1, 3.6 · design §1A.6_
+  - [ ]* 3.3 Unit + hostile-param fuzz for new surface commands
+    - Co-located unit tests; extend `hostile_params_never_panic` discipline for `surface.offset`/`.rule`
+    - **Property 1: Hostile input never crashes and leaves the design unchanged** — **Validates: 3.7**
+    - **Property 2: Unsupported options are reported, not performed** — **Validates: 3.6** (≥100 inputs)
+
+- [ ] 4. Checkpoint — surface depth green
+  - Ensure all tests pass (`cargo xtask ci`); capture before/after control-channel screenshots of a
+    surface create + thicken (`ui.screenshot`); ask the user if questions arise.
+
+### Stage 1B — Freeform / T-spline modelling (Requirement 4 · design §1B)
+
+- [ ] 5. Deepen the Form feature into an editable cage model (additive format change)
+  - [ ] 5.1 Extend `FeatureKind::Form` with cage fields + ref structs
+    - In `crates/doc/src/document.rs`, add `edits: Vec<FormEdit>`, `symmetry: Option<PlaneRef>`,
+      `creases: Vec<CageEdgeRef>` to `Form`, all `#[serde(default)]`; keep legacy `pulls` (also
+      `#[serde(default)]`); add `FormEdit` tagged enum and `CageVertRef`/`CageFaceRef`/`CageEdgeRef`
+    - _Requirements: 4.1, 4.2 · design §1B, Document & format_
+  - [ ]* 5.2 Corpus round-trip test: old 4×4-pull design loads and re-evaluates equivalently
+    - Add a seed-`form.*` design to the CLI design corpus; assert load → re-eval → equivalent model
+    - **Property 21: Documents round-trip across the deepened model** — **Validates: 1.4** (≥100 corpus/generated)
+
+- [ ] 6. Deepen the Form kernel evaluation path
+  - [ ] 6.1 Add `form_sheet(cage, creases, symmetry) -> Result<Body>` in kernel
+    - Add/deepen in `crates/kernel/src/formbody.rs` / `freeform.rs` building on
+      `crates/kernel/src/tspline.rs` (`tspline_sheet`); mirror edits across the symmetry plane and
+      sharpen creased edges before the smooth sheet; guarded
+    - _Requirements: 4.2, 4.3 · design §1B (cage model, symmetry & crease)_
+  - [ ] 6.2 Replay edits deterministically on `Model::refresh`
+    - In `crates/doc` eval path, replay `pulls` then `edits` in order so the form stays editable
+      from the timeline and re-evaluation is deterministic
+    - _Requirements: 4.2 · design §1B (re-evaluability)_
+  - [ ]* 6.3 Property tests for cage evaluation and symmetry
+    - **Property 8: Form-create appends one evaluable feature for either start shape** — **Validates: 4.1**
+    - **Property 9: Cage edits re-evaluate deterministically and change the body** — **Validates: 4.2**
+    - **Property 10: Symmetric sculpting yields a symmetric body** — **Validates: 4.3** (each ≥100 inputs)
+
+- [ ] 7. Add the Form command set (sibling ids; keep `form.create`/`form.pull`)
+  - [ ] 7.1 Enforce cage caps before any kernel call
+    - In `crates/engine/src/cmd/form.rs`, add `MAX_CAGE_VERTS=20_000`, `MAX_SUBDIV_LEVEL=6`,
+      `MAX_EDITS=10_000`; validate finite + bounded before allocating, returning an error past a cap
+    - _Requirements: 4.5 · design §1B (hostile-input caps)_
+  - [ ] 7.2 Register `form.edit_point`, `form.insert_edge`, `form.subdivide`, `form.bridge`
+    - Each appends a `FormEdit` and re-evaluates via `form_sheet`; new dotted ids, code-drawn icons
+    - _Requirements: 4.2 · design §1B (new commands)_
+  - [ ] 7.3 Register `form.crease`, `form.symmetry`, `form.finish`
+    - `form.crease`/`form.symmetry` set `creases`/`symmetry`; `form.finish` converts the cage to a
+      solid or surface body usable downstream; unsupported ops return `"not supported yet: …"`
+    - _Requirements: 4.3, 4.4, 4.6 · design §1B_
+  - [ ]* 7.4 Property + fuzz for finish and hostile cage input
+    - **Property 11: A finished form is a usable solid or surface** — **Validates: 4.4**
+    - **Property 1 / Property 2** over all `form.*` commands — **Validates: 4.5, 4.6** (≥100 inputs each)
+
+- [ ] 8. Checkpoint — form depth green
+  - Ensure all tests pass; capture a control-channel screenshot sequence of create → edit_point →
+    symmetry → finish; ask the user if questions arise.
+
+### Stage 1C — Mesh reverse-engineering (Requirement 5 · design §1C)
+
+- [ ] 9. Deepen mesh section and face groups
+  - [ ] 9.1 Deepen `mesh.section` to multiple ordered closed loops
+    - In `crates/engine/src/cmd/mesh.rs` + `crates/kernel/src/meshbody.rs`, build multiple
+      de-duplicated ordered closed loops (not one chain); a non-intersecting plane returns an error;
+      cap loop/triangle counts
+    - _Requirements: 5.2 · design §1C.1_
+  - [ ] 9.2 Deepen `mesh.face_groups` to dihedral-angle region growing (partition)
+    - Group by region growing on dihedral angle so groups partition all triangles; keep `.noundo()`
+    - _Requirements: 5.3 · design §1C.2_
+  - [ ]* 9.3 Property tests for section and face groups
+    - **Property 12: Mesh-section points lie on the cut plane** — **Validates: 5.2**
+    - **Property 13: Face groups partition the mesh** — **Validates: 5.3** (each ≥100 inputs)
+
+- [ ] 10. Deepen mesh convert and modify ops with caps
+  - [ ] 10.1 Deepen prismatic `mesh.convert` with cylindrical-region recognition
+    - In `crates/engine/src/cmd/mesh.rs` + `crates/kernel/src/mesh_convert.rs`, recognize
+      cylindrical regions via plane/surface-kind fitting (reuse `crates/kernel/src/surface_kind.rs`);
+      faceted stays `face_count == triangle_count`; guarded
+    - _Requirements: 5.4 · design §1C.3_
+  - [ ] 10.2 Add `mesh.remesh` command + `FeatureKind::MeshRemesh`
+    - Add `mesh_remesh(mesh, target) -> Result<Body>` in `crates/kernel/src/meshbody.rs`; add
+      `FeatureKind::MeshRemesh` (`#[serde(default)]` fields) in `crates/doc/src/document.rs`; register
+      `mesh.remesh` with `MAX_MESH_TRIS` cap in `crates/engine/src/cmd/mesh.rs`
+    - _Requirements: 5.5 · design §1C.4_
+  - [ ]* 10.3 Property + oracle for convert/reduce/cut
+    - **Property 14: Mesh conversion face counts are correct per mode** — **Validates: 5.4**
+    - **Property 15: Reduction does not increase triangle count and cut keeps one side** — **Validates: 5.5**
+    - Oracle: faceted-conversion face count, section points on plane — **Validates: 5.2, 5.4** (≥100 inputs)
+
+- [ ] 11. Add `mesh.deviation` compare command
+  - [ ] 11.1 Add `mesh_deviation(brep, mesh) -> Result<Deviation>` kernel helper
+    - Add to `crates/kernel/src/meshbody.rs` (or measure-adjacent module); add `Deviation { max, mean }`
+      result type in `crates/doc`/`crates/kernel`; guarded; cap triangle counts
+    - _Requirements: 5.6 · design §1C.5, Kernel interfaces_
+  - [ ] 11.2 Register read-only `mesh.deviation` command
+    - Register in `crates/engine/src/cmd/mesh.rs` with `.noundo()`; report max/mean distance as a
+      number; new dotted id, code-drawn icon
+    - _Requirements: 5.6 · design §1C.5_
+  - [ ]* 11.3 Property + fuzz for deviation and all mesh commands
+    - **Property 16: Deviation is finite, non-negative, and ~0 for an exact rebuild** — **Validates: 5.6**
+    - **Property 1** over all `mesh.*` commands — **Validates: 5.7** (≥100 inputs each)
+
+- [ ] 12. Checkpoint — mesh RE green
+  - Ensure all tests pass; capture a control-channel screenshot of import → section → convert →
+    deviation report; ask the user if questions arise.
+
+### Stage 1D — UI-shell parity (Requirement 2 · design §1D)
+
+- [ ] 13. Pure, testable shell math (render/engine) — keeps ui-egui thin & swappable
+  - [ ] 13.1 Quick-toolbox + context-menu pure builders
+    - Add a pure registry search over `command_specs()` + query, and
+      `context_menu(selection, &registry) -> Vec<CommandInfo>` returning only commands whose
+      `enabled(session)` holds, plus a synthetic Repeat-last entry; place in `crates/engine`
+    - _Requirements: 2.1, 2.2, 2.7 · design §1D (quick-toolbox, context menu)_
+  - [ ] 13.2 View-orientation camera math (Z-up preserved)
+    - Add a `crates/render` function mapping each of the 26 standard/diagonal directions to a camera
+      orientation with world Z up, consistent with existing axis navigation
+    - _Requirements: 2.3 · design §1D (view orientation)_
+  - [ ] 13.3 Selection modes/filters pure picking
+    - Add `SelectMode`, `SelectFilter`, and `pick(ray, candidates, mode, filter) -> Option<Pickable>`
+      to `crates/render` (deterministic, occluded resolved by sorted depth, returns only permitted kinds)
+    - _Requirements: 2.4, 2.5 · design §1D (selection modes & filters)_
+  - [ ] 13.4 Visual-style render parameter (no geometry change)
+    - Add `VisualStyle { Shaded, ShadedEdges, HiddenEdges, Wireframe }` to `crates/render` driving
+      the rasterizer/viewport; it is a view setting — not undoable, not serialized into the design
+    - _Requirements: 2.6 · design §1D (visual styles)_
+  - [ ]* 13.5 Property tests for shell math
+    - **Property 17: Visual-style switches never change geometry or timeline** — **Validates: 2.6**
+    - **Property 18: View orientation preserves Z-up** — **Validates: 2.3**
+    - **Property 19: Selection respects mode and filter, deterministically** — **Validates: 2.4, 2.5**
+    - **Property 20: Quick-toolbox and context-menu entries resolve to valid commands** — **Validates: 2.1, 2.2** (each ≥100 inputs)
+
+- [ ] 14. Register shell commands and wire thin egui widgets
+  - [ ] 14.1 Register `ui.*` / `view.*` shell commands
+    - In `crates/engine/src/cmd/ui.rs` + `view.rs`, register `ui.quick_toolbox`, `ui.context_menu`,
+      `ui.repeat_last`, `ui.select_mode`, `ui.select_filter`, `view.orient`, `view.visual_style`;
+      engine holds current mode/filter/style as session state; invalid/stale targets return an `Err`
+      (never panic), consuming `ux-ui-shell-improvements` widgets where that spec already provides them
+    - _Requirements: 2.1–2.6, 2.7, 2.8 · design §1D_
+  - [ ] 14.2 Wire thin egui widgets reading engine state
+    - In `crates/ui-egui`, add S-toolbox, context/marking menu, ViewCube, selection filter, and
+      visual-style switch that read engine state and act via `app.run(id, params)` / `app.start(id)`;
+      colours from `theme::Tokens`; no behaviour bypasses `CommandSpec`
+    - _Requirements: 2.7 · design §1D (thinness)_
+  - [ ]* 14.3 Fuzz invalid shell targets + control-channel screenshot evidence
+    - **Property 1** over `ui.*`/`view.*` with vanished/invalid targets — **Validates: 2.8**
+    - Capture `ui.start` + `ui.click` + `ui.screenshot` evidence for toolbox, ViewCube orient, and
+      visual-style switch (before/after)
+
+- [ ] 15. Stage 1 integration + registry/docs wiring
+  - [ ] 15.1 Register all new commands and regenerate feature docs
+    - Ensure every new id is wired in `crates/engine/src/cmd/mod.rs`; run `cargo xtask features` to
+      regenerate `docs/features.md`; update `ROADMAP.md` for the landed Stage-1 tasks
+    - _Requirements: 1.6 · design (Document & format, Roadmap)_
+  - [ ]* 15.2 Standard-workflow validation recipe (mesh RE end-to-end)
+    - Script a control-channel/CLI recipe: import mesh → `mesh.section` → clean sketch →
+      surface/solid rebuild → `mesh.deviation`; assert every step runs through a `CommandSpec`, no
+      panic, unsupported steps return `"not supported yet: …"`
+    - _Requirements: 13.2, 13.6 · design (standard-workflow validation)_
+
+- [ ] 16. Stage 1 alpha checkpoint
+  - Ensure `cargo xtask ci` is green (fmt, clippy -D warnings, tests, assets, layers, wasm); confirm
+    all seed ids remain registered and the design corpus round-trips; capture a short control-channel
+    recording of the four sub-areas; ask the user if questions arise.
+
+### Stage 2 — 2D Drawings depth (Requirement 6 · design Stage 2) · later-phase
+
+- [ ]* 17. Deepen `DrawingSheet` with associative views and annotations
+  - [ ]* 17.1 Associative projected/section/detail views + hidden-line/section extraction
+    - Deepen `crates/doc` `DrawingSheet`/`DrawingView`; add view-plane projection + hidden-line/section
+      curve extraction in `crates/geom`/`crates/kernel` (truck only in kernel); deepen `crates/engine/src/cmd/drawing.rs`
+    - _Requirements: 6.1, 6.2, 6.7 · design Stage 2_
+  - [ ]* 17.2 Associative dimensions/center-marks/annotations, title block, BOM + balloons
+    - Populate parts list from component structure; SolidCraft-original templates/symbols only
+    - _Requirements: 6.3, 6.4, 6.5 · design Stage 2_
+  - [ ]* 17.3 DXF/PDF export from public specs (SVG seeded)
+    - Add exporters in `crates/io`; keep `drawing.export_svg`
+    - _Requirements: 6.6 · design Stage 2_
+  - [ ]* 17.4 Property + evidence
+    - **Property 22 (later-phase): Drawing views and annotations are associative** — **Validates: 6.1–6.4**
+    - **Property 23 (later-phase): exports round-trip through public formats** — **Validates: 6.6**
+
+### Stage 3 — Manufacture / CAM depth (Requirement 7 · design Stage 3) · later-phase
+
+- [ ]* 18. Promote `CamJob` into setups with 2D/3D toolpaths and G-code
+  - [ ]* 18.1 Setups (WCS + stock + targets) and 2D ops (contour/pocket/drill)
+    - Deepen `CamJob` in `crates/doc`; SolidCraft-authored 2D offset math in `crates/geom`/`crates/kernel`;
+      extend `crates/engine/src/cmd/cam.rs` (keep `cam.contour`)
+    - _Requirements: 7.1, 7.2 · design Stage 3_
+  - [ ]* 18.2 3D surface toolpaths, hole recognition, G-code post, simulation report
+    - Scallop/stepover math (own); cylindrical-face detection reusing kernel surface-kind analysis;
+      configurable SolidCraft-authored G-code post in `crates/io`/`crates/engine`; removed/remaining stock report
+    - _Requirements: 7.3, 7.4, 7.5, 7.6, 7.7 · design Stage 3_
+  - [ ]* 18.3 Property + round-trip
+    - **Property 23 (later-phase): toolpaths and exports round-trip** — **Validates: 7.2, 7.5**
+
+### Stage 4 — Simulation (FEA) & Generative Design (Requirements 8, 9 · design Stage 4) · later-phase
+
+- [ ]* 19. Simulation and generative study entities with non-GPL solver seam
+  - [ ]* 19.1 `sim` study entity + own/openly-licensed non-GPL solver, method recorded
+    - Add study entity in `crates/doc` (target body, material, constraints, loads); result field via
+      SolidCraft-own or non-GPL dependency; colour-map overlay in `crates/render`; min/max reported;
+      under-constrained/over-cap refuses misleading results
+    - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5 · design Stage 4_
+  - [ ]* 19.2 `generative` study entity + candidate generation and promotion
+    - Preserve/obstacle/loads/objective in `crates/doc`; own/non-GPL method, method recorded; promote
+      candidate into editable body
+    - _Requirements: 9.1, 9.2, 9.3, 9.4 · design Stage 4_
+  - [ ]* 19.3 Property: geometry unchanged, checks sound
+    - **Property 24 (later-phase)** — **Validates: 8.3, 9.2**
+
+### Stage 5 — Render (PBR) & Animation (Requirements 10, 11 · design Stage 5) · later-phase
+
+- [ ]* 20. PBR render path and animation storyboard
+  - [ ]* 20.1 PBR appearances (reuse appearance targeting) + image output
+    - PBR path in `crates/render`; reuse `crates/doc/src/appearance.rs`; image file via `crates/io`;
+      SolidCraft-original/openly-licensed materials with `ATTRIBUTION.md` rows; missing asset falls back
+    - _Requirements: 10.1, 10.2, 10.3, 10.4 · design Stage 5_
+  - [ ]* 20.2 Storyboard reusing motion-study/exploded-view + video/image-sequence export
+    - Keyed poses + auto-explode in `crates/doc` (`motion`); publish via `crates/io`; never alter real placements
+    - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5 · design Stage 5_
+  - [ ]* 20.3 Property: geometry/placements unchanged, interpolation reproduces keyed poses
+    - **Property 24 (later-phase)** — **Validates: 10.3, 11.2, 11.3**
+
+### Stage 6 — Electronics / PCB (Requirement 12 · design Stage 6) · later-phase
+
+- [ ]* 21. Schematic/PCB entities, ERC/DRC, push-to-3D
+  - [ ]* 21.1 Schematic (components+nets) and PCB layout entities; ERC/DRC read-only checks
+    - Add entities in `crates/doc`; ECAD import/export via public-spec formats in `crates/io`;
+      openly-licensed/SolidCraft-original part data; checks report without modifying the design
+    - _Requirements: 12.1, 12.2, 12.3, 12.5, 12.6 · design Stage 6_
+  - [ ]* 21.2 Push board to 3D as a mechanical component
+    - Produce a 3D PCB body placeable in the assembly
+    - _Requirements: 12.4 · design Stage 6_
+  - [ ]* 21.3 Property: geometry unchanged, DRC/ERC sound
+    - **Property 24 (later-phase)** — **Validates: 12.2, 12.3**
+
+- [ ]* 22. Remaining standard-workflow validation (Requirement 13) · later-phase
+  - [ ]* 22.1 Parametric-mechanical-part, design-for-manufacturing, assembly-and-motion recipes
+    - Scripted control-channel/CLI recipes running only registered commands end-to-end; timeline edit
+      re-evaluates dependents; motion respects limits/contact; interference reported; evidence captured
+    - _Requirements: 13.1, 13.3, 13.4, 13.5, 13.6 · design (standard-workflow validation)_
+
+---
+
+## Notes
+
+- Tasks with no `*` are **required for the Stage 1 alpha**; `*` sub-tasks are **optional** (extra
+  tests, or later-phase Stages 2–6 scaffolding). Running "required tasks" ships the Stage 1 alpha;
+  running "required and optional" also lands the full test matrix and begins Stages 2–6.
+- Because the never-crash rule outranks feature work, the hostile-param fuzz and oracle sub-tasks
+  are strongly recommended before any Stage 1 commit even though they are formally optional.
+- Every task is additive: existing command ids (`surface.*`, `form.*`, `mesh.*`, `drawing.*`,
+  `cam.contour`) and saved `solidcraft-container/1` designs keep working; new fields use
+  `#[serde(default)]`, new capabilities use sibling ids.
+- All kernel work routes through `solidcraft_kernel::guard`; only `crates/kernel` touches `truck`;
+  shell math lives in `crates/render`/`crates/engine` so `crates/ui-egui` stays thin and swappable;
+  everything below apps keeps building for wasm (`cargo xtask wasm`).
+- Expected oracle values come only from analytic math or the FreeCAD oracle run as a separate
+  program — never from a commercial CAD product.
+- Icons for new commands are drawn in code (`crates/ui-egui/src/icons.rs`); any file asset needs an
+  `ATTRIBUTION.md` row (`cargo xtask assets`).
+- `cargo xtask ci` must be green before every commit; `cargo xtask features` + `ROADMAP.md` are
+  updated whenever commands are added.
+
+## Task Dependency Graph
+
+```json
+{
+  "waves": [
+    { "id": 0, "tasks": ["1.1", "5.1", "9.2", "13.2", "13.3", "13.4"] },
+    { "id": 1, "tasks": ["1.2", "2.3", "2.4", "3.1", "6.1", "7.1", "9.1", "10.1", "11.1"] },
+    { "id": 2, "tasks": ["1.3", "1.4", "2.1", "2.2", "3.2", "5.2", "6.2", "7.2", "10.2", "11.2", "13.1"] },
+    { "id": 3, "tasks": ["2.5", "2.6", "3.3", "6.3", "7.3", "9.3", "10.3", "11.3", "13.5", "14.1"] },
+    { "id": 4, "tasks": ["7.4", "14.2", "15.1"] },
+    { "id": 5, "tasks": ["14.3", "15.2", "17.1", "18.1", "19.1", "20.1", "21.1"] },
+    { "id": 6, "tasks": ["17.2", "17.3", "18.2", "19.2", "20.2", "21.2"] },
+    { "id": 7, "tasks": ["17.4", "18.3", "19.3", "20.3", "21.3", "22.1"] }
+  ]
+}
+```
