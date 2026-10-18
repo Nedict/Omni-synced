@@ -19,7 +19,7 @@ pub fn extract(s: &Session) -> Result<ProductScene> {
             return Err(EngineError::Other("render scene exceeds 16384 visible bodies".into()));
         }
         let mesh = body.mesh();
-        scene.bounds = scene.bounds.union(&mesh.bounds());
+        scene.bounds = scene.bounds.union(&body.framing_bounds());
         let to8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
         let color = s.doc.body_color(body).map(|c| c.map(to8)).unwrap_or([176, 186, 198]);
         let faces = s

@@ -146,7 +146,8 @@ mod web {
                     path
                 };
                 match intent {
-                    Intent::Open => self.app.open_path(&path),
+                    // STEP imports must use the staged loader so the browser can keep drawing.
+                    Intent::Open => self.app.open_path_async(&path),
                     Intent::Insert => self.app.drop_path(&path),
                 }
                 self.files.panel.set(false);
@@ -286,11 +287,11 @@ mod web {
             let path = format!("{}{name}", files::OPFS);
             match what {
                 "open" => {
-                    self.app.open_path(&path);
+                    self.app.open_path_async(&path);
                     self.files.panel.set(false);
                 }
                 "insert" => {
-                    self.app.insert_path(&path);
+                    self.app.insert_path_async(&path);
                     self.files.panel.set(false);
                 }
                 "download" => match vfs::read(&path, solidcraft_engine::io::MAX_DESIGN_BYTES) {

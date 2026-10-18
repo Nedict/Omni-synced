@@ -113,7 +113,7 @@ pub fn visible_bounds(s: &Session, sketches: bool) -> Aabb3 {
     let st = s.world_state();
     let mut b = Aabb3::EMPTY;
     for body in st.bodies.iter().filter(|x| s.body_visible(&x.name)) {
-        b = b.union(&body.mesh().bounds());
+        b = b.union(&body.framing_bounds());
     }
     for ss in st.sketches.iter().filter(|x| sketch_drawn(s, x.feature, sketches)) {
         // All four corners: on a tilted plane two opposite ones don't span the rectangle.

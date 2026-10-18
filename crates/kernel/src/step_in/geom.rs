@@ -112,6 +112,32 @@ fn direction(cx: &Ctx, id: u64) -> R<mt::Vector3> {
     if m > 1e-12 && m.is_finite() { Ok(v / m) } else { Err(format!("#{id}: zero direction")) }
 }
 
+/// CARTESIAN_TRANSFORMATION_OPERATOR_3D, including its orientation and uniform scale.
+pub(crate) fn transformation_operator(cx: &Ctx, id: u64) -> R<mt::Matrix4> {
+    let e = entity(cx, id)?;
+    if e.name() != "CARTESIAN_TRANSFORMATION_OPERATOR_3D" {
+        return Err(format!("#{id}: expected CARTESIAN_TRANSFORMATION_OPERATOR_3D, found {}", e.name()));
+    }
+    let p = e.params();
+    let axis = |index: usize, default: mt::Vector3| -> R<mt::Vector3> {
+        match p.get(index).and_then(Param::as_ref_id) {
+            Some(id) => direction(cx, id),
+            None => Ok(default),
+        }
+    };
+    let x = axis(1, mt::Vector3::unit_x())?;
+    let y = axis(2, mt::Vector3::unit_y())?;
+    // The inherited operator fields come first: local_origin is parameter 3 and
+    // scale is parameter 4. The 3D subtype's optional axis3 follows at parameter 5.
+    let z = axis(5, x.cross(y))?;
+    let origin = point(cx, p.get(3).and_then(Param::as_ref_id).ok_or("transformation without origin")?)?;
+    let scale = p.get(4).and_then(Param::as_f64).unwrap_or(1.0);
+    if !scale.is_finite() || scale <= 0.0 || scale > 1e6 {
+        return Err(format!("#{id}: transformation scale {scale} is out of range"));
+    }
+    Ok(mt::Matrix4::from_cols((x * scale).extend(0.0), (y * scale).extend(0.0), (z * scale).extend(0.0), origin.to_homogeneous()))
+}
+
 fn any_perpendicular(z: mt::Vector3) -> mt::Vector3 {
     let a = if z.x.abs() < 0.9 { mt::Vector3::unit_x() } else { mt::Vector3::unit_y() };
     let x = a - z * a.dot(z);
