@@ -585,10 +585,11 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
                 continue;
             }
             // The set's silhouette is traced on its first face's surface, so a face joins only
-            // when that surface passes through its own points within the trimming tolerance
-            // (recognition groups surfaces more loosely, 1e-9 of their position).
+            // when that surface passes through its own points to 1e-8 of the face's size, plus
+            // rounding at its coordinates (recognition groups surfaces more loosely, 1e-9 of
+            // their position).
             let first = f.group.iter().copied().filter(|j| def.faces.get(*j).is_some_and(supported)).min().unwrap_or(fi);
-            let tol = 2. * f.trim.chord_error + 1e-9 * (1. + (f.hi - f.lo).len());
+            let tol = 1e-8 * (1. + (f.hi - f.lo).len()) + 1e-14 * f.lo.len().max(f.hi.len());
             let fits = def.faces.get(first).is_some_and(|l| {
                 f.trim
                     .chords

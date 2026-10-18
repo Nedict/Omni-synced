@@ -179,9 +179,11 @@ pub(crate) fn as_circle(c: &C3, tol: f64) -> Option<(Vec3, Vec3, f64)> {
             let centre = a + (v * u.len2() - u * v.len2()).cross(n) * (1. / (2. * n2));
             let normal = n.normalized()?;
             let r = centre.dist(a);
-            let ok = (0..=64).all(|i| {
-                let p = at(i as f64 / 64.);
-                ((p.dist(centre) - r).abs() <= tol * r) && ((p - centre).dot(normal).abs() <= tol * r)
+            // Checked on every knot span: uneven knots can squeeze a span between uniform samples.
+            let on = |p: Vec3| (p.dist(centre) - r).abs() <= tol * r && (p - centre).dot(normal).abs() <= tol * r;
+            let ok = c.breaks().windows(2).all(|w| {
+                let (Some(&s0), Some(&s1)) = (w.first(), w.get(1)) else { return true };
+                (0..=16).all(|i| on(c.at(s0 + (s1 - s0) * i as f64 / 16.)))
             });
             ok.then_some((centre, normal, r))
         }

@@ -554,16 +554,14 @@ fn a_torus_seen_obliquely_spans_its_outer_diameter() {
     }
 }
 
-#[test]
-fn an_unevenly_parameterised_circle_is_drawn_whole() {
-    // A disc bounded by an exact rational circle whose first three quarters are squeezed into
-    // the parameters 0 to 0.009: the conic arcs must still turn the full 360 degrees.
-    let r = 10.;
+/// A disc bounded by a rational quadratic circle of radius `r` (control points `pts` with
+/// weights 1 and 1/sqrt 2 alternating) whose first three quarters are squeezed into the
+/// parameters 0 to 0.009.
+fn squeezed_disc(r: f64, pts: [[f64; 2]; 9]) -> Brep {
     let s = std::f64::consts::FRAC_1_SQRT_2;
-    let pts = [[r, 0.], [r, r], [0., r], [-r, r], [-r, 0.], [-r, -r], [0., -r], [r, -r], [r, 0.]];
     let homogeneous = pts.iter().enumerate().map(|(i, p)| if i % 2 == 1 { [p[0] * s, p[1] * s, 0., s] } else { [p[0], p[1], 0., 1.] }).collect();
     let knots = vec![0., 0., 0., 0.003, 0.003, 0.006, 0.006, 0.009, 0.009, 1., 1., 1.];
-    let disc = Brep {
+    Brep {
         version: crate::brep::VERSION,
         shells: vec![Shell {
             vertices: vec![[r, 0., 0.]],
@@ -574,8 +572,17 @@ fn an_unevenly_parameterised_circle_is_drawn_whole() {
                 forward: true,
             }],
         }],
-    };
-    let def = prepare(&disc, &Options::default()).unwrap();
+    }
+}
+
+fn circle_points(r: f64) -> [[f64; 2]; 9] {
+    [[r, 0.], [r, r], [0., r], [-r, r], [-r, 0.], [-r, -r], [0., -r], [r, -r], [r, 0.]]
+}
+
+#[test]
+fn an_unevenly_parameterised_circle_is_drawn_whole() {
+    // The conic arcs must still turn the full 360 degrees.
+    let def = prepare(&squeezed_disc(10., circle_points(10.)), &Options::default()).unwrap();
     let view = View::new(Vec3::new(0.2, 0.1, -1.), Vec3::new(0., 1., 0.)).unwrap();
     let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
     let mut sweep = 0.;
@@ -587,6 +594,20 @@ fn an_unevenly_parameterised_circle_is_drawn_whole() {
         }
     }
     assert!((sweep - std::f64::consts::TAU).abs() < 1e-9, "the arcs turn {sweep} rad");
+}
+
+#[test]
+fn a_spline_off_its_circle_in_a_narrow_knot_span_is_not_taken_for_one() {
+    // Moving one control point of the squeezed circle bends the span 0.003 to 0.006 off the
+    // circle by about 0.3 mm: the edge is drawn as sampled chords, not exact arcs.
+    let mut pts = circle_points(10.);
+    if let Some(p) = pts.get_mut(3) {
+        *p = [-11., 10.];
+    }
+    let def = prepare(&squeezed_disc(10., pts), &Options::default()).unwrap();
+    let view = View::new(Vec3::new(0.2, 0.1, -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    assert!(pieces(&d).all(|p| matches!(p.accuracy, CurveAccuracy::Sampled { .. })), "{d:?}");
 }
 
 /// A cone frustum about a vertical axis through `o`: radius `r0` at the frame's origin and
@@ -611,14 +632,17 @@ fn frustum(o: [f64; 3], r0: f64, k: f64, h: [f64; 2]) -> Shell {
 
 #[test]
 fn nearly_coaxial_cones_far_out_keep_their_own_silhouettes() {
-    // Two frusta of slope 0.25 whose axes are 0.005 mm apart, 1e7 mm out: recognition may take
-    // them for one cone, but each is drawn with its own outline.
-    let x = 1e7;
-    let body = Brep {
-        version: crate::brep::VERSION,
-        shells: vec![frustum([x, 0., 0.], 5., 0.25, [0., 10.]), frustum([x + 0.005, 0., 0.], 5., 0.25, [20., 30.])],
-    };
-    let def = prepare(&body, &Options::default()).unwrap();
+    // Two frusta of slope 0.25 whose axes are slightly apart, far out: recognition may take
+    // them for one cone, but each is drawn with its own outline. Small ones 0.005 mm apart
+    // 1e7 mm out, and 1 km ones 0.4 mm apart 1e9 mm out.
+    for (x, r, gap) in [(1e7, 5., 0.005), (1e9, 1e6, 0.4)] {
+        let shells = vec![frustum([x, 0., 0.], r, 0.25, [0., 10.]), frustum([x + gap, 0., 0.], r, 0.25, [20., 30.])];
+        check_two_cone_outlines(&Brep { version: crate::brep::VERSION, shells });
+    }
+}
+
+fn check_two_cone_outlines(body: &Brep) {
+    let def = prepare(body, &Options::default()).unwrap();
     let view = View::new(Vec3::new(0., 1., 0.), Vec3::new(0., 0., 1.)).unwrap();
     let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
     for (z0, z1) in [(0., 10.), (20., 30.)] {
