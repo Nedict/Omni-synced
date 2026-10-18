@@ -628,25 +628,67 @@ fn a_short_piece_of_a_fast_arc_turns_its_own_way() {
     assert!((sweep - 5.8).abs() < 1e-9, "the pieces turn {sweep} rad in all, want 5.8");
 }
 
+/// The homogeneous control points of an exact quartic arc of radius 10 about the origin from
+/// angle `a0` to `a1` (z^4 / |z|^4 with z running straight between the quarter angles).
+fn quartic_arc(a0: f64, a1: f64) -> Vec<[f64; 4]> {
+    let (c0, c1) = ((a0 / 4.).cos(), (a0 / 4.).sin());
+    let (d0, d1) = ((a1 / 4.).cos(), (a1 / 4.).sin());
+    let mul = |a: (f64, f64), b: (f64, f64)| (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0);
+    let pw = |c: (f64, f64), k: usize| (0..k).fold((1., 0.), |acc, _| mul(acc, c));
+    let q = [1., c0 * d0 + c1 * d1, 1.];
+    let w = bernstein_product(&q, &q);
+    (0..=4)
+        .map(|k| {
+            let z = mul(pw((c0, c1), 4 - k), pw((d0, d1), k));
+            [10. * z.0, 10. * z.1, 0., w[k]]
+        })
+        .collect()
+}
+
+#[test]
+fn an_arc_whose_whole_domain_is_8_roundings_wide_is_not_guessed() {
+    // An exact arc of radius 10 turning +3.75 rad over the parameters 0.25 to 0.25 + 2^-51
+    // (8 roundings), closed by a chord: there is no room to tell its direction, so it is drawn
+    // as chords rather than as the short arc the other way round, through (0, -10).
+    let k = 0.25 + 2f64.powi(-51);
+    let end = [10. * 3.75f64.cos(), 10. * 3.75f64.sin(), 0.];
+    let shape = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![[10., 0., 0.], end],
+            edges: vec![
+                Edge {
+                    vertices: [0, 1],
+                    curve: Curve::RationalSpline { knots: [vec![0.25; 5], vec![k; 5]].concat(), homogeneous: quartic_arc(0., 3.75) },
+                },
+                Edge { vertices: [1, 0], curve: Curve::Line { start: end, end: [10., 0., 0.] } },
+            ],
+            faces: vec![Face {
+                loops: vec![vec![uses(0, true), uses(1, true)]],
+                surface: Surface::Plane { origin: [0.; 3], u_axis: [1., 0., 0.], v_axis: [0., 1., 0.] },
+                forward: true,
+            }],
+        }],
+    };
+    let def = prepare(&shape, &Options::default()).unwrap();
+    let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    for p in &edge_line(&d, 0, 0).pieces {
+        assert!(matches!(p.accuracy, CurveAccuracy::Sampled { .. }), "{p:?}");
+        for g in &p.geometry {
+            for s in [0., 0.25, 0.5, 0.75, 1.] {
+                assert!(g.point_at(s).dist(Vec2::new(0., -10.)) > 1., "{g:?} passes the wrong side");
+            }
+        }
+    }
+}
+
 #[test]
 fn a_piece_in_a_knot_span_of_1e_11_turns_its_own_way() {
     // An exact arc of radius 10 in three quartic spans: 0 to 0.1 rad, then 0.1 to 3.85 rad over
     // the parameters 0.25 to 0.25 + 1e-11, then on to 4.5 rad. Two blocks in front hide the
     // outer spans, so the middle one is a visible piece of its own turning 3.75 rad.
-    let span = |a0: f64, a1: f64| -> Vec<[f64; 4]> {
-        let (c0, c1) = ((a0 / 4.).cos(), (a0 / 4.).sin());
-        let (d0, d1) = ((a1 / 4.).cos(), (a1 / 4.).sin());
-        let mul = |a: (f64, f64), b: (f64, f64)| (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0);
-        let pw = |c: (f64, f64), k: usize| (0..k).fold((1., 0.), |acc, _| mul(acc, c));
-        let q = [1., c0 * d0 + c1 * d1, 1.];
-        let w = bernstein_product(&q, &q);
-        (0..=4)
-            .map(|k| {
-                let z = mul(pw((c0, c1), 4 - k), pw((d0, d1), k));
-                [10. * z.0, 10. * z.1, 0., w[k]]
-            })
-            .collect()
-    };
+    let span = quartic_arc;
     let (s1, s2, s3) = (span(0., 0.1), span(0.1, 3.85), span(3.85, 4.5));
     let homogeneous: Vec<[f64; 4]> = s1.iter().chain(s2.iter().skip(1)).chain(s3.iter().skip(1)).copied().collect();
     let k = 0.25 + 1e-11;

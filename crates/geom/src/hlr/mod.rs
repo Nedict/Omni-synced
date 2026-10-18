@@ -962,7 +962,7 @@ fn piece_geometry(t: &Track, piece: &Piece, p: &Placement, view: &View) -> (Vec<
                 // Measured inside each knot span the piece crosses, over a step small next to that
                 // part (a span can be a tiny part of the range and still turn far), yet a few
                 // roundings of the parameter.
-                let (mut fwd, mut back) = (false, false);
+                let (mut fwd, mut back, mut unknown) = (false, false, false);
                 for w in c.breaks().windows(2) {
                     let (Some(&b0), Some(&b1)) = (w.first(), w.get(1)) else { continue };
                     let (lo, hi) = (b0.max(t0), b1.min(t1));
@@ -970,6 +970,12 @@ fn piece_geometry(t: &Track, piece: &Piece, p: &Placement, view: &View) -> (Vec<
                         continue;
                     }
                     let h = (1e-7 * (hi - lo)).max(8. * f64::EPSILON * lo.abs().max(hi.abs()));
+                    if 8. * h > hi - lo {
+                        // Too few representable parameters in this part to measure in: unknown,
+                        // unless it barely turns.
+                        unknown |= wrap(angle(hi) - angle(lo)).abs() > 1e-9;
+                        continue;
+                    }
                     for x in [lo, 0.5 * (lo + hi), hi] {
                         let sp = wrap(angle((x + h).min(hi)) - angle((x - h).max(lo)));
                         fwd |= sp > 1e-12;
@@ -978,8 +984,9 @@ fn piece_geometry(t: &Track, piece: &Piece, p: &Placement, view: &View) -> (Vec<
                 }
                 let a0 = angle(t0);
                 let ends = angle(t1) - a0;
-                // Turning both ways, or no measurable way while its ends differ: not guessed.
-                if (fwd && back) || (!fwd && !back && wrap(ends).abs() > 1e-9) {
+                // Turning both ways, or a part that turns but cannot be measured, or no
+                // measurable way while its ends differ: not guessed.
+                if (fwd && back) || unknown || (!fwd && !back && wrap(ends).abs() > 1e-9) {
                     return chords();
                 }
                 let dir = if fwd || (!back && wrap(ends) >= 0.) { 1. } else { -1. };
