@@ -286,9 +286,9 @@ fn under_surface(
     inside: bool,
     within: Option<&solidcraft_geom::Aabb3>,
 ) -> bool {
-    m.triangles.iter().filter_map(|t| m.tri(t)).any(|Triangle([p, q, r])| {
-        let Some(n) = (q - p).cross(r - p).normalized() else { return false };
-        let c = (p + q + r) * (1.0 / 3.0) - n * depth;
+    m.triangles.iter().filter_map(|t| m.tri(t)).any(|tri| {
+        let Some(n) = tri.normal() else { return false };
+        let c = tri.centroid() - n * depth;
         let near = within.is_none_or(|b| c.x >= b.min.x && c.x <= b.max.x && c.y >= b.min.y && c.y <= b.max.y && c.z >= b.min.z && c.z <= b.max.z);
         // A wall thinner than `depth` puts the point outside its own body: no evidence.
         near && other.contains(c) == inside && own.contains(c)
@@ -1455,8 +1455,8 @@ fn sliver_faces(b: &Body, size: f64) -> usize {
     // Per face: its area, and how many of its triangles use each mesh edge (its boundary once).
     let mut area: HashMap<u32, f64> = HashMap::new();
     let mut sides: HashMap<(u32, (i64, i64, i64), (i64, i64, i64)), (u32, f64)> = HashMap::new();
-    for (Triangle([a, b, c]), f) in m.face_tris() {
-        *area.entry(f).or_default() += (b - a).cross(c - a).len() * 0.5;
+    for (tri @ Triangle([a, b, c]), f) in m.face_tris() {
+        *area.entry(f).or_default() += tri.area();
         for (p, r) in [(a, b), (b, c), (c, a)] {
             let (kp, kr) = (key(p), key(r));
             let k = if kp <= kr { (f, kp, kr) } else { (f, kr, kp) };

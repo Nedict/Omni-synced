@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use solidcraft_doc::joints;
 use solidcraft_doc::{IDENTITY, Mat, apply_point, mat_mul};
-use solidcraft_geom::{Aabb3, Mesh, Triangle, Vec3};
+use solidcraft_geom::{Aabb3, Mesh, Vec3};
 
 use crate::params::bad;
 use crate::{Result, Session};
@@ -96,10 +96,10 @@ impl ContactGeometry {
                     let mut thickness = extent.x.min(extent.y).min(extent.z);
                     let mut directions: Vec<Vec3> = Vec::new();
                     for triangle in &mesh.triangles {
-                        let Some(Triangle([a, b, c])) = mesh.tri(triangle) else {
+                        let Some(tri) = mesh.tri(triangle) else {
                             return Err(limit("invalid contact tessellation"));
                         };
-                        let Some(direction) = (b - a).cross(c - a).normalized() else { continue };
+                        let Some(direction) = tri.normal() else { continue };
                         if directions.len() < 32 && !directions.iter().any(|d| d.dot(direction).abs() > 1.0 - 1e-6) {
                             directions.push(direction);
                         }
