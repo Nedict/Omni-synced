@@ -694,3 +694,23 @@ fn a_refresh_of_a_chosen_stack_replaces_what_it_held() {
     assert_eq!((count(&r, "placed"), count(&r, "kept"), count(&r, "removed")), (0, 1, 0), "{r}");
     assert_eq!(part_occurrences(&s), 1);
 }
+
+#[test]
+fn a_refresh_counts_each_nut_with_its_own_bolt_on_one_axis() {
+    // Two pairs of plates on one axis, 2 apart: the lower pair's nut, on its top face, lies
+    // within reach of the upper pair's stack.
+    let mut s = Session::default();
+    for (name, z0, t) in [("A1", 0.0, 3.0), ("A2", 3.0, 4.0), ("B1", 9.0, 3.0), ("B2", 12.0, 4.0)] {
+        run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": t, "corner": [0, 0, z0], "operation": "new", "body_name": name}));
+    }
+    run(&mut s, "solid.hole", json!({"position": [20, 15, 16], "diameter": 5.5}));
+    let fill = json!({"family": "hex_bolt", "size": "M5", "washer": true, "nut": true, "refresh": true});
+    let r = run(&mut s, "parts.fasten", fill.clone());
+    assert_eq!((count(&r, "placed"), count(&r, "unfilled")), (2, 0), "{r}");
+    let parts = part_occurrences(&s);
+    for _ in 0..2 {
+        let r = run(&mut s, "parts.fasten", fill.clone());
+        assert_eq!((count(&r, "placed"), count(&r, "kept"), count(&r, "removed"), count(&r, "unfilled")), (0, 2, 0, 0), "{r}");
+        assert_eq!(part_occurrences(&s), parts, "{r}");
+    }
+}
