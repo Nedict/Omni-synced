@@ -793,6 +793,77 @@ fn an_edge_leaving_a_left_out_faces_box_in_front_stays_visible() {
 }
 
 #[test]
+fn a_nearly_straight_cubic_is_not_taken_for_a_huge_circle() {
+    // x = 1000 t, y = 0.071 t - 0.113 t^2 + 0.042 t^3: within 0.002 mm of a circle of radius
+    // about 1e7, which is 2e-10 of that radius but 2e-6 of the curve. Drawn as chords.
+    let pts = [[0., 0., 0.], [1000. / 3., 0.071 / 3., 0.], [2000. / 3., 0.071 * 2. / 3. - 0.113 / 3., 0.], [1000., 0., 0.]];
+    let shape = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![[0.; 3], [1000., 0., 0.]],
+            edges: vec![
+                Edge { vertices: [0, 1], curve: Curve::Spline { knots: [[0.; 4], [1.; 4]].concat(), points: pts.to_vec() } },
+                Edge { vertices: [1, 0], curve: Curve::Line { start: [1000., 0., 0.], end: [0.; 3] } },
+            ],
+            faces: vec![Face {
+                loops: vec![vec![uses(0, true), uses(1, true)]],
+                surface: Surface::Plane { origin: [0.; 3], u_axis: [1., 0., 0.], v_axis: [0., 1., 0.] },
+                forward: true,
+            }],
+        }],
+    };
+    let def = prepare(&shape, &Options::default()).unwrap();
+    let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    assert!(edge_line(&d, 0, 0).pieces.iter().all(|p| matches!(p.accuracy, CurveAccuracy::Sampled { .. })), "{d:?}");
+}
+
+#[test]
+fn an_edge_dipping_behind_a_left_out_face_between_samples_is_uncertain() {
+    // Under a freeform patch over x in [0, 10], y in [0, 1] (z within 1e-4 of zero, zero along
+    // y = 0.5), a quadratic edge x = 10 t, y = 0.5, z = 20 (t - 0.0075)(t - 0.02375) dips
+    // below the patch for t from 0.0075 to 0.02375, between its samples; its projection is
+    // straight, so the screen never asks for more.
+    let e = 1e-4;
+    let p = [[0., 0., e], [10., 0., -e], [10., 1., e], [0., 1., -e]];
+    let edges =
+        (0..4).map(|i| Edge { vertices: [i as u32, ((i + 1) % 4) as u32], curve: Curve::Line { start: p[i], end: p[(i + 1) % 4] } }).collect();
+    let face = Face {
+        loops: vec![(0..4).map(|e| uses(e, true)).collect()],
+        surface: Surface::Spline { u_knots: vec![0., 0., 1., 1.], v_knots: vec![0., 0., 1., 1.], points: vec![vec![p[0], p[3]], vec![p[1], p[2]]] },
+        forward: true,
+    };
+    let patch =
+        prepare(&Brep { version: crate::brep::VERSION, shells: vec![Shell { vertices: p.to_vec(), edges, faces: vec![face] }] }, &Options::default())
+            .unwrap();
+    assert_eq!(patch.report.freeform_faces, vec![0]);
+    // z = 20 t^2 - 0.625 t + 0.0035625 as a quadratic Bezier.
+    let z = [0.0035625, 0.0035625 - 0.3125, 20. - 0.625 + 0.0035625];
+    let c = [[0., 0.5, z[0]], [5., 0.5, z[1]], [10., 0.5, z[2]]];
+    let shape = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![c[0], c[2]],
+            edges: vec![
+                Edge { vertices: [0, 1], curve: Curve::Spline { knots: vec![0., 0., 0., 1., 1., 1.], points: c.to_vec() } },
+                Edge { vertices: [1, 0], curve: Curve::Line { start: c[2], end: c[0] } },
+            ],
+            faces: vec![Face {
+                loops: vec![vec![uses(0, true), uses(1, true)]],
+                surface: Surface::Plane { origin: c[0], u_axis: [1., 0., 0.], v_axis: [0., 0., 1.] },
+                forward: true,
+            }],
+        }],
+    };
+    let curve = prepare(&shape, &Options::default()).unwrap();
+    let view = View::new(Vec3::new(0., 0., -1.), Vec3::new(0., 1., 0.)).unwrap();
+    let d = hidden_lines(&[patch, curve], &[identity(0, [0.; 3]), identity(1, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    let dip: Vec<&Piece> = edge_line(&d, 1, 0).pieces.iter().filter(|p| p.t[0] < 0.02 && p.t[1] > 0.01).collect();
+    assert!(!dip.is_empty());
+    assert!(dip.iter().all(|p| p.visibility != Visibility::Visible), "{dip:?}");
+}
+
+#[test]
 fn a_cone_tip_trimmed_near_the_apex_is_only_its_tip() {
     // A cone record of slope 0.25 from its apex up to 10 m, trimmed by a circle at z = 1 to the
     // tip below it: a box edge at x = 40, z = 50 to 150, seen along +X, is in front of nothing.

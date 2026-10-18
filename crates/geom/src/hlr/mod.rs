@@ -955,15 +955,47 @@ fn in_shadow(t: &Track, r: [f64; 2], scene: &[Placement], view: &View, shadows: 
         .filter(|(w, _)| w.get(1).is_some_and(|b| b.0 > r[0]) && w.first().is_some_and(|a| a.0 < r[1]))
         .map(|(_, s)| *s)
         .fold(0., f64::max);
-    // A point counts when it is both within the box and behind the face's nearest point; the
-    // piece is cut at the box's sides, so its points inside it are all of it there.
-    shadows.iter().any(|sh| {
-        !(sh.placement == t.placement && t.own.contains(&sh.face))
-            && pts.iter().any(|w| {
-                let s = view.screen(*w);
-                w.dot(view.d) > sh.near && s[0] >= sh.lo[0] - sag && s[0] <= sh.hi[0] + sag && s[1] >= sh.lo[1] - sag && s[1] <= sh.hi[1] + sag
-            })
-    })
+    // The piece is cut at the boxes' sides: it is in a box when its middle or one of its inner
+    // points is (its ends may lie on the side it was cut at). Then it is in the shadow when
+    // its depth can pass the face's nearest point anywhere along it: the bound comes from the
+    // curve itself (its control points' hull, an arc's reach), not from samples, which a dip
+    // in depth that the screen does not show could fall between.
+    let inside = |sh: &Shadow| {
+        pts.iter().enumerate().filter(|(i, _)| *i != 0 && *i != 2).any(|(_, w)| {
+            let s = view.screen(*w);
+            s[0] >= sh.lo[0] - sag && s[0] <= sh.hi[0] + sag && s[1] >= sh.lo[1] - sag && s[1] <= sh.hi[1] + sag
+        })
+    };
+    let deepest = depth_bound(c, r, p, view.d).max(pts.iter().map(|w| w.dot(view.d)).fold(f64::MIN, f64::max));
+    shadows.iter().any(|sh| !(sh.placement == t.placement && t.own.contains(&sh.face)) && inside(sh) && deepest > sh.near)
+}
+
+/// An upper bound of the depth along `d` of the curve's part `r` placed by `p`: a line's ends,
+/// an arc's centre plus its reach, the projected control points a spline's part depends on
+/// (its weights are positive, so the part lies in their hull), a polyline's vertices.
+fn depth_bound(c: &C3, r: [f64; 2], p: &Placement, d: Vec3) -> f64 {
+    let depth = |q: Vec3| p.apply(q).dot(d);
+    match c {
+        C3::Line { .. } => depth(c.at(r[0])).max(depth(c.at(r[1]))),
+        C3::Arc { o, x, y, r: rad, .. } => {
+            let dl = p.local_dir(d);
+            depth(*o) + (rad[0] * x.dot(dl)).hypot(rad[1] * y.dot(dl))
+        }
+        C3::Spline { degree, knots, points } => points
+            .iter()
+            .enumerate()
+            .filter(|(i, h)| h[3] > 0. && knots.get(*i).zip(knots.get(i + degree + 1)).is_some_and(|(lo, hi)| *lo < r[1] && *hi > r[0]))
+            .map(|(_, h)| depth(Vec3::new(h[0] / h[3], h[1] / h[3], h[2] / h[3])))
+            .fold(f64::MIN, f64::max)
+            .max(depth(c.at(r[0])))
+            .max(depth(c.at(r[1]))),
+        C3::Polyline(pts) => pts
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| (*i as f64) > r[0] && (*i as f64) < r[1])
+            .map(|(_, q)| depth(*q))
+            .fold(depth(c.at(r[0])).max(depth(c.at(r[1]))), f64::max),
+    }
 }
 
 /// Distance between the segment `a b` and the box `lo hi` (zero when they meet).

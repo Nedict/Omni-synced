@@ -201,7 +201,12 @@ pub(crate) fn as_circle(c: &C3, tol: f64) -> Option<(Vec3, Vec3, f64)> {
                     d = d.max(off(c.at(mid + half * (std::f64::consts::PI * (2 * k + 1) as f64 / (2 * n) as f64).cos())));
                 }
             }
-            (4. * (w_max / w_min).powi(2) * d <= tol * r).then_some((centre, normal, r))
+            // Relative to the curve's own size when that is smaller than the radius: a nearly
+            // straight curve fits a huge circle, whose radius says nothing about the error.
+            let pts: Vec<Vec3> = points.iter().filter(|h| h[3] != 0.).map(|h| Vec3::new(h[0] / h[3], h[1] / h[3], h[2] / h[3])).collect();
+            let size = pts.iter().skip(1).fold(pts.first().map(|p| (*p, *p)), |acc, p| acc.map(|(lo, hi)| (lo.min(*p), hi.max(*p))));
+            let size = size.map_or(r, |(lo, hi)| (hi - lo).len());
+            (4. * (w_max / w_min).powi(2) * d <= tol * r.min(size)).then_some((centre, normal, r))
         }
         _ => None,
     }

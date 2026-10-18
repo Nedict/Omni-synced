@@ -100,8 +100,9 @@ Faces that are not planes, cylinders, cones, spheres or tori are freeform. By de
 they are listed in `Drawing::unsupported` with the reason `freeform face`, their
 silhouettes are not drawn, and a piece whose ray meets one is `Uncertain`, never
 `Hidden`. Without its silhouettes nothing marks where such a face's outline crosses a curve,
-so curves are cut at the face's screen box and every piece inside the box and behind its
-nearest point is `Uncertain` too (faces left out for an unsupported trim likewise). With `Options::freeform` set their silhouettes are contoured and their ray
+so curves are cut at the face's screen box and every piece inside the box that can reach
+behind its nearest point (bounded by the curve's control points, not by samples) is
+`Uncertain` too (faces left out for an unsupported trim likewise). With `Options::freeform` set their silhouettes are contoured and their ray
 tests use seeded Newton iterations: slower, `Sampled`, and subject to the misses listed
 in the W05a findings.
 
@@ -148,7 +149,9 @@ and intervals:
   a freeform tube is uncertain where the tube may cover it and visible elsewhere, and so is
   a sloping edge that only dips behind a freeform patch near its end, while one that leaves
   the patch's box below its level but crosses the box above it stays visible;
-- a curve that swerves 2.9 mm off its circle where its weight is 1e-12 is drawn as chords;
+- a curve that swerves 2.9 mm off its circle where its weight is 1e-12, and a nearly straight
+  cubic 0.002 mm off a circle of radius 1e7, are drawn as chords; an edge whose depth dips
+  behind a freeform patch between its samples is uncertain there;
 - a torus patch stored as a rational spline is recognised and draws its outer equator as an
   exact arc, and one with a bump in a knot span 0.002 of its parameters wide is not taken for
   a torus; a big circle passing under a thin freeform tube in a coarse scene is uncertain
