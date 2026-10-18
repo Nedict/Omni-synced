@@ -430,6 +430,12 @@ fn one_by_one(input: Traced, edges: &[Vec3], blend: impl Fn(&kernel::Body, Vec3)
     }
 }
 
+/// `Posts` for `Posts (1)`: the body a split piece was numbered after.
+fn split_piece_of(name: &str) -> Option<&str> {
+    let (base, n) = name.strip_suffix(')')?.rsplit_once(" (")?;
+    (!n.starts_with('0') && n.parse::<u32>().is_ok()).then_some(base)
+}
+
 /// Add `note` to a feature's warning.
 fn append_warning(warning: &mut Option<String>, note: String) {
     *warning = Some(match warning.take() {
@@ -1281,7 +1287,7 @@ impl Model {
                 // the face along the hole's axis and never slides sideways to the face's nearest
                 // point when the face no longer reaches it.
                 let hole_axis = match &f.kind {
-                    FeatureKind::Hole { direction, points: None, .. } => direction.normalized(),
+                    FeatureKind::Hole { direction, points: None | Some(crate::SketchPoints { single: true, .. }), .. } => direction.normalized(),
                     _ => None,
                 };
                 let fst = face_point_state(doc, &state, &f.kind, f.component);
@@ -2673,7 +2679,7 @@ fn sketch_hole_dir(st: &ModelState, spots: &[Vec3], n: Vec3) -> Vec3 {
 fn hole_spots(vals: &BTreeMap<String, Value>, st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
     let FeatureKind::Hole { position, at, direction, points, .. } = &f.kind else { return Err(DocError::Invalid("not a hole".into())) };
     let (spots, dir) = match points {
-        Some(sp) => {
+        Some(sp) if !sp.single => {
             let ss =
                 st.sketch(sp.sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {} (it must come earlier in the timeline)", sp.sketch)))?;
             let mut v = Vec::new();
@@ -2685,9 +2691,9 @@ fn hole_spots(vals: &BTreeMap<String, Value>, st: &ModelState, f: &Feature) -> R
             let dir = if sp.flip { -dir } else { dir };
             (v, dir)
         }
-        None => {
+        _ => {
             let dir = direction.normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?;
-            let at = hole_on_surface(st, hole_position(vals, position, at)?, dir);
+            let at = hole_on_surface(st, single_hole_position(vals, st, position, at, points)?, dir);
             let dir = hole_dir_into_face(st, at, dir);
             return Ok((vec![hole_on_surface(st, at, dir)], dir));
         }
@@ -2724,7 +2730,7 @@ fn hole_depth_to(st: &ModelState, at: &Vec3, dir: Vec3, to: &Option<Vec3>, depth
 fn hole_spots_raw(vals: &BTreeMap<String, Value>, st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
     let FeatureKind::Hole { position, at, direction, points, .. } = &f.kind else { return Err(DocError::Invalid("not a hole".into())) };
     match points {
-        Some(sp) => {
+        Some(sp) if !sp.single => {
             let ss = st.sketch(sp.sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {}", sp.sketch)))?;
             let v: Vec<Vec3> =
                 sp.ids.iter().filter_map(|id| ss.sketch.points.iter().find(|p| &p.id == id)).map(|p| ss.plane.to_world(p.pos)).take(10_000).collect();
@@ -2732,12 +2738,28 @@ fn hole_spots_raw(vals: &BTreeMap<String, Value>, st: &ModelState, f: &Feature) 
             let dir = if sp.flip { -dir } else { dir };
             Ok((v, dir))
         }
-        None => {
+        _ => {
             let dir = direction.normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?;
-            let p = hole_position(vals, position, at)?;
+            let p = single_hole_position(vals, st, position, at, points)?;
             Ok((vec![p], hole_dir_into_face(st, hole_on_surface(st, p, dir), dir)))
         }
     }
+}
+
+/// Where a hole placed by position is drilled: at its sketch point where the sketch has it now,
+/// for a Single hole snapped to one (#2110), else as [`hole_position`].
+fn single_hole_position(
+    vals: &BTreeMap<String, Value>,
+    st: &ModelState,
+    position: &crate::FacePick,
+    at: &Option<crate::PointExpr>,
+    points: &Option<crate::SketchPoints>,
+) -> Result<Vec3> {
+    let Some(sp) = points else { return hole_position(vals, position, at) };
+    let ss = st.sketch(sp.sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {} (it must come earlier in the timeline)", sp.sketch)))?;
+    let id = sp.ids.first().ok_or_else(|| DocError::Invalid("a Single hole needs its sketch point".into()))?;
+    let p = ss.sketch.points.iter().find(|p| &p.id == id).ok_or_else(|| DocError::Unknown(format!("sketch point `{id}`")))?;
+    Ok(ss.plane.to_world(p.pos))
 }
 
 /// Where a hole placed by position is drilled: its `at` expressions evaluated, so it follows the
@@ -3195,21 +3217,30 @@ fn feature_tools_with_constructor(
             };
             if let Some(tp) = &extent.taper {
                 let taper = val(vals, tp, Kind::Angle)?;
-                if extent.distance2.is_some() || extent.start_offset.is_some() || extent.direction == crate::Direction::Symmetric {
-                    return Err(DocError::Invalid("not supported yet: taper with two-sided, symmetric or offset extents".into()));
+                if extent.distance2.is_some() || extent.direction == crate::Direction::Symmetric {
+                    return Err(DocError::Invalid("not supported yet: taper with two-sided or symmetric extents".into()));
                 }
                 let sign = if extent.to.is_none() && extent.direction == crate::Direction::Negative { -1.0 } else { 1.0 };
                 let (len, sign) = if d < 0.0 { (-d, -sign) } else { (d, sign) };
-                let start_plane = ss.plane.offset(from);
+                // Where the extrude starts: the From Object's level and a start offset along the
+                // normal from it. The offset moves the profile that far and the sides are drafted
+                // from there, so the profile stays the section at the start whatever the offset
+                // (`d` is measured from the start already, To Object included).
+                let base = from
+                    + match &extent.start_offset {
+                        Some(e) => val(vals, e, Kind::Length)?,
+                        None => 0.0,
+                    };
+                let start_plane = ss.plane.offset(base);
                 let caps = [
-                    Some(crate::lineage::extrude_cap_role(from)),
-                    Some(crate::lineage::extrude_cap_role(if sign < 0.0 { from - len } else { from + len })),
+                    Some(crate::lineage::extrude_cap_role(base)),
+                    Some(crate::lineage::extrude_cap_role(if sign < 0.0 { base - len } else { base + len })),
                 ];
                 // How far a tool grows past its profile at either end, at most.
                 let mut growth: f64 = 0.0;
                 // A face of the targets in the profile's plane (the same for every profile).
                 let plain_targets: Vec<String> = crate::plain(targets);
-                let on_face = matches!(operation, Operation::Join | Operation::Cut) && face_level_at(st, &ss.plane, from, &plain_targets);
+                let on_face = matches!(operation, Operation::Join | Operation::Cut) && face_level_at(st, &ss.plane, base, &plain_targets);
                 let surroundings = Surroundings::of(st, *operation, &plain_targets);
                 let tools: Vec<Traced> = regions
                     .iter()
@@ -3233,9 +3264,9 @@ fn feature_tools_with_constructor(
                             growth = growth.max(len * taper.tan().abs());
                             return Ok(roles.tool(exact, None));
                         }
-                        let (lo, hi) = if sign < 0.0 { (from - len, from) } else { (from, from + len) };
+                        let (lo, hi) = if sign < 0.0 { (base - len, base) } else { (base, base + len) };
                         let (l2, h2) = surroundings.as_ref().map_or((lo, hi), |sur| extend_for_coplanar(sur, &ss.plane, r, lo, hi));
-                        let (mut a, b) = if sign < 0.0 { (from - h2, from - l2) } else { (l2 - from, h2 - from) };
+                        let (mut a, b) = if sign < 0.0 { (base - h2, base - l2) } else { (l2 - base, h2 - base) };
                         // A taper that narrows the tool away from the face widens it as it runs on into it, past
                         // the profile (where the profile is the whole face, out through the body's sides, #1534):
                         // then it starts on the face instead.
@@ -5246,10 +5277,28 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             }
             let mut tb = Vec::new();
             for t in tools {
-                tb.push(st.body(t).ok_or_else(|| DocError::Unknown(format!("body `{t}`")))?.traced());
+                match st.body(t) {
+                    Some(b) => tb.push(b.traced()),
+                    // Designs saved before #2247 combined the pieces a cut split off a body that
+                    // was already several pieces (`Posts`, `Posts (1)`). A cut keeps them in one
+                    // body now: the piece is in `Posts`, which is a tool too or the body joined to.
+                    None => match split_piece_of(t) {
+                        Some(base)
+                            if st.body(base).is_some()
+                                && (tools.iter().any(|o| **o == *base)
+                                    || (**target == *base && matches!(operation, Operation::Join | Operation::NewBody))) =>
+                        {
+                            append_warning(warning, format!("`{t}` is part of `{base}` now"));
+                        }
+                        _ => return Err(DocError::Unknown(format!("body `{t}`"))),
+                    },
+                }
             }
             if st.body(target).is_none() {
                 return Err(DocError::Unknown(format!("body `{target}`")));
+            }
+            if tb.is_empty() && !tools.is_empty() {
+                return Ok(()); // the pieces were all joined back into the body they are part of
             }
             let op = if *operation == Operation::NewBody { Operation::Join } else { *operation };
             apply_traced(st, f, tb, op, std::slice::from_ref(&target.0))?;
