@@ -77,6 +77,8 @@ mod pattern_arrow_tests;
 #[cfg(test)]
 mod surface_clamp_tests;
 #[cfg(test)]
+mod surface_errors_tests;
+#[cfg(test)]
 mod timeline_marks_tests;
 #[cfg(test)]
 mod status_tests {
