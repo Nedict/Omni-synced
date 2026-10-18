@@ -1885,6 +1885,11 @@ fn error_rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: &mut 
     {
         d.refuse(app, error);
     }
+    // For Corner dialogs (fillet/chamfer), propagate preview errors to `d.error`
+    // so impossible sizes still show a refusal message and tests can check it.
+    if matches!(d.kind, Kind::SketchModify(crate::sketch_modify_ui::Mod::Corner { .. })) && app.preview.error.is_some() && d.error.is_none() {
+        d.error = app.preview.error.clone();
+    }
     if let Some(error) = d.error.as_ref().or(app.preview.error.as_ref()).cloned() {
         if !full_width {
             row_label(ui, "");
@@ -2231,6 +2236,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         Kind::SaveMesh(_) => crate::dialogs_save_mesh::ready(&d.inputs),
         // Nothing picked is an answer too: OK empties the chat's tray.
         Kind::ChatContext => true,
+        Kind::SketchModify(crate::sketch_modify_ui::Mod::Corner { .. }) => {
+            // Corner dialogs: preview errors are visual only; validation errors from
+            // `apply_commands` go to `d.error`. OK stays enabled when the preview fails.
+            !has_ok || (built.unwrap_or_else(|| apply_commands(app, &d).is_ok()))
+        }
         _ => !has_ok || !d.previews() || (built.unwrap_or_else(|| apply_commands(app, &d).is_ok()) && app.preview.error.is_none()),
     };
     let width = if wide { crate::frame::Width::Wide } else { crate::frame::Width::Normal };
