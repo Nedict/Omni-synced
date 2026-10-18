@@ -482,12 +482,14 @@ fn shell_create_polygon<S: PreMeshableSurface>(
     let polygon: Option<PolygonMesh> = (|| {
         let boundary = PolyBoundary::new(preboundary?, &surface, tol);
         let mut mesh = trimming_tessellation(surface, &boundary, tol, cap);
-        // Display and export meshes only, as the ruling grid lines: the meshes Boolean
-        // operations intersect keep truck's points.
-        if tol.rulings {
-            let points: Vec<Point3> = wires.iter().flat_map(Wire::edge_iter).flat_map(|e| e.curve().0).collect();
-            onto_edges(&mut mesh, &boundary, &points, tol.chord);
-        }
+        // SolidCraft: the meshes Boolean operations intersect share their edges' points too
+        // (#2258). Two intersection curves that meet at a point of an edge (a tool crossing two
+        // faces of a shell where they meet) end where the tool's mesh crosses that edge in each
+        // face's mesh; on a face whose surface puts the edge's points a few `TOLERANCE` off (an
+        // offset wall of a shell), the two ends missed each other, the curves were not joined
+        // there and the face pieces' wires visited a vertex twice.
+        let points: Vec<Point3> = wires.iter().flat_map(Wire::edge_iter).flat_map(|e| e.curve().0).collect();
+        onto_edges(&mut mesh, &boundary, &points, tol.chord);
         Some(mesh)
     })();
     // SolidCraft: faces with seam edges (a loop running along an edge both ways, as STEP

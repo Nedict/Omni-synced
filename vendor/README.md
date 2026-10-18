@@ -179,7 +179,15 @@ Changes:
   vertex at a point of a face's boundary loops that is farther than `TOLERANCE` from the nearest
   point of the face's edges now goes to that point, when it is within the chord tolerance
   (`onto_edges`). Points within `TOLERANCE` stay on the surface, so exact geometry meshes as
-  before. The meshes Boolean operations intersect keep truck's points.
+  before.
+- `tessellation/triangulation.rs`: the meshes Boolean operations intersect share their edges'
+  points as well (`onto_edges`, which only display and export meshes did). Where a tool crosses
+  two faces at the edge between them, the two intersection curves end where the tool's mesh
+  crosses that edge in each face's mesh; on a face whose surface reproduces the edge's points
+  only a few `TOLERANCE` off (the offset arched wall of a shell, 2e-6 mm), the two ends missed
+  each other, the curves were not joined at the edge, and a face piece's wire visited a vertex
+  twice: the cut failed at every tolerance (#2258). Faces whose meshes already met within
+  `TOLERANCE` mesh as before.
 
 - `tessellation/triangulation.rs`: in display and export meshes (`Deflection::rulings`), a
   direction left undivided along the rulings of a face ruled one way also gets a grid line
