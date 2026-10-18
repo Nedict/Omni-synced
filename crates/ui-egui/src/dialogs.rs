@@ -334,6 +334,9 @@ pub struct Dialog {
     pub refused: Option<Refused>,
     /// Create Sketch opened by a sketch tool's shortcut: that tool starts once the sketch is open.
     pub then_start: Option<&'static str>,
+    /// The Targets input lists the bodies the operation changes by default (the visible ones),
+    /// following what is shown, until it is edited by hand.
+    pub targets_follow: bool,
 }
 
 /// OK computing off the window thread: the dialog's commands evaluated on a scratch copy of the
@@ -445,6 +448,7 @@ impl Dialog {
             extra: serde_json::Map::new(),
             refused: None,
             then_start: None,
+            targets_follow: false,
         }
     }
 
@@ -727,9 +731,25 @@ impl Dialog {
         if matches!(d.kind, Kind::Extrude { .. }) {
             let mut targets = SelInput::new(TARGETS, BODIES, true);
             targets.items = s.selection.iter().filter(|sel| matches!(sel, Sel::Body { .. })).cloned().collect();
+            d.targets_follow = targets.items.is_empty();
             d.inputs.push(targets);
+            d.follow_targets(s);
         }
         Some(d)
+    }
+
+    /// While the Targets input follows the defaults, set it to them: the bodies the operation
+    /// changes as things are shown now ([`default_targets`]).
+    pub(crate) fn follow_targets(&mut self, s: &Session) {
+        if !self.targets_follow || self.editing.is_some() || !matches!(self.kind, Kind::Extrude { .. }) {
+            return;
+        }
+        let want = default_targets(s, self);
+        if let Some(inp) = self.inputs.iter_mut().find(|i| i.label == TARGETS)
+            && inp.items != want
+        {
+            inp.items = want;
+        }
     }
 
     /// Resolve a newly selected face without replacing an authored size or changing the
@@ -983,6 +1003,9 @@ impl Dialog {
             inp.items.retain(|x| !matches!(x, Sel::Profile { sketch: s2, .. } if s2 != sketch));
         }
         let Some(inp) = self.inputs.get_mut(self.active) else { return };
+        if inp.label == TARGETS {
+            self.targets_follow = false;
+        }
         inp.toggle(picked);
         self.focus = true;
         // A measurement is between two items: a third pick starts over from the last one.
@@ -1008,6 +1031,9 @@ impl Dialog {
         }
         let measure = matches!(self.kind, Kind::Measure { .. });
         let Some(inp) = self.inputs.get_mut(self.active) else { return };
+        if inp.label == TARGETS {
+            self.targets_follow = false;
+        }
         if !add {
             inp.items.clear();
         }
@@ -1708,6 +1734,9 @@ fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::
     let mut clear: Option<usize> = None;
     let mut activate: Option<usize> = None;
     for (i, inp) in d.inputs.iter().enumerate().skip(range.start).take(range.end.saturating_sub(range.start)) {
+        if inp.label == TARGETS {
+            continue;
+        }
         let stored_reference = feature_pattern_reference_key(d, i).and_then(|key| d.extra.get(key)).filter(|_| inp.items.is_empty());
         row_label(ui, inp.label);
         ui.horizontal(|ui| {
@@ -2344,6 +2373,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     ui.label(tr("dialog.selection_guidance"));
                     ui.end_row();
                 }
+                d.follow_targets(&app.session);
                 input_rows(&mut d, ui, &app.session);
                 match &mut d.kind {
                     Kind::Sketch => {
@@ -2488,6 +2518,15 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             *auto_op = false;
                         }
                         ui.end_row();
+                        // A new body changes no other body.
+                        let targets = d.inputs.iter().position(|i| i.label == TARGETS);
+                        if *operation == 0 {
+                            if targets == Some(d.active) {
+                                d.active = 0;
+                            }
+                        } else if let Some(i) = targets {
+                            targets_row(ui, &app.session, &mut d.inputs, i, &mut d.active, &mut d.targets_follow, d.editing.is_some());
+                        }
                     }
                     Kind::Revolve { angle, operation, .. } => {
                         row_label(ui, "Type");
@@ -3248,7 +3287,7 @@ pub(crate) fn roll_marker(app: &mut SolveApp, marker: Option<usize>) -> Result<(
 const TO_OBJECT: &str = "To Object";
 const FROM_OBJECT: &str = "From Object";
 /// The bodies an extrude joins, cuts or intersects.
-pub(crate) const TARGETS: &str = "Targets (visible if none)";
+pub(crate) const TARGETS: &str = "Targets";
 
 fn picked_bodies(inputs: &[SelInput], label: &str) -> Vec<String> {
     inputs
@@ -3259,18 +3298,67 @@ fn picked_bodies(inputs: &[SelInput], label: &str) -> Vec<String> {
         .collect()
 }
 
-/// A new Join, Cut or Intersect with no picked targets changes the visible bodies of the active
-/// component: the targets to store when that differs from the command's default (some of them
-/// are hidden). `face_body` is the body a Join from a face defaults to; it stays the target
-/// while it is shown. `None`: the command's default.
-fn visible_targets(s: &Session, face_body: Option<&str>) -> Option<Vec<String>> {
-    let st = s.model.state();
-    let own: Vec<&str> = st.bodies.iter().filter(|b| s.doc.model_body_component(b) == s.active_component).map(|b| b.name.as_str()).collect();
-    let visible: Vec<String> = own.iter().filter(|name| s.body_visible(name)).map(|name| name.to_string()).collect();
-    if visible.is_empty() || visible.len() == own.len() || face_body.is_some_and(|b| s.body_visible(b)) {
-        return None;
+/// The bodies a new Join, Cut or Intersect changes unless told otherwise: a Join from a shown
+/// body's face (or a sketch on one) that body, as the command does; else the visible bodies of
+/// the active component, or the visible bodies anywhere while it has none.
+fn default_targets(s: &Session, d: &Dialog) -> Vec<Sel> {
+    if matches!(d.kind, Kind::Extrude { operation: 1, .. }) {
+        let face = match d.inputs.first().and_then(|i| i.items.first()) {
+            Some(Sel::Face { body, .. }) => Some(body.clone()),
+            Some(Sel::Profile { sketch, .. }) => solidcraft_engine::join_face_body(s, &json!({"sketch": sketch})),
+            _ => None,
+        };
+        if let Some(body) = face.filter(|b| s.body_visible(b)) {
+            return vec![Sel::Body { name: body }];
+        }
     }
-    Some(visible)
+    let st = s.model.state();
+    let shown: Vec<_> = st.bodies.iter().filter(|b| !b.body.is_mesh() && s.body_visible(&b.name)).collect();
+    let own: Vec<_> = shown.iter().filter(|b| s.doc.model_body_component(b) == s.active_component).collect();
+    let names: Vec<String> =
+        if own.is_empty() { shown.iter().map(|b| b.name.clone()).collect() } else { own.iter().map(|b| b.name.clone()).collect() };
+    names.into_iter().map(|name| Sel::Body { name }).collect()
+}
+
+/// The Targets row: a pill per body (× takes it out) and a chip that picks bodies into it.
+fn targets_row(ui: &mut egui::Ui, s: &Session, inputs: &mut [SelInput], index: usize, active: &mut usize, follow: &mut bool, editing: bool) {
+    let t = Tokens::get();
+    let Some(inp) = inputs.get_mut(index) else { return };
+    row_label(ui, TARGETS);
+    let mut remove = None;
+    let mut activate = false;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+        for (k, item) in inp.items.iter().enumerate() {
+            let name = selection_label(s, item);
+            let pill = egui::Button::new(RichText::new(format!("{name}  ×")).color(Color32::WHITE)).fill(t.chip).min_size(vec2(0.0, 22.0));
+            let r = ui.add(pill).on_hover_text(tr("Remove from Targets"));
+            crate::scenario::publish_handle(&format!("dialog:target:{name}"), r.rect.center());
+            if r.clicked() {
+                remove = Some(k);
+            }
+        }
+        if inp.items.is_empty() && editing {
+            ui.label(RichText::new(tr("All bodies of the component")).color(t.text_dim));
+        }
+        let on = index == *active;
+        let stroke = if on { Stroke::new(1.5, t.accent) } else { Stroke::new(1.0, t.dialog_border.gamma_multiply(1.6)) };
+        let chip =
+            egui::Button::new(RichText::new(tr("dialog.select")).color(t.text)).fill(Color32::TRANSPARENT).stroke(stroke).min_size(vec2(0.0, 22.0));
+        let r = crate::frame::add_outlined(ui, chip, stroke.width);
+        publish_row(&r);
+        if r.on_hover_text(format!("{} (click to pick into this input)", hint(inp))).clicked() {
+            activate = true;
+        }
+    });
+    ui.end_row();
+    if let Some(k) = remove {
+        inp.items.remove(k);
+        *follow = false;
+    }
+    if activate {
+        *active = index;
+    }
 }
 
 fn object_on(inputs: &[SelInput], label: &str) -> bool {
@@ -3790,20 +3878,17 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             if op != "new" && !targets.is_empty() {
                 common["targets"] = json!(targets);
             }
-            // An edit keeps the scope the feature has.
-            let implicit = op != "new" && targets.is_empty() && d.editing.is_none() && !d.extra.contains_key("targets");
+            // An edit of a feature made without targets keeps it so; a new one changes exactly
+            // the bodies listed.
+            if op != "new" && targets.is_empty() && d.editing.is_none() {
+                return Err(tr("Pick the bodies to change, or choose New Body").to_string());
+            }
             let with = |extra: Value| -> Value {
                 let mut p = common.clone();
                 if let (Value::Object(m), Value::Object(e)) = (&mut p, extra) {
                     m.extend(e);
                     for (k, v) in &d.extra {
                         m.entry(k.clone()).or_insert_with(|| v.clone());
-                    }
-                }
-                if implicit {
-                    let face = if op == "join" { solidcraft_engine::join_face_body(s, &p) } else { None };
-                    if let Some(visible) = visible_targets(s, face.as_deref()) {
-                        p["targets"] = json!(visible);
                     }
                 }
                 p

@@ -568,7 +568,7 @@ fn used_profile_of_the_last_sketch_is_not_pre_picked() {
     assert_eq!(ui["selection"], json!([]));
     assert_eq!(
         ui["dialog"],
-        json!([{"label":"Profiles","items":[]}, {"label":crate::dialogs::TARGETS,"items":[]}]),
+        json!([{"label":"Profiles","items":[]}, {"label":crate::dialogs::TARGETS,"items":[{"type":"body","name":"Body1"}]}]),
         "the extruded sketch's profile is taken again"
     );
     let d = h.app.dialog.as_ref().unwrap();

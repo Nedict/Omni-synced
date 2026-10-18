@@ -1,5 +1,6 @@
-//! The Extrude window's targets: with none picked a Join or Cut changes the visible bodies of the
-//! active component, stored on the feature; picked ones are stored as picked.
+//! The Extrude window's Targets: under Operation (none for a New Body), a pill per body. A new
+//! Join, Cut or Intersect lists the bodies it changes, the visible ones, following what is
+//! shown until the list is edited by hand; what is listed is what the feature stores.
 use crate::dialogs::{Kind, TARGETS, apply_commands};
 use crate::scenario::Harness;
 use serde_json::{Value, json};
@@ -92,22 +93,70 @@ fn a_join_from_a_hidden_bodys_face_targets_the_visible_one() {
     assert!((volume(&h, "Plate") - 8000.0).abs() < 1e-6);
 }
 
-/// With every body shown, or with the face's own body shown, the window stores no targets: the
-/// command's own default (the component's bodies, or that face's body) is the same.
+/// Every body shown: all of them are listed and stored. A sketch on a shown body's face joins
+/// that body alone, as the command does.
 #[test]
-fn nothing_hidden_or_the_face_body_shown_leaves_the_command_default() {
+fn the_list_holds_the_visible_bodies_or_the_face_body() {
     let mut h = plate_and_copy(false);
     start_join(&mut h);
-    assert!(params(&h).get("targets").is_none(), "{}", params(&h));
+    assert_eq!(params(&h)["targets"], json!(["Plate", "Plate (2)"]));
     let mut h = plate_and_copy(true);
     hide(&mut h, "Plate (2)");
     start_join(&mut h);
-    assert!(params(&h).get("targets").is_none(), "{}", params(&h));
+    assert_eq!(params(&h)["targets"], json!(["Plate"]));
     h.step(&json!({"key":"Enter"})).unwrap();
     assert!((volume(&h, "Plate (2)") - 8000.0).abs() < 1e-6, "the sketch's face body is joined alone");
 }
 
-/// Targets picked in the viewport are what the join changes; a New Body takes none.
+/// Showing or hiding a body while the window is open changes the list, until a pill is removed
+/// by hand: then it stays as edited.
+#[test]
+fn the_list_follows_visibility_until_edited() {
+    let mut h = plate_and_copy(false);
+    start_join(&mut h);
+    hide(&mut h, "Plate (2)");
+    h.frames(2);
+    assert_eq!(params(&h)["targets"], json!(["Plate"]));
+    h.app.run("browser.visibility", json!({"items":["Plate (2)"],"visible":true})).unwrap();
+    h.frames(2);
+    assert_eq!(params(&h)["targets"], json!(["Plate", "Plate (2)"]));
+    h.step(&json!({"click":{"handle":"dialog:target:Plate (2)"}})).unwrap();
+    h.frames(2);
+    assert_eq!(params(&h)["targets"], json!(["Plate"]), "the pill's × takes it out");
+    hide(&mut h, "Plate");
+    h.frames(2);
+    assert_eq!(params(&h)["targets"], json!(["Plate"]), "an edited list stays");
+}
+
+/// The row sits under Operation and is not there for a New Body; an empty list is refused.
+#[test]
+fn the_row_is_under_operation_and_not_for_a_new_body() {
+    let mut h = plate_and_copy(false);
+    start_join(&mut h);
+    let (op, row) = (crate::scenario::handle_at("dialog:Operation").unwrap(), crate::scenario::handle_at("dialog:Targets").unwrap());
+    assert!(row.y > op.y, "Targets {row:?} under Operation {op:?}");
+    assert!(crate::scenario::handle_at("dialog:target:Plate").is_some(), "a pill per body");
+    if let Kind::Extrude { operation, .. } = &mut h.app.dialog.as_mut().unwrap().kind {
+        *operation = 0;
+    }
+    crate::scenario::clear_handles();
+    h.frames(2);
+    assert!(crate::scenario::handle_at("dialog:Targets").is_none(), "no Targets for a new body");
+    assert!(params(&h).get("targets").is_none());
+    if let Kind::Extrude { operation, .. } = &mut h.app.dialog.as_mut().unwrap().kind {
+        *operation = 1;
+    }
+    h.frames(2);
+    for name in ["Plate", "Plate (2)"] {
+        h.step(&json!({"click":{"handle":format!("dialog:target:{name}")}})).unwrap();
+        h.frames(2);
+    }
+    let refused = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap_err();
+    assert!(refused.contains("New Body"), "{refused}");
+}
+
+/// Clicking a listed body in the viewport takes it out; what is left is what the join changes,
+/// and Edit shows and keeps it.
 #[test]
 fn picked_targets_are_sent_and_kept_when_editing() {
     let mut h = Harness::new();
@@ -121,26 +170,17 @@ fn picked_targets_are_sent_and_kept_when_editing() {
     let d = h.app.dialog.as_ref().unwrap();
     assert_eq!(d.active, 0, "the profiles stay the active input");
     let index = d.inputs.iter().position(|i| i.label == TARGETS).unwrap();
-    assert!(d.inputs[index].items.is_empty());
-    // Pick the plate's side into Targets, as a hand does.
+    assert_eq!(d.inputs[index].items, vec![Sel::Body { name: "Plate".into() }, Sel::Body { name: "Ref".into() }]);
     h.call("ui.dialogInput", json!({"index":index}));
     h.call("ui.view", json!({"view":"front"}));
     h.frames(2);
-    h.step(&json!({"click":{"world":[20,0,2.5]}})).unwrap();
+    h.step(&json!({"click":{"world":[20,0,12.5]}})).unwrap();
     assert_eq!(h.app.dialog.as_ref().unwrap().inputs[index].items, vec![Sel::Body { name: "Plate".into() }]);
     assert_eq!(params(&h)["targets"], json!(["Plate"]));
-    if let Kind::Extrude { operation, .. } = &mut h.app.dialog.as_mut().unwrap().kind {
-        *operation = 0;
-    }
-    assert!(params(&h).get("targets").is_none(), "a new body has no targets");
-    if let Kind::Extrude { operation, .. } = &mut h.app.dialog.as_mut().unwrap().kind {
-        *operation = 1;
-    }
     h.step(&json!({"key":"Enter"})).unwrap();
     assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog);
     let feature = h.app.session.doc.features.last().unwrap().id;
     let before = serde_json::to_value(&h.app.session.doc.feature(feature).unwrap().kind).unwrap();
-    // Edit Feature shows them in the input and sends them back unchanged.
     h.app.edit_feature(feature);
     h.frames(2);
     let d = h.app.dialog.as_ref().unwrap();
@@ -178,7 +218,7 @@ fn a_preselected_face_stays_the_profile_and_a_preselected_body_is_the_target() {
     h.app.start("solid.extrude");
     let d = h.app.dialog.as_ref().unwrap();
     assert!(matches!(d.inputs[0].items.first(), Some(Sel::Face { .. })), "{:?}", d.inputs);
-    assert!(d.inputs.iter().find(|i| i.label == TARGETS).unwrap().items.is_empty());
+    assert_eq!(d.inputs.iter().find(|i| i.label == TARGETS).unwrap().items, vec![Sel::Body { name: "Base".into() }], "the face's body");
     h.app.dialog = None;
     h.app.session.selection = vec![Sel::Body { name: "Base".into() }];
     h.app.start("solid.extrude");
