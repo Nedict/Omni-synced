@@ -1679,17 +1679,26 @@ fn placement_row(d: &mut Dialog, ui: &mut egui::Ui) {
 fn selection_label(s: &Session, item: &Sel) -> String {
     match item {
         Sel::SketchCurve { id } => id.clone(),
-        Sel::SketchPoint { id } => crate::sketch_modify_ui::point_id(s, item).unwrap_or(id).to_string(),
+        Sel::SketchPoint { id } => {
+            let shown = crate::sketch_modify_ui::point_id(s, item).unwrap_or(id);
+            // "<sketch id>:<point id>" from outside the active sketch reads "<point> · <sketch>".
+            let owner = shown.split_once(':').and_then(|(o, p)| Some((s.doc.feature(o.parse().ok()?)?, p)));
+            match owner {
+                Some((f, p)) => format!("{p} · {}", f.name),
+                None => shown.to_string(),
+            }
+        }
         Sel::SketchCrossing { a, b, .. } => format!("{a} × {b}"),
         Sel::Plane { name } | Sel::Axis { name } | Sel::Body { name } => name.clone(),
         Sel::Face { body, index, .. } => format!("{body} · face {index}"),
         Sel::Edge { body, index, .. } => format!("{body} · edge {index}"),
         Sel::Feature { id } => s.doc.feature(*id).map(|f| f.name.clone()).unwrap_or_else(|| format!("Feature {id}")),
-        Sel::Vertex { body, point } if body.is_empty() => {
+        Sel::Vertex { body, point } if body.is_empty() && s.active_sketch.is_some() => {
             let state = s.world_state();
             let p = s.active_sketch.and_then(|id| state.sketch(id)).map(|sk| sk.plane.to_local(*point)).unwrap_or_default();
             format!("({:.2}, {:.2}) mm", p.x, p.y)
         }
+        Sel::Vertex { point, .. } => format!("({:.2}, {:.2}, {:.2}) mm", point.x, point.y, point.z),
         _ => format!("{item:?}"),
     }
 }
@@ -5644,4 +5653,27 @@ fn same_face(a: &Sel, b: &Sel) -> bool {
 /// Where a face was picked.
 fn face_point(x: &Sel) -> Option<Value> {
     if let Sel::Face { point, .. } = x { Some(pt(*point)) } else { None }
+}
+
+#[cfg(test)]
+mod chip_label_tests {
+    //! What a picked point's chip says in the Plane Through Three Points dialog.
+    use super::*;
+    use solidcraft_engine::Session;
+
+    #[test]
+    fn point_chips_name_what_was_picked() {
+        let mut s = Session::default();
+        s.execute("sketch.create", &json!({"plane": "XY", "name": "Outline"})).unwrap();
+        s.execute("sketch.point", &json!({"point": [30, 5], "id": "apex"})).unwrap();
+        s.execute("sketch.finish", &json!({})).unwrap();
+        let sid = s.doc.features.last().map(|f| f.id).unwrap();
+        let at = Vec3::new(1.0, 2.5, 20.0);
+        for body in ["Base", ""] {
+            assert_eq!(selection_label(&s, &Sel::Vertex { body: body.into(), point: at }), "(1.00, 2.50, 20.00) mm");
+        }
+        assert_eq!(selection_label(&s, &Sel::SketchPoint { id: format!("{sid}:apex") }), "apex · Outline");
+        let x = Sel::SketchCrossing { sketch: sid, a: "l1".into(), b: "l2".into(), at: Default::default() };
+        assert_eq!(selection_label(&s, &x), "l1 × l2");
+    }
 }

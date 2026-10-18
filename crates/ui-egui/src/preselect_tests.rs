@@ -1788,6 +1788,26 @@ fn point_at_crossing_wins() {
 }
 
 #[test]
+fn crossing_nearer_than_a_point_wins() {
+    use crate::selection::{CROSSINGS, POINTS, VERTICES};
+    let (mut h, at) = crossing_scene(VERTICES | POINTS | CROSSINGS);
+    let one_mm = h.at(&json!({"world":[11,10,0]})).unwrap();
+    let px_per_mm = (one_mm[0] - at[0]).abs();
+    h.app.dialog = None;
+    h.app.run("sketch.edit", json!({"sketch": h.app.session.world_state().sketches[0].feature})).ok();
+    h.app.run("sketch.point", json!({"point":[10.0 + 6.0 / px_per_mm, 10]})).unwrap();
+    h.app.run("sketch.finish", json!({})).unwrap();
+    h.frames(3);
+    h.app.start("construct.plane.midplane");
+    h.frames(2);
+    h.app.dialog.as_mut().unwrap().inputs[0].accept = VERTICES | POINTS | CROSSINGS;
+    let hits = crossing_hits(&h, at);
+    assert!(hits.iter().any(|x| matches!(x, crate::viewport::Hit::SketchPoint { .. })), "the point is in reach: {hits:?}");
+    let (hit, _) = crate::viewport::candidate(&h.app, &hits).expect("a candidate");
+    assert!(matches!(hit, crate::viewport::Hit::SketchCrossing { .. }), "{hit:?}");
+}
+
+#[test]
 fn hidden_or_edge_on_sketch_offers_no_crossings() {
     use crate::selection::{CROSSINGS, POINTS, VERTICES};
     let (mut h, at) = crossing_scene(VERTICES | POINTS | CROSSINGS);
@@ -1878,6 +1898,35 @@ fn three_point_plane_from_vertex_point_and_crossing() {
         }
         k => panic!("{k:?}"),
     }
+}
+
+#[test]
+fn three_point_plane_keeps_its_values_when_reopened_and_confirmed() {
+    use solidcraft_engine::doc::{FeatureKind, PlaneRef, PlaneSize};
+    let (mut h, sid) = three_point_scene();
+    let [a, b, c] = three_point_picks(sid);
+    let r = |p: &Sel| match p {
+        Sel::Vertex { point, .. } => json!({"vertex":[point.x, point.y, point.z]}),
+        Sel::SketchPoint { .. } => json!({"sketch": sid, "point": "apex"}),
+        _ => json!({"type":"sketch_crossing","sketch":sid,"a":"l1","b":"l2","near":[10,10]}),
+    };
+    h.app.run("construct.plane.three_points", json!({"a": r(&a), "b": r(&b), "c": r(&c), "offset":"5 mm", "size":"large"})).unwrap();
+    let id = h.app.session.doc.features.last().unwrap().id;
+    let parts = |h: &crate::scenario::Harness| match &h.app.session.doc.feature(id).unwrap().kind {
+        FeatureKind::ConstructionPlane { plane: PlaneRef::Offset { base, distance }, size } => match base.as_ref() {
+            PlaneRef::ThreePoints { a, b, c } => (format!("{a:?} {b:?} {c:?}"), distance.to_string(), *size),
+            p => panic!("{p:?}"),
+        },
+        k => panic!("{k:?}"),
+    };
+    let before = parts(&h);
+    assert_eq!(before.1, "5 mm");
+    assert_eq!(before.2, PlaneSize::Large);
+    h.app.edit_feature(id);
+    h.frames(2);
+    h.step(&json!({"key":"Enter"})).unwrap();
+    assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().and_then(|d| d.error.clone()));
+    assert_eq!(parts(&h), before);
 }
 
 #[test]
