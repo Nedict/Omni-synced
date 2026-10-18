@@ -374,8 +374,10 @@ fn run_shape(app: &mut SolveApp, t: &Tool) -> Result<Vec<String>, String> {
         "sketch.polygon.edge" => json!({"p0": xy(&p[0]), "p1": xy(&p[1]), "sides": sides}),
         "sketch.slot.center_to_center" | "sketch.slot.overall" => {
             let dir = (p[1].0 - p[0].0).normalized().unwrap_or(Vec2::X);
-            let w = 2.0 * dir.cross(p[2].0 - p[0].0).abs();
-            json!({"p0": xy(&p[0]), "p1": xy(&p[1]), "width": w.max(1e-3)})
+            // Seed the creator with the typed width too: an Overall slot places its cap
+            // centres from this width before the driving dimension is applied.
+            let width = crate::sketch_dims::locked_value(app, t, "Width").unwrap_or_else(|| (2.0 * dir.cross(p[2].0 - p[0].0).abs()).max(1e-3));
+            json!({"p0": xy(&p[0]), "p1": xy(&p[1]), "width": width})
         }
         "sketch.point" => json!({"point": xy(&p[0])}),
         _ => return Err(format!("drawing {} is not supported", t.cmd)),
@@ -578,7 +580,13 @@ pub(crate) fn paint_curve(
 
 /// Temporary analytic geometry uses the same exact span extraction as committed curves.
 /// It never solves constraints or modifies the document.
-pub(crate) fn preview_curve(t: &Tool, hover: Vec2, sweep: Option<f64>, rho: Option<f64>) -> Option<solidcraft_engine::sketch::Sketch> {
+pub(crate) fn preview_curve(
+    t: &Tool,
+    hover: Vec2,
+    sweep: Option<f64>,
+    rho: Option<f64>,
+    slot_width: Option<f64>,
+) -> Option<solidcraft_engine::sketch::Sketch> {
     use solidcraft_engine::sketch::{CurveKind, Sketch};
     if !hover.is_finite() || t.pts.len() >= solidcraft_engine::sketch::MAX_SPLINE_POINTS || t.pts.iter().any(|p| !p.0.is_finite()) {
         return None;
@@ -628,9 +636,11 @@ pub(crate) fn preview_curve(t: &Tool, hover: Vec2, sweep: Option<f64>, rho: Opti
         }
         ("sketch.slot.center_to_center" | "sketch.slot.overall" | "sketch.slot.center_point", [a, b]) => {
             let dir = (*b - *a).normalized()?;
-            // Match the final click, including its minimum width and the different meaning
-            // of the first two clicks for Overall and Center Point slots.
-            let width = (2.0 * dir.cross(hover - *a).abs()).max(1e-3);
+            // Typed widths can be smaller than the final click's pointer minimum.
+            let width = slot_width.unwrap_or_else(|| (2.0 * dir.cross(hover - *a).abs()).max(1e-3));
+            if !width.is_finite() || width <= 1e-9 {
+                return None;
+            }
             let radius = width * 0.5;
             let (c0, c1) = match t.cmd {
                 "sketch.slot.overall" if a.dist(*b) > width => (*a + dir * radius, *b - dir * radius),
@@ -799,7 +809,13 @@ pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) {
         }
     }
 
-    if let Some(curve) = preview_curve(t, h, crate::sketch_dims::locked_value(app, t, "Sweep"), crate::sketch_dims::locked_value(app, t, "Rho")) {
+    if let Some(curve) = preview_curve(
+        t,
+        h,
+        crate::sketch_dims::locked_value(app, t, "Sweep"),
+        crate::sketch_dims::locked_value(app, t, "Rho"),
+        crate::sketch_dims::locked_value(app, t, "Width"),
+    ) {
         paint_preview_curve(curve, &ss.plane, painter, proj, stroke, crate::sketch_palette::mode(app));
         return;
     }
