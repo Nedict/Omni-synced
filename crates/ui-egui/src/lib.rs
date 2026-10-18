@@ -118,6 +118,7 @@ mod file_load_ui_tests;
 #[cfg(test)]
 mod fillet_spline_handle_tests;
 pub mod manufacture_setup;
+pub mod manufacture_turning;
 pub mod manufacture_multiaxis;
 pub mod manufacture_3d;
 pub mod manufacture_hole_recognition;
