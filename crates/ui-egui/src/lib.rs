@@ -73,6 +73,8 @@ mod measurement_ui_tests;
 #[cfg(test)]
 mod menu_tests;
 #[cfg(test)]
+mod pattern_arrow_tests;
+#[cfg(test)]
 mod surface_clamp_tests;
 #[cfg(test)]
 mod timeline_marks_tests;
