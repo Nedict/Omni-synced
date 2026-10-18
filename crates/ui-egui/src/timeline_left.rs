@@ -958,6 +958,24 @@ mod tests {
     }
 
     #[test]
+    fn dragging_the_sidebar_edge_resizes_the_browser() {
+        for timeline_left in [false, true] {
+            let mut harness = Harness::new();
+            harness.app.preferences.timeline_left = timeline_left;
+            harness.frames(4);
+            let before = harness.app.preferences.browser_width;
+            let (x, y) = (before, 300.0);
+            harness.step(&json!({"drag": [[x, y], [x + 80.0, y]]})).unwrap();
+            harness.frames(2);
+            assert!(
+                harness.app.preferences.browser_width > before + 40.0,
+                "dragging the sidebar edge should widen it (timeline_left={timeline_left}): {before} -> {}",
+                harness.app.preferences.browser_width
+            );
+        }
+    }
+
+    #[test]
     fn rollback_bar_above_last_feature_can_be_dragged_to_the_end() {
         let mut harness = Harness::new();
         harness.app.preferences.timeline_left = true;
