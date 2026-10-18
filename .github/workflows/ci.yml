@@ -250,7 +250,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.native == 'true'
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'self-hosted-untrusted' || 'ubuntu-24.04' }}
-    timeout-minutes: 45
+    # Fork builds compile inside gVisor on shared boxes; give them room to finish and upload.
+    timeout-minutes: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 90 || 45 }}
     env:
       CARGO_INCREMENTAL: "0"
       RUSTC_WRAPPER: sccache
