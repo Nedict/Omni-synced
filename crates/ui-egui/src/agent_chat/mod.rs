@@ -244,7 +244,7 @@ pub struct AgentChat {
     auth: Vec<acp::AuthMethod>,
     auth_status: Option<String>,
     /// A message typed before the agent was ready.
-    queued: Option<(String, bool)>,
+    queued: Option<(String, bool, Option<usize>)>,
     /// Messages typed while the agent works, in order. They go as one prompt when the turn ends
     /// (or at once with Send now); after Stop they wait for Send.
     pub pending: Vec<Pending>,
@@ -265,13 +265,15 @@ pub struct AgentChat {
     /// Where the panel was drawn last (for its shortcuts).
     pub panel_rect: Option<egui::Rect>,
     /// The last message sent, kept to send again after a sign-in.
-    last: Option<(String, bool)>,
+    last: Option<(String, bool, Option<usize>)>,
     /// The command the running agent was started with.
     argv: Vec<String>,
     /// The agent picked for this conversation (the header's switcher); `None`: the default.
     pub agent_id: Option<String>,
     /// The agent the running backend is (for permissions and "always allow").
     running_id: String,
+    /// The popped-out chat window was given its saved place (it is open); see `panel::window_builder`.
+    pub(crate) window_placed: bool,
     /// The agent's own modes, and the current one.
     modes: Vec<(String, String)>,
     mode: String,
@@ -318,16 +320,15 @@ impl AgentChat {
         }
         self.items.push(item);
     }
-    /// Keep the picture just sent with the newest message that wanted one (the user can open it).
-    fn keep_picture(&mut self, png: Vec<u8>) {
-        let slot = self.items.iter_mut().rev().find_map(|item| match item {
-            Item::User { image: true, pictures, .. } if pictures.is_empty() => Some(pictures),
-            _ => None,
-        });
-        if let Some(slot) = slot
+    /// Keep the picture just sent with the message at `at` in the conversation (the user can open
+    /// it). A message sent again (after a sign-in) has its picture already: nothing is added, and
+    /// never to another message.
+    fn keep_picture(&mut self, at: Option<usize>, png: Vec<u8>) {
+        if let Some(Item::User { image: true, pictures, .. }) = at.and_then(|i| self.items.get_mut(i))
+            && pictures.is_empty()
             && png.len() <= MAX_PICTURE_BYTES
         {
-            slot.push(Picture::new(png, ""));
+            pictures.push(Picture::new(png, ""));
         }
     }
     fn notice(&mut self, text: impl Into<String>, error: bool) {
@@ -732,12 +733,14 @@ pub fn send(app: &mut SolveApp, ctx: &egui::Context, text: String) {
 /// previous step).
 fn submit(app: &mut SolveApp, ctx: &egui::Context, text: String, image: bool, context: Context, interrupted: bool) {
     app.agent_chat.push(Item::User { text: text.clone(), image, pictures: Vec::new(), context: context.clone() });
+    // The message's place in the conversation: its picture is kept there when it is taken.
+    let at = app.agent_chat.items.len().checked_sub(1);
     // The agent gets the selection as text after the message; the conversation shows chips.
     let text = context::with_context(&text, &context);
     match app.agent_chat.state() {
-        State::Ready => start_turn_with(app, text, image, interrupted.then_some(INTERRUPT_NOTE)),
+        State::Ready => start_turn_with(app, text, image, at, interrupted.then_some(INTERRUPT_NOTE)),
         s => {
-            app.agent_chat.queued = Some((text, image));
+            app.agent_chat.queued = Some((text, image, at));
             #[cfg(not(target_arch = "wasm32"))]
             if !s.running() {
                 connect(app, ctx);
@@ -844,12 +847,12 @@ fn after_turn(app: &mut SolveApp, ctx: &egui::Context) {
     }
 }
 
-fn start_turn(app: &mut SolveApp, text: String, image: bool) {
-    start_turn_with(app, text, image, None);
+fn start_turn(app: &mut SolveApp, text: String, image: bool, at: Option<usize>) {
+    start_turn_with(app, text, image, at, None);
 }
 
 /// Start a message; `note` goes before the text for the agent, not into the conversation.
-fn start_turn_with(app: &mut SolveApp, text: String, image: bool, note: Option<&str>) {
+fn start_turn_with(app: &mut SolveApp, text: String, image: bool, at: Option<usize>, note: Option<&str>) {
     let sent = match note {
         Some(n) => format!("{n}\n\n{text}"),
         None => text.clone(),
@@ -859,7 +862,7 @@ fn start_turn_with(app: &mut SolveApp, text: String, image: bool, note: Option<&
         match crate::control::view_png(app, VIEW_IMAGE.0, VIEW_IMAGE.1) {
             Ok(png) => {
                 parts.push(PromptPart::Image { mime: "image/png".into(), base64: backend::base64(&png) });
-                app.agent_chat.keep_picture(png);
+                app.agent_chat.keep_picture(at, png);
             }
             Err(e) => log::warn!("the view's picture is left out of the prompt: {e}"),
         }
@@ -867,7 +870,7 @@ fn start_turn_with(app: &mut SolveApp, text: String, image: bool, note: Option<&
     let label: String = text.lines().next().unwrap_or("").chars().take(48).collect();
     app.agent_chat.turn =
         Some(Turn { start_doc: app.session.doc.clone(), start_undo: app.session.undo.len(), changes: 0, requests: 0, limit_told: false, label });
-    app.agent_chat.last = Some((text, image));
+    app.agent_chat.last = Some((text, image, at));
     app.agent_chat.state = Some(State::Busy);
     app.agent_chat.stopped = false;
     app.agent_chat.steering = false;
@@ -1133,8 +1136,8 @@ pub fn poll(app: &mut SolveApp, ctx: &egui::Context) {
         if ready {
             apply_saved_model(app);
         }
-        if ready && let Some((text, image)) = app.agent_chat.queued.take() {
-            start_turn(app, text, image);
+        if ready && let Some((text, image, at)) = app.agent_chat.queued.take() {
+            start_turn(app, text, image, at);
         }
     }
     pump_tools(app);
@@ -1278,6 +1281,9 @@ pub fn control(app: &mut SolveApp, ctx: &egui::Context, p: &Value) -> Result<Val
     if let Some(m) = p.get("minimized").and_then(Value::as_bool) {
         app.preferences.agent_chat_minimized = m;
     }
+    if let Some(w) = p.get("popped").and_then(Value::as_bool) {
+        app.preferences.agent_chat_popped = w;
+    }
     if let Some(w) = p.get("width").and_then(Value::as_f64).filter(|w| w.is_finite()) {
         app.preferences.agent_chat_width = (w as f32).clamp(panel::MIN_WIDTH, panel::MAX_WIDTH);
         panel::forget_width(ctx);
@@ -1386,6 +1392,8 @@ pub fn status(app: &SolveApp) -> Value {
         "open": c.open,
         "side": app.preferences.agent_chat_side,
         "minimized": app.preferences.agent_chat_minimized,
+        "popped": app.preferences.agent_chat_popped,
+        "window": app.preferences.agent_chat_window,
         "width": app.preferences.agent_chat_width,
         "state": c.state().id(),
         "agent": c.agent,
