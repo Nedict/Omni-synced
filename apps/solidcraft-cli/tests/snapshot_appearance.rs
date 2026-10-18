@@ -58,7 +58,8 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new() -> Self {
-        let dir = std::env::temp_dir().join(format!("solidcraft-snapshot-appearance-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        let dir =
+            std::env::temp_dir().join(format!("solidcraft-snapshot-appearance-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
         std::fs::create_dir(&dir).unwrap();
         Self(dir)
     }
@@ -113,10 +114,8 @@ impl Drop for Scratch {
 fn a_body_drawn_see_through_is_the_picture_of_the_same_appearance_assigned() {
     let dir = Scratch::new();
     let plain = dir.script("plain.json", &[]);
-    let assigned = dir.script(
-        "assigned.json",
-        &[json!({"command": "appearance.assign", "params": {"bodies": ["Target"], "color": "#b0bac6", "opacity": 0.3}})],
-    );
+    let assigned =
+        dir.script("assigned.json", &[json!({"command": "appearance.assign", "params": {"bodies": ["Target"], "color": "#b0bac6", "opacity": 0.3}})]);
     let solid = dir.snapshot(&plain, "solid.png", &[]);
     let see_through = dir.snapshot(&plain, "see-through.png", &["--body", "Target:opacity=0.3"]);
     assert_differs(&see_through, &solid, "--body opacity was ignored");
@@ -124,10 +123,8 @@ fn a_body_drawn_see_through_is_the_picture_of_the_same_appearance_assigned() {
 
     // The option's colour is the design's too. It names the target, not the tool: the tool is
     // inside the target, so a solid target hides whatever colour the tool is given.
-    let painted = dir.script(
-        "painted.json",
-        &[json!({"command": "appearance.assign", "params": {"bodies": ["Target"], "color": "#00aa33", "opacity": 1.0}})],
-    );
+    let painted =
+        dir.script("painted.json", &[json!({"command": "appearance.assign", "params": {"bodies": ["Target"], "color": "#00aa33", "opacity": 1.0}})]);
     let by_option = dir.snapshot(&plain, "painted.png", &["--body", "Target:color=#00aa33"]);
     assert_differs(&by_option, &solid, "--body color was ignored");
     assert_same(&by_option, &dir.snapshot(&painted, "painted-script.png", &[]), "the same colour assigned by a script");

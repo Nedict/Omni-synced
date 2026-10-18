@@ -128,8 +128,7 @@ pub fn render(scene: &Scene, cam: &Camera, w: usize, h: usize) -> Canvas {
                     continue;
                 }
                 let iw = t.map(|k| inv_w.get(k as usize).copied().unwrap_or(1.0));
-                let (Some(Some(a)), Some(Some(b)), Some(Some(cc))) = (pts.get(t[0] as usize), pts.get(t[1] as usize), pts.get(t[2] as usize))
-                else {
+                let (Some(Some(a)), Some(Some(b)), Some(Some(cc))) = (pts.get(t[0] as usize), pts.get(t[1] as usize), pts.get(t[2] as usize)) else {
                     continue;
                 };
                 let ns: Vec<Vec3> = t.iter().map(|k| m.normals.get(*k as usize).copied().unwrap_or(Vec3::Z)).collect();
@@ -414,7 +413,12 @@ mod tests {
         let glass = SceneMesh { mesh: Arc::new(panel(-5.0)), color: Rgb(255, 0, 0), face_colors: Vec::new(), opacity: front_opacity };
         let scene = Scene {
             meshes: vec![SceneMesh::solid(Arc::new(panel(5.0)), Rgb(0, 255, 0)), glass],
-            lines: vec![SceneLine { points: vec![Vec3::new(-8.0, 2.0, 0.0), Vec3::new(8.0, 2.0, 0.0)], color: Rgb(0, 0, 255), width: 1.4, on_top: false }],
+            lines: vec![SceneLine {
+                points: vec![Vec3::new(-8.0, 2.0, 0.0), Vec3::new(8.0, 2.0, 0.0)],
+                color: Rgb(0, 0, 255),
+                width: 1.4,
+                on_top: false,
+            }],
             radius: 40.0,
             ..Default::default()
         };
@@ -473,12 +477,7 @@ mod tests {
     /// A close front view: 40 mm high on 64 px (128 canvas px, 0.3125 mm each), of a design of
     /// radius `radius`.
     fn close_view(mesh: Mesh, lines: Vec<SceneLine>, radius: f64, fov: f64) -> (Scene, Camera) {
-        let scene = Scene {
-            meshes: vec![SceneMesh::solid(Arc::new(mesh), Rgb(160, 165, 175))],
-            lines,
-            radius,
-            ..Default::default()
-        };
+        let scene = Scene { meshes: vec![SceneMesh::solid(Arc::new(mesh), Rgb(160, 165, 175))], lines, radius, ..Default::default() };
         let mut cam = Camera { distance: if fov > 0.0 { 20.0 / (fov * 0.5).tan() } else { 50.0 }, fov, ..Default::default() };
         cam.set_view(StandardView::Front);
         (scene, cam)

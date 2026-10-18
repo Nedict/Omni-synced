@@ -37,9 +37,9 @@ pub struct BodyLook {
 /// `NAME:key=value[,key=value]`, or `NAME` on its own (which says nothing and is an error:
 /// a body is named here to change how it is drawn).
 pub fn parse_body(spec: &str) -> Result<BodyLook, String> {
-    let (name, rest) = spec.split_once(':').ok_or_else(|| {
-        format!("--body `{spec}` must be NAME:key=value (`Target:opacity=0.3`, `Tool:color=#cc3333`, keys separated by commas)")
-    })?;
+    let (name, rest) = spec
+        .split_once(':')
+        .ok_or_else(|| format!("--body `{spec}` must be NAME:key=value (`Target:opacity=0.3`, `Tool:color=#cc3333`, keys separated by commas)"))?;
     let name = name.trim();
     if name.is_empty() {
         return Err(format!("--body `{spec}` names no body"));
@@ -212,10 +212,7 @@ mod tests {
         let look = |s: &str| parse_body(s).unwrap();
         assert_eq!(look("Target:opacity=0.3"), BodyLook { name: "Target".into(), opacity: Some(0.3), color: None });
         assert_eq!(look("Tool:color=#CC3333"), BodyLook { name: "Tool".into(), opacity: None, color: Some("#cc3333".into()) });
-        assert_eq!(
-            look("Tool: opacity = 1 , color = #00ff00 "),
-            BodyLook { name: "Tool".into(), opacity: Some(1.0), color: Some("#00ff00".into()) }
-        );
+        assert_eq!(look("Tool: opacity = 1 , color = #00ff00 "), BodyLook { name: "Tool".into(), opacity: Some(1.0), color: Some("#00ff00".into()) });
         // A body name with a space in it, as the browser shows them.
         assert_eq!(look("Bracket arm:opacity=0").name, "Bracket arm");
         assert_eq!(look("A:opacity=0").opacity, Some(0.0));
