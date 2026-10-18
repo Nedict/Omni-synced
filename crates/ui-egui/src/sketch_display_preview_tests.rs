@@ -173,3 +173,77 @@ fn polygon_preview_rejects_invalid_or_unbounded_input() {
     let t = tool("sketch.polygon.inscribed", &[[f64::INFINITY, 0.0]]);
     assert!(polygon_outline(&t, Vec2::X, 6.0).is_none());
 }
+
+#[test]
+fn slot_preview_matches_every_committed_side_and_cap() {
+    let cases = [
+        ("sketch.slot.center_to_center", vec![[0., 0.], [40., 0.]], [20., 8.], json!({"p0":[0,0],"p1":[40,0],"width":16})),
+        ("sketch.slot.overall", vec![[0., 0.], [40., 0.]], [20., -8.], json!({"p0":[0,0],"p1":[40,0],"width":16})),
+        ("sketch.slot.center_point", vec![[0., 0.], [20., 0.]], [10., 8.], json!({"center":[0,0],"end":[20,0],"width":16})),
+        ("sketch.slot.arc_center", vec![[0., 0.], [20., 0.], [0., 20.]], [0., 24.], json!({"center":[0,0],"start":[20,0],"end":[0,20],"width":8})),
+        (
+            "sketch.slot.arc_three_point",
+            vec![[20., 0.], [0., 20.], [-20., 0.]],
+            [-20., 4.],
+            json!({"start":[20,0],"through":[0,20],"end":[-20,0],"width":8}),
+        ),
+        // A sloping, reversed axis and the opposite side of a three-point centre arc.
+        ("sketch.slot.center_to_center", vec![[30., 40.], [0., 0.]], [8., -6.], json!({"p0":[30,40],"p1":[0,0],"width":20})),
+        (
+            "sketch.slot.arc_three_point",
+            vec![[-20., 0.], [0., 20.], [20., 0.]],
+            [20., -4.],
+            json!({"start":[-20,0],"through":[0,20],"end":[20,0],"width":8}),
+        ),
+    ];
+    for (command, points, hover, params) in cases {
+        let mut h = Harness::new();
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        let preview = preview_curve(&tool(command, &points), Vec2::new(hover[0], hover[1]), None, None)
+            .unwrap_or_else(|| panic!("{command}: no slot outline before the width click"));
+        let ctx = egui::Context::default();
+        let proj = projection(2.0);
+        let output = ctx.run_ui(egui::RawInput { screen_rect: Some(proj.rect), ..Default::default() }, |ui| {
+            super::paint_preview_curve(preview.clone(), &Plane::XY, ui.painter(), &proj, egui::Stroke::new(1.5, egui::Color32::WHITE), 0);
+        });
+        assert_eq!(
+            output.shapes.iter().filter(|shape| matches!(shape.shape, egui::Shape::Path(_))).count(),
+            4,
+            "{command}: paint all four outline curves"
+        );
+        h.app.run(command, params).unwrap();
+        let state = h.app.session.world_state();
+        let committed = &state.sketch(h.app.session.active_sketch.unwrap()).unwrap().sketch;
+        assert_eq!(preview.curves.len(), committed.curves.len(), "{command}");
+        for index in 0..committed.curves.len() {
+            let a = preview.exact_segs(index).unwrap_or_else(|| preview.segs(index));
+            let b = committed.exact_segs(index).unwrap_or_else(|| committed.segs(index));
+            assert_eq!(a.len(), b.len(), "{command}, curve {index}");
+            assert_eq!(preview.curves[index].construction, committed.curves[index].construction);
+            for (a, b) in a.iter().zip(&b) {
+                for i in 0..=20 {
+                    assert!(a.point_at(f64::from(i) / 20.0).dist(b.point_at(f64::from(i) / 20.0)) < 1e-7, "{command}, curve {index}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn slot_preview_rejects_invalid_extents() {
+    let cases = [
+        ("sketch.slot.center_to_center", vec![[0., 0.], [0., 0.]], [0., 8.]),
+        ("sketch.slot.overall", vec![[0., 0.], [10., 0.]], [5., 5.]),
+        ("sketch.slot.overall", vec![[0., 0.], [10., 0.]], [5., 8.]),
+        ("sketch.slot.arc_center", vec![[0., 0.], [20., 0.], [0., 20.]], [0., 40.]),
+        ("sketch.slot.arc_center", vec![[0., 0.], [0., 20.], [0., 0.]], [0., 24.]),
+        ("sketch.slot.arc_three_point", vec![[0., 0.], [10., 0.], [20., 0.]], [20., 4.]),
+    ];
+    for (command, points, hover) in cases {
+        assert!(preview_curve(&tool(command, &points), Vec2::new(hover[0], hover[1]), None, None).is_none(), "{command}");
+    }
+    let t = tool("sketch.slot.center_to_center", &[[0., 0.], [40., 0.]]);
+    for hover in [Vec2::new(f64::NAN, 0.), Vec2::new(0., f64::INFINITY), Vec2::new(f64::MAX, f64::MAX)] {
+        assert!(preview_curve(&t, hover, None, None).is_none());
+    }
+}

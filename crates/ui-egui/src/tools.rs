@@ -536,9 +536,13 @@ pub(crate) fn paint_preview_curve(
         let line = matches!(curve.kind, solidcraft_engine::sketch::CurveKind::Line { .. });
         curve.centerline = mode == 2 && line;
         curve.infinite = mode == 3 && line;
-        curve.construction = mode != 0 && !curve.centerline;
+        curve.construction |= mode != 0 && !curve.centerline;
     }
-    paint_curve(&sketch, 0, plane, painter, proj, stroke, &mut solidcraft_engine::render::SamplingBudget::new(4096, 65_536));
+    let mut budget = solidcraft_engine::render::SamplingBudget::new(4096, 65_536);
+    for index in 0..sketch.curves.len() {
+        paint_curve(&sketch, index, plane, painter, proj, stroke, &mut budget);
+    }
+    crate::scenario::publish_count("tool_preview_curves", sketch.curves.len() as f64);
 }
 
 pub(crate) fn paint_sketch_path(points: &[solidcraft_engine::geom::Vec3], mode: u8, painter: &egui::Painter, proj: &Proj, stroke: Stroke) {
@@ -597,13 +601,7 @@ pub(crate) fn preview_curve(t: &Tool, hover: Vec2, sweep: Option<f64>, rho: Opti
             sk.add_line(*m * 2.0 - hover, hover, None, None, None).ok()?;
         }
         ("sketch.circle.three_point" | "sketch.arc.three_point", [a, b]) => {
-            let ab = *b - *a;
-            let ah = hover - *a;
-            let d = 2.0 * ab.cross(ah);
-            if !d.is_finite() || d.abs() < 1e-12 {
-                return None;
-            }
-            let centre = *a + Vec2::new(ah.y * ab.len2() - ab.y * ah.len2(), ab.x * ah.len2() - ah.x * ab.len2()) / d;
+            let centre = preview_circumcentre(*a, *b, hover)?;
             if t.cmd == "sketch.circle.three_point" {
                 sk.add_circle(centre, centre.dist(*a), None, None).ok()?;
             } else {
@@ -627,6 +625,53 @@ pub(crate) fn preview_curve(t: &Tool, hover: Vec2, sweep: Option<f64>, rho: Opti
             if let Some(curve) = sk.curves.first_mut() {
                 curve.reversed = sweep < 0.0;
             }
+        }
+        ("sketch.slot.center_to_center" | "sketch.slot.overall" | "sketch.slot.center_point", [a, b]) => {
+            let dir = (*b - *a).normalized()?;
+            // Match the final click, including its minimum width and the different meaning
+            // of the first two clicks for Overall and Center Point slots.
+            let width = (2.0 * dir.cross(hover - *a).abs()).max(1e-3);
+            let radius = width * 0.5;
+            let (c0, c1) = match t.cmd {
+                "sketch.slot.overall" if a.dist(*b) > width => (*a + dir * radius, *b - dir * radius),
+                "sketch.slot.overall" => return None,
+                "sketch.slot.center_point" => (*a * 2.0 - *b, *b),
+                _ => (*a, *b),
+            };
+            let n = dir.perp() * radius;
+            sk.add_line(c0 - n, c1 - n, None, None, None).ok()?;
+            sk.add_arc(c1, c1 - n, c1 + n, [None; 3], None).ok()?;
+            sk.add_line(c1 + n, c0 + n, None, None, None).ok()?;
+            sk.add_arc(c0, c0 + n, c0 - n, [None; 3], None).ok()?;
+        }
+        ("sketch.slot.arc_center" | "sketch.slot.arc_three_point", [a, b, c]) => {
+            let (centre, start, end, radius, width) = if t.cmd == "sketch.slot.arc_center" {
+                (*a, *b, *c, a.dist(*b), (2.0 * (hover.dist(*a) - a.dist(*b)).abs()).max(1e-3))
+            } else {
+                let centre = preview_circumcentre(*a, *c, *b)?;
+                let span = |p: Vec2| ((p - centre).angle() - (*a - centre).angle()).rem_euclid(std::f64::consts::TAU);
+                let (start, end) = if span(*b) < span(*c) { (*a, *c) } else { (*c, *a) };
+                (centre, start, end, centre.dist(*a), (2.0 * hover.dist(*c)).max(1e-3))
+            };
+            let t0 = (start - centre).angle();
+            let sweep = ((end - centre).angle() - t0).rem_euclid(std::f64::consts::TAU);
+            let half = width * 0.5;
+            if !radius.is_finite()
+                || !half.is_finite()
+                || half >= radius
+                || end.dist(centre) < 1e-9
+                || !(sweep > 1e-6 && sweep < std::f64::consts::TAU - 1e-6)
+            {
+                return None;
+            }
+            let at = |angle: f64, r: f64| centre + Vec2::from_angle(angle) * r;
+            let t1 = t0 + sweep;
+            sk.add_arc(centre, at(t0, radius + half), at(t1, radius + half), [None; 3], None).ok()?;
+            sk.add_arc(centre, at(t0, radius - half), at(t1, radius - half), [None; 3], None).ok()?;
+            sk.add_arc(at(t1, radius), at(t1, radius + half), at(t1, radius - half), [None; 3], None).ok()?;
+            sk.add_arc(at(t0, radius), at(t0, radius - half), at(t0, radius + half), [None; 3], None).ok()?;
+            let guide = sk.add_arc(centre, at(t0, radius), at(t1, radius), [None; 3], None).ok()?;
+            sk.curves.get_mut(guide)?.construction = true;
         }
         ("sketch.ellipse", [c, m]) => {
             let u = (*m - *c).normalized()?;
@@ -674,6 +719,17 @@ pub(crate) fn preview_curve(t: &Tool, hover: Vec2, sweep: Option<f64>, rho: Opti
         _ => return None,
     }
     Some(sk)
+}
+
+fn preview_circumcentre(a: Vec2, b: Vec2, c: Vec2) -> Option<Vec2> {
+    let ab = b - a;
+    let ac = c - a;
+    let d = 2.0 * ab.cross(ac);
+    if !d.is_finite() || d.abs() < 1e-12 {
+        return None;
+    }
+    let centre = a + Vec2::new(ac.y * ab.len2() - ab.y * ac.len2(), ab.x * ac.len2() - ac.x * ab.len2()) / d;
+    centre.is_finite().then_some(centre)
 }
 
 /// The polygon's actual straight edges, in the same orientation as the eventual command.
