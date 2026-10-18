@@ -699,31 +699,47 @@ pub fn cylinder_face_at(b: &Body, p: Vec3) -> Option<CylinderFace> {
     // long facets). Of the faces within that tolerance of the nearest, the point lies on the
     // one whose own surface it is nearest (a cylinder: within its extent).
     let tol = mesh_tol(size);
-    let mut best: Option<(f64, u32, Option<CylinderFace>)> = None;
     let mut faces: Vec<(u32, f64)> = near.into_iter().filter(|(_, d)| *d <= nearest + tol).collect();
     faces.sort_by_key(|(f, _)| *f);
+    let mut best: Option<(f64, Option<CylinderFace>)> = None;
     for (face, d) in faces {
         let (off, cyl) = match surfs.get(face as usize) {
             Some(Surf::Plane { n, d: k }) => (d.min((n.dot(p) - k).abs()), None),
             Some(Surf::Cylinder { axis, p: ap, r }) => {
                 let c = cylinder_extent(mesh, face, *axis, *ap, *r);
-                let v = p - c.axis_point;
-                let along = v.dot(c.axis);
-                let surface = ((v - c.axis * along).len() - c.radius).abs() + (c.start - along).max(along - c.end).max(0.0);
-                (d.min(surface), Some(c))
+                (d.min(c.off(p)), Some(c))
             }
             _ => (d, None),
         };
-        if best.as_ref().is_none_or(|(bo, ..)| off < *bo) {
-            best = Some((off, face, cyl));
+        if best.as_ref().is_none_or(|(bo, _)| off < *bo) {
+            best = Some((off, cyl));
         }
     }
-    best?.2
+    best?.1
 }
 
 /// The chord tolerance the cylinder lookups mesh a body of this size at.
 fn mesh_tol(size: f64) -> f64 {
     (size * 1e-3).max(1e-3)
+}
+
+/// Face `face` of a body as a cylinder: the axis and radius of its own surface, and its extent
+/// along the axis and side read from `mesh` (the body's tessellation, whose faces are the
+/// body's). `None` when the face is not part of a cylinder, or has no triangles.
+pub fn cylinder_face(b: &Body, mesh: &Mesh, face: usize) -> Option<CylinderFace> {
+    let crate::FaceSurface::Cylinder { origin, axis, radius } = crate::face_surface(b, face)? else { return None };
+    let axis = axis.normalized()?;
+    let c = cylinder_extent(mesh, u32::try_from(face).ok()?, axis, origin, radius);
+    (c.start.is_finite() && c.end.is_finite()).then_some(c)
+}
+
+impl CylinderFace {
+    /// How far `p` is from the face: off its cylinder, and past its ends along the axis.
+    pub fn off(&self, p: Vec3) -> f64 {
+        let v = p - self.axis_point;
+        let along = v.dot(self.axis);
+        ((v - self.axis * along).len() - self.radius).abs() + (self.start - along).max(along - self.end).max(0.0)
+    }
 }
 
 /// The cylindrical face one of whose end circles is centred at `p` (a circle given by its
