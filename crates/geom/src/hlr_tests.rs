@@ -527,6 +527,87 @@ fn a_circle_racing_through_its_first_turn_is_drawn_whole_edge_on() {
 }
 
 #[test]
+fn an_arc_racing_through_almost_a_full_turn_is_drawn_whole() {
+    // 10 z^4 / |z|^4 with z = (1 - t) + 400 e^(i (pi/2 - 0.01)) t: an exact arc of radius 10 that
+    // turns 2 pi - 0.04 almost all within t < 0.01, closed by a short line. Seen along its plane
+    // at -0.45 rad, the first samples look straight and turn little between them; the arcs
+    // must still turn the whole 2 pi - 0.04.
+    let phi = std::f64::consts::FRAC_PI_2 - 0.01;
+    let c1 = (400. * phi.cos(), 400. * phi.sin());
+    let mut num = Vec::new();
+    let mut pw = (1f64, 0f64);
+    for _ in 0..=4 {
+        num.push(pw);
+        pw = (pw.0 * c1.0 - pw.1 * c1.1, pw.0 * c1.1 + pw.1 * c1.0);
+    }
+    let q = [1., c1.0, 160_000.];
+    let w = bernstein_product(&q, &q);
+    let homogeneous: Vec<[f64; 4]> = num.iter().zip(&w).map(|((re, im), w)| [10. * re, 10. * im, 0., *w]).collect();
+    let sweep_want = 4. * phi;
+    let end = [10. * sweep_want.cos(), 10. * sweep_want.sin(), 0.];
+    let shape = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![[10., 0., 0.], end],
+            edges: vec![
+                Edge { vertices: [0, 1], curve: Curve::RationalSpline { knots: [[0.; 5], [1.; 5]].concat(), homogeneous } },
+                Edge { vertices: [1, 0], curve: Curve::Line { start: end, end: [10., 0., 0.] } },
+            ],
+            faces: vec![Face {
+                loops: vec![vec![uses(0, true), uses(1, true)]],
+                surface: Surface::Plane { origin: [0.; 3], u_axis: [1., 0., 0.], v_axis: [0., 1., 0.] },
+                forward: true,
+            }],
+        }],
+    };
+    let def = prepare(&shape, &Options::default()).unwrap();
+    let view = View::new(Vec3::new(0.45f64.sin(), 0.45f64.cos(), 0.), Vec3::new(0., 0., 1.)).unwrap();
+    let d = hidden_lines(&[def], &[identity(0, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    let mut sweep = 0.;
+    for p in edge_line(&d, 0, 0).pieces.iter() {
+        for g in &p.geometry {
+            let Seg2::Conic { w, .. } = *g else { panic!("an arc is drawn as conic arcs: {g:?}") };
+            sweep += 2. * w.acos();
+        }
+    }
+    assert!((sweep - sweep_want).abs() < 1e-9, "the arcs turn {sweep} rad, want {sweep_want}");
+}
+
+#[test]
+fn a_cone_tip_trimmed_near_the_apex_is_only_its_tip() {
+    // A cone record of slope 0.25 from its apex up to 10 m, trimmed by a circle at z = 1 to the
+    // tip below it: a box edge at x = 40, z = 50 to 150, seen along +X, is in front of nothing.
+    let tau = std::f64::consts::TAU;
+    let tip = Brep {
+        version: crate::brep::VERSION,
+        shells: vec![Shell {
+            vertices: vec![[0.25, 0., 1.]],
+            edges: vec![circle([0., 0., 1.], 0.25, 0)],
+            faces: vec![Face {
+                loops: vec![vec![uses(0, false)]],
+                surface: Surface::Cone {
+                    frame: frame_at([0.; 3]),
+                    radius_at_origin: 0.,
+                    half_angle: 0.25f64.atan(),
+                    angle: [0., tau],
+                    height: [0., 10_000.],
+                },
+                forward: true,
+            }],
+        }],
+    };
+    let tip = prepare(&tip, &Options::default()).unwrap();
+    let bar = prepare(&cuboid([40., -1., 50.], [41., 1., 150.]), &Options::default()).unwrap();
+    let view = View::new(Vec3::new(1., 0., 0.), Vec3::new(0., 0., 1.)).unwrap();
+    let d = hidden_lines(&[tip, bar], &[identity(0, [0.; 3]), identity(1, [0.; 3])], &view, &Options::default(), &never).unwrap();
+    // Edges 8 and 10 run along z at x = 40, the side facing the viewer.
+    for e in [8, 10] {
+        let states: Vec<Visibility> = edge_line(&d, 1, e).pieces.iter().map(|p| p.visibility).collect();
+        assert!(states.iter().all(|v| *v == Visibility::Visible), "edge {e}: {states:?}");
+    }
+}
+
+#[test]
 fn mirrored_placements_bad_indices_and_bad_views_are_refused() {
     let def = prepare(&cuboid([0.; 3], [1.; 3]), &Options::default()).unwrap();
     let view = View::new(Vec3::new(-1., -1., -1.), Vec3::new(0., 0., 1.)).unwrap();

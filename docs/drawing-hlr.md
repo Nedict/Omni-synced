@@ -128,13 +128,15 @@ and intervals:
 - a disc bounded by a rational circle with unevenly spaced knots, with a knot span narrower
   than rounding, or with a parameterisation that races through its first turn is drawn as
   arcs turning the full 360 degrees; splines off their circle between evenly spaced samples
-  or inside such a narrow span are drawn as chords;
+  or inside such a narrow span are drawn as chords; an exact arc that turns almost all of
+  its 358 degrees in the first hundredth of its parameter is drawn whole;
 - a torus stored as two halves, seen face on, is drawn at both equators, one silhouette
   each; an edge under it is hidden over exactly the intervals the tube covers; seen
   obliquely its outline spans R + r on both sides with a deviation under 1e-3 mm;
 - cone frusta and narrow cone sectors a hair off one axis or with axes 3e-7 rad apart, and
   spherical caps through one circle with centres 5e-7 mm apart, keep their own outlines;
-- a cylinder 1e5 and 1e7 mm from the origin draws as at the origin;
+- a cylinder 1e5 and 1e7 mm from the origin draws as at the origin; a cone trimmed to its
+  tip 1 mm below the apex hides nothing above it;
 - a freeform patch is reported and makes the edges it covers uncertain, or hidden when
   freeform faces are enabled; a flat spline patch hides them for certain;
 - two touching boxes draw each shared edge once;

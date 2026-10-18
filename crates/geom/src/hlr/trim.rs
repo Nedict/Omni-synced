@@ -173,7 +173,6 @@ pub(crate) fn build(face: &Face, edges: &[C3], surface: &S3, per_break: usize) -
     let open = (0..2).any(|k| period[k].is_some_and(|p| net[k].abs() > 0.5 * p));
     let sigma = if open { 1. } else { area.signum() };
     let dom = surface.domain();
-    let within = |p: [f64; 2]| (0..2).all(|k| period[k].is_some() || dom.get(k).is_none_or(|d| p[k] >= d[0] && p[k] <= d[1]));
     // Inside point: beside the longest non-seam segment, on the face's side.
     let mut inside = None;
     let real: Vec<usize> = (0..segs.len()).filter(|i| !seam.get(*i).copied().unwrap_or(true)).collect();
@@ -196,9 +195,27 @@ pub(crate) fn build(face: &Face, edges: &[C3], surface: &S3, per_break: usize) -
                 }
             }
             let delta = 0.25 * room;
-            if delta > 0. && delta.is_finite() {
-                let (left, right) = ([m[0] + n[0] * delta, m[1] + n[1] * delta], [m[0] - n[0] * delta, m[1] - n[1] * delta]);
-                inside = Some(if within(left) || !within(right) { left } else { right });
+            // At most half way to the chart's domain edge, so a face hugging that edge (a cone's
+            // tip) keeps its point; a loop on the edge itself has no room on the outer side.
+            let step = |dir: [f64; 2]| {
+                let mut s = delta;
+                for k in 0..2 {
+                    let (Some(d), Some(&c), Some(&mk)) = (dom.get(k), dir.get(k), m.get(k)) else { continue };
+                    if period[k].is_some() {
+                        continue;
+                    }
+                    if c < 0. {
+                        s = s.min(0.5 * (mk - d[0]) / -c);
+                    } else if c > 0. {
+                        s = s.min(0.5 * (d[1] - mk) / c);
+                    }
+                }
+                s
+            };
+            let flip = [-n[0], -n[1]];
+            let pick = [(n, step(n)), (flip, step(flip))].into_iter().find(|(_, s)| *s > 0. && s.is_finite());
+            if let Some((dir, s)) = pick {
+                inside = Some([m[0] + dir[0] * s, m[1] + dir[1] * s]);
             }
         }
         if inside.is_none() {

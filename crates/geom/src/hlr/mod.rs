@@ -945,40 +945,40 @@ fn piece_geometry(t: &Track, piece: &Piece, p: &Placement, view: &View) -> (Vec<
                 let w = c.at(x) - o;
                 w.dot(v).atan2(w.dot(u))
             };
-            // Unwrap the piece's angles through the track's own samples (dense, and at every
-            // knot), halving each step in 3D until its halves turn less than a quarter turn:
-            // the samples were spaced for the screen, and a view along the circle's plane does
-            // not split a step that turns far. Past the halving budget, chords.
-            let wrap = |d: f64| (d + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
-            let mut a0 = angle(piece.t[0]);
-            let mut a1 = a0;
-            let mut budget = 1usize << 16;
-            let inner = t.samples.iter().map(|s| s.0).filter(|x| *x > piece.t[0] && *x < piece.t[1]);
-            let (mut xa, mut aa) = (piece.t[0], a0);
-            for xb in inner.chain(std::iter::once(piece.t[1])) {
-                let ab = angle(xb);
-                let mut stack = vec![(xa, aa, xb, ab, 0u32)];
-                while let Some((x0, g0, x1, g1, depth)) = stack.pop() {
-                    let xm = 0.5 * (x0 + x1);
-                    let gm = angle(xm);
-                    let (d0, d1) = (wrap(gm - g0), wrap(g1 - gm));
-                    if (d0.abs() > std::f64::consts::FRAC_PI_4 || d1.abs() > std::f64::consts::FRAC_PI_4) && depth < 60 && !param_is_angle {
-                        budget = match budget.checked_sub(1) {
-                            Some(b) => b,
-                            None => return chords(),
-                        };
-                        stack.push((xm, gm, x1, g1, depth + 1));
-                        stack.push((x0, g0, xm, gm, depth + 1));
-                    } else {
-                        a1 += d0 + d1;
-                    }
+            // The angle turned from the piece's start to its end. An edge does not turn back, so
+            // it turns one way all along: the sign of its angular speed (at its ends and samples;
+            // both signs mean it turns back, drawn as chords) and its end angles fix the turn,
+            // however unevenly it is parameterised. A whole closed edge turns a full circle.
+            let (a0, a1) = if param_is_angle {
+                (piece.t[0], piece.t[1])
+            } else {
+                let tau = std::f64::consts::TAU;
+                let wrap = |d: f64| (d + std::f64::consts::PI).rem_euclid(tau) - std::f64::consts::PI;
+                let (t0, t1) = (piece.t[0], piece.t[1]);
+                let span = (t.range[1] - t.range[0]).abs();
+                let h = 1e-7 * span;
+                let speed = |x: f64| wrap(angle((x + h).min(t1)) - angle((x - h).max(t0)));
+                let inner = t.samples.iter().map(|s| s.0).filter(|x| *x > t0 && *x < t1);
+                let (mut fwd, mut back) = (false, false);
+                for x in std::iter::once(t0).chain(inner).chain(std::iter::once(t1)) {
+                    let sp = speed(x);
+                    fwd |= sp > 1e-12;
+                    back |= sp < -1e-12;
                 }
-                (xa, aa) = (xb, ab);
-            }
-            if param_is_angle {
-                a0 = piece.t[0];
-                a1 = piece.t[1];
-            }
+                if fwd && back {
+                    return chords();
+                }
+                let a0 = angle(t0);
+                let ends = angle(t1) - a0;
+                let dir = if fwd || (!back && wrap(ends) >= 0.) { 1. } else { -1. };
+                let mut turn = (dir * ends).rem_euclid(tau);
+                let whole =
+                    t0 <= t.range[0] + 1e-12 * span && t1 >= t.range[1] - 1e-12 * span && c.at(t.range[0]).dist(c.at(t.range[1])) <= 1e-9 * u.len();
+                if whole && (turn < 1e-9 || turn > tau - 1e-9) {
+                    turn = tau;
+                }
+                (a0, a0 + dir * turn)
+            };
             let pieces = ((a1 - a0).abs() / std::f64::consts::FRAC_PI_2).ceil().max(1.) as usize;
             let at = |a: f64| o + u * a.cos() + v * a.sin();
             let mut out = Vec::with_capacity(pieces);
