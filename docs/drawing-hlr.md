@@ -65,9 +65,11 @@ the visibility work allows for it.
 
 Surfaces are recognised whether they are stored as analytic records, as revolutions of
 lines and circles or as spline patches (to 1e-9 relative; a patch whose control points lie
-in one plane is that plane). A patch is taken for a quadric or torus only when it lies on it
-at enough points of every knot span to make the check exact for its degree; a recognised
-patch is trimmed and intersected in its own analytic chart. Faces that lie on one surface (a sphere
+in one plane is that plane). A spline curve or patch is taken for a circle, quadric or torus
+only when it lies on it at enough points of every knot span to make the check exact for its
+degree, with its largest distance there, scaled by how far apart its weights are, within
+the tolerance: weights near zero cannot hide a swerve, and widely spread weights mean chords.
+A recognised patch is trimmed and intersected in its own analytic chart. Faces that lie on one surface (a sphere
 stored as two hemispheres, a cylinder split in two) share their silhouettes: the edges
 between them are seams and are not drawn, and a silhouette running along such a seam is
 one curve. A face joins such a set only when the first face's surface passes through its
@@ -144,7 +146,9 @@ and intervals:
 - a freeform patch is reported and makes the edges it covers uncertain, or hidden when
   freeform faces are enabled; a flat spline patch hides them for certain; a long edge behind
   a freeform tube is uncertain where the tube may cover it and visible elsewhere, and so is
-  a sloping edge that only dips behind a freeform patch near its end;
+  a sloping edge that only dips behind a freeform patch near its end, while one that leaves
+  the patch's box below its level but crosses the box above it stays visible;
+- a curve that swerves 2.9 mm off its circle where its weight is 1e-12 is drawn as chords;
 - a torus patch stored as a rational spline is recognised and draws its outer equator as an
   exact arc, and one with a bump in a knot span 0.002 of its parameters wide is not taken for
   a torus; a big circle passing under a thin freeform tube in a coarse scene is uncertain
