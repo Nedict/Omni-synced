@@ -276,7 +276,7 @@ pub fn projection(app: &SolveApp, rect: Rect) -> Proj {
 }
 
 /// Sketches drawn in the viewport: the active one, and finished ones not yet used by a feature.
-fn visible_sketches(app: &SolveApp) -> Vec<u64> {
+pub(crate) fn visible_sketches(app: &SolveApp) -> Vec<u64> {
     let st = app.session.world_state();
     st.sketches.iter().filter(|s| solidcraft_engine::view::sketch_drawn(&app.session, s.feature, app.ui.show_sketches)).map(|s| s.feature).collect()
 }
@@ -305,6 +305,7 @@ fn scene_key(app: &SolveApp) -> u64 {
     app.session.visibility.hidden_occurrences.hash(&mut h);
     app.session.visibility.hidden_sketches.hash(&mut h);
     app.session.visibility.shown_sketches.hash(&mut h);
+    app.session.visibility.hidden_folders.hash(&mut h);
     app.ui.hidden_profiles.hash(&mut h);
     app.session.active_component.hash(&mut h);
     app.session.active_occurrence_path.hash(&mut h);
@@ -942,10 +943,8 @@ pub fn origin_axes(app: &SolveApp) -> Vec<(&'static str, Vec3)> {
 /// past it either side), at least the origin axes' length around the axis's origin: (name,
 /// from, to).
 pub fn construction_axis_segments(app: &SolveApp) -> Vec<(String, Vec3, Vec3)> {
-    let axes: Vec<_> = solidcraft_engine::view::construction_axes(&app.session)
-        .into_iter()
-        .filter(|(_, n, _, _)| !app.session.visibility.hidden_origin.contains(n))
-        .collect();
+    let axes: Vec<_> =
+        solidcraft_engine::view::construction_axes(&app.session).into_iter().filter(|(_, n, _, _)| app.session.construction_visible(n)).collect();
     if axes.is_empty() {
         return Vec::new();
     }
@@ -975,7 +974,7 @@ pub fn construction_axis_segments(app: &SolveApp) -> Vec<(String, Vec3, Vec3)> {
 pub fn construction_points(app: &SolveApp) -> Vec<(String, Vec3)> {
     solidcraft_engine::view::construction_points(&app.session)
         .into_iter()
-        .filter(|(_, n, _)| !app.session.visibility.hidden_origin.contains(n))
+        .filter(|(_, n, _)| app.session.construction_visible(n))
         .map(|(_, n, p)| (n, p))
         .collect()
 }
@@ -985,7 +984,7 @@ pub fn construction_quads(app: &SolveApp) -> Vec<(String, Vec3, [Vec3; 4])> {
     let h = origin_size(app.cam.half_height()) * 1.2;
     solidcraft_engine::view::construction_planes(&app.session)
         .into_iter()
-        .filter(|(_, n, _)| !app.session.visibility.hidden_origin.contains(n))
+        .filter(|(_, n, _)| app.session.construction_visible(n))
         .map(|(_, name, pl)| {
             let (o, x, y) = (pl.origin, pl.x * h, pl.y * h);
             (name, pl.normal(), [o - x - y, o + x - y, o + x + y, o - x + y])
@@ -1902,6 +1901,7 @@ fn highlight_geometry_key(app: &SolveApp) -> u64 {
     app.session.visibility.hidden_origin.hash(&mut h);
     app.session.visibility.hidden_bodies.hash(&mut h);
     app.session.visibility.hidden_occurrences.hash(&mut h);
+    app.session.visibility.hidden_folders.hash(&mut h);
     h.finish()
 }
 
@@ -4718,6 +4718,90 @@ mod tests {
                 }
                 hover_frame(&mut app, &ctx, vec![egui::Event::PointerButton { pos: p, button, pressed: false, modifiers: Default::default() }]);
                 assert!(app.viewport.hover.is_some(), "hover must return on release");
+            }
+        }
+    }
+
+    fn device_face_app(gpu: bool) -> SolveApp {
+        let mut app = hover_app(gpu);
+        app.session = solidcraft_engine::Session::default();
+        app.session.execute("solid.box", &json!({"length":40,"width":40,"height":40,"corner":[-20,-20,-20]})).unwrap();
+        app.ui.show_origin = false;
+        app.cam.target = Vec3::ZERO;
+        app.cam.distance = 110.0;
+        app.cam.yaw = 0.5;
+        app.cam.pitch = 0.5;
+        app
+    }
+
+    fn device_hover_frame(app: &mut SolveApp, ctx: &egui::Context, events: Vec<egui::Event>) {
+        use crate::space_mouse::{DeviceMotion, Motion};
+        let before = app.cam;
+        app.viewport.device_motion = Some(DeviceMotion { motion: Motion { translation: [0.0; 3], rotation: [0.0, 0.0, 0.1] }, seconds: 0.016 });
+        hover_frame(app, ctx, events);
+        assert_ne!(app.cam, before, "the device must keep moving the camera");
+        assert!(app.viewport.device_motion.is_none());
+    }
+
+    #[test]
+    fn device_navigation_keeps_face_hover_current_for_a_stationary_or_moving_pointer() {
+        for gpu in [false, true] {
+            let ctx = egui::Context::default();
+            let mut app = device_face_app(gpu);
+            hover_frame(&mut app, &ctx, vec![]);
+            let p = projection(&app, app.viewport.rect.unwrap()).to_screen(Vec3::ZERO).unwrap();
+            hover_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(p)]);
+            for offset in [0.0, 15.0, -15.0, 0.0] {
+                let at = p + vec2(offset, 0.0);
+                let mut key = app.viewport.last_pick.as_ref().unwrap().0;
+                for events in [vec![egui::Event::PointerMoved(at)], vec![], vec![]] {
+                    device_hover_frame(&mut app, &ctx, events);
+                    let proj = projection(&app, app.viewport.rect.unwrap());
+                    let (expected, _) = candidate(&app, &pick(&app, &proj, at)).unwrap();
+                    assert!(matches!(expected, Hit::Face { .. }));
+                    assert_eq!(app.viewport.hover.as_ref(), Some(&expected), "hover must use the current camera and pointer");
+                    let next = app.viewport.last_pick.as_ref().unwrap().0;
+                    assert_ne!(next, key, "a moving camera must invalidate cached picking");
+                    key = next;
+                }
+            }
+            hover_frame(&mut app, &ctx, vec![]);
+            assert!(matches!(app.viewport.hover, Some(Hit::Face { .. })));
+        }
+    }
+
+    #[test]
+    fn device_navigation_allows_face_clicks_and_preserves_modifier_selection() {
+        for gpu in [false, true] {
+            for (modifiers, add) in [(egui::Modifiers::NONE, false), (egui::Modifiers::SHIFT, true), (egui::Modifiers::CTRL, true)] {
+                let ctx = egui::Context::default();
+                let mut app = device_face_app(gpu);
+                let existing = Sel::Body { name: "Body1".into() };
+                app.session.selection = vec![existing.clone()];
+                hover_frame(&mut app, &ctx, vec![]);
+                let p = projection(&app, app.viewport.rect.unwrap()).to_screen(Vec3::ZERO).unwrap();
+                device_hover_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(p - vec2(15.0, 0.0))]);
+                assert_eq!(app.session.selection, vec![existing.clone()], "device motion alone must retain selection");
+                let at = p + vec2(15.0, 0.0);
+                device_hover_frame(
+                    &mut app,
+                    &ctx,
+                    vec![
+                        egui::Event::ModifiersChanged(modifiers),
+                        egui::Event::PointerMoved(at),
+                        egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: true, modifiers },
+                    ],
+                );
+                device_hover_frame(
+                    &mut app,
+                    &ctx,
+                    vec![egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers }],
+                );
+                let proj = projection(&app, app.viewport.rect.unwrap());
+                let (_, selected) = candidate(&app, &pick(&app, &proj, at)).unwrap();
+                assert!(matches!(selected, Sel::Face { .. }));
+                let expected = if add { vec![existing, selected] } else { vec![selected] };
+                assert_eq!(app.session.selection, expected, "the click must select the face under the current camera");
             }
         }
     }
