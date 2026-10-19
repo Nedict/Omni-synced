@@ -214,6 +214,10 @@ pub use control::{ControlRequest, ControlResponse};
 pub struct UiState {
     /// Toolbar tab: SOLID, SURFACE, MESH, SHEET METAL, PLASTIC, UTILITIES (SKETCH while sketching).
     pub tab: String,
+    /// The toolbar tab a sketch was started from; finishing the sketch goes back to it (#3250).
+    /// Not saved: it only lives while a sketch is open.
+    #[serde(skip)]
+    pub sketch_return_tab: Option<String>,
     pub show_browser: bool,
     pub show_timeline: bool,
     pub show_grid: bool,
@@ -247,6 +251,7 @@ impl Default for UiState {
     fn default() -> Self {
         UiState {
             tab: "SOLID".into(),
+            sketch_return_tab: None,
             show_browser: true,
             show_timeline: true,
             show_grid: true,
@@ -727,9 +732,11 @@ impl SolveApp {
             }
         }
         if self.session.active_sketch.is_some() && self.ui.tab != "SKETCH" {
-            self.ui.tab = "SKETCH".into();
+            // Remember where the sketch came from (#3250).
+            self.ui.sketch_return_tab = Some(std::mem::replace(&mut self.ui.tab, "SKETCH".into()));
         } else if self.session.active_sketch.is_none() && self.ui.tab == "SKETCH" {
-            self.ui.tab = "SOLID".into();
+            let back = self.ui.sketch_return_tab.take().filter(|t| toolbar::TABS.contains(&t.as_str()));
+            self.ui.tab = back.unwrap_or_else(|| "SOLID".into());
             self.tool = None;
         }
         r
