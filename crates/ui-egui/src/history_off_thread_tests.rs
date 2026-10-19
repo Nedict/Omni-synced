@@ -110,6 +110,7 @@ fn ask(tx: &std::sync::mpsc::Sender<crate::ControlRequest>, method: &str, params
 /// The block with its boss and hole, driven over the control channel.
 fn agent_harness() -> (Harness, std::sync::mpsc::Sender<crate::ControlRequest>) {
     let mut h = block_boss_hole();
+    h.app.preferences.agent_off_thread = true;
     let (tx, rx) = std::sync::mpsc::channel();
     h.app.control_rx = Some(rx);
     (h, tx)
@@ -256,8 +257,8 @@ fn an_agent_export_runs_on_a_copy() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// With the preference off (Preferences > AI) an agent's design change runs on the window
-/// thread, as before: answered in the frame it arrives.
+/// With the preference off (Preferences > AI, the default) an agent's design change runs on the
+/// window thread, as before: answered in the frame it arrives.
 #[test]
 fn with_the_preference_off_an_agent_command_runs_at_once() {
     let (mut h, tx) = agent_harness();

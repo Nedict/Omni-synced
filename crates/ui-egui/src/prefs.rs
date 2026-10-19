@@ -375,7 +375,7 @@ pub struct Prefs {
     pub ai_toolbar_button: bool,
     /// An agent's slow commands over the control channel (MCP) compute off the window thread,
     /// so the window stays live while they run (#1989, [`crate::control_job`]). Off: they run on
-    /// the window thread, and the window waits for each, as before.
+    /// the window thread, and the window waits for each, as before (the default).
     pub agent_off_thread: bool,
     /// Agents the user added (the installed ones are found by themselves). API keys are never
     /// here: they live in the system keychain.
@@ -495,7 +495,7 @@ impl Default for Prefs {
             custom_slicers: Vec::new(),
             ai_features: true,
             ai_toolbar_button: true,
-            agent_off_thread: true,
+            agent_off_thread: false,
             agents: Vec::new(),
             agent_default: String::new(),
             ai_permissions: crate::agent_chat::agents::Mode::Edits,

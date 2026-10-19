@@ -82,7 +82,9 @@ Commands never open dialogs when run this way. `solidcraft-cli commands` prints 
 
 ### Slow commands and the window (#1989)
 
-In the desktop app a design change that takes longer than about 150 ms (an `engine.execute` of a
+With the preference **Preferences > AI > Keep the window responsive while agents run commands**
+on (`ui.prefs {"agent_off_thread": true}`; off by default), a design change in the desktop app
+that takes longer than about 150 ms (an `engine.execute` of a
 modelling command, an `engine.batch` of them) computes off the window thread, so the window keeps
 drawing and answering while it runs:
 - The command is evaluated ahead on a copy of the design. Then it runs for real on the window
@@ -105,9 +107,8 @@ drawing and answering while it runs:
   measure the real work.
 
 Timeouts and `control.pending` work as described above. A slow command is still answered when it
-is done, from a later frame. The preference **Preferences > AI > Keep the window responsive while
-agents run commands** (`ui.prefs {"agent_off_thread": false}`) switches this off: commands then
-run on the window thread again, and the window waits for each one.
+is done, from a later frame. With the preference off, commands run on the window thread, and the
+window waits for each one.
 
 Product images use `render.preflight/start/status/cancel/export` through `engine.execute`.
 Keep the returned session-scoped job ID for subsequent calls; status does not block or
