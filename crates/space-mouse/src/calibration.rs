@@ -349,7 +349,7 @@ pub const HOLD_SECONDS: f64 = 0.4;
 /// at least [`RETURNED_SHARE`] of the way back, and some axis that moved about as far (at least
 /// half as far) is within [`SETTLED_SHARE`] of its own peak: cross-talk can move another raw axis
 /// further than the one being asked for, and which raw axis that is isn't known yet. Steady means
-/// each raw axis's readings span no more than twice its rest wander, at least 2 units and
+/// each raw axis's readings span no more than twice its rest wander, at least 4 units (±2) and
 /// [`STEADY_SHARE`] of the furthest that axis has gone in any step: an axis that read flat at rest
 /// may still dither once it's off-centre.
 pub const SETTLE_SECONDS: f64 = 0.5;
@@ -549,11 +549,11 @@ impl Wizard {
     }
 
     /// How far apart raw axis `r`'s readings may be and still be one position: its noise's whole
-    /// spread (twice its rest wander), at least 2 units and [`STEADY_SHARE`] of the furthest it
+    /// spread (twice its rest wander), at least 4 units (±2) and [`STEADY_SHARE`] of the furthest it
     /// has gone in any step.
     fn tolerance(&self, r: usize) -> f64 {
         let wander = self.recording.rest.rest_and_wander(r).map_or(0.0, |(_, wander)| wander);
-        (2.0 * wander).max(2.0).max(STEADY_SHARE * self.reach.get(r).copied().unwrap_or(0.0))
+        (2.0 * wander).max(4.0).max(STEADY_SHARE * self.reach.get(r).copied().unwrap_or(0.0))
     }
 
     /// Whether two readings are the same position, give or take the noise.
