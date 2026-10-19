@@ -322,6 +322,11 @@ sketches, solid features, an editable timeline, parameters and assemblies. See t
 See [CONTRIBUTING.md](CONTRIBUTING.md): how to build and test, the code map, the clean-room
 and licence rules, and where help is wanted most.
 
+## Sponsors
+
+SolidCraft's continuous integration runs on [Blacksmith](https://www.blacksmith.sh), which
+sponsors its CI minutes.
+
 ## Licence
 
 MIT OR Apache-2.0, at your option. Developed under the
