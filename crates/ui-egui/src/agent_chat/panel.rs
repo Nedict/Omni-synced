@@ -597,6 +597,11 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
         ui.separator();
         // The files for the next message (#1744), as chips of their own.
         attachment_chips(app, ui);
+        // Ctrl/Cmd+V: files and pictures on the clipboard attach; text goes to the box below.
+        #[cfg(not(target_arch = "wasm32"))]
+        if focused {
+            super::paste::handle(app, ui);
+        }
         let edit = egui::TextEdit::multiline(&mut app.agent_chat.input)
             .hint_text(tr(if busy { "ui.agent_chat_placeholder_busy" } else { "ui.agent_chat_placeholder" }))
             .desired_rows(2)
