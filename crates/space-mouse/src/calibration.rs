@@ -438,9 +438,9 @@ impl Wizard {
                 // steady, since a device's axes may have different ranges.
                 let lead = (0..6).fold(0, |lead, r| if self.peaks[r] > self.peaks[lead] { r } else { lead });
                 self.reach = self.reach.max(self.peaks[lead]);
-                // A reading that stays steady close to rest is the cap settling, not held.
-                let settling = self.steady > 0.0 && offsets[lead] <= SETTLED_SHARE * self.peaks[lead];
-                let stopped = settling && self.steady >= SETTLE_SECONDS;
+                // Close to rest is the cap settling, never held; it has let go once it's steady there.
+                let settling = offsets[lead] <= SETTLED_SHARE * self.peaks[lead];
+                let stopped = settling && (self.steady >= SETTLE_SECONDS);
                 if away <= 0.5 || stopped {
                     // Where it settled: on a noisy device, the middle of the steady readings.
                     let point = match self.run.mean() {
@@ -976,11 +976,16 @@ mod tests {
         // Silent at rest, so no wander was measured, but ±2 around where each release stops.
         let mut wizard = Wizard::default();
         hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        let dither = |at: [i16; 6]| [at.map(|value| value - 2), at, at.map(|value| value + 2)];
         for (index, reading) in PRO.into_iter().enumerate() {
             assert_eq!(wizard.stage(), Stage::Step(index));
+            if index > 0 {
+                // Dithering where the last step settled doesn't fill this one.
+                cycle(&mut wizard, &dither(STUCK[index]), 1.0);
+                assert_eq!((wizard.stage(), wizard.progress()), (Stage::Step(index), 0.0));
+            }
             hold(&mut wizard, reading, 0.5);
-            let at = STUCK[index + 1];
-            cycle(&mut wizard, &[at.map(|value| value - 2), at, at.map(|value| value + 2)], SETTLE_SECONDS + 0.1);
+            cycle(&mut wizard, &dither(STUCK[index + 1]), SETTLE_SECONDS + 0.1);
         }
         assert_eq!(wizard.stage(), Stage::Done);
         assert!(wizard.result().unwrap().is_ok());
@@ -1006,6 +1011,21 @@ mod tests {
         hold(&mut wizard, [100, 0, 0, 0, 0, 0], 0.5);
         hold(&mut wizard, [5, 30, 0, 0, 0, 0], SETTLE_SECONDS + 0.1);
         assert_eq!(wizard.stage(), Stage::Step(1));
+    }
+
+    #[test]
+    fn a_hand_held_still_close_to_rest_after_the_push_counts_as_let_go() {
+        // The known limit: held exactly still at a fifth of the way out, on any device, ends the
+        // step there, and that axis's dead zone widens to cover it.
+        let low = PRO[0].map(|value| value / 5);
+        let mut wizard = Wizard::default();
+        rest_then(&mut wizard);
+        hold(&mut wizard, PRO[0], 0.5);
+        hold(&mut wizard, low, SETTLE_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(1));
+        assert_eq!(wizard.recording.settled[0], Some(low));
+        // No frame of where it settled went into the step as held.
+        assert_eq!((wizard.recording.steps[0].min[0], wizard.recording.steps[0].max[4]), (PRO[0][0], PRO[0][4]));
     }
 
     #[test]
