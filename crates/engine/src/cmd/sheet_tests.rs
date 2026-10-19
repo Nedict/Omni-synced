@@ -3034,6 +3034,109 @@ fn corner_reliefs_of_the_rule_reach_the_part_the_flat_pattern_and_the_dxf() {
     }
 }
 
+/// A base flange on a rhombus whose corners are 60° and 120°, with a flange on each of its
+/// four edges: the two flanges of a corner meet there, and their bends stop short of it.
+fn rhombus_sheet(s: &mut Session, rule: Value) {
+    let mut r = json!({"name": "AL2", "thickness": "2 mm", "k_factor": 0.5, "bend_radius": "1 mm", "gap": "0.5 mm", "active": true});
+    if let (Some(r), Some(extra)) = (r.as_object_mut(), rule.as_object()) {
+        r.extend(extra.clone());
+    }
+    run(s, "sheet.manage_rules", r);
+    run(s, "sketch.create", json!({"plane": "XY", "name": "Base"}));
+    run(s, "sketch.line", json!({"points": [[0, 0], [120, 0], [165, 77.94228634095945], [45, 77.94228634095945]], "closed": true}));
+    run(s, "sketch.finish", json!({}));
+    run(s, "sheet.flange", json!({"sketch": "Base"}));
+    run(
+        s,
+        "sheet.flange",
+        json!({"edges": [[60, 0, 2], [142.5, 38.97114317047972, 2], [105, 77.94228634095945, 2], [22.5, 38.97114317047972, 2]], "height": 38.6, "angle": "90 deg"}),
+    );
+}
+
+/// The far corner of the square relief at a corner of the base: `4 / (1 + cos α)` from the
+/// corner, on the bisector of its two edges.
+fn kite_vertex(c: (f64, f64), d1: (f64, f64), d2: (f64, f64)) -> (f64, f64) {
+    let k = 4.0 / (1.0 + d1.0 * d2.0 + d1.1 * d2.1);
+    (c.0 + (d1.0 + d2.0) * k, c.1 + (d1.1 + d2.1) * k)
+}
+
+/// The corner reliefs at corners that are not square: a 60° and a 120° one, each of the four
+/// shapes. The relief is cut `size / 2` from the corner along both edges, the bends stop there,
+/// and the flat pattern and the DXF keep one clean loop.
+#[test]
+fn corner_reliefs_at_non_orthogonal_corners_reach_the_flat_pattern_and_the_dxf() {
+    // The corners of the trimmed base: the two at 60° (6 mm from their corner, on the bisector)
+    // and the two at 120° (3.464 mm from theirs).
+    let corners = [
+        ((5.196152422706632, 3.0), (1.0, 0.0), (0.5, 0.8660254037844387)),
+        ((118.26794919243112, 3.0), (-1.0, 0.0), (0.5, 0.8660254037844387)),
+        ((159.80384757729337, 74.94228634095945), (-0.5, -0.8660254037844387), (-1.0, 0.0)),
+        ((46.73205080756888, 74.94228634095945), (1.0, 0.0), (-0.5, -0.8660254037844387)),
+    ];
+    let mut notch = Session::default();
+    rhombus_sheet(&mut notch, json!({}));
+    assert!(no_errors_or_warnings(&notch), "{:?}", notch.model.results);
+    let area0 = flat_area(&flat(&mut notch));
+    for shape in ["notch", "round", "rectangular", "tear"] {
+        let mut s = Session::default();
+        rhombus_sheet(&mut s, json!({"corner_relief_shape": shape, "corner_relief": "8 mm"}));
+        assert!(no_errors_or_warnings(&s), "{shape}: {:?}", s.model.results);
+        // The flat pattern is one loop with no cut-outs.
+        let f = flat(&mut s);
+        assert_eq!(f["outline"].as_array().map(Vec::len), Some(1), "{shape}: {f}");
+        assert_eq!(f["cutouts"], json!([]), "{shape}: {f}");
+        // The folded part holds the flat pattern's material (K = 0.5 keeps the volume).
+        let (v, area) = (volume(&mut s), flat_area(&f));
+        assert!((v - area * 2.0).abs() < 1e-3 * v, "{shape}: {v} vs {}", area * 2.0);
+        // The DXF: the relief at each of the four corners.
+        let (arcs, ends) = relief_drawing(&mut s);
+        match shape {
+            "round" => {
+                // A round about each corner, of radius 4.
+                assert_eq!(arcs.len(), 4, "{shape}: {arcs:?}");
+                for (c, _, _) in corners {
+                    assert!(
+                        arcs.iter().any(|(a, r)| (a.x - c.0).abs() < 1e-6 && (a.y - c.1).abs() < 1e-6 && (r - 4.0).abs() < 1e-6),
+                        "{shape}: {arcs:?}"
+                    );
+                }
+                // The base loses a sector of radius 4 at each corner and 4 mm of each of the two
+                // bends there: 2 corners at 60° and 2 at 120°.
+                let ba = std::f64::consts::PI;
+                let want = 2.0 * (16.0 * (PI / 3.0) / 2.0) + 2.0 * (16.0 * (2.0 * PI / 3.0) / 2.0) + 4.0 * 2.0 * 4.0 * ba;
+                assert!((area0 - area - want).abs() < 0.1, "{shape}: {} vs {want}", area0 - area);
+            }
+            "rectangular" => {
+                // A kite at each corner, meeting 4 / cos(α / 2) from it on the bisector.
+                assert!(arcs.is_empty(), "{shape}: {arcs:?}");
+                for (c, d1, d2) in corners {
+                    let x = kite_vertex(c, d1, d2);
+                    assert!(ends.iter().any(|p| (p.x - x.0).abs() < 1e-6 && (p.y - x.1).abs() < 1e-6), "{shape}: no kite at {c:?}: {ends:?}");
+                }
+                let ba = std::f64::consts::PI;
+                let want = 2.0 * (16.0 * (PI / 6.0).tan()) + 2.0 * (16.0 * (PI / 3.0).tan()) + 4.0 * 2.0 * 4.0 * ba;
+                assert!((area0 - area - want).abs() < 0.1, "{shape}: {} vs {want}", area0 - area);
+            }
+            "tear" => {
+                // The tear cuts the bend ends, not the base: no arc, and the base keeps its corners.
+                assert!(arcs.is_empty(), "{shape}: {arcs:?}");
+                assert!(area > area0, "{shape}: the tear takes nothing out of the base");
+            }
+            _ => {
+                // The notch cuts nothing.
+                assert!(arcs.is_empty(), "{shape}: {arcs:?}");
+                assert!((area - area0).abs() < 1e-6, "{shape}: {area} vs {area0}");
+            }
+        }
+        // Unfolding and refolding keep it.
+        run(&mut s, "sheet.unfold", json!({}));
+        run(&mut s, "sheet.refold", json!({}));
+        assert!((volume(&mut s) - v).abs() < 1e-6 * v, "{shape}");
+        let mut reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        assert!((volume(&mut reopened) - v).abs() < 1e-6 * v, "{shape}");
+    }
+}
+
 #[test]
 fn a_tear_of_the_rule_reaches_the_part_the_flat_pattern_and_the_dxf() {
     use std::f64::consts::SQRT_2;
