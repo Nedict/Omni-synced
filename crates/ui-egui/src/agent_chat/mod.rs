@@ -31,6 +31,8 @@ mod markdown;
 mod markdown_view;
 mod panel;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod paste;
+#[cfg(not(target_arch = "wasm32"))]
 mod process;
 pub mod settings;
 
@@ -333,6 +335,8 @@ pub struct AgentChat {
     pub(crate) attachments: Vec<attach::Attachment>,
     /// Pictures pasted so far, to name the next one.
     pasted: usize,
+    /// When the last text paste arrived (input time), so the V key coming up after it isn't a second paste.
+    pub(crate) text_pasted_at: Option<f64>,
     /// The chips' thumbnails, by the picture they show.
     thumbs: std::collections::HashMap<u64, egui::TextureHandle>,
     /// The last id given to a file added to a message.
