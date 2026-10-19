@@ -282,11 +282,11 @@ fn an_opened_design_shows_its_bodies_as_they_are_meshed() {
     w.app.control_rx = Some(rx);
     let (open, open_rx) = crate::control::ControlRequest::new("engine.execute", json!({"command": "doc.open", "params": {"path": path}}));
     tx.send(open).unwrap();
-    let mut frames = 0;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     while open_rx.try_recv().is_err() {
         w.frame(vec![]);
-        frames += 1;
-        assert!(frames < 100_000);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        assert!(std::time::Instant::now() < deadline, "the open answers");
     }
     let mut seen = Vec::new();
     while crate::open_meshing::active(&w.app) {
@@ -317,11 +317,11 @@ fn a_screenshot_after_an_open_waits_for_the_whole_design() {
     w.app.control_rx = Some(rx);
     let (open, open_rx) = crate::control::ControlRequest::new("engine.execute", json!({"command": "doc.open", "params": {"path": path}}));
     tx.send(open).unwrap();
-    let mut frames = 0;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     while open_rx.try_recv().is_err() {
         w.frame(vec![]);
-        frames += 1;
-        assert!(frames < 100_000);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        assert!(std::time::Instant::now() < deadline, "the open answers");
     }
     if !crate::open_meshing::active(&w.app) {
         return; // Meshed already: nothing to wait for on this machine.
