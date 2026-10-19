@@ -40,6 +40,7 @@ static GALICIAN: Catalog = Catalog::new("gl", "Galego", include_str!(concat!(env
 static ITALIAN: Catalog = Catalog::new("it", "Italiano", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/it.json")));
 static JAPANESE: Catalog = Catalog::new("ja", "日本語", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ja.json")));
 static KOREAN: Catalog = Catalog::new("ko", "한국어", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ko.json")));
+static POLISH: Catalog = Catalog::new("pl", "Polski", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/pl.json")));
 static PORTUGUESE_BR: Catalog =
     Catalog::new("pt-BR", "Português (Brasil)", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/pt-BR.json")));
 static RUSSIAN: Catalog = Catalog::new("ru", "Русский", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ru.json")));
@@ -59,6 +60,7 @@ pub const LOCALES: &[&Catalog] = &[
     &ITALIAN,
     &JAPANESE,
     &KOREAN,
+    &POLISH,
     &PORTUGUESE_BR,
     &RUSSIAN,
     &TURKISH,
@@ -102,8 +104,12 @@ impl Locale {
         interpolate(self.text(id), args)
     }
 
-    /// The default names SolidCraft gives (`Sketch1`, `Body2`, `Component3`), translated.
+    /// The default names SolidCraft gives (`Untitled` for a new design, `Sketch1`, `Body2`,
+    /// `Component3`), translated.
     fn default_name(self, text: &str) -> Option<String> {
+        if text == "Untitled" {
+            return Some(self.text("ui.untitled").to_string());
+        }
         for (prefix, id) in [("Sketch", "browser.sketch_name"), ("Body", "browser.body_name"), ("Component", "browser.component_name")] {
             if let Some(number) = text.strip_prefix(prefix)
                 && !number.is_empty()
@@ -226,6 +232,19 @@ mod tests {
         assert_eq!(ids.first(), Some(&"en"));
         assert!(ids[1..].is_sorted(), "{ids:?}");
     }
+
+    /// A new design's name, `Untitled`, is a default name like `Sketch1`: it shows translated
+    /// wherever the design's name is shown (the tab, the browser's top row, the save prompt).
+    #[test]
+    fn a_new_designs_name_is_translated_like_the_other_default_names() {
+        let ja = Locale::for_language("ja");
+        assert_eq!(ja.given_name("Untitled"), ja.text("ui.untitled"));
+        assert_ne!(ja.given_name("Untitled"), "Untitled");
+        assert_eq!(Locale::for_language("en").given_name("Untitled"), "Untitled");
+        // Only the whole default name: names people type stay as typed.
+        assert_eq!(ja.given_name("Untitled bracket"), "Untitled bracket");
+        assert_eq!(ja.given_name("Boss"), "Boss");
+    }
     use std::collections::BTreeSet;
 
     fn placeholders(text: &str) -> BTreeSet<&str> {
@@ -329,6 +348,7 @@ mod tests {
             ("ja", "フランジ", "ゼブラ解析", "モーション スタディ"),
             ("de", "Flansch", "Zebra-Analyse", "Bewegungsuntersuchung"),
             ("ko", "플랜지", "얼룩말줄무늬 분석", "운동 연구"),
+            ("pl", "Kołnierz", "Analiza zebry", "Badanie ruchu"),
             ("ru", "Фланец", "Зебра-анализ", "Исследование движения"),
             ("fr", "Bord tombé", "Analyse zébrée", "Étude de mouvement"),
             ("uk", "Фланець", "Зебра-аналіз", "Дослідження руху"),
