@@ -965,7 +965,8 @@ pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) {
         && let Some(piece) = trim_hover_piece(app, *sketch, id)
     {
         let world: Vec<_> = piece.iter().map(|p| ss.plane.to_world(*p)).collect();
-        crate::tools::paint_sketch_path(&world, 0, painter, proj, Stroke::new(3.0, tk.hover_profile_edge));
+        // In the error colour, thicker than a hover: it is what the click deletes.
+        crate::tools::paint_sketch_path(&world, 0, painter, proj, Stroke::new(4.5, tk.error));
     }
     let stroke = Stroke::new(1.5, tk.rubber_band);
     if let Some((hp, snap)) = &t.hover
