@@ -40,8 +40,14 @@
 # self-hosted machine has a newer glibc, so its binaries wouldn't start on ubuntu-24.04, while the
 # archive runs there unchanged (same /home/runner/work checkout path). The self-hosted shards
 # (main and the merge queue) skip the archive and build the tests in their warm build directories.
-# Fork pull requests, the nightly run and Run workflow use GitHub's runners only; the self-hosted
-# runners refuse any other job.
+# Fork pull requests, the nightly run and Run workflow never use our self-hosted runners; the
+# self-hosted runners refuse any other job.
+# "GitHub's runners" above means Blacksmith's Ubuntu 24.04 runners (blacksmith-<N>vcpu-ubuntu-2404,
+# sized per job: 16 vCPU for Build tests and Clippy, 8 for compiles, test shards, doc and
+# reference tests, 4 for the light checks, 2 for Select checks and ci). Same image family as
+# ubuntu-24.04, so the test archive and recorded goldens behave the same. Windows jobs stay on
+# windows-latest. Blacksmith runners report runner.environment == 'self-hosted' as well, so steps
+# tell our own machines apart by runner name (minisforum-*, ci-box-*).
 name: CI
 
 on:
@@ -82,7 +88,7 @@ jobs:
   dependency-advisories:
     name: Dependency advisories
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -98,7 +104,7 @@ jobs:
     # approved-for-ci either (the same skip, for the same reason).
     if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event.action != 'labeled' || github.event.label.name == 'approved-for-ci')
     # Trusted runs (see the top of this file) use the self-hosted runners.
-    runs-on: ${{ (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && 'self-hosted-light' || 'ubuntu-24.04' }}
+    runs-on: ${{ (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && 'self-hosted-light' || 'blacksmith-2vcpu-ubuntu-2404' }}
     permissions:
       contents: read
       # To ask whether the merge queue already tested a commit pushed to main.
@@ -118,7 +124,7 @@ jobs:
       carried: ${{ steps.paths.outputs.carried }}
       # The fast self-hosted runners are kept for main and the merge queue (the pre-merge gate);
       # pull requests, same-repo ones included, take the GitHub-hosted or untrusted paths.
-      local: ${{ runner.environment == 'self-hosted' && github.event_name != 'pull_request' }}
+      local: ${{ (startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) && github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -263,19 +269,19 @@ jobs:
   checks:
     name: Format and repository checks
     if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event.action != 'labeled' || github.event.label.name == 'approved-for-ci')
-    runs-on: ${{ (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && 'self-hosted-fast' || 'ubuntu-24.04' }}
+    runs-on: ${{ (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && 'self-hosted-fast' || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm build directory (self-hosted runner)
-        if: runner.environment == 'self-hosted' && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+        if: (startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
         run: scripts/ci/warm-target.sh checks
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       # The trusted self-hosted runners keep their build directory and Cargo home instead; the
       # untrusted ones (fork pull requests) start empty and restore main's cache, read-only.
-      - if: runner.environment == 'github-hosted' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+      - if: ${{ !(startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: repo-checks
@@ -308,14 +314,14 @@ jobs:
     name: Quick compile
     needs: changes
     if: needs.changes.outputs.quick == 'true'
-    runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-light' || 'ubuntu-24.04' }}
+    runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-light' || 'blacksmith-8vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Size parallel compiles to the job's memory
         run: scripts/ci/build-jobs.sh
       - uses: dtolnay/rust-toolchain@stable
-      - if: runner.environment == 'github-hosted'
+      - if: ${{ !(startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) }}
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: quick-compile
@@ -327,19 +333,19 @@ jobs:
     name: Native Linux Clippy
     needs: changes
     if: needs.changes.outputs.native == 'true'
-    runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-fast' || 'ubuntu-24.04' }}
+    runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-fast' || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm build directory (self-hosted runner)
-        if: runner.environment == 'self-hosted' && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+        if: (startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
         run: scripts/ci/warm-target.sh clippy
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       # The trusted self-hosted runners keep their build directory and Cargo home instead; the
       # untrusted ones (fork pull requests) start empty and restore main's cache, read-only.
-      - if: runner.environment == 'github-hosted' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+      - if: ${{ !(startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: native-clippy
@@ -364,7 +370,7 @@ jobs:
     # The self-hosted shards (main and the merge queue) build from their warm build directories
     # instead: downloading the 3 GB archive took them longer than building.
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.native == 'true' && needs.changes.outputs.local != 'true' && (github.event_name != 'pull_request' || needs.checks.result == 'success') }}
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && (endsWith(format('{0}', github.event.pull_request.number), '7') || endsWith(format('{0}', github.event.pull_request.number), '8') || endsWith(format('{0}', github.event.pull_request.number), '9'))) && 'self-hosted-untrusted' || 'ubuntu-24.04' }}
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && (endsWith(format('{0}', github.event.pull_request.number), '7') || endsWith(format('{0}', github.event.pull_request.number), '8') || endsWith(format('{0}', github.event.pull_request.number), '9'))) && 'self-hosted-untrusted' || 'blacksmith-16vcpu-ubuntu-2404' }}
     # Fork builds compile inside gVisor on shared boxes; give them room to finish and upload.
     timeout-minutes: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && (endsWith(format('{0}', github.event.pull_request.number), '7') || endsWith(format('{0}', github.event.pull_request.number), '8') || endsWith(format('{0}', github.event.pull_request.number), '9'))) && 90 || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 60 || 45 }}
     env:
@@ -411,7 +417,7 @@ jobs:
     name: Native Linux tests (${{ matrix.shard }}/4)
     needs: [changes, checks, build-tests]
     if: ${{ !cancelled() && needs.changes.outputs.native == 'true' && (github.event_name != 'pull_request' || needs.checks.result == 'success') && (needs.changes.outputs.local == 'true' || needs.build-tests.result == 'success') }}
-    runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-fast' || ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && (endsWith(format('{0}', github.event.pull_request.number), '7') || endsWith(format('{0}', github.event.pull_request.number), '8') || endsWith(format('{0}', github.event.pull_request.number), '9'))) && 'self-hosted-untrusted' || 'ubuntu-24.04') }}
+    runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-fast' || ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && (endsWith(format('{0}', github.event.pull_request.number), '7') || endsWith(format('{0}', github.event.pull_request.number), '8') || endsWith(format('{0}', github.event.pull_request.number), '9'))) && 'self-hosted-untrusted' || 'blacksmith-8vcpu-ubuntu-2404') }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -428,7 +434,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install a software Vulkan driver (lavapipe)
         # Preinstalled on the self-hosted runner, which has no sudo.
-        if: runner.environment == 'github-hosted'
+        if: ${{ !(startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) }}
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan1
@@ -510,7 +516,7 @@ jobs:
     name: Action matrix (${{ matrix.shard }}/16)
     needs: build-tests
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 55
     strategy:
       fail-fast: false
@@ -552,7 +558,7 @@ jobs:
     name: Action matrix determinism
     needs: build-tests
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -574,7 +580,7 @@ jobs:
     name: Property tests (many cases)
     needs: build-tests
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -598,7 +604,7 @@ jobs:
     name: Doc tests
     needs: changes
     if: needs.changes.outputs.doctests == 'true'
-    runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-fast' || 'ubuntu-24.04' }}
+    runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-fast' || 'blacksmith-8vcpu-ubuntu-2404' }}
     timeout-minutes: 45
     env:
       CARGO_INCREMENTAL: "0"
@@ -610,12 +616,12 @@ jobs:
       - name: Size parallel compiles to the job's memory
         run: scripts/ci/build-jobs.sh
       - name: Warm build directory (self-hosted runner)
-        if: runner.environment == 'self-hosted' && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+        if: (startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
         run: scripts/ci/warm-target.sh doc-tests
       - uses: dtolnay/rust-toolchain@stable
       # The trusted self-hosted runners keep their build directory and Cargo home instead; the
       # untrusted ones (fork pull requests) start empty and restore main's cache, read-only.
-      - if: runner.environment == 'github-hosted' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+      - if: ${{ !(startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: doc-tests
@@ -651,7 +657,7 @@ jobs:
     name: Reference tests
     needs: changes
     if: needs.changes.outputs.oracle == 'true'
-    runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-fast' || ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && (endsWith(format('{0}', github.event.pull_request.number), '7') || endsWith(format('{0}', github.event.pull_request.number), '8') || endsWith(format('{0}', github.event.pull_request.number), '9'))) && 'self-hosted-untrusted' || 'ubuntu-24.04') }}
+    runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-fast' || ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && (endsWith(format('{0}', github.event.pull_request.number), '7') || endsWith(format('{0}', github.event.pull_request.number), '8') || endsWith(format('{0}', github.event.pull_request.number), '9'))) && 'self-hosted-untrusted' || 'blacksmith-8vcpu-ubuntu-2404') }}
     timeout-minutes: 60
     env:
       CARGO_INCREMENTAL: "0"
@@ -663,12 +669,12 @@ jobs:
       - name: Size parallel compiles to the job's memory
         run: scripts/ci/build-jobs.sh
       - name: Warm build directory (self-hosted runner)
-        if: runner.environment == 'self-hosted' && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+        if: (startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
         run: scripts/ci/warm-target.sh oracle
       - uses: dtolnay/rust-toolchain@stable
       # The trusted self-hosted runners keep their build directory and Cargo home instead; the
       # untrusted ones (fork pull requests) start empty and restore main's cache, read-only.
-      - if: runner.environment == 'github-hosted' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+      - if: ${{ !(startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: oracle
@@ -752,7 +758,7 @@ jobs:
     name: ${{ github.event.action == 'labeled' && github.event.label.name != 'approved-for-ci' && 'ci (ignored label)' || 'ci' }}
     needs: [changes, checks, quick-compile, clippy, build-tests, tests, doc-tests, oracle, windows-fxc, windows-startup]
     if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event.action != 'labeled' || github.event.label.name == 'approved-for-ci')
-    runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-light' || 'ubuntu-24.04' }}
+    runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-light' || 'blacksmith-2vcpu-ubuntu-2404' }}
     steps:
       - name: Verify required checks
         env:
@@ -805,7 +811,7 @@ jobs:
   wasm:
     name: Compile WebAssembly (manual)
     if: github.event_name == 'workflow_dispatch' && inputs.cross_compile
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -821,7 +827,7 @@ jobs:
   riscv64-gates:
     name: Compile RISC-V (manual)
     if: github.event_name == 'workflow_dispatch' && inputs.cross_compile
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
