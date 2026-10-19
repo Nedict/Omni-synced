@@ -239,6 +239,12 @@ pub fn right_aligned<R>(ui: &mut Ui, total: f32, width: f32, add: impl FnOnce(&m
     add(ui)
 }
 
+/// Shared rounded surface for floating shell cards.
+pub(crate) fn shell_card(fill: egui::Color32) -> egui::Frame {
+    let t = crate::theme::Tokens::get();
+    egui::Frame::NONE.fill(fill).stroke(egui::Stroke::new(1.0, t.border)).corner_radius(t.radius_lg).shadow(t.shell_shadow())
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

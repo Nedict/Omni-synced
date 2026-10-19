@@ -205,6 +205,12 @@ fn flat_pattern_islands_fit_before_the_actual_command_panel() {
         let mut dialog = app.dialog.clone().unwrap();
         let Kind::Sheet(Sm::FlatPattern { data, .. }) = &mut dialog.kind else { panic!("flat dialog") };
         *data = Some(Ok(flat));
+        let viewport = Rect::from_min_max(pos2(250.0, crate::toolbar::APP_BAR_HEIGHT + crate::toolbar::RIBBON_HEIGHT), pos2(1400.0, 832.0));
+        let browser = Rect::from_min_max(viewport.min, viewport.min + vec2(250.0, 450.0));
+        let history = Rect::from_min_max(pos2(viewport.left(), viewport.bottom() - 40.0), viewport.max);
+        if mode == crate::shell::LayoutMode::Floating {
+            app.shell.content = Some(Rect::from_min_max(pos2(browser.right(), viewport.top()), pos2(viewport.right(), history.top())));
+        }
         let ctx = egui::Context::default();
         let id = egui::Id::new(("sc_dialog", "FLAT PATTERN"));
         let mut output = egui::FullOutput::default();
@@ -241,6 +247,12 @@ fn flat_pattern_islands_fit_before_the_actual_command_panel() {
             outlines.iter().flat_map(|p| &p.points).all(|p| p.x <= panel.left() - 19.0),
             "both complete islands must remain exposed before the command panel: {panel:?}"
         );
+        if mode == crate::shell::LayoutMode::Floating {
+            assert!(
+                outlines.iter().flat_map(|p| &p.points).all(|p| !browser.contains(*p) && !history.contains(*p)),
+                "flat pattern fits clear of the shell cards"
+            );
+        }
     }
 }
 

@@ -78,8 +78,9 @@ impl Cards {
 pub(crate) struct State {
     pub cards: Vec<Rect>,
     pub panels: Vec<Rect>,
-    pub content: Option<Rect>,
     pub browser: Option<Rect>,
+    pub history: Option<Rect>,
+    pub content: Option<Rect>,
 }
 
 /// One source of occlusion for navigation, picking, overlays and fit.
@@ -88,8 +89,9 @@ pub(crate) fn covered_rects(app: &SolveApp) -> Vec<Rect> {
     if app.ui.layout == LayoutMode::Floating {
         rects.extend(app.shell.cards.iter().copied());
         rects.extend(app.shell.panels.iter().copied());
+        rects.extend(app.shell.history);
     }
-    rects.extend(app.shell.browser.filter(|_| app.ui.show_browser && app.preferences.browser_float));
+    rects.extend(app.shell.browser.filter(|_| app.ui.show_browser));
     rects.extend(app.viewport.palette_rect.filter(|_| app.session.active_sketch.is_some()));
     rects.extend(app.viewport.dialog_rect.filter(|_| app.dialog.is_some()));
     rects.retain(|r| r.is_finite() && r.is_positive());

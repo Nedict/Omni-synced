@@ -326,3 +326,29 @@ fn tiny_viewports_never_overlap_navigation_and_axis_view() {
         }
     }
 }
+
+#[test]
+fn floating_fit_uses_the_measured_browser_and_history_cards_at_each_size() {
+    for (width, height) in [(1400, 900), (900, 720), (700, 475)] {
+        let mut h = Harness::new();
+        h.call("ui.resize", json!({"width":width,"height":height}));
+        h.app.run("solid.box", json!({"length":40,"width":30,"height":20})).unwrap();
+        h.settle();
+        h.app.fit_view();
+        h.settle();
+        let layout = h.app.viewport.layout.as_ref().unwrap();
+        for name in ["browser:card", "history:card"] {
+            let card = crate::scenario::rect_of(name).unwrap();
+            assert!(layout.viewport.contains_rect(card), "{name}: {card:?} {layout:?}");
+            assert!(!layout.drawable.intersect(card).is_positive(), "{name}: {card:?} {layout:?}");
+        }
+        let projection = crate::viewport::projection(&h.app, layout.viewport);
+        for x in [0.0, 40.0] {
+            for y in [0.0, 30.0] {
+                for z in [0.0, 20.0] {
+                    assert!(layout.drawable.contains(projection.to_screen(Vec3::new(x, y, z)).unwrap()), "{layout:?}");
+                }
+            }
+        }
+    }
+}

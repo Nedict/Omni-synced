@@ -5,13 +5,13 @@ use serde_json::json;
 use solidcraft_ui_egui::frame::{DIALOG_MAX_W, DIALOG_MIN_W, DIALOG_WIDE_MAX_W, WINDOW_WIDE_MAX_W};
 use solidcraft_ui_egui::scenario::Harness;
 
-/// Widths of the windows on screen (their areas in the middle layer).
+/// Widths of dialogs and windows on screen; the browser card is workspace chrome.
 fn window_widths(h: &Harness) -> Vec<(String, f32)> {
     h.ctx.memory(|m| {
         m.areas()
             .visible_layer_ids()
             .into_iter()
-            .filter(|l| l.order == egui::Order::Middle)
+            .filter(|l| l.order == egui::Order::Middle && l.id != egui::Id::new("sc_browser_card"))
             .filter_map(|l| m.area_rect(l.id).map(|r| (format!("{:?}", l.id), r.width())))
             .collect()
     })

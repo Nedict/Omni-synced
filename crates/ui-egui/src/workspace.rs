@@ -664,7 +664,7 @@ mod tests {
         h.step(&json!({"key":"Enter"})).unwrap();
         assert_eq!(h.app.ui.tab, "MANAGE");
         h.step(&json!({"key":"Escape"})).unwrap();
-        crate::palette::submit(&mut h.app, "parameters.change");
+        h.app.start("parameters.change");
         assert_eq!(h.app.ui.tab, "MANAGE");
         h.frames(2);
         for tab in TABS {

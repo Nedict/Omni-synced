@@ -2863,7 +2863,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     if let Some(since) = app.computing_since() {
         let seconds = ((crate::now_ms() - since) / 1000.0).floor().max(0.0);
         let text = crate::i18n::format("dialog.computing", &[("seconds", &format!("{seconds:.0}"))]);
-        let pos = pos2(crate::shell::content_rect(app, rect).left() + 12.0, rect.bottom() - 76.0);
+        let pos = pos2(crate::shell::content_rect(app, rect).left() + 12.0, crate::shell::content_rect(app, rect).bottom() - 76.0);
         let galley = painter.layout_no_wrap(text, FontId::proportional(t.font_label), t.text);
         let r = Rect::from_min_size(pos, galley.size() + vec2(34.0, 8.0));
         painter.rect_filled(r, t.radius_sm, t.overlay);
@@ -2874,7 +2874,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     // Status chip.
     if let Some((msg, at, err)) = app.status.clone() {
         if crate::now_ms() - at < 6000.0 {
-            let pos = pos2(crate::shell::content_rect(app, rect).left() + 12.0, rect.bottom() - 46.0);
+            let pos = pos2(crate::shell::content_rect(app, rect).left() + 12.0, crate::shell::content_rect(app, rect).bottom() - 46.0);
             let galley = painter.layout_no_wrap(msg, FontId::proportional(t.font_label), if err { t.error } else { t.text });
             let r = Rect::from_min_size(pos, galley.size() + vec2(16.0, 8.0));
             painter.rect_filled(r, t.radius_sm, t.overlay);
@@ -5744,21 +5744,28 @@ mod tests {
             h.call("ui.move", field.clone());
             h.call("ui.click", field);
             assert!(handle_at(item).is_none(), "the list must close");
-            // The full floating viewport extends under the browser; its exposed content
-            // edge is the boundary between the panel and navigable model in either layout.
-            let content = crate::shell::content_rect(&h.app, vp);
-            let (mid, x) = (content.center().y, content.left() + content.width() * 0.25);
+            // Floating cards sit inside the full viewport. Probe their actual edges; the
+            // content anchor also reserves gaps and space below the short browser card.
+            // Docked panels end at the viewport boundary instead.
+            let (browser_edge, mid, history_edge) = if layout == crate::shell::LayoutMode::Floating {
+                let browser = h.app.shell.browser.expect("the floating browser card");
+                let history = h.app.shell.history.expect("the floating history card");
+                (browser.right(), browser.center().y, history.top())
+            } else {
+                (vp.left(), vp.center().y, vp.bottom())
+            };
+            let x = vp.center().x;
             for p in [
                 pos2(dialog.left() + 2.0, dialog.center().y),
                 pos2(dialog.center().x, dialog.bottom() - 2.0),
-                pos2(content.left() - 2.0, mid),
-                pos2(x, vp.bottom() + 2.0),
+                pos2(browser_edge - 2.0, mid),
+                pos2(x, history_edge + 2.0),
             ] {
                 assert!(!wheel(&mut h, p, 60.0), "smooth {smooth}: the wheel at {p:?} off the model ({vp:?}, dialog {dialog:?}) zoomed it");
                 assert!(h.app.viewport.mouse.is_none(), "the model must not see the pointer at {p:?}");
             }
             // The model itself still zooms right next to them.
-            for p in [pos2(dialog.left() - 2.0, dialog.center().y), pos2(content.left() + 2.0, mid), pos2(x, vp.bottom() - 2.0)] {
+            for p in [pos2(dialog.left() - 2.0, dialog.center().y), pos2(browser_edge + 2.0, mid), pos2(x, history_edge - 2.0)] {
                 assert!(wheel(&mut h, p, 60.0), "smooth {smooth}: the wheel at {p:?} on the model ({vp:?}) must zoom it");
                 assert_eq!(h.app.viewport.mouse, Some(p));
                 assert!(gestures(&mut h, p), "a pinch and a two-finger scroll at {p:?} on the model must move it");
@@ -6013,6 +6020,8 @@ mod tests {
                 h.app.ui.perspective = perspective;
                 h.app.run("solid.box", json!({"length":80,"width":50,"height":20})).unwrap();
                 h.app.fit_view();
+                // Fit resolves after measuring the floating browser and history cards.
+                h.frames(2);
                 let rect = h.app.viewport.rect.unwrap();
                 let at = rect.center() + offset;
                 let proj = projection(&h.app, rect);

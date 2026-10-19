@@ -81,12 +81,12 @@ fn window_chrome_renders_in_the_active_language() {
     for (lang, browser, filter, faces) in [
         ("zh", "浏览器", "选择筛选", "面"),
         ("ja", "ブラウザ", "選択フィルター", "面"),
-        ("de", "BROWSER", "Auswahlfilter", "Flächen"),
+        ("de", "Browser", "Auswahlfilter", "Flächen"),
         ("ko", "브라우저", "선택 필터", "면"),
-        ("ru", "БРАУЗЕР", "Фильтр выделения", "Грани"),
-        ("fr", "NAVIGATEUR", "Filtre de sélection", "Faces"),
-        ("it", "STRUTTURA", "Filtro di selezione", "Facce"),
-        ("uk", "БРАУЗЕР", "Фільтр виділення", "Грані"),
+        ("ru", "Браузер", "Фильтр выделения", "Грани"),
+        ("fr", "Navigateur", "Filtre de sélection", "Faces"),
+        ("it", "Struttura", "Filtro di selezione", "Facce"),
+        ("uk", "Браузер", "Фільтр виділення", "Грані"),
     ] {
         let mut h = Harness::new();
         h.app.preferences.language = lang.into();
@@ -211,19 +211,6 @@ fn home_page_renders_in_the_active_language() {
             assert!(!texts.iter().any(|t| t == english), "{lang}: {english:?} is still painted in English");
         }
     }
-}
-
-/// The command palette's hint embeds a JSON example, so its braces must not be mistaken for a
-/// placeholder name by the catalog's parser, and the example must survive interpolation whole.
-#[test]
-fn command_palette_hint_keeps_its_json_example_intact() {
-    let mut h = Harness::new();
-    h.app.preferences.language = "zh".into();
-    h.app.home.open = false;
-    h.frames(2);
-    let hint = crate::i18n::format("ui.command_palette_hint", &[("example", "Extrude {\"distance\": 20}")]);
-    assert!(hint.contains("Extrude {\"distance\": 20}"), "the example is inserted literally: {hint:?}");
-    assert!(!hint.contains("{example}"), "the placeholder is substituted: {hint:?}");
 }
 
 #[test]

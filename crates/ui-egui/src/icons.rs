@@ -39,20 +39,25 @@ pub fn paint_icon(p: &Painter, r: Rect, name: &str, opacity: f32) {
 /// Draw the icon `name` for a surface that is always dark (the application bar), whatever the
 /// theme: `dark: Some(true)`. `None` follows the theme.
 pub fn paint_on(p: &Painter, r: Rect, name: &str, dark: Option<bool>, opacity: f32) {
-    paint_with_ink(p, r, name, dark, opacity, None);
+    paint_with_ink(p, r, name, dark, opacity, None, false);
 }
 
 /// Monochrome flat controls on the application bar use its text token exactly.
 pub(crate) fn paint_app_bar(p: &Painter, r: Rect, name: &str, opacity: f32) {
-    paint_with_ink(p, r, name, Some(true), opacity, Some(crate::theme::Tokens::get().app_bar_text));
+    paint_with_ink(p, r, name, Some(true), opacity, Some(crate::theme::Tokens::get().app_bar_text), false);
 }
 
 /// Paint a single-colour icon in `ink`.
 pub(crate) fn paint_ink(p: &Painter, r: Rect, name: &str, ink: Color32) {
-    paint_with_ink(p, r, name, Some(true), 1.0, Some(ink));
+    paint_with_ink(p, r, name, Some(true), 1.0, Some(ink), false);
 }
 
-fn paint_with_ink(p: &Painter, r: Rect, name: &str, dark: Option<bool>, opacity: f32, ink: Option<Color32>) {
+/// Paint a single-colour icon in `ink`, mirrored top to bottom (a chevron pointing up).
+pub(crate) fn paint_ink_flipped(p: &Painter, r: Rect, name: &str, ink: Color32) {
+    paint_with_ink(p, r, name, Some(true), 1.0, Some(ink), true);
+}
+
+fn paint_with_ink(p: &Painter, r: Rect, name: &str, dark: Option<bool>, opacity: f32, ink: Option<Color32>, flip_y: bool) {
     let ctx = p.ctx();
     let ppp = ctx.pixels_per_point().max(0.5);
     let side = r.width().min(r.height());
@@ -78,7 +83,8 @@ fn paint_with_ink(p: &Painter, r: Rect, name: &str, dark: Option<bool>, opacity:
     let size = px as f32 / ppp;
     let min = pos2(((r.center().x - size / 2.0) * ppp).round() / ppp, ((r.center().y - size / 2.0) * ppp).round() / ppp);
     let tint = Color32::from_white_alpha((opacity.clamp(0.0, 1.0) * 255.0).round() as u8);
-    p.image(tex.id(), Rect::from_min_size(min, egui::vec2(size, size)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint);
+    let uv = if flip_y { Rect::from_min_max(pos2(0.0, 1.0), pos2(1.0, 0.0)) } else { Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)) };
+    p.image(tex.id(), Rect::from_min_size(min, egui::vec2(size, size)), uv, tint);
 }
 
 #[cfg(test)]
