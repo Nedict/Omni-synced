@@ -61,7 +61,7 @@ pub use profiles::{
     CurvePick, Profile, distinct_curves, find_drawn_profiles, find_profiles, merge_regions, profile_at_point, profile_by_curves,
     without_text_counters,
 };
-pub use shape::{Shape, intersections};
+pub use shape::{Shape, intersections, intersections_within};
 pub use solver::{
     Analysis, CONSISTENT, DrivingValues, Hold, SolveReport, SolveStatus, constraint_residual, determined_by, measure_dimension, move_point_towards,
     solve, solve_after_edit, solve_after_value_edit, solve_holding, solve_with,
