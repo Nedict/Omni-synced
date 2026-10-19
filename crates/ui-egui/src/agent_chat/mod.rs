@@ -31,6 +31,8 @@ mod markdown;
 mod markdown_view;
 mod panel;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod paste;
+#[cfg(not(target_arch = "wasm32"))]
 mod process;
 pub mod settings;
 
@@ -95,41 +97,86 @@ impl State {
     }
 }
 
-/// A picture shown with a message: what the agent got (a picture of the view, or any other
-/// attachment) as PNG, and a note shown with it in the viewer. The thumbnail and the viewer share
-/// one texture, made when the picture is first drawn.
+/// A picture shown with a message: what the agent got (a picture of the view, or a file the user
+/// attached) as the encoded bytes it was sent in (PNG, JPEG, GIF, WebP…), and a note shown with it
+/// (the file's name). The thumbnail and the viewer share one texture, decoded off the window
+/// thread the first time the picture is drawn.
 #[derive(Clone)]
 pub struct Picture {
-    png: Arc<Vec<u8>>,
+    bytes: Arc<Vec<u8>>,
     note: String,
-    texture: Arc<std::sync::OnceLock<Option<egui::TextureHandle>>>,
+    /// The picture of the view that Attach view sends, not a file.
+    view: bool,
+    decode: Arc<Decode>,
+}
+
+/// A picture's decoding: started once, and the texture (`None`: not a picture) once it is in.
+#[derive(Default)]
+struct Decode {
+    started: std::sync::atomic::AtomicBool,
+    texture: std::sync::OnceLock<Option<egui::TextureHandle>>,
+}
+
+/// How a picture can be drawn now.
+#[cfg(not(target_arch = "wasm32"))]
+pub enum Shown {
+    /// Still being decoded: a repaint comes when it is in.
+    Loading,
+    Ready(egui::TextureHandle),
+    /// The bytes are not a picture the app can read.
+    Failed,
 }
 
 impl Picture {
-    pub fn new(png: Vec<u8>, note: impl Into<String>) -> Self {
-        Self { png: Arc::new(png), note: note.into(), texture: Arc::default() }
+    pub fn new(bytes: Vec<u8>, note: impl Into<String>) -> Self {
+        Self::shared(Arc::new(bytes), note, false)
     }
 
-    /// The picture as a texture, `None` when it can't be decoded.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn texture(&self, ctx: &egui::Context) -> Option<egui::TextureHandle> {
-        self.texture
-            .get_or_init(|| {
-                let rgba = image::load_from_memory_with_format(&self.png, image::ImageFormat::Png).ok()?.to_rgba8();
-                let size = [usize::try_from(rgba.width()).ok()?, usize::try_from(rgba.height()).ok()?];
-                Some(ctx.load_texture(
-                    "sc_agent_chat_picture",
-                    egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw()),
-                    egui::TextureOptions::LINEAR,
-                ))
-            })
-            .clone()
+    fn shared(bytes: Arc<Vec<u8>>, note: impl Into<String>, view: bool) -> Self {
+        Self { bytes, note: note.into(), view, decode: Arc::default() }
     }
+
+    /// The picture as a texture, decoded in the background on first use.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn texture(&self, ctx: &egui::Context) -> Shown {
+        use std::sync::atomic::Ordering;
+        if let Some(done) = self.decode.texture.get() {
+            return done.clone().map_or(Shown::Failed, Shown::Ready);
+        }
+        if !self.decode.started.swap(true, Ordering::AcqRel) {
+            let (bytes, decode, ctx) = (Arc::clone(&self.bytes), Arc::clone(&self.decode), ctx.clone());
+            let spawned = std::thread::Builder::new().name("agent-chat-picture".into()).spawn(move || {
+                let texture = decode_picture(&bytes).map(|image| ctx.load_texture("sc_agent_chat_picture", image, egui::TextureOptions::LINEAR));
+                let _ = decode.texture.set(texture);
+                ctx.request_repaint();
+            });
+            if spawned.is_err() {
+                let _ = self.decode.texture.set(None);
+                return Shown::Failed;
+            }
+        }
+        Shown::Loading
+    }
+}
+
+/// Decode a picture in any format the app reads, within limits (it came through the attachment
+/// checks already; a hostile header still can't ask for gigabytes here).
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_picture(bytes: &[u8]) -> Option<egui::ColorImage> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(20_000);
+    limits.max_image_height = Some(20_000);
+    limits.max_alloc = Some(1 << 30);
+    reader.limits(limits);
+    let rgba = reader.decode().ok()?.to_rgba8();
+    let size = [usize::try_from(rgba.width()).ok()?, usize::try_from(rgba.height()).ok()?];
+    Some(egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw()))
 }
 
 impl std::fmt::Debug for Picture {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Picture({} bytes, {:?})", self.png.len(), self.note)
+        write!(f, "Picture({} bytes, {:?})", self.bytes.len(), self.note)
     }
 }
 
@@ -256,6 +303,8 @@ pub struct AgentChat {
     state: Option<State>,
     agent: String,
     images: bool,
+    /// The agent takes documents (PDFs) in a message.
+    documents: bool,
     /// Send a picture of the view with the next message.
     pub attach_view: bool,
     auth: Vec<acp::AuthMethod>,
@@ -288,6 +337,8 @@ pub struct AgentChat {
     pub(crate) attachments: Vec<attach::Attachment>,
     /// Pictures pasted so far, to name the next one.
     pasted: usize,
+    /// When the last text paste arrived (input time), so the V key coming up after it isn't a second paste.
+    pub(crate) text_pasted_at: Option<f64>,
     /// The chips' thumbnails, by the picture they show.
     thumbs: std::collections::HashMap<u64, egui::TextureHandle>,
     /// The last id given to a file added to a message.
@@ -404,10 +455,10 @@ impl AgentChat {
     /// never to another message.
     fn keep_picture(&mut self, at: Option<usize>, png: Vec<u8>) {
         if let Some(Item::User { image: true, pictures, .. }) = at.and_then(|i| self.items.get_mut(i))
-            && pictures.is_empty()
+            && !pictures.iter().any(|p| p.view)
             && png.len() <= MAX_PICTURE_BYTES
         {
-            pictures.push(Picture::new(png, ""));
+            pictures.push(Picture::shared(Arc::new(png), "", true));
         }
     }
     fn notice(&mut self, text: impl Into<String>, error: bool) {
@@ -463,6 +514,7 @@ impl AgentChat {
     /// Take in what the backend reported.
     fn on_event(&mut self, e: Event) -> Option<Outcome> {
         match e {
+            Event::Documents(documents) => self.documents = documents,
             Event::Ready { agent, images } => {
                 self.agent = agent;
                 self.images = images;
@@ -767,7 +819,21 @@ pub fn send(app: &mut SolveApp, ctx: &egui::Context, text: String) {
 /// Put `text` in the conversation and send it with its files (`interrupted`: the agent is told it
 /// cut in on its previous step).
 fn submit(app: &mut SolveApp, ctx: &egui::Context, text: String, image: bool, files: Vec<attach::Attachment>, interrupted: bool) {
-    app.agent_chat.push(Item::User { text: text.clone(), image, pictures: Vec::new(), files: files.iter().map(|f| f.name.clone()).collect() });
+    // Attached pictures show as thumbnails with the viewer, as the view's picture does; the other
+    // files are listed by name.
+    let pictures = files
+        .iter()
+        .filter_map(|f| match &f.content {
+            attach::Content::Picture { bytes, .. } => Some(Picture::shared(Arc::clone(bytes), f.name.clone(), false)),
+            _ => None,
+        })
+        .collect();
+    app.agent_chat.push(Item::User {
+        text: text.clone(),
+        image,
+        pictures,
+        files: files.iter().filter(|f| !f.is_picture()).map(|f| f.name.clone()).collect(),
+    });
     // The message's place in the conversation: its picture is kept there when it is taken.
     let at = app.agent_chat.items.len().checked_sub(1);
     match app.agent_chat.state() {
@@ -897,14 +963,14 @@ fn start_turn(app: &mut SolveApp, text: String, image: bool, at: Option<usize>, 
 /// files are named after the text (text files in full), and pictures go as images to an agent
 /// that takes them. `at` is the message's place in the conversation, where its picture is kept.
 fn start_turn_with(app: &mut SolveApp, text: String, image: bool, at: Option<usize>, files: Vec<attach::Attachment>, note: Option<&str>) {
-    let pictures = app.agent_chat.images;
+    let (pictures, documents) = (app.agent_chat.images, app.agent_chat.documents);
     let lead = match note {
         Some(n) => format!("{n}\n\n{text}"),
         None => text.clone(),
     };
     // The whole message stays within the cap: the files' text gets what the words leave.
     let budget = MAX_PROMPT.saturating_sub(lead.chars().count() + FILE_NAMES_ROOM);
-    let about_files = attach::note(&files, pictures, budget);
+    let about_files = attach::note(&files, pictures, documents, budget);
     let sent: String = format!("{lead}{about_files}").chars().take(MAX_PROMPT).collect();
     let mut parts = vec![PromptPart::Text(sent)];
     if image {
@@ -916,9 +982,7 @@ fn start_turn_with(app: &mut SolveApp, text: String, image: bool, at: Option<usi
             Err(e) => log::warn!("the view's picture is left out of the prompt: {e}"),
         }
     }
-    if pictures {
-        parts.extend(attach::parts(&files));
-    }
+    parts.extend(attach::parts(&files, pictures, documents));
     // The undo step is named after the message, or its first file when it has no words.
     let first_line = text.lines().find(|l| !l.trim().is_empty()).or_else(|| files.first().map(|f| f.name.as_str())).unwrap_or("");
     let label: String = first_line.chars().take(48).collect();
@@ -954,9 +1018,10 @@ pub fn attach_path(app: &mut SolveApp, path: &str) -> std::result::Result<String
         crate::file_load::begin_request(app, request).map_err(|e| trf("ui.agent_chat_import_failed", &[("name", &name), ("error", &e)]))?;
         return Ok(app.agent_chat.importing(name, rx));
     } else {
-        // A picture is decoded off the window thread: a large one takes long enough to stop it.
+        // A picture is decoded and a PDF read off the window thread: a large one takes long enough
+        // to stop it.
         #[cfg(not(target_arch = "wasm32"))]
-        if attach::kind(p) == attach::Kind::Picture {
+        if matches!(attach::kind(p), attach::Kind::Picture | attach::Kind::Pdf) {
             // A missing file is said at once; reading and decoding wait for the worker.
             if !p.is_file() {
                 return Err(trf("ui.agent_chat_file_not_a_file", &[("name", &attach::name_of(p))]));
@@ -1591,6 +1656,7 @@ pub fn status(app: &SolveApp) -> Value {
         "state": c.state().id(),
         "agent": c.agent,
         "images": c.images,
+        "documents": c.documents,
         "authStatus": c.auth_status,
         "authMethods": c.auth.iter().map(|m| json!({"id": m.id, "name": m.name, "kind": match &m.kind { acp::AuthKind::Agent => "agent", acp::AuthKind::Terminal { .. } => "terminal", acp::AuthKind::EnvVar { .. } => "env_var" }})).collect::<Vec<_>>(),
         "toolsPort": c.tools_port,
