@@ -16,6 +16,8 @@ struct Popup {
     accept: bool,
     dismissed: bool,
     explicit: bool,
+    /// Where each suggestion was drawn, for a press on one (see [`complete`]).
+    rows: Vec<egui::Rect>,
 }
 
 fn popup_id() -> egui::Id {
@@ -94,7 +96,19 @@ pub(crate) fn begin_frame(ctx: &egui::Context) {
 
 pub(crate) fn complete(ui: &mut egui::Ui, resp: &egui::Response, text: &mut String) -> bool {
     let ctx = ui.ctx().clone();
-    if !ctx.memory(|m| m.has_focus(resp.id)) {
+    // A press on a suggestion takes the focus from the editor before the list can see it
+    // clicked, and the editor then gives up what was typed (#3257). The press picks the
+    // suggestion under it, and the editor gets its focus back below.
+    let pressed_row = ctx
+        .input(|i| i.pointer.primary_pressed().then(|| i.pointer.interact_pos()).flatten())
+        .and_then(|at| ctx.data(|d| d.get_temp::<Popup>(popup_id())).filter(|p| p.editor == resp.id)?.rows.iter().position(|r| r.contains(at)));
+    // Its release is a click away from the editor, which gives up the focus again: take it back.
+    let picked_by_press = resp.id.with("completion_picked_by_press");
+    if ctx.data(|d| d.get_temp::<bool>(picked_by_press)).is_some() && ctx.input(|i| i.pointer.any_released()) {
+        ctx.data_mut(|d| d.remove::<bool>(picked_by_press));
+        resp.request_focus();
+    }
+    if !ctx.memory(|m| m.has_focus(resp.id)) && pressed_row.is_none() {
         return false;
     }
     let state = egui::TextEdit::load_state(&ctx, resp.id);
@@ -111,6 +125,7 @@ pub(crate) fn complete(ui: &mut egui::Ui, resp: &egui::Response, text: &mut Stri
         accept: false,
         dismissed: false,
         explicit: false,
+        rows: Vec::new(),
     });
     let list = suggestions_for(&ctx, &popup.word, popup.explicit);
     popup.frame = ctx.cumulative_frame_nr();
@@ -120,8 +135,13 @@ pub(crate) fn complete(ui: &mut egui::Ui, resp: &egui::Response, text: &mut Stri
         ctx.data_mut(|d| d.insert_temp(popup_id(), popup));
         return false;
     }
-    let mut pick = if popup.accept { list.get(popup.selected).map(|s| s.text.clone()) } else { None };
+    let pick = match pressed_row {
+        Some(row) => list.get(row).map(|s| s.text.clone()),
+        None if popup.accept => list.get(popup.selected).map(|s| s.text.clone()),
+        None => None,
+    };
     popup.accept = false;
+    popup.rows.clear();
     let t = Tokens::get();
     crate::frame::area(resp.id.with("completions")).order(egui::Order::Tooltip).fixed_pos(resp.rect.left_bottom() + egui::vec2(0.0, 2.0)).show(
         &ctx,
@@ -134,14 +154,15 @@ pub(crate) fn complete(ui: &mut egui::Ui, resp: &egui::Response, text: &mut Stri
                         "function" => t.accent,
                         _ => t.text_dim,
                     };
+                    // Not focusable: a click must leave the focus with the editor. The press
+                    // already picked it (`pressed_row`), so the release does nothing more.
                     let r = ui
-                        .add(egui::Button::new(RichText::new(&suggestion.text).color(colour)).selected(i == popup.selected))
+                        .add(egui::Button::new(RichText::new(&suggestion.text).color(colour)).selected(i == popup.selected).sense(egui::Sense::CLICK))
                         .on_hover_text(&suggestion.detail);
+                    popup.rows.push(r.rect);
+                    crate::scenario::publish_handle(&format!("completion:{i}"), r.rect.center());
                     if i == popup.selected {
                         ui.label(RichText::new(&suggestion.detail).small().color(t.text_dim));
-                    }
-                    if r.clicked() {
-                        pick = Some(suggestion.text.clone());
                     }
                 }
                 ui.label(RichText::new("↑ ↓ choose · Enter / Tab complete · Esc dismiss").small().color(t.text_dim));
@@ -158,6 +179,9 @@ pub(crate) fn complete(ui: &mut egui::Ui, resp: &egui::Response, text: &mut Stri
     state.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(start + pick.chars().count()))));
     state.store(&ctx, resp.id);
     resp.request_focus();
+    if pressed_row.is_some() {
+        ctx.data_mut(|d| d.insert_temp(picked_by_press, true));
+    }
     // Do not leave the accepted popup owning Enter on the next frame.
     ctx.data_mut(|d| d.remove::<Popup>(popup_id()));
     true
@@ -201,7 +225,7 @@ mod tests {
         fn frame(&mut self, events: Vec<egui::Event>) {
             self.accepted = false;
             self.leaked.clear();
-            let _ = self.ctx.run_ui(
+            let mut output = self.ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 400.0))),
                     events,
@@ -224,6 +248,8 @@ mod tests {
                     });
                 },
             );
+            // Nothing paints these frames: drop their texture updates on purpose.
+            output.textures_delta.clear();
         }
 
         fn key(&mut self, key: Key) {
@@ -259,6 +285,26 @@ mod tests {
         assert!(e.leaked.is_empty());
         assert_eq!(e.cursor(), e.text.chars().count());
         assert!(e.ctx.memory(|m| m.has_focus(e.id)));
+    }
+
+    /// #3257: a click on a suggestion inserts it, though the press takes the focus from the
+    /// editor first; the editor keeps its focus and its caret goes after the inserted name.
+    #[test]
+    fn clicking_a_suggestion_inserts_it() {
+        let mut e = Editor::new("2 * wi");
+        let list = suggestions(&e.ctx, "wi");
+        let rows = e.ctx.data(|d| d.get_temp::<Popup>(popup_id())).unwrap().rows;
+        assert_eq!(rows.len(), list.len());
+        let at = rows[1].center();
+        let button =
+            |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        e.frame(vec![egui::Event::PointerMoved(at)]);
+        e.frame(vec![button(true)]);
+        assert!(e.accepted, "the press picked the suggestion under it");
+        e.frame(vec![button(false)]);
+        assert_eq!(e.text, format!("2 * {}", list[1].text));
+        assert!(e.ctx.memory(|m| m.has_focus(e.id)), "the editor keeps the focus");
+        assert_eq!(e.cursor(), e.text.chars().count());
     }
 
     #[test]
