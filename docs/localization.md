@@ -34,10 +34,8 @@ meaning (Construction, Flat, Round, Normal, Gap, Clearance).
 ## English (UK)
 
 `en-GB.json` holds only the English messages whose spelling differs in UK English (Centre,
-Customise, Organisation, Licence, colours, …), in UK spelling; every other message is English's.
-`english_uk_is_english_in_uk_spelling` (in `i18n.rs`) works the catalog out from `en.json` and
-its table of US and UK words, and fails with the exact lines to add when an English message
-with a US spelling is added or changed. A word the table doesn't know yet goes in the table.
+Customise, Organisation, Licence, colours, …); every other message falls back to English. When an
+English message with a US spelling is added, add its UK spelling there too.
 
 ## Coverage
 
