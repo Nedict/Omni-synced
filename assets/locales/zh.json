@@ -1370,6 +1370,7 @@
   "ui.newSketchGroup": "新建草图组",
   "ui.new_body": "新建实体",
   "ui.new_design": "新建设计",
+  "ui.no_geometry_yet": "尚无几何图形",
   "ui.no_slicer_found": "未找到切片软件",
   "ui.normal": "法向",
   "ui.normalConstruction": "普通 / 构造",
