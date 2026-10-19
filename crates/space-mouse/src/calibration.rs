@@ -343,16 +343,22 @@ pub const MIN_SHARE: f64 = 1.0 / 12.0;
 pub const REST_SECONDS: f64 = 1.5;
 /// Seconds the cap has to be held out in a step's direction before letting go finishes it.
 pub const HOLD_SECONDS: f64 = 0.4;
-/// Seconds the reading has to stay steady, with the step's own axis back within
-/// [`SETTLED_SHARE`] of how far it went, to count as let go even outside the rest wander: the cap
-/// stopped short of rest, as a drifting stick does, or spacenavd with a relative-axis device
-/// (#2778). Steady means each raw axis's readings span no more than twice its rest wander, at
-/// least 2 units and [`STEADY_SHARE`] of the furthest any step has gone: an axis that read flat
-/// at rest may still dither once it's off-centre.
+/// Seconds the reading has to stay steady, back close to rest, to count as let go even outside the
+/// rest wander: the cap stopped short of rest, as a drifting stick does, or spacenavd with a
+/// relative-axis device (#2778). Back close to rest means the axis that went furthest this step is
+/// at least [`RETURNED_SHARE`] of the way back, and some axis that moved about as far (at least
+/// half as far) is within [`SETTLED_SHARE`] of its own peak: cross-talk can move another raw axis
+/// further than the one being asked for, and which raw axis that is isn't known yet. Steady means
+/// each raw axis's readings span no more than twice its rest wander, at least 2 units and
+/// [`STEADY_SHARE`] of the furthest that axis has gone in any step: an axis that read flat at rest
+/// may still dither once it's off-centre.
 pub const SETTLE_SECONDS: f64 = 0.5;
-/// How far back from its peak, as a share of it, the step's own axis has to be to count as let go.
+/// How far from rest, as a share of its peak this step, an axis that moved has to be to count as let go.
 pub const SETTLED_SHARE: f64 = 0.25;
-/// The least spread steady readings may have, as a share of the furthest any step has gone.
+/// How far from rest, as a share of its peak, the axis that went furthest may still be when the
+/// step counts as let go. A hand still holding the push keeps it out.
+pub const RETURNED_SHARE: f64 = 0.5;
+/// The least spread steady readings may have, as a share of the furthest the axis has gone.
 pub const STEADY_SHARE: f64 = 1.0 / 50.0;
 
 /// Where the guided calibration is.
@@ -388,8 +394,8 @@ pub struct Wizard {
     steady: f64,
     /// How far each raw axis went from rest in this step, in raw units.
     peaks: [f64; 6],
-    /// The furthest any raw axis went from rest in any step so far.
-    reach: f64,
+    /// The furthest each raw axis went from rest in any step so far.
+    reach: [f64; 6],
     /// Where the previous step settled: while the reading stays there, nobody has touched the cap.
     settled: Option<[i16; 6]>,
 }
@@ -404,7 +410,7 @@ impl Default for Wizard {
             run: Samples::default(),
             steady: 0.0,
             peaks: [0.0; 6],
-            reach: 0.0,
+            reach: [0.0; 6],
             settled: None,
         }
     }
@@ -456,15 +462,15 @@ impl Wizard {
                 self.settled = None;
                 let away = self.away(raw);
                 let offsets = self.offsets(raw);
-                for (peak, offset) in self.peaks.iter_mut().zip(offsets) {
+                for ((peak, reach), offset) in self.peaks.iter_mut().zip(&mut self.reach).zip(offsets) {
                     *peak = peak.max(offset);
+                    *reach = reach.max(offset);
                 }
-                // The step's own axis is the one that went furthest; the others only have to be
-                // steady, since a device's axes may have different ranges.
-                let lead = (0..6).fold(0, |lead, r| if self.peaks[r] > self.peaks[lead] { r } else { lead });
-                self.reach = self.reach.max(self.peaks[lead]);
+                let furthest = self.peaks.iter().copied().fold(0.0, f64::max);
+                let peaks = self.peaks;
                 // Close to rest is the cap settling, never held; it has let go once it's steady there.
-                let settling = offsets[lead] <= SETTLED_SHARE * self.peaks[lead];
+                let settling = (0..6).any(|r| peaks[r] == furthest && offsets[r] <= RETURNED_SHARE * furthest)
+                    && (0..6).any(|r| peaks[r] >= 0.5 * furthest && offsets[r] <= SETTLED_SHARE * peaks[r]);
                 let stopped = settling && (self.steady >= SETTLE_SECONDS);
                 if away <= 0.5 || stopped {
                     // Where it settled: on a noisy device, the middle of the steady readings.
@@ -533,6 +539,8 @@ impl Wizard {
         self.stage = stage;
         self.seconds = 0.0;
         self.peaks = [0.0; 6];
+        // A new stage's steadiness starts with its own readings.
+        (self.run, self.steady) = (Samples::default(), 0.0);
     }
 
     /// How far each raw axis is from rest, in raw units.
@@ -541,11 +549,11 @@ impl Wizard {
     }
 
     /// How far apart raw axis `r`'s readings may be and still be one position: its noise's whole
-    /// spread (twice its rest wander), at least 2 units and [`STEADY_SHARE`] of the furthest any
-    /// step has gone.
+    /// spread (twice its rest wander), at least 2 units and [`STEADY_SHARE`] of the furthest it
+    /// has gone in any step.
     fn tolerance(&self, r: usize) -> f64 {
         let wander = self.recording.rest.rest_and_wander(r).map_or(0.0, |(_, wander)| wander);
-        (2.0 * wander).max(2.0).max(STEADY_SHARE * self.reach)
+        (2.0 * wander).max(2.0).max(STEADY_SHARE * self.reach.get(r).copied().unwrap_or(0.0))
     }
 
     /// Whether two readings are the same position, give or take the noise.
@@ -1018,7 +1026,12 @@ mod tests {
             cycle(&mut wizard, &dither(STUCK[index + 1]), SETTLE_SECONDS + 0.1);
         }
         assert_eq!(wizard.stage(), Stage::Done);
-        assert!(wizard.result().unwrap().is_ok());
+        let calibration = wizard.result().unwrap().unwrap();
+        for at in &STUCK[1..] {
+            for still in dither(*at) {
+                assert_eq!(calibration.apply(still), [0; 6], "{still:?} {calibration:?}");
+            }
+        }
     }
 
     #[test]
@@ -1041,6 +1054,23 @@ mod tests {
         hold(&mut wizard, [100, 0, 0, 0, 0, 0], 0.5);
         hold(&mut wizard, [5, 30, 0, 0, 0, 0], SETTLE_SECONDS + 0.1);
         assert_eq!(wizard.stage(), Stage::Step(1));
+    }
+
+    #[test]
+    fn a_step_settles_when_cross_talk_moved_another_axis_further_than_its_own() {
+        // Nula's case: the push moves raw 1 twice as far as raw 0, which may be the one asked
+        // for. Raw 0 comes back to 5 % and raw 1 stays at 30 %: let go, both steady.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        hold(&mut wizard, [100, 200, 0, 0, 0, 0], 0.5);
+        hold(&mut wizard, [5, 60, 0, 0, 0, 0], SETTLE_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(1));
+        // Still holding the push, with only the lesser axis back, isn't let go.
+        let mut holding = Wizard::default();
+        hold(&mut holding, [0; 6], REST_SECONDS + 0.1);
+        hold(&mut holding, [100, 200, 0, 0, 0, 0], 0.5);
+        hold(&mut holding, [5, 200, 0, 0, 0, 0], 1.0);
+        assert_eq!(holding.stage(), Stage::Step(0));
     }
 
     #[test]

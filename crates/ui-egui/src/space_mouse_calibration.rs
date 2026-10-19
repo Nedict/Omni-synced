@@ -60,8 +60,14 @@ pub(crate) fn dead_zone_pads(ui: &mut egui::Ui, calibration: &Calibration, raw: 
                     })
                     .collect();
                 painter.add(egui::Shape::convex_polygon(zone, visuals.selection.bg_fill.gamma_multiply(0.35), egui::Stroke::NONE));
-                painter.line_segment([centre - egui::vec2(radius, 0.0), centre + egui::vec2(radius, 0.0)], egui::Stroke::new(1.0, faint.gamma_multiply(0.4)));
-                painter.line_segment([centre - egui::vec2(0.0, radius), centre + egui::vec2(0.0, radius)], egui::Stroke::new(1.0, faint.gamma_multiply(0.4)));
+                painter.line_segment(
+                    [centre - egui::vec2(radius, 0.0), centre + egui::vec2(radius, 0.0)],
+                    egui::Stroke::new(1.0, faint.gamma_multiply(0.4)),
+                );
+                painter.line_segment(
+                    [centre - egui::vec2(0.0, radius), centre + egui::vec2(0.0, radius)],
+                    egui::Stroke::new(1.0, faint.gamma_multiply(0.4)),
+                );
                 painter.circle_stroke(centre, radius, egui::Stroke::new(1.0, faint));
                 let dot = egui::vec2(h_way * travel[h], v_way * travel[v]);
                 let dot = if dot.length() > 1.0 { dot.normalized() } else { dot };
