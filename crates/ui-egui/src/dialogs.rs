@@ -313,11 +313,13 @@ pub struct HoleOpts {
     /// Tap type: tapped (a cosmetic thread) instead of simple.
     pub tapped: bool,
     pub thread: String,
+    /// Custom nominal diameter and pitch being edited, separate from the saved designation.
+    pub custom_thread: Option<crate::dialogs_thread::HoleThreadDraft>,
 }
 
 impl Default for HoleOpts {
     fn default() -> Self {
-        HoleOpts { multiple: false, all: false, angled: true, tip_angle: "118 deg".into(), tapped: false, thread: "M5".into() }
+        HoleOpts { multiple: false, all: false, angled: true, tip_angle: "118 deg".into(), tapped: false, thread: "M5".into(), custom_thread: None }
     }
 }
 
@@ -2956,7 +2958,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         opts.tapped = tap == 1;
                         ui.end_row();
                         if opts.tapped {
-                            enter |= crate::dialogs_thread::hole_rows(ui, &mut opts.thread);
+                            enter |= crate::dialogs_thread::hole_rows(ui, &app.session.doc, &mut opts.thread, &mut opts.custom_thread);
                         }
                         if *kind == 0 {
                             row_label(ui, "Drill Point");
@@ -4316,6 +4318,9 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                     params["tip_angle"] = json!(opts.tip_angle);
                 }
                 if opts.tapped {
+                    if let Some(error) = opts.custom_thread.as_ref().and_then(|draft| draft.error.as_ref()) {
+                        return Err(error.clone());
+                    }
                     solidcraft_engine::doc::parse_metric_thread(&opts.thread).ok_or("select a valid metric thread size")?;
                     params["thread"] = json!(opts.thread.trim());
                 }
