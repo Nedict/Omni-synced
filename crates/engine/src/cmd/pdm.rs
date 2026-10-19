@@ -102,10 +102,8 @@ pub(crate) fn validate_params(id: &str, p: &Value) -> Result<()> {
         "pdm.open_document" | "pdm.history" => {
             document(p)?;
         }
-        "pdm.archive" => {
-            if p.get("logical_path").is_some_and(|v| v.as_str().is_none_or(|s| s.is_empty() || s.len() > 1024)) {
-                return Err(err("Invalid logical archive path"));
-            }
+        "pdm.archive" if p.get("logical_path").is_some_and(|v| v.as_str().is_none_or(|s| s.is_empty() || s.len() > 1024)) => {
+            return Err(err("Invalid logical archive path"));
         }
         _ => {}
     }

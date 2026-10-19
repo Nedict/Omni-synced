@@ -474,10 +474,10 @@ impl Host {
             }
             let entry = entries.get(&document).ok_or_else(|| fail("A managed dependency is missing"))?;
             let version = entry.head.ok_or_else(|| fail("The selected document has no archived version"))?;
-            if let Some(old) = ws.manifest().documents.get(&document) {
-                if old.checked_out || ws.local_sha256(&document).map_err(error)? != old.base_sha256 {
-                    return Err(fail("Update refused: a local dependency is modified or checked out"));
-                }
+            if let Some(old) = ws.manifest().documents.get(&document)
+                && (old.checked_out || ws.local_sha256(&document).map_err(error)? != old.base_sha256)
+            {
+                return Err(fail("Update refused: a local dependency is modified or checked out"));
             }
             let (metadata, bytes) = client.download(&VersionRef { document: document.clone(), version }).map_err(error)?;
             if hash(&bytes) != metadata.sha256 {
