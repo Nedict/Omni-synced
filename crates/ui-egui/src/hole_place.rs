@@ -1,13 +1,15 @@
-//! Placing a Single hole on the canvas (#2171, #1047). The planar face under the cursor offers
-//! snap points: the middle of the face and the centres of its round edges (a boss standing on
-//! it, a rounded corner, a hole already in it). While the cursor is over the face they show as
-//! small marks; a pick within reach of one, or on one of those round edges, is taken at that
-//! point, and the mark it takes is named. Sketch points on the face (#657) still come first.
-//! Ctrl or Alt held: no snap.
+//! Placing a Single hole on the canvas (#2171, #1047).
 //!
-//! Every placed hole has a handle at its centre: dragging it moves the hole across the model,
-//! snapping the same way, and clicking it takes the hole out. A pick elsewhere on a face that
-//! already has a hole moves the hole there.
+//! With Preferences › Design › Hole placement snaps on (off by default, so a hole goes where it
+//! is clicked): the planar face under the cursor offers snap points, the middle of the face and
+//! the centres of its round edges (a boss standing on it, a rounded corner, a hole already in
+//! it). While the cursor is over the face they show as small marks; a pick within reach of one,
+//! or on one of those round edges, is taken at that point, and the mark it takes is named.
+//! Sketch points on the face (#657) still come first. Ctrl or Alt held: no snap. A pick elsewhere
+//! on a face that already has a hole moves the hole there (off: it takes the hole out).
+//!
+//! Either way, every placed hole has a handle at its centre: dragging it moves the hole across
+//! the model (snapping as a pick would), and clicking it takes the hole out.
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -110,6 +112,11 @@ pub(crate) fn placing(app: &SolveApp) -> bool {
     })
 }
 
+/// Do picks snap while a Single hole is placed (the preference is on)?
+pub(crate) fn snapping(app: &SolveApp) -> bool {
+    app.preferences.hole_snaps && placing(app)
+}
+
 /// The distance on screen from `p` to the segment from `a` to `b`.
 fn to_segment(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     let v = b - a;
@@ -147,7 +154,7 @@ fn nearest(proj: &Proj, pos: Pos2, snaps: &[Snap]) -> Option<Snap> {
 /// within reach on it, or at the centre of a round edge the cursor is on (the edge lies between
 /// the face and a hole's or a boss's wall, so the face under the cursor may be the wall).
 pub(crate) fn snap_hits(app: &SolveApp, proj: &Proj, pos: Pos2, hits: &mut Vec<Hit>) {
-    if !placing(app) || crate::drag_snap::suppressed() {
+    if !snapping(app) || crate::drag_snap::suppressed() {
         return;
     }
     let st = app.session.world_state();
@@ -231,7 +238,8 @@ pub(crate) fn move_place(d: &mut Dialog, s: &Session, i: usize, to: Sel) -> bool
 }
 
 /// A Single hole's face place picked on a face that already has a hole moves that hole there
-/// (true). A pick on the hole itself (within its radius) is left to take it out, as before.
+/// (true), when hole snaps are on. A pick on the hole itself (within its radius) is left to take
+/// it out, as before.
 pub(crate) fn pick_moves(d: &mut Dialog, s: &Session, sel: &Sel) -> bool {
     let Kind::Hole { opts, diameter, .. } = &d.kind else { return false };
     let Sel::Face { point, .. } = sel else { return false };
@@ -318,7 +326,7 @@ fn remove_place(d: &mut Dialog, s: &Session, i: usize) {
 /// The snap points of the face under the cursor while a Single hole is placed, and the one a
 /// pick there takes, named.
 fn marks(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
-    if !placing(app) {
+    if !snapping(app) {
         return;
     }
     let Some(Hit::Face { body, index, point }) = &app.viewport.hover else { return };

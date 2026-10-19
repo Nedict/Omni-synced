@@ -969,12 +969,6 @@ impl Dialog {
         }
         let measure = matches!(self.kind, Kind::Measure { .. });
         let sel = if measure { crate::viewport::measurement_selection(s, &sel) } else { sel };
-        // A Single hole picked again on its face moves there.
-        if crate::hole_place::pick_moves(self, s, &sel) {
-            self.focus = true;
-            self.sync_thread(s);
-            return;
-        }
         let chain = matches!(self.kind, Kind::Fillet { chain: true, .. });
         let mut picked =
             if !measure && self.active_input().is_some_and(|i| i.multi) { crate::viewport::picked_selection(s, &sel) } else { vec![sel.clone()] };

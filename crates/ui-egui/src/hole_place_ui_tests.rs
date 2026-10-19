@@ -1,7 +1,8 @@
-//! Placing a Single hole (#2171, #1047): a pick near the middle of a face or on a round edge
-//! snaps there, Alt held places it where it was clicked, the handle drags a placed hole (also
-//! one being edited), a second pick on its face moves it, and the dialog shows the hole's sizes
-//! beside a section of it.
+//! Placing a Single hole (#2171, #1047). With Hole placement snaps on (Preferences, off by
+//! default): a pick near the middle of a face or on a round edge snaps there, Alt held places it
+//! where it was clicked, and a second pick on its face moves it. Off, picks behave as before.
+//! Either way the handle drags a placed hole (also one being edited), and the dialog shows the
+//! hole's sizes beside a section of it.
 
 use serde_json::json;
 use solidcraft_engine::Sel;
@@ -12,8 +13,17 @@ use crate::dialogs::Kind;
 use crate::scenario::{Harness, handle_at, rect_of};
 use crate::viewport::Hit;
 
-/// A 40 × 30 × 20 block seen from the top, with a 10 mm hole through it at (10, 10).
+/// A 40 × 30 × 20 block seen from the top, with a 10 mm hole through it at (10, 10), and hole
+/// snaps turned on as the Preferences dialog (or `ui.prefs`) turns them on.
 fn block() -> Harness {
+    let mut h = block_as_installed();
+    crate::prefs::set(&mut h.app, &json!({"hole_snaps": true})).unwrap();
+    assert!(h.app.preferences.hole_snaps);
+    h
+}
+
+/// The block with the preferences a new installation has.
+fn block_as_installed() -> Harness {
     let mut h = Harness::new();
     h.app.ui.show_origin = false;
     h.app.run("solid.box", json!({"length": 40, "width": 30, "height": 20})).unwrap();
@@ -190,6 +200,33 @@ fn editing_a_hole_drags_it_to_a_new_place() {
     let down = Vec3::new(0.0, 0.0, 10.0);
     assert!(solid_at(&h, BORE - down), "the old place is solid again");
     assert!(!solid_at(&h, MIDDLE - down), "the hole is at the middle now");
+}
+
+#[test]
+fn hole_snaps_are_off_by_default_and_picks_behave_as_before() {
+    let mut h = block_as_installed();
+    assert!(!h.app.preferences.hole_snaps, "a new installation places holes where they are clicked");
+    h.step(&json!({"start": "solid.hole"})).unwrap();
+    // Beside the middle: no snap.
+    let at = off(&mut h, MIDDLE, 5.0, -4.0);
+    h.step(&json!({"move": at})).unwrap();
+    match &h.app.viewport.hover {
+        Some(Hit::Face { point, .. }) => assert!(point.dist(MIDDLE) > 0.1, "{point:?}"),
+        other => panic!("the face lights up, not {other:?}"),
+    }
+    h.step(&json!({"click": at})).unwrap();
+    assert!(matches!(places(&h).as_slice(), [p] if p.dist(MIDDLE) > 0.1 && (p.z - 20.0).abs() < 1e-9), "{:?}", places(&h));
+    // A second pick on the face takes the hole out, as it always did.
+    let elsewhere = screen(&mut h, Vec3::new(32.0, 24.0, 20.0));
+    h.step(&json!({"click": elsewhere})).unwrap();
+    assert!(places(&h).is_empty(), "{:?}", places(&h));
+    // The handle still drags a placed hole, to where it is let go.
+    let start = screen(&mut h, Vec3::new(30.0, 8.0, 20.0));
+    h.step(&json!({"click": start})).unwrap();
+    h.frames(2);
+    let to = off(&mut h, MIDDLE, 5.0, -4.0);
+    h.step(&json!({"drag": [{"handle": "hole:0"}, to]})).unwrap();
+    assert!(matches!(places(&h).as_slice(), [p] if p.dist(MIDDLE) > 0.1 && p.dist(MIDDLE) < 2.0), "{:?}", places(&h));
 }
 
 #[test]
