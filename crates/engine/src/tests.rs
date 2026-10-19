@@ -3744,3 +3744,37 @@ fn a_sketch_on_one_piece_stays_attached_when_the_side_joins() {
     let sketch = run(&mut s, "timeline.inspect", json!({"feature": "Sketch2"}));
     assert!(sketch["error"].is_null() && sketch["warning"].is_null(), "{sketch}");
 }
+
+/// #3044: renaming a body of an imported assembly (a part placed twice, so the file has more
+/// solids than the part has bodies) evaluates nothing, not even the file again, and leaves the
+/// model evaluating the renamed design gives; undo does the same.
+#[test]
+fn renaming_an_imported_assembly_body_reads_nothing_again() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-step-rename-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut a = Session::default();
+    run(&mut a, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Cube"}));
+    run(&mut a, "solid.box", json!({"length": 4, "width": 4, "height": 4, "center": [30, 0, 2], "operation": "new", "body_name": "Pin"}));
+    run(&mut a, "component.from_bodies", json!({"bodies": ["Cube"]}));
+    run(&mut a, "occurrence.copy", json!({"component": "Cube", "translate": [0, 40, 0]}));
+    let p = dir.join("Assembly.step");
+    run(&mut a, "file.export", json!({"path": p.to_string_lossy()}));
+    let mut s = Session::default();
+    run(&mut s, "doc.open", json!({"path": p.to_string_lossy()}));
+    let names = |s: &Session| s.model.state().bodies.iter().map(|b| b.name.clone()).collect::<Vec<_>>();
+    let before = names(&s);
+    let body = before.first().cloned().unwrap();
+    s.evaluations = 0;
+    run(&mut s, "body.rename", json!({"body": body, "name": "Renamed"}));
+    assert_eq!(s.evaluations, 0, "a rename evaluates nothing");
+    let after = names(&s);
+    assert_eq!(after.first().map(String::as_str), Some("Renamed"));
+    assert_eq!(after.len(), before.len());
+    let mut fresh = Session::new((*s.doc).clone());
+    fresh.refresh();
+    assert_eq!(names(&fresh), after, "the same names as evaluating the renamed design");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(names(&s), before);
+    assert_eq!(s.evaluations, 0, "nor does its undo");
+    let _ = std::fs::remove_dir_all(&dir);
+}

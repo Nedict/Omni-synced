@@ -69,6 +69,11 @@ impl NameCell {
     pub fn same(body: &ModelBody) -> Self {
         NameCell { copy_of: Some(Arc::new(body.clone())), ..NameCell::default() }
     }
+    /// The same origin and lineage with nothing worked out yet: for a body given a new name,
+    /// whose faces' names may be made from it.
+    pub(crate) fn renamed(&self) -> Self {
+        NameCell { origin: self.origin.clone(), lineage: self.lineage.clone(), copy_of: self.copy_of.clone(), ..NameCell::default() }
+    }
     fn shared(names: Arc<Names>) -> Self {
         let cell = OnceLock::new();
         let _ = cell.set(names);
