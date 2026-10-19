@@ -310,6 +310,9 @@ pub struct Prefs {
     /// Decimals shown for lengths and angles.
     pub length_decimals: u8,
     pub angle_decimals: u8,
+    /// Up/Down and the wheel over a focused value field step its plain number (`value_step`,
+    /// #2320). Off by default: the keys move the text cursor and the wheel scrolls, as before.
+    pub step_values: bool,
     /// `dark`, `light` or `system` (follow the operating system), or a theme file's id: a
     /// built-in one (`gruvbox-dark`, …) or one of `custom_themes` (#2255).
     pub theme: String,
@@ -461,6 +464,7 @@ impl Default for Prefs {
             measure_axis_distances: true,
             length_decimals: 2,
             angle_decimals: 1,
+            step_values: false,
             theme: "dark".into(),
             custom_themes: Vec::new(),
             language: "en".into(),
@@ -734,6 +738,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.default_units = d.default_units;
             p.length_decimals = d.length_decimals;
             p.angle_decimals = d.angle_decimals;
+            p.step_values = d.step_values;
             p.check_updates = d.check_updates;
             app.ui.dark = true;
             app.ui.agent_cursor = Default::default();
@@ -1280,6 +1285,11 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.end_row();
             ui.label(app.tr("ui.angle_decimals"));
             ui.add(egui::DragValue::new(&mut app.preferences.angle_decimals).range(0..=6));
+            ui.end_row();
+            ui.label(app.tr("ui.step_values"));
+            let tip = app.tr("ui.step_values_tip").to_string();
+            let r = ui.checkbox(&mut app.preferences.step_values, "").on_hover_text(tip);
+            crate::scenario::publish_handle("prefs:step_values", r.rect.center());
             ui.end_row();
             ui.label(app.tr("ui.agent_cursor"));
             let speed_label = app.tr("ui.agent_cursor_speed");
