@@ -3085,6 +3085,19 @@ fn corner_reliefs_at_non_orthogonal_corners_reach_the_flat_pattern_and_the_dxf()
         let f = flat(&mut s);
         assert_eq!(f["outline"].as_array().map(Vec::len), Some(1), "{shape}: {f}");
         assert_eq!(f["cutouts"], json!([]), "{shape}: {f}");
+        // No hairline edges in it: no degenerate face.
+        let shortest = f["outline"][0].as_array().map(|l| {
+            l.windows(2)
+                .map(|w| {
+                    let (x, y) = (
+                        w[1][0].as_f64().unwrap_or(f64::NAN) - w[0][0].as_f64().unwrap_or(f64::NAN),
+                        w[1][1].as_f64().unwrap_or(f64::NAN) - w[0][1].as_f64().unwrap_or(f64::NAN),
+                    );
+                    (x * x + y * y).sqrt()
+                })
+                .fold(f64::MAX, f64::min)
+        });
+        assert!(shortest.is_some_and(|d| d > 1e-3), "{shape}: the shortest edge of the flat pattern is {shortest:?}");
         // The folded part holds the flat pattern's material (K = 0.5 keeps the volume).
         let (v, area) = (volume(&mut s), flat_area(&f));
         assert!((v - area * 2.0).abs() < 1e-3 * v, "{shape}: {v} vs {}", area * 2.0);
