@@ -19,13 +19,17 @@ choose **New Body** explicitly to keep an addition separate. Changing the defaul
 operations already saved in a design.
 
 A Join, Cut or Intersect changes the bodies listed under **Targets**, just under Operation in the
-Extrude dialog (a New Body has none). The list starts with the bodies the operation changes: the
-visible bodies of the active component, or, for a Join from a body's face or a sketch on one,
-that body. Showing or hiding bodies while the dialog is open updates it, until you edit it: × on
-a body takes it out, and clicking bodies with Targets active adds or removes them. The listed
-bodies are saved as the extrude's `targets`, so showing or hiding bodies later never changes the
-model. Without `targets`, `solid.extrude` changes every body of the active component that it
-meets, hidden or shown.
+Extrude dialog (a New Body has none). The list starts with the bodies the extrude would change on
+its own, leaving out hidden ones: for a Join from a body's face or a sketch on one, that body;
+for a Cut or Intersect in a component with no bodies of its own, every body; otherwise the
+bodies of the active component. With the design itself active and no bodies of its own, a Join
+lists the bodies of the one component that holds them (a part kept in a component). Automatic
+operation decides from that list, and with nothing listed it makes a new body. Showing or hiding
+bodies while the dialog is open updates the list, until you edit it: × on a body takes it out,
+and clicking bodies with Targets active adds or removes them. The listed bodies are saved as the
+extrude's `targets`, so showing or hiding bodies later never changes the model. Without
+`targets`, `solid.extrude` changes every body of the active component that it meets, hidden or
+shown.
 
 A taper slopes the sides of any profile, sketch text included: lines, arcs and spline or conic
 curves move in or out together, and a flat tip shorter than the taper closes to a point. On
