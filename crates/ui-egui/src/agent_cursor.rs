@@ -124,6 +124,9 @@ pub struct Job {
     started: f64,
     /// Clicked at the current stop (waiting out the click).
     clicked: bool,
+    /// The command computing ahead off the window thread while the pointer glides (#1989): at
+    /// its last stop the pointer waits for it, then the command runs and finds it in the cache.
+    ahead: Option<crate::control_job::Ahead>,
 }
 
 /// The pointer's state.
@@ -141,6 +144,19 @@ impl AgentCursor {
     /// A request is being acted out (later requests wait behind it).
     pub fn busy(&self) -> bool {
         self.job.is_some()
+    }
+
+    /// Since when the pointer has waited at its last stop for its command to compute (ms), and
+    /// the command.
+    pub fn computing(&self) -> Option<(f64, &str)> {
+        self.job.as_ref().filter(|j| j.stops.is_empty()).and_then(|j| j.ahead.as_ref()).map(|a| (a.started, a.label.as_str()))
+    }
+
+    /// Stop the request the pointer waits on: answered as stopped, nothing of it applied.
+    pub(crate) fn stop(&mut self) -> Option<(Sender<ControlResponse>, String)> {
+        self.computing()?;
+        let job = self.job.take()?;
+        Some((job.reply, job.ahead.map(|a| a.label).unwrap_or_default()))
     }
 }
 
@@ -251,8 +267,9 @@ pub fn intercept(app: &mut SolveApp, method: &str, params: &Value, reply: &Sende
         return false;
     }
     let from = app.cursor_start();
+    let ahead = crate::control_job::Ahead::begin(app, params, cmd, &inner);
     app.agent.job =
-        Some(Job { method: method.to_string(), params: params.clone(), reply: reply.clone(), stops, from, started: app.now, clicked: false });
+        Some(Job { method: method.to_string(), params: params.clone(), reply: reply.clone(), stops, from, started: app.now, clicked: false, ahead });
     true
 }
 
@@ -279,7 +296,9 @@ pub fn step(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(job) = app.agent.job.as_mut() else { return };
     ctx.request_repaint();
     let Some(&to) = job.stops.front() else {
-        finish(app, ctx);
+        if job.ahead.as_ref().is_none_or(crate::control_job::Ahead::finished) {
+            finish(app, ctx);
+        }
         return;
     };
     let t = if glide > 0.0 { (now - job.started) / glide } else { 1.0 };
@@ -298,7 +317,7 @@ pub fn step(app: &mut SolveApp, ctx: &egui::Context) {
         job.from = to;
         job.started = now;
         job.clicked = false;
-        if job.stops.is_empty() {
+        if job.stops.is_empty() && job.ahead.as_ref().is_none_or(crate::control_job::Ahead::finished) {
             finish(app, ctx);
         }
     }
