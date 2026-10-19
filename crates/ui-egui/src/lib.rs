@@ -124,6 +124,7 @@ mod file_load_ui_tests;
 #[cfg(test)]
 mod fillet_spline_handle_tests;
 pub(crate) mod navigation;
+pub(crate) mod open_meshing;
 pub mod palette;
 pub mod params_dialog;
 pub(crate) mod pick_buffer;
@@ -420,6 +421,8 @@ pub struct SolveApp {
     /// The 3D mouse: which device, its reading, and the calibration window.
     pub space_mouse: space_mouse::Input,
     pub file_load: file_load::FileLoad,
+    /// An opened design's bodies still being meshed, off the UI thread.
+    pub(crate) open_meshing: Option<open_meshing::Meshing>,
     /// The other open designs (tabs).
     pub docs: documents::Documents,
     /// The language the installed font fallback chain is ordered for (`fonts::fallback_order`);
@@ -513,6 +516,7 @@ impl SolveApp {
             home: home::HomeState::default(),
             space_mouse: Default::default(),
             file_load: file_load::FileLoad::default(),
+            open_meshing: None,
             docs: documents::Documents::default(),
             applied_fonts_language: "en".into(),
             applied_ui_font: String::new(),
@@ -1292,6 +1296,8 @@ impl SolveApp {
         render_workspace::sync_backend(self);
         render_workspace::tick(self, ctx);
         file_load::tick(self, ctx);
+        open_meshing::tick(self, ctx);
+        open_meshing::refresh(self, ctx.input(|i| i.time));
         self.esc_handled = false;
         prefs::apply(self, ctx);
         if !self.styled || theme::is_dark() != self.ui.dark || theme::vision() != self.preferences.color_vision {

@@ -737,13 +737,10 @@ fn compute(
     phase.store(1, Ordering::Relaxed);
     let world = session.world_state();
     let placement_ms = view_began.elapsed().as_secs_f64() * 1000.0;
-    let mesh_began = std::time::Instant::now();
-    // Fit, picking and the first viewport frame must not trigger cold tessellation on the UI.
-    world.warm_meshes(|| !progress.is_cancelled());
-    if progress.is_cancelled() {
-        return cancelled();
-    }
-    let tessellation_ms = mesh_began.elapsed().as_secs_f64() * 1000.0;
+    // The display meshes are made once the design is in the window, which shows its bodies as
+    // they come ([`crate::open_meshing`]): framing, picking and drawing never mesh on the UI.
+    drop(world);
+    let tessellation_ms = 0.0;
     phase.store(2, Ordering::Relaxed);
     let view_ms = view_began.elapsed().as_secs_f64() * 1000.0;
     if profile {
@@ -807,7 +804,8 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
                     }
                 }
                 app.home.open = false;
-                app.fit_view();
+                // Shown as its bodies are meshed, framed from their outlines meanwhile.
+                crate::open_meshing::start(app);
                 // A caller that said which way is up has been answered: no offer to stand the part up.
                 if (request.kind == Kind::Open || request.insert()) && !request.options.contains_key("up") {
                     crate::stand_up::offer(app, &request.path, &running.before, Some(&made.result));
