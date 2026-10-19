@@ -4,8 +4,7 @@
 //! pointer in the plane through it that faces the view. Each frame runs `occurrence.drag`; the
 //! whole drag is one undo step, and Escape puts everything back as it was.
 //!
-//! Holding the rebindable rotation shortcut at drag start rotates about the placement origin
-//! and the view axis. Floating chains move together whichever member is grabbed. Parts held
+//! Floating chains move together whichever member is grabbed. Parts held
 //! by joints to something fixed go to `joint_drag`; grounded parts and the active component's
 //! own bodies are left to the selection box.
 
@@ -29,7 +28,6 @@ pub struct Drag {
     /// The plane the pointer moves the point in: through where it was grabbed, facing the view.
     origin: Vec3,
     normal: Vec3,
-    rotate: bool,
     /// What Escape goes back to (`edit.checkpoint`).
     checkpoint: Option<u64>,
     /// The drag's undo step is on top of the history (it went in with the first frame that
@@ -56,7 +54,7 @@ fn placement_of(app: &SolveApp, body: &str) -> Option<Vec<u64>> {
 }
 
 /// Begin a drag on the part under `p` when nothing holds it in place. True when one began.
-pub fn start(app: &mut SolveApp, proj: &Proj, p: Pos2, rotate: bool) -> bool {
+pub fn start(app: &mut SolveApp, proj: &Proj, p: Pos2) -> bool {
     // The face under the pointer, past the part's own edges and vertices (not past sketches or
     // construction geometry in front of it).
     let hits = crate::viewport::pick(app, proj, p);
@@ -77,7 +75,7 @@ pub fn start(app: &mut SolveApp, proj: &Proj, p: Pos2, rotate: bool) -> bool {
         return false;
     };
     let checkpoint = app.session.execute("edit.checkpoint", &json!({})).ok().and_then(|r| r["checkpoint"].as_u64());
-    app.viewport.occurrence_drag = Some(Drag { path, local, origin: at, normal: proj.ray(p).1, rotate, checkpoint, step: None });
+    app.viewport.occurrence_drag = Some(Drag { path, local, origin: at, normal: proj.ray(p).1, checkpoint, step: None });
     true
 }
 
@@ -109,25 +107,11 @@ pub fn to(app: &mut SolveApp, proj: &Proj, p: Pos2) {
     if !target.is_finite() || !at.is_finite() || target.dist(at) < 1e-9 {
         return;
     }
-    let mut params = json!({"path": d.path, "at": [at.x, at.y, at.z], "point": [target.x, target.y, target.z], "continuous": true});
-    let command = if d.rotate {
-        let pivot = apply_point(&placement.world, Vec3::ZERO);
-        // The pivot's projection into the grab plane lies on the same rotation axis.
-        let centre = pivot + d.normal * ((d.origin - pivot).dot(d.normal));
-        let (Some(from), Some(to)) = ((at - centre).normalized(), (target - centre).normalized()) else { return };
-        let angle = d.normal.dot(from.cross(to)).atan2(from.dot(to));
-        params["point"] = json!([at.x, at.y, at.z]);
-        params["origin"] = json!([pivot.x, pivot.y, pivot.z]);
-        params["axis"] = json!([d.normal.x, d.normal.y, d.normal.z]);
-        params["angle"] = json!(angle);
-        "occurrence.drag.rotate"
-    } else {
-        "occurrence.drag"
-    };
+    let params = json!({"path": d.path, "at": [at.x, at.y, at.z], "point": [target.x, target.y, target.z], "continuous": true});
     // One undo step for the whole drag: the first frame's, kept on top while the others run.
     let own = if d.step.is_some() { app.session.undo.pop() } else { None };
     let before = app.session.doc.clone();
-    let pushed = app.run(command, params).is_ok() && !Arc::ptr_eq(&before, &app.session.doc);
+    let pushed = app.run("occurrence.drag", params).is_ok() && !Arc::ptr_eq(&before, &app.session.doc);
     match own {
         Some(step) => {
             if pushed {

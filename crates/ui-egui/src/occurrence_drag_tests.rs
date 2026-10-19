@@ -190,55 +190,10 @@ fn key(h: &mut Harness, key: egui::Key, pressed: bool) {
 }
 
 #[test]
-fn rotation_drag_uses_the_rebindable_shortcut_and_cancels_in_one_step() {
-    let (mut h, base, free) = two_parts();
-    // An asymmetric part makes the rotation visible in the optional before/after captures.
-    let component = h.app.session.occurrence_placement(&[free]).unwrap().component;
-    run(&mut h, "component.activate", json!({"component": component}));
-    run(&mut h, "solid.box", json!({"length": 20, "width": 6, "height": 10, "corner": [20, 0, 0], "operation": "join"}));
-    run(&mut h, "component.activate", json!({"component": "root"}));
-    h.app.cam.distance = 120.0;
-    h.frames(2);
-    assert_eq!(crate::keymap::effective(&h.app, "occurrence.drag.rotate").as_deref(), Some("R"));
-    for binding in [egui::Key::R, egui::Key::K] {
-        if binding != egui::Key::R {
-            crate::keymap::bind(&mut h.app, "occurrence.drag.rotate", binding.name(), true).unwrap();
-        }
-        let before = h.app.session.doc.to_json();
-        let undo = h.app.session.undo.len();
-        let grab = Vec3::new(25.0, 5.0, 10.0);
-        let turned = Vec3::new(-5.0, 25.0, 10.0);
-        h.step(&json!({"shot": "rotation-before"})).unwrap();
-        let (a, b) = (screen(&mut h, grab), screen(&mut h, turned));
-        key(&mut h, binding, true);
-        press_and_move(&mut h, a, b, Default::default());
-        let w = h.app.session.occurrence_placement(&[free]).unwrap().world;
-        let got = solidcraft_engine::doc::apply_point(&w, grab);
-        assert!(got.dist(turned) < 0.5, "{binding:?}: {got:?}");
-        h.step(&json!({"shot": "rotation-after"})).unwrap();
-        assert!(origin(&h, &[free]).dist(Vec3::ZERO) < 1e-9);
-        assert!(origin(&h, &[base]).dist(Vec3::ZERO) < 1e-9);
-        assert_eq!(h.app.session.undo.len(), undo + 1);
-        // Release the shortcut mid-drag: its mode was captured at the start.
-        key(&mut h, binding, false);
-        if binding == egui::Key::R {
-            release(&mut h, b);
-            run(&mut h, "edit.undo", json!({}));
-        } else {
-            key(&mut h, egui::Key::Escape, true);
-            key(&mut h, egui::Key::Escape, false);
-            release(&mut h, b);
-        }
-        assert_eq!(h.app.session.undo.len(), undo);
-        assert_eq!(h.app.session.doc.to_json(), before);
-    }
-    // Persistence uses the existing shortcut preferences, and an unbound R no longer rotates.
-    let saved = h.app.keymap.prefs();
-    crate::keymap::reset(&mut h.app, None);
-    h.app.keymap.load(&saved);
-    assert_eq!(crate::keymap::effective(&h.app, "occurrence.drag.rotate").as_deref(), Some("K"));
+fn r_still_starts_rectangle_with_a_free_part_in_the_design() {
+    let (mut h, _, _) = two_parts();
     key(&mut h, egui::Key::R, true);
     key(&mut h, egui::Key::R, false);
-    assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(crate::dialogs::Kind::Sketch)), "R returns to Rectangle after rebinding rotation");
-    assert!(origin(&h, &[free]).dist(Vec3::ZERO) < 1e-9);
+    assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(crate::dialogs::Kind::Sketch)), "R starts Rectangle through Create Sketch");
+    assert_eq!(h.app.dialog.as_ref().and_then(|d| d.then_start), Some("sketch.rectangle.two_point"));
 }

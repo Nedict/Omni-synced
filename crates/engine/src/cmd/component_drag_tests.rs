@@ -265,20 +265,6 @@ fn shared_joint_chains_follow_the_selected_frame_and_survive_solving() {
     assert_eq!(s.undo.len(), undo + 1);
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(s.doc.to_json(), before);
-    run(
-        &mut s,
-        "occurrence.drag.rotate",
-        json!({"path": [second, b], "at": [100, 0, 0], "point": [100, 0, 0], "origin": [90, 0, 0], "angle": std::f64::consts::FRAC_PI_2}),
-    );
-    for member in [a, b] {
-        near(origin(&s, &[second, member]), [90.0, 10.0, 0.0]);
-        near(origin(&s, &[first, member]), [10.0, 10.0, 0.0]);
-    }
-    let rotated = s.doc.to_json();
-    run(&mut s, "joint.solve", json!({}));
-    assert_eq!(s.doc.to_json(), rotated);
-    run(&mut s, "edit.undo", json!({}));
-    assert_eq!(s.doc.to_json(), before);
 }
 
 #[test]
@@ -300,36 +286,4 @@ fn a_unique_part_can_drag_a_chain_through_a_shared_peer() {
     let before = s.doc.to_json();
     run(&mut s, "joint.solve", json!({}));
     assert_eq!(s.doc.to_json(), before);
-}
-
-#[test]
-fn rotation_carries_a_floating_chain_and_rejects_hostile_angles_atomically() {
-    let mut s = Session::default();
-    part(&mut s, "Base", [0.0, 0.0, 0.0]);
-    let (_, a) = part(&mut s, "A", [20.0, 0.0, 0.0]);
-    let (_, b) = part(&mut s, "B", [40.0, 0.0, 0.0]);
-    let at = |o| json!({"occurrence": o, "point": [0, 0, 0], "z": [0, 0, 1]});
-    run(&mut s, "joint.create", json!({"type": "rigid", "a": at(a), "b": at(b), "flip": true}));
-    run(
-        &mut s,
-        "occurrence.drag.rotate",
-        json!({"occurrence": b, "at": [0, 0, 0], "point": [0, 0, 0], "origin": [10, 0, 0], "angle": std::f64::consts::FRAC_PI_2}),
-    );
-    near(origin(&s, &[a]), [10.0, -10.0, 0.0]);
-    near(origin(&s, &[b]), [10.0, -10.0, 0.0]);
-    let before = s.doc.to_json();
-    run(&mut s, "joint.solve", json!({}));
-    assert_eq!(s.doc.to_json(), before);
-    for extra in [
-        json!({}),
-        json!({"angle": 1e300}),
-        json!({"angle": "bad"}),
-        json!({"angle": 1, "axis": [0, 0, 0]}),
-        json!({"angle": 1, "origin": [1e300, 0, 0]}),
-    ] {
-        let mut p = json!({"occurrence": b, "at": [0, 0, 0], "point": [0, 0, 0]});
-        p.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
-        assert!(s.execute("occurrence.drag.rotate", &p).is_err(), "{p}");
-        assert_eq!(s.doc.to_json(), before);
-    }
 }

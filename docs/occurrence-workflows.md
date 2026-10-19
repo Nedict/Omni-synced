@@ -68,21 +68,10 @@ Use `sketch.redefine` with the sketch ID and a new plane to repair or convert an
 
 Paste New remaps internal certified targets and authoring paths to the copied definitions. Timeline paste reports retained external face targets and refuses translating such attachments until an explicit fixed-plane conversion establishes independent geometry. Rename preserves certified body identity; another producer using the same body name cannot repair a lost attachment.
 
-## Rotation and floating joint chains
+## Floating joint chains
 
 Dragging any member of a floating joint chain carries the chain together without changing its
 joint values. A chain joined to a grounded part still uses `joint.reach` within its joints.
 Repeated nested definitions are shared: their other instances follow in their respective
 parent frames. The selected exact path determines the local change, which is carried through
 the solver's first-placement frame to jointed peers, including repeated peers.
-
-Hold **R** when starting a face drag to rotate a free part and its chain about the part origin
-and view axis. The entire gesture is one undo step, and Escape cancels it. Change or clear
-**Rotate by Dragging** under **Preferences > Keyboard Shortcuts**; the chosen binding persists.
-The rotation mode is chosen at drag start, so releasing the key does not switch to translation.
-Dragging at the projected rotation centre has no angular leverage; grab farther from it.
-
-`occurrence.drag.rotate` accepts the same `occurrence`/`path`, `at` and `point` as
-`occurrence.drag`, plus required `angle` (finite radians within one turn), optional `axis`
-(world direction, default Z), and `origin` (world pivot, default `at`). Rotation precedes
-translation by `point - at`. Grounded and fixed chains are refused atomically, as for translation.

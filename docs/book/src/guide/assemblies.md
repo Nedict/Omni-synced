@@ -35,15 +35,6 @@ pending. Scripts and agents do the same with `occurrence.drag {occurrence or pat
 which moves the placement by `point - at` in world coordinates and answers the placements it
 `moved`.
 
-**Rotate a free part by dragging.** Hold **R** while starting a drag on its face. The part
-turns about its own origin and the view axis, carrying its floating joint chain with it.
-Release the pointer to keep the rotation; Escape restores the starting pose. Rebind or clear
-**Rotate by Dragging** in **Preferences > Keyboard Shortcuts**. The binding is saved with
-your other shortcuts. Scripts use `occurrence.drag.rotate` with `at`, `point`, `angle`
-(radians), and optional world `axis` and `origin`; rotation happens before translation.
-R keeps its Rectangle behavior in sketches and when there is no ungrounded occurrence;
-rebinding rotation leaves the Rectangle binding intact.
-
 Paste New copies nested component definitions, sketches, feature histories and generated
 dimension parameters. Repeated child instances remain shared within the new copy. Materials,
 appearances and wholly internal joints/motion records receive copied references. Design-wide
@@ -198,8 +189,11 @@ it where it is), and it moves.
 `joint.drive` answers the joint's values as `joint.list` gives them, in degrees and millimetres
 with their units and limits, and `moved` says whether any part moved. A joint's origins are mated
 by default: B's z axis is turned against A's, as two faces meet. `flip: true` lines them up
-instead, so two origins given at one point with the same z stay as they are. For scripts that
-drive many steps, `quiet: true` leaves the per-part degrees of freedom out of joint answers, and
+instead, so two origins given at one point with the same z stay as they are. Without an
+`angle`, a new joint takes no turn or a half turn about its axis, whichever turns B less: two
+faces that already meet, a plate under a panel, stay as they are instead of B spinning about
+their shared normal. For scripts that drive many steps, `quiet: true` leaves the per-part
+degrees of freedom out of joint answers, and
 `motion.play` with `quiet: true` gives the poses of only the parts that moved.
 
 **Motion Trace** (`motion.trace`, on the **ASSEMBLE** panel) draws the path a point of a part

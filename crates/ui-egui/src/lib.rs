@@ -743,11 +743,6 @@ impl SolveApp {
             self.home.open = false;
             return;
         }
-        if id == "occurrence.drag.rotate" {
-            let key = keymap::effective(self, id).unwrap_or_default();
-            self.set_status(format!("Hold {key} while starting a drag on a free part to rotate it"), false);
-            return;
-        }
         // A display toggle leaves the current modelling tool and camera in place.
         if id == "view.ambient_occlusion" {
             let _ = self.run(id, json!({"enabled": !self.preferences.ambient_occlusion}));

@@ -98,15 +98,6 @@ pub fn effective(app: &SolveApp, id: &str) -> Option<String> {
     }
 }
 
-/// Whether the current binding is held, for commands that modify a pointer gesture.
-pub fn held(app: &SolveApp, ctx: &egui::Context, id: &str) -> bool {
-    let Some(binding) = effective(app, id) else { return false };
-    if capturing(app) || ctx.egui_wants_keyboard_input() {
-        return false;
-    }
-    ctx.input(|i| i.keys_down.iter().any(|key| key_name(*key, i.modifiers) == binding))
-}
-
 /// Commands bound to `key` now.
 pub fn commands_for(app: &SolveApp, key: &str) -> Vec<&'static str> {
     command_specs().into_iter().filter(|c| effective(app, c.id).as_deref() == Some(key)).map(|c| c.id).collect()

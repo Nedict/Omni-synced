@@ -60,10 +60,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("occurrence.drag", "Drag Occurrence", drag::drag).icon("move").params(
         "occurrence or path: exact placement; at: [x,y,z] world point on it; point: [x,y,z] where it goes. Moves the placement by \
          point - at (with any chain of joints it is in that is joined to nothing grounded) and captures its position; other pending \
-         moves stay pending. angle?: radians within one turn, axis?: world direction (default Z), origin?: world pivot (default at): rotate before translating. Shared definitions move in all placements. Grounded parts and parts joints hold to something fixed are refused (joint.reach moves those)",
-    ),
-    CommandSpec::new("occurrence.drag.rotate", "Rotate by Dragging", drag::rotate).icon("move").key("R").enabled(drag::can_rotate).params(
-        "occurrence or path; at, point: world points; angle: radians within one turn; axis?: world direction (default Z); origin?: world pivot (default at). Rotates a free part and its floating joint chain. In the viewport, hold the shortcut while starting a drag to rotate about the part origin and view axis; rebind in Keyboard Shortcuts",
+         moves stay pending. Shared definitions move in all placements. Grounded parts and parts joints hold to something fixed are refused (joint.reach moves those)",
     ),
     CommandSpec::new("occurrence.ground", "Ground", ground).icon("ground").params("occurrence; grounded?: bool (default toggles)"),
     CommandSpec::new("component.capture_position", "Capture Position", capture).at("SOLID", "POSITION").icon("capture").params("keeps pending occurrence moves"),

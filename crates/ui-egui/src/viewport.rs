@@ -2731,13 +2731,12 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     // when the chain is anchored. Shift, Ctrl/Cmd or Alt held as the drag starts
     // draws a selection box instead, as a drag from empty space does.
     if app.tool.is_none() && app.dialog.is_none() && primary_nav.is_none() && mode.is_none() && app.session.active_sketch.is_none() && !held {
-        let rotate = crate::keymap::held(app, ui.ctx(), "occurrence.drag.rotate");
         if resp.drag_started_by(egui::PointerButton::Primary)
             && !(add || mods.alt)
             && let Some(a) = ui.input(|i| i.pointer.press_origin())
             && rect.contains(a)
             && !axes.contains(a)
-            && !crate::occurrence_drag::start(app, &proj, a, rotate)
+            && !crate::occurrence_drag::start(app, &proj, a)
         {
             crate::joint_drag::start(app, &proj, a);
         }

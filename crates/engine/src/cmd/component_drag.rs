@@ -6,7 +6,6 @@
 
 use serde_json::{Value, json};
 use solidcraft_doc::{mat_inverse, mat_mul};
-use solidcraft_geom::Vec3;
 
 use super::{move_vector, occurrence, occurrence_path, translation, valid_position};
 use crate::params::bad;
@@ -121,21 +120,7 @@ pub(super) fn drag(s: &mut Session, p: &Value) -> Result<Value> {
     let at = move_vector(p, "at", Default::default(), true, cmd)?;
     let point = move_vector(p, "point", Default::default(), true, cmd)?;
     let t = point - at;
-    let world_move = if p.get("angle").is_some() {
-        let angle = p
-            .get("angle")
-            .and_then(Value::as_f64)
-            .filter(|a| a.is_finite() && a.abs() <= std::f64::consts::TAU)
-            .ok_or_else(|| bad(cmd, "angle must be finite radians within one turn"))?;
-        let axis = move_vector(p, "axis", Vec3::Z, false, cmd)?.normalized().ok_or_else(|| bad(cmd, "rotation axis must be nonzero"))?;
-        let origin = move_vector(p, "origin", at, true, cmd)?;
-        solidcraft_doc::rigid(t, origin, axis, angle)
-    } else {
-        if p.get("axis").is_some() || p.get("origin").is_some() {
-            return Err(bad(cmd, "axis and origin require angle"));
-        }
-        translation(t)
-    };
+    let world_move = translation(t);
     let group = s.drag_group(&path).map_err(|e| bad(cmd, e.to_string()))?;
     let dragged = s.occurrence_placement(&path).map_err(|e| bad(cmd, e.to_string()))?;
     let inverse = mat_inverse(&dragged.parent_world).ok_or_else(|| bad(cmd, "parent frame is singular"))?;
@@ -174,16 +159,4 @@ pub(super) fn drag(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let continuous = p.get("continuous").and_then(Value::as_bool).unwrap_or(false);
     Ok(json!({"occurrence": path.last(), "path": path, "moved": moved, "translate": [t.x, t.y, t.z], "continuous": continuous}))
-}
-
-pub(super) fn rotate(s: &mut Session, p: &Value) -> Result<Value> {
-    if p.get("angle").is_none() {
-        return Err(bad("occurrence.drag.rotate", "angle is required"));
-    }
-    drag(s, p)
-}
-
-pub(super) fn can_rotate(s: &Session) -> std::result::Result<(), String> {
-    super::super::not_in_sketch(s)?;
-    if s.doc.occurrences.iter().any(|o| !o.grounded) { Ok(()) } else { Err("no ungrounded occurrence to rotate".into()) }
 }
