@@ -371,7 +371,7 @@ fn sphere_or_cone(s: &[(Vec3, Vec3)], tol: f64) -> Option<Surf> {
 
 /// Move `p` (on all of `old`) onto the moved surfaces `new`: the smallest displacement δ with
 /// n_i · δ = s_i for each face's normal n_i at p, then checked against the moved surfaces.
-fn move_point(p: Vec3, old: &[Surf], shifts: &[f64], new: &[Surf], tol: f64) -> Option<Vec3> {
+fn move_point(p: Vec3, old: &[Surf], shifts: &[f64], new: &[Surf], tol: f64, polish: bool) -> Option<Vec3> {
     let ns: Vec<Vec3> = old.iter().map(|sf| sf.normal(p)).collect::<Option<_>>()?;
     let mut q = p + span_step(&ns, shifts)?;
     // The step is exact for planes; a curved face meeting another at an angle needs a few
@@ -384,11 +384,14 @@ fn move_point(p: Vec3, old: &[Surf], shifts: &[f64], new: &[Surf], tol: f64) -> 
     };
     for _ in 0..30 {
         let w = worst(q);
+        if w < tol && !polish {
+            return Some(q);
+        }
         if w < tol {
-            // Within `tol`, and closer still for a few more steps while they help: the moved vertex
-            // must lie on the faces' own surfaces to well within the kernel's fixed tolerance (1e-6
-            // whatever the body's size), or a later boolean can't place it on them (a revolve's end
-            // face pushed out a few millimetres along the walls it ends, #3156).
+            // Within `tol`, and closer still for a few more steps while they help: a boolean that follows
+            // must find the moved vertex on the faces' own surfaces, to the kernel's fixed tolerance (1e-6
+            // whatever the body's size): a revolve's end face pushed out a few millimetres along the walls
+            // it ends (#3156).
             let mut best = (w, q);
             for _ in 0..4 {
                 let Some(q2) = step(best.1).map(|v| best.1 + v) else { break };
@@ -728,6 +731,17 @@ pub(crate) fn arc_mid(e: &mt::Edge, tol: f64) -> Option<Option<Vec3>> {
 /// is over `[b]`: each face is the face it was moved from, each edge the edge it was moved from;
 /// faces moved to nothing are gone, and their neighbours meet along new edges.
 pub(crate) fn offset_body(b: &Body, shift: impl Fn(usize, Vec3) -> f64) -> Result<Body> {
+    offset_body_with(b, shift, false)
+}
+
+/// [`offset_body`] with every moved vertex brought onto its faces' surfaces to rounding error, not only to within 1e-6 of the
+/// body's size: for a body that goes straight into a boolean with its new faces on the old faces' surfaces (coincident faces
+/// pushed apart, [`crate::coplanar::push_faces`]), where the kernel looks for the vertices on those surfaces to a fixed 1e-6.
+pub(crate) fn offset_body_on_surfaces(b: &Body, shift: impl Fn(usize, Vec3) -> f64) -> Result<Body> {
+    offset_body_with(b, shift, true)
+}
+
+fn offset_body_with(b: &Body, shift: impl Fn(usize, Vec3) -> f64, polish: bool) -> Result<Body> {
     let faces: Vec<mt::Face> = b.solid.face_iter().cloned().collect();
     let size = b.size();
     let tol = (size * 1e-7).max(1e-9);
@@ -924,7 +938,7 @@ pub(crate) fn offset_body(b: &Body, shift: impl Fn(usize, Vec3) -> f64) -> Resul
         });
         let q = match apex {
             Some(q) if n.iter().all(|sf| sf.dist(q).abs() < size * 1e-6) => q,
-            _ => match move_point(p, &o, &s, &n, size * 1e-6) {
+            _ => match move_point(p, &o, &s, &n, size * 1e-6, polish) {
                 Some(q) => q,
                 None => {
                     let nodes = (fs == *at)
@@ -1052,7 +1066,7 @@ pub(crate) fn offset_body(b: &Body, shift: impl Fn(usize, Vec3) -> f64) -> Resul
                     return Err(fail("an edge along a collapsed round with no face across it"));
                 }
                 let (o, s, n) = pick(&meet);
-                let m = move_point(mid, &o, &s, &n, size * 1e-6).ok_or_else(|| fail("faces that don't meet along a collapsed round"))?;
+                let m = move_point(mid, &o, &s, &n, size * 1e-6, polish).ok_or_else(|| fail("faces that don't meet along a collapsed round"))?;
                 let near = size * 1e-5;
                 let twin = merged.iter().find(|(x, y, pts, _)| {
                     ((*x == a.id() && *y == c.id()) || (*x == c.id() && *y == a.id()))
@@ -1090,7 +1104,8 @@ pub(crate) fn offset_body(b: &Body, shift: impl Fn(usize, Vec3) -> f64) -> Resul
                 for j in 1..k {
                     let p = from_p3(cv.subs(t0 + (t1 - t0) * j as f64 / k as f64));
                     pts.push(
-                        move_point(p, &o, &s, &n, size * 1e-6).ok_or_else(|| fail("an edge whose faces don't meet the same way after the move"))?,
+                        move_point(p, &o, &s, &n, size * 1e-6, polish)
+                            .ok_or_else(|| fail("an edge whose faces don't meet the same way after the move"))?,
                     );
                 }
                 pts.push(from_p3(c.point()));
@@ -1105,8 +1120,8 @@ pub(crate) fn offset_body(b: &Body, shift: impl Fn(usize, Vec3) -> f64) -> Resul
                 Some(m) => {
                     let fs = efaces.get(&e.id()).ok_or_else(|| fail("edge faces"))?;
                     let (o, s, n) = pick(fs);
-                    let m2 =
-                        move_point(m, &o, &s, &n, size * 1e-6).ok_or_else(|| fail("an edge whose faces don't meet the same way after the move"))?;
+                    let m2 = move_point(m, &o, &s, &n, size * 1e-6, polish)
+                        .ok_or_else(|| fail("an edge whose faces don't meet the same way after the move"))?;
                     builder::circle_arc(a, c, p3(m2))
                 }
             };
@@ -1275,7 +1290,8 @@ pub(crate) fn draft_walls(b: &Body, chosen: &[usize], neutral: &solidcraft_geom:
         }
         let fs = vfaces.get(&v.id()).ok_or_else(|| fail("vertex"))?;
         let (o, s, n) = at(fs, height(p)).ok_or_else(|| fail("draft: a wall shrinks to nothing"))?;
-        let q = move_point(p, &o, &s, &n, size * 1e-6).ok_or_else(|| fail("draft: a corner whose faces don't meet the same way after the draft"))?;
+        let q = move_point(p, &o, &s, &n, size * 1e-6, false)
+            .ok_or_else(|| fail("draft: a corner whose faces don't meet the same way after the draft"))?;
         newpos.insert(v.id(), q);
     }
     // New surfaces for the drafted walls: planes through their hinge line, cylinders → cones.
@@ -1348,7 +1364,7 @@ pub(crate) fn draft_walls(b: &Body, chosen: &[usize], neutral: &solidcraft_geom:
                 Some(m) => {
                     let fs = efaces.get(&e.id()).ok_or_else(|| fail("edge faces"))?;
                     let (o, s, n) = at(fs, height(m)).ok_or_else(|| fail("draft"))?;
-                    let m2 = move_point(m, &o, &s, &n, size * 1e-6).ok_or_else(|| fail("draft: an arc that can't follow its faces"))?;
+                    let m2 = move_point(m, &o, &s, &n, size * 1e-6, false).ok_or_else(|| fail("draft: an arc that can't follow its faces"))?;
                     builder::circle_arc(a, c, p3(m2))
                 }
             };
