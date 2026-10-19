@@ -62,7 +62,10 @@ body in `bodies` and the other in `against`, and `skip_within` leaves out pairs 
 occurrence (`"occurrence"`) or one placed component, its subcomponents included
 (`"component"`): the parts of a bought component that touch by design. Distances are measured on
 the exact faces and edges; the meshes only rule out pairs that are too far apart, and the pairs
-left are checked in parallel. `inspect.interference` remains for the overlaps alone.
+left are checked in parallel. `inspect.interference` remains for the overlaps alone: it clears
+pairs whose meshes stay apart without intersecting them, intersects the rest in parallel, and
+returns after `budget_s` seconds (default 240) at most, listing the pairs it had no time for as
+not checked.
 
 **Gear**, **Rack and Pinion** and **Screw** (on the **ASSEMBLE** panel) are motion links whose
 ratio comes from the parts rather than a typed number:
@@ -249,6 +252,22 @@ After the part file changes, **Update Links** (`component.update_links`) reads i
 `component.links` lists the links and whether their files are found. A linked component holds
 the part's bodies only: its timeline, parameters and sheet-metal data (flat pattern, bend
 table) stay in the part's own design.
+
+If a source file moves or is renamed, right-click its linked component or occurrence in the
+Browser and choose **Relink Source (All Instances)…**. Choose the saved `.solidcraft` design
+to use. Relinking updates that component's stored path and solid bodies for **all its
+instances**, keeping their identities and placements. Cancelling or choosing a missing,
+invalid, empty or self-referencing design leaves the assembly unchanged. The operation is
+one undo step and the new path is saved relative to the assembly when possible.
+
+Scripts use `component.relink {component, path}`. The reply includes `previous_path`, `path`,
+`warnings`, `joint_errors` and `joint_conflicts`. Changed geometry can invalidate a joint's
+face reference: relinking reports those joints in the reply and UI status/message history;
+repair the joint or undo the relink. Relink does not repair or verify the intended meaning of
+existing joints.
+When linked geometry changes and the component has joints, a reminder to check those joints
+is also shown even if the solver reports no error: a successful solve does not prove that a
+joint still describes the intended connection.
 
 STEP export writes the component tree as an assembly.
 

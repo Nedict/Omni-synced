@@ -260,7 +260,8 @@ pub fn navigate_frame(app: &mut SolveApp, ctx: &egui::Context, mapping: DriverMa
     // Calibrated first, so the calibration puts the device's axes in order, then the user's choice
     // of which motion drives which axis. Invert and speed then go with the axis, not the motion.
     let axes = reassigned(calibrated(axes, calibration(app)), app.preferences.space_mouse_axis_source);
-    if !app.preferences.space_mouse_enabled || app.home.open || app.file_picker_busy() || !axes.moving() {
+    // Only the window with focus: with two windows open, the cap moves the one being used, not both.
+    if !app.preferences.space_mouse_enabled || app.home.open || app.file_picker_busy() || !axes.moving() || !ctx.input(|i| i.focused) {
         return false;
     }
     let speed = f64::from(app.preferences.space_mouse_speed);
@@ -296,6 +297,15 @@ mod tests {
     /// the orientation, as editing a sketch does.
     fn navigate(cam: &mut Camera, motion: Motion, seconds: f64, height: f64, sketch: bool, reverse_zoom: bool) {
         crate::navigation::device_camera(cam, motion, seconds, height, !sketch, reverse_zoom);
+    }
+
+    /// A window that has run a frame, with or without focus. A context that has never run one
+    /// reads as unfocused, so the tests run one first, as the app always has.
+    fn window(focused: bool) -> egui::Context {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput { focused, ..Default::default() }, |_| {});
+        output.textures_delta.clear();
+        ctx
     }
 
     /// One frame: the 3D mouse hands its motion over, and the modelling viewport applies it.
@@ -460,7 +470,7 @@ mod tests {
 
     #[test]
     fn a_frame_moves_the_view_and_keeps_the_next_frame_coming() {
-        let ctx = egui::Context::default();
+        let ctx = window(true);
         let mut app = app();
         let before = app.cam;
         assert!(frame(&mut app, &ctx, DriverMapping::default(), PUSH, 0.02));
@@ -473,8 +483,19 @@ mod tests {
     }
 
     #[test]
+    fn only_the_focused_window_moves() {
+        // Two windows side by side (#2077): the cap moves the one with focus and leaves the other.
+        let mut app = app();
+        let before = app.cam;
+        assert!(!frame(&mut app, &window(false), DriverMapping::default(), PUSH, 0.02));
+        assert_eq!(app.cam.distance, before.distance);
+        assert!(frame(&mut app, &window(true), DriverMapping::default(), PUSH, 0.02));
+        assert!(app.cam.distance < before.distance);
+    }
+
+    #[test]
     fn an_open_file_picker_holds_the_view_until_it_closes() {
-        let ctx = egui::Context::default();
+        let ctx = window(true);
         let mut app = app();
         let slot: crate::picker_test_support::Slot = Default::default();
         crate::picker_test_support::open(&mut app, &slot);
@@ -493,7 +514,7 @@ mod tests {
 
     #[test]
     fn a_long_gap_between_frames_moves_as_far_as_a_short_one() {
-        let ctx = egui::Context::default();
+        let ctx = window(true);
         let (mut short, mut long) = (app(), app());
         frame(&mut short, &ctx, DriverMapping::default(), PUSH, 0.05);
         frame(&mut long, &ctx, DriverMapping::default(), PUSH, 30.0);
@@ -508,7 +529,7 @@ mod tests {
 
     #[test]
     fn navigation_off_the_start_page_and_a_hostile_speed_leave_the_view_alone() {
-        let ctx = egui::Context::default();
+        let ctx = window(true);
         let mut off = app();
         off.preferences.space_mouse_enabled = false;
         let mut home = app();
