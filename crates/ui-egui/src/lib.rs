@@ -111,6 +111,7 @@ mod extrude_edit_tests;
 mod extrude_preview;
 mod file_load;
 mod file_picker;
+pub(crate) mod frame_watch;
 #[cfg(test)]
 mod history_off_thread_tests;
 pub use file_picker::FilePickerFuture;
@@ -425,6 +426,8 @@ pub struct SolveApp {
     pub(crate) open_meshing: Option<open_meshing::Meshing>,
     /// A design is being put in the window and will be meshed after it: framing it uses outlines.
     pub(crate) open_meshing_next: bool,
+    /// How long each frame takes on the window thread, by phase.
+    pub(crate) frame_watch: frame_watch::Watch,
     /// The other open designs (tabs).
     pub docs: documents::Documents,
     /// The language the installed font fallback chain is ordered for (`fonts::fallback_order`);
@@ -520,6 +523,7 @@ impl SolveApp {
             file_load: file_load::FileLoad::default(),
             open_meshing: None,
             open_meshing_next: false,
+            frame_watch: Default::default(),
             docs: documents::Documents::default(),
             applied_fonts_language: "en".into(),
             applied_ui_font: String::new(),
@@ -1295,6 +1299,7 @@ impl SolveApp {
 
     /// Per-frame logic before layout.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        frame_watch::begin(self);
         file_picker::tick(self, ctx);
         render_workspace::sync_backend(self);
         render_workspace::tick(self, ctx);
@@ -1410,6 +1415,7 @@ impl SolveApp {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
         }
         self.frame_ms = now_ms() - t0;
+        frame_watch::end(self);
     }
 
     fn cad_ui(&mut self, ui: &mut egui::Ui, report_input: &mut Option<issue_report::CadInput>) {

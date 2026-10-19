@@ -853,6 +853,17 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
 /// The light overlay over everything under the title bar while a file loads. The title bar,
 /// its window buttons and the window's resize edges stay live; the design underneath takes no
 /// pointer input until the file is in.
+/// What a file operation under way is doing (for the frame watch), if one is.
+pub(crate) fn phase(app: &SolveApp) -> Option<&'static str> {
+    let r = app.file_load.running.as_ref()?;
+    Some(match (r.staged.is_some(), r.phase.load(Ordering::Relaxed)) {
+        (true, 0) => "reading the file (staged)",
+        (_, 0) => "reading the file",
+        (_, 1) => "preparing the view",
+        _ => "finishing the open",
+    })
+}
+
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(r) = &app.file_load.running else { return };
     let cancelled = r.cancelled();
