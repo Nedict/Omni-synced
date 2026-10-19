@@ -768,11 +768,15 @@ mod tests {
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), solidcraft_ui_egui::Services::default());
         app.home.open = false;
         app.preferences.space_mouse_calibrations.insert(DEVICE.key(), resting_at_100());
+        // A window that has run a frame with focus, as the app's always has by now.
+        let ctx = Context::default();
+        let mut frame = ctx.run_ui(egui::RawInput::default(), |_| {});
+        frame.textures_delta.clear();
         let motion = |app: &mut SolveApp, reading: Reading, now: Instant| {
             let mut mouse = mouse(reading, now);
             mouse.last_frame = now - Duration::from_millis(20);
             app.viewport.device_motion = None;
-            mouse.tick_at(app, &Context::default(), now);
+            mouse.tick_at(app, &ctx, now);
             app.viewport.device_motion.is_some()
         };
         // Connected, and nothing reported yet.
