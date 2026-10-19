@@ -82,8 +82,12 @@ disk. Integrating the lower spherical hemisphere and the removed cylinder-wall p
 the surface reference. The test compares the chordal measurement with these independent
 references at 5e-5 relative error.
 
-Seed 67 checks the final two bodies' analytic surface inventory: 22 planar, six cylindrical
-and one conical face after merging redundant subdivisions. These checks supplement the
+A fixed command replay recorded from seed 67 checks two disconnected shells kept in one
+body after a cut (#2247), with a combined analytic surface inventory of 22 planar, six
+cylindrical and one conical face after merging redundant subdivisions. The commands are
+fixed because the generator chooses later operations from the current body and edge layout;
+changes to body grouping can therefore change the generated design. This preserves the
+original geometric reference independently of those choices. These checks supplement the
 snapshots' stricter repeatability comparisons of raw topology and tessellated measurements.
 
 ## Successful Boolean retries

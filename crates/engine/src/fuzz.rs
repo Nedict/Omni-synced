@@ -448,10 +448,14 @@ mod tests {
     use super::*;
 
     #[allow(clippy::expect_used)]
+    fn body_measures(s: &Session) -> Vec<solidcraft_kernel::BodyMeasure> {
+        s.model.state().bodies.iter().map(|b| solidcraft_kernel::measure(&b.body).expect("measure a valid body")).collect()
+    }
+
     fn seed_measures(seed: u64) -> Vec<solidcraft_kernel::BodyMeasure> {
         let (run, s) = run_session(seed, 8, &mut |_| {});
         assert_eq!(run.outcome.kind, "ok", "seed {seed}: {:?}", run.outcome);
-        s.model.state().bodies.iter().map(|b| solidcraft_kernel::measure(&b.body).expect("measure a valid seeded body")).collect()
+        body_measures(&s)
     }
 
     /// Seed 34: a quarter cylinder R15 x 12.5, a spherical bite R2.5 centred
@@ -470,13 +474,42 @@ mod tests {
         assert_eq!(m.merged.face_types, BTreeMap::from([("cone".into(), 1), ("cylinder".into(), 2), ("plane".into(), 4), ("sphere".into(), 1)]));
     }
 
-    /// Seed 67 leaves two disconnected bodies: the notched extrusion with its
-    /// bores and cylindrical boss, and a chamfered block with a patterned bore.
-    /// Redundant raw subdivisions must preserve their analytic surface inventory.
+    /// The recorded seed-67 design: a notched extrusion with bores and a boss,
+    /// and a chamfered block with a patterned bore. Freeze the commands because
+    /// retaining disconnected shells in one body (#2247) changes later generator picks.
+    /// Redundant raw subdivisions must preserve the original analytic surface inventory.
     #[test]
     fn a_patterned_bore_preserves_the_analytic_surfaces() {
-        let measured = seed_measures(67);
-        assert_eq!(measured.len(), 2);
+        let commands = [
+            ("sketch.create", json!({"plane":"XY"})),
+            ("sketch.line", json!({"points":[[0,0],[30.0,0],[30.0,32.5],[17.5,32.5],[17.5,17.5],[10.0,17.5],[10.0,32.5],[0,32.5]]})),
+            ("sketch.arc.three_point", json!({"end":[0,0],"start":[0,32.5],"through":[-15.0,16.25]})),
+            ("sketch.finish", json!({})),
+            ("solid.extrude", json!({"distance":20.0})),
+            ("solid.cylinder", json!({"axis":[0.0,0.0,-1.0],"base":[-0.0,0.0,20.00000000000001],"height":2.5,"operation":"cut","radius":6.25})),
+            ("solid.hole", json!({"diameter":6.0,"position":[13.749999999999998,17.5,10.00000000000001]})),
+            ("solid.cylinder", json!({"axis":[0.0,0.0,1.0],"base":[-5.0,12.5,2.5],"height":30.0,"operation":"join","radius":3.75})),
+            (
+                "solid.box",
+                json!({"corner":[-14.999881984669182,22.5,32.500000000000014],"height":20.0,"length":12.5,"operation":"join","width":12.5}),
+            ),
+            ("solid.hole", json!({"depth":12.5,"diameter":4.0,"position":[-8.749881984669182,28.75,32.500000000000014]})),
+            (
+                "solid.chamfer",
+                json!({"distance":0.5,"edges":[[-2.499881984669182,28.75,32.500000000000014],[-9.900529629797113,27.11414854074047,32.500000000000014],[-8.749881984669182,35.0,32.500000000000014]]}),
+            ),
+            ("solid.pattern.rectangular", json!({"count1":2,"dir1":[1.0,0.0,0.0],"features":["Hole2"],"spacing1":7.5})),
+        ];
+        let mut s = Session::default();
+        for (command, params) in commands {
+            let result = s.execute(command, &params);
+            assert!(result.is_ok(), "{command}: {result:?}");
+            for body in &s.model.state().bodies {
+                assert!(body.body.validity().is_empty(), "{command}: {:?}", body.body.validity());
+            }
+        }
+        let measured = body_measures(&s);
+        assert_eq!(measured.len(), 1);
         assert_eq!(measured.iter().map(|m| m.shells).sum::<usize>(), 2);
         let mut kinds = BTreeMap::new();
         for m in &measured {
