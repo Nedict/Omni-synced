@@ -84,20 +84,21 @@ unsupported. A new Emboss without an explicit face infers a unique eligible supp
 select the face when the target is ambiguous. Older saved features without a face retain their
 planar placement.
 
+A **Hole** with **Single** placement can also sit at distances from up to two straight edges of
+its face. After picking the face, click **Reference 1** and pick an edge, then pick a second one
+into **Reference 2**. Each edge gets a **Distance** row, measured from where you picked; the
+canvas shows each one as a dimension from the edge to the hole's centre, with a box beside it.
+Type a distance in either place and the hole moves so its centre is that far from the edge,
+measured in the face's plane. Moving the hole measures the distances again. The hole keeps its
+distances when the part changes: it follows its edges, and the distances are parameters like its
+diameter.
+
 A **Hole** with **Single** placement drills where you pick a planar face. A pick on or near a
 point of a shown sketch that lies on that face, such as a circle's centre, places the hole
 exactly at that point, as **Multiple** placement picks it; **Select Other** (press and hold) also
 offers the face where you clicked. The corners of text outlines don't count, nor do projected
 points while the sketch hides projected geometry. The hole keeps that place on the face; to have
 holes follow later edits of the sketch, place them with **Multiple**.
-
-A Single hole can also be placed by its distances from up to two straight edges of its face.
-After picking the face, click **Reference 1** and pick an edge, then pick a second one into
-**Reference 2**. Each edge gets a **Distance** row, measured from where you picked; the canvas
-shows each one as a dimension from the edge to the hole's centre, with a box beside it. Type a
-distance in either place and the hole moves so its centre is that far from the edge, measured in
-the face's plane. Moving the hole measures the distances again. The hole keeps its distances when
-the part changes: it follows its edges, and the distances are parameters like its diameter.
 
 Fillets and chamfers handle straight edges between planar faces, whole smooth loops, runs of
 neighbouring edges with mitred or spherical corners, and closed chains of curved edges (a rolling
