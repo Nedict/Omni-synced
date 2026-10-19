@@ -71,6 +71,41 @@ class RealWorkspace(unittest.TestCase):
     def test_docs_only_selects_nothing(self):
         self.assertEqual(affected.select(self.meta, ["docs/book/src/dev/testing.md", "CONTRIBUTING.md"]), (False, []))
 
+    def test_goldens_select_the_engine_and_its_dependents_not_the_kernel(self):
+        full, pk = affected.select(self.meta, ["tests/robustness/goldens.json"])
+        self.assertFalse(full)
+        self.assertIn("solidcraft-engine", pk)
+        self.assertNotIn("solidcraft-kernel", pk)
+        self.assertNotIn("solidcraft-render", pk)
+
+    def test_oracle_cases_select_the_cli_and_xtask(self):
+        full, pk = affected.select(self.meta, ["tests/oracle/box/recipe.json"])
+        self.assertFalse(full)
+        self.assertIn("solidcraft-cli", pk)
+        self.assertIn("xtask", pk)
+
+    def test_unmapped_test_data_selects_full(self):
+        self.assertEqual(affected.select(self.meta, ["tests/tools/x.json"]), (True, []))
+
+    def test_vendored_truck_selects_the_kernel_and_up_not_render(self):
+        full, pk = affected.select(self.meta, ["vendor/truck-shapeops/src/lib.rs"])
+        self.assertFalse(full)
+        self.assertIn("solidcraft-kernel", pk)
+        self.assertIn("solidcraft-engine", pk)
+        self.assertNotIn("solidcraft-render", pk)
+        self.assertNotIn("solidcraft-geom", pk)
+
+    def test_vendored_egui_wgpu_selects_the_ui_and_apps_not_the_kernel(self):
+        full, pk = affected.select(self.meta, ["vendor/egui-wgpu/src/winit.rs"])
+        self.assertFalse(full)
+        self.assertIn("solidcraft-ui-egui", pk)
+        self.assertIn("solidcraft", pk)
+        self.assertNotIn("solidcraft-kernel", pk)
+        self.assertNotIn("solidcraft-engine", pk)
+
+    def test_vendor_readme_alone_selects_nothing(self):
+        self.assertEqual(affected.select(self.meta, ["vendor/README.md"]), (False, []))
+
     def test_translation_selects_the_ui_and_xtask_not_the_kernel(self):
         full, pk = affected.select(self.meta, ["assets/locales/ja.json", "assets/locales/it.json"])
         self.assertFalse(full)

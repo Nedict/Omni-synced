@@ -11,8 +11,11 @@
 # the viewport's GPU glue, the graphics dependencies, their scripts or this file); main and
 # nightly always run them. Only main saves the build caches; pull requests restore them.
 # The merge queue runs the full suite on exactly the commit it then puts on main, so a push to
-# main that a passing merge-queue run already tested runs only the repository checks; a push
-# that skipped the queue still runs everything. Pull requests run the reference tests when the
+# main that a passing merge-queue run already tested runs only the repository checks. A push that
+# skipped the queue runs everything when it changes code; one that changes only documentation,
+# packaging, other workflows or the GitHub bots' scripts (the same rule as pull requests,
+# `touches_code` in Select checks) runs only the repository checks. Test data under tests/ and
+# vendored crates under vendor/ select the packages that read them (scripts/ci/affected.py). Pull requests run the reference tests when the
 # command line (or anything it depends on) changes, and doc tests for the affected packages.
 # Heavy checks wait for review: a pull request without the `approved-for-ci` label runs only
 # Select checks, the format and repository checks and a quick compile. Adding the label (after
@@ -122,6 +125,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PUSH_SHA: ${{ github.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
           REPO: ${{ github.repository }}
           APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'approved-for-ci') }}
           GH_TOKEN: ${{ github.token }}
@@ -132,6 +136,23 @@ jobs:
           windows=false
           full=true
           packages=
+          # Whether any of the NUL-separated paths on stdin is something a build or test reads.
+          # Pull requests and pushes to main share it, so a docs-only change runs no native job
+          # on either.
+          touches_code() {
+            local path
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                .github/workflows/ci.yml) return 0 ;;
+                *.rs|Cargo.toml|Cargo.lock|*/Cargo.toml|.cargo/*|rust-toolchain*) return 0 ;;
+                docs/*|*.md|.github/*|packaging/*|LICENSE*|NOTICE|THIRD-PARTY-LICENSES.txt) ;;
+                # The GitHub bots' scripts: no Rust, tested in this job (Claim and triage bot tests).
+                scripts/claim/*|scripts/triage/*) ;;
+                *) return 0 ;;
+              esac
+            done
+            return 1
+          }
           if [ "$EVENT_NAME" = push ]; then
             # The queue lands the very commit its merge_group run tested. If that run passed,
             # testing the push again proves nothing new; otherwise (a merge that skipped the
@@ -142,7 +163,15 @@ jobs:
               | grep -o '"total_count": *[0-9]*' | grep -o '[0-9]*$' || echo 0)
             if [ "${tested:-0}" -gt 0 ]; then
               echo "The merge queue already tested $PUSH_SHA: repository checks only."
+            elif [ -n "$BEFORE_SHA" ] && [ "${BEFORE_SHA#0000000}" = "$BEFORE_SHA" ] \
+              && git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null \
+              && git diff --no-renames --name-only -z "$BEFORE_SHA" "$PUSH_SHA" > "$RUNNER_TEMP/ci-paths" \
+              && ! touches_code < "$RUNNER_TEMP/ci-paths"; then
+              # Nothing a build reads changed (documentation, packaging, other workflows, the bots'
+              # scripts): the code on main is what the last push already tested.
+              echo "$BEFORE_SHA..$PUSH_SHA changes no code: repository checks only."
             else
+              # Code changed (or the push can't be compared): main runs everything.
               native=true
               windows=true
             fi
@@ -164,15 +193,8 @@ jobs:
                 crates/gpu/*|apps/solidcraft/*|crates/ui-egui/src/gpu.rs|vendor/egui-wgpu/*) windows=true ;;
                 tools/windows-*.ps1|.github/workflows/ci.yml|rust-toolchain*|.cargo/*) windows=true ;;
               esac
-              case "$path" in
-                .github/workflows/ci.yml) native=true ;;
-                *.rs|Cargo.toml|Cargo.lock|*/Cargo.toml|.cargo/*|rust-toolchain*) native=true ;;
-                docs/*|*.md|.github/*|packaging/*|LICENSE*|NOTICE|THIRD-PARTY-LICENSES.txt) ;;
-                # The GitHub bots' scripts: no Rust, tested in this job (Claim and triage bot tests).
-                scripts/claim/*|scripts/triage/*) ;;
-                *) native=true ;;
-              esac
             done < "$RUNNER_TEMP/ci-paths"
+            if touches_code < "$RUNNER_TEMP/ci-paths"; then native=true; fi
             # A lockfile change that moves the graphics stack (wgpu, naga, egui, winit, windows).
             if [ "$windows" = false ] && grep -qxz 'Cargo.lock' "$RUNNER_TEMP/ci-paths" \
               && git diff "$BASE_SHA...$HEAD_SHA" -- Cargo.lock \

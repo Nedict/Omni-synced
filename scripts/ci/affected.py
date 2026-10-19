@@ -12,9 +12,10 @@ Prints and optionally appends to $GITHUB_OUTPUT:
   packages=a b c    the affected packages (empty when full, or when nothing needs building)
 
 A changed file maps to the package whose directory holds it. The packages that depend on those
-(directly or not, dev-dependencies included) are added. Anything that can change every package,
-or that no package owns, selects the full workspace. Only documentation and packaging files are
-ignored.
+(directly or not, dev-dependencies included) are added. Test data under tests/ maps to the
+packages that read it, and a vendored crate (vendor/, a [patch] of a crates.io dependency) to the
+packages that use it. Anything that can change every package, or that no package owns, selects
+the full workspace. Only documentation and packaging files are ignored.
 """
 import argparse
 import json
@@ -22,7 +23,7 @@ import subprocess
 import sys
 
 # Changes here can affect every package.
-FULL_PREFIXES = (".cargo/", ".config/", ".github/", "vendor/", "tests/", "scripts/")
+FULL_PREFIXES = (".cargo/", ".config/", ".github/", "scripts/")
 FULL_FILES = ("Cargo.toml", "Cargo.lock")
 # Changes here affect no code: documentation and packaging.
 IGNORED_PREFIXES = ("docs/", "packaging/")
@@ -30,6 +31,29 @@ IGNORED_PREFIXES = ("docs/", "packaging/")
 EMBEDDED = {"ATTRIBUTION.md": "solidcraft-ui-egui"}
 # Asset folders that only some packages read: the UI embeds the catalogs, xtask checks them.
 EMBEDDED_PREFIXES = {"assets/locales/": ("solidcraft-ui-egui", "xtask")}
+# Test data and the package directories whose tests (or xtask) read it. Any other folder under
+# tests/ selects the full workspace.
+TEST_DATA = {
+    "tests/robustness/": ("crates/engine/",),
+    "tests/hole_matrix/": ("crates/engine/",),
+    "tests/projection/": ("crates/engine/",),
+    "tests/taper/": ("crates/engine/",),
+    "tests/oracle/": ("apps/solidcraft-cli/", "crates/kernel/", "xtask/"),
+    "tests/action_matrix/": ("apps/solidcraft-cli/", "crates/engine/", "xtask/"),
+}
+# Vendored crates (vendor/<crate>/, a [patch] of a crates.io dependency) and the dependency names
+# through which workspace packages reach them: the truck crates and their maths crate only through
+# truck itself (crates/kernel), egui-wgpu directly or through eframe. Another vendored crate
+# selects the full workspace.
+TRUCK = lambda dep: dep.startswith("truck-")  # noqa: E731
+VENDOR_USES = {
+    "truck-geometry": TRUCK,
+    "truck-shapeops": TRUCK,
+    "truck-stepio": TRUCK,
+    "truck-meshalgo": TRUCK,
+    "matext4cgmath": TRUCK,
+    "egui-wgpu": lambda dep: dep in ("egui-wgpu", "eframe"),
+}
 
 
 def load_metadata(path):
@@ -69,12 +93,32 @@ def select(meta, paths):
             if target:
                 dependents[target].add(p["name"])
 
+    def users_of(vendored):
+        """The workspace packages that depend on a vendored crate (by dependency name)."""
+        uses = VENDOR_USES.get(vendored)
+        if uses is None:
+            return set()
+        return {p["name"] for p in meta["packages"] if any(uses(d["name"]) for d in p["dependencies"])}
+
     hit = set()
     for path in paths:
         if path in FULL_FILES or path.startswith(FULL_PREFIXES) or path.startswith("rust-toolchain"):
             return True, []
         owners = [d for d in by_dir if path.startswith(d)]
-        if owners:
+        if path.startswith("vendor/"):
+            if path == "vendor/README.md":
+                continue
+            users = users_of(path.split("/")[1])
+            if not users:
+                return True, []
+            hit.update(users)
+        elif path.startswith("tests/"):
+            data = next((v for k, v in TEST_DATA.items() if path.startswith(k)), None)
+            readers = [by_dir[d] for d in data or () if d in by_dir]
+            if not readers:
+                return True, []
+            hit.update(readers)
+        elif owners:
             hit.add(by_dir[max(owners, key=len)])
         elif path in EMBEDDED:
             hit.add(EMBEDDED[path])

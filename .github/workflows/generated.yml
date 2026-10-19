@@ -6,6 +6,15 @@ name: Generated files
 on:
   push:
     branches: [main]
+    # THIRD-PARTY-LICENSES.txt follows the manifests and the lockfile; docs/features.md follows the
+    # command registry (crates/engine), read through solidcraft-cli. Other pushes regenerate nothing.
+    paths:
+      - "Cargo.lock"
+      - "**/Cargo.toml"
+      - "crates/engine/**"
+      - "apps/solidcraft-cli/**"
+      - "xtask/**"
+      - ".github/workflows/generated.yml"
   workflow_dispatch:
 
 permissions:
