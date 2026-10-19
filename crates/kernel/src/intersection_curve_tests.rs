@@ -219,3 +219,58 @@ fn a_plate_across_a_part_whose_faces_meet_its_edges_loosely_closes() {
     let v = crate::measure(&body).unwrap().volume;
     assert!((v - 200.0).abs() < 0.01, "{v}");
 }
+
+/// A ring of rectangular section (radii 5 and 6 mm, 4 mm high) revolved 300° about the z axis.
+/// truck builds each side of three faces of 100°, each on its own surface whose angle runs from
+/// 0 to 100°; each surface is turned 50° about the axis (the same geometry), so its angle runs
+/// from -50° to 50° across the face and the seam, where the angle wraps from 2π to 0, lies
+/// inside it, as it can on an imported part.
+fn ring_with_seams_inside_its_faces() -> truck_modeling::Solid {
+    use truck_modeling::{Face, Matrix4, Rad, Shell, Solid, Surface, Vector3, builder};
+    let v = |x: f64, z: f64| builder::vertex(Point3::new(x, 0.0, z));
+    let p = [v(5.0, 0.0), v(6.0, 0.0), v(6.0, 4.0), v(5.0, 4.0)];
+    let wire: truck_modeling::Wire = (0..4).map(|i| builder::line(&p[i], &p[(i + 1) % 4])).collect();
+    let section = builder::try_attach_plane(&[wire]).unwrap();
+    let ring: Solid = builder::rsweep(&section, Point3::new(0.0, 0.0, 0.0), Vector3::unit_z(), Rad(300f64.to_radians()));
+    let turn = Matrix4::from_axis_angle(Vector3::unit_z(), Rad(50f64.to_radians()));
+    let faces: Vec<Face> = ring.boundaries()[0]
+        .face_iter()
+        .map(|face| {
+            let Surface::RevolutedCurve(revolved) = face.surface() else { return face.clone() };
+            let surface = revolved.map_ref(|rc| {
+                truck_modeling::RevolutedCurve::by_revolution(
+                    truck_modeling::Transformed::transformed(rc.entity_curve(), turn),
+                    rc.origin(),
+                    rc.axis(),
+                )
+            });
+            let mut f = Face::new(face.absolute_boundaries().clone(), Surface::RevolutedCurve(surface));
+            if !face.orientation() {
+                f.invert();
+            }
+            f
+        })
+        .collect();
+    // The swept section faces into the ring.
+    let mut ring = Solid::new(vec![Shell::from(faces)]);
+    ring.not();
+    ring
+}
+
+/// A plate across a ring whose revolved faces hold their surface's seam. A boundary's points in
+/// such a face's parameters were each found within one turn, so they jumped by 2π where the
+/// boundary crossed the seam: the loops of the pieces the plate cut the face into came out with
+/// the wrong sign and area, a piece was taken for a hole inside no other piece, and the boolean
+/// gave up ("loop not inside any face piece"). Each point is now taken the turn nearest the one
+/// before it.
+#[test]
+fn a_plate_across_revolved_faces_holding_their_surfaces_seam_divides_them() {
+    let ring = ring_with_seams_inside_its_faces();
+    let plate = crate::box_solid(Vec3::new(-10.0, -10.0, 1.0), Vec3::new(10.0, 10.0, 2.0)).unwrap();
+    let solid = truck_shapeops::and(&ring, &plate.solid, 0.04).expect("the ring's faces are divided by the plate");
+    let body = crate::Body::new(solid).unwrap();
+    let v = crate::measure(&body).unwrap().volume;
+    // 300° of an annulus of radii 5 and 6, 1 mm thick.
+    let expected = 300.0 / 360.0 * std::f64::consts::PI * (36.0 - 25.0);
+    assert!((v - expected).abs() < 1e-3 * expected, "{v} against {expected}");
+}
