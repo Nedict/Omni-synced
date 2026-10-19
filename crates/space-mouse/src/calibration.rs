@@ -405,7 +405,9 @@ impl Wizard {
                 }
             }
             Stage::Step(index) => {
-                // Still where the last step settled: the cap hasn't been touched yet.
+                // Still where the last step settled: the cap hasn't been touched yet. Deliberately
+                // skips the peak and hold bookkeeping; a device that rests exactly there reads as
+                // untouched until it moves, which is what it is.
                 if self.settled == Some(raw) {
                     return;
                 }
@@ -855,6 +857,18 @@ mod tests {
         // The cap still reaches full speed, and a push past the stuck range still moves.
         assert!(calibration.apply(PRO[0])[0] >= FULL_SCALE - 1, "{calibration:?}");
         assert!(calibration.apply([120, 0, 0, 0, 0, 0])[0] > 0);
+    }
+
+    #[test]
+    fn a_steady_hold_that_repeats_one_reading_is_still_a_hold() {
+        // spacenavd sends only on change, so a cap held still at full deflection repeats one
+        // reading for far longer than SETTLE_SECONDS; it is held, not let go.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, STUCK[0], REST_SECONDS + 0.1);
+        hold(&mut wizard, PRO[0], 1.0);
+        assert_eq!((wizard.stage(), wizard.progress()), (Stage::Step(0), 1.0));
+        hold(&mut wizard, STUCK[1], SETTLE_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(1));
     }
 
     #[test]
