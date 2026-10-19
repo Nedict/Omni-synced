@@ -48,6 +48,8 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
   `crashes replay <id>` (or the `diagnostics.crash_reports` command / MCP `crash_reports` tool).
 - **Prove it:** every crash fix lands with a regression test (see `hostile_params_never_panic`); a
   crash report's `design.solidcraft` + `replay.json` is the test's starting point.
+- **Where tests go:** a regression test goes into the existing test file for its area (booleans, blends,
+  shell, sweep, STEP, naming…), never a new file named after the bug (#3226).
 - Every production crate root carries
   `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]`.
 
