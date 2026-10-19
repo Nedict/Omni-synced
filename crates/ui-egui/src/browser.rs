@@ -654,8 +654,7 @@ fn browser_header(app: &mut SolveApp, ui: &mut egui::Ui, collapsible: bool) {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), Sense::hover());
     let response = ui.interact(rect, ui.id().with("browser_header"), if collapsible { Sense::click() } else { Sense::hover() });
-    crate::scenario::publish_handle("browser:header", rect.center());
-    crate::scenario::publish_rect("browser:header", rect);
+    crate::scenario::publish_target("browser:header", rect);
     let collapsed = collapsible && app.tree.panel_collapsed;
     if collapsible && (response.hovered() || response.has_focus()) {
         ui.painter().rect_filled(rect, t.radius_lg.saturating_sub(CARD_INSET as u8), t.hover);

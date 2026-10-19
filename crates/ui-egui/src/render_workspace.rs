@@ -211,20 +211,20 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                         app.cam.fov = if perspective { std::f64::consts::FRAC_PI_4 } else { 0.0 };
                         app.render_workspace.view.dirty = true;
                     }
-                    if crate::ui_kit::secondary_button(ui, app.tr("render.fit")).clicked() {
+                    if crate::ui_kit::button(ui, app.tr("render.fit"), crate::ui_kit::Button::Normal).clicked() {
                         match solidcraft_engine::product_scene::extract(&app.session) {
                             Ok(scene) if !scene.bounds.is_empty() => app.cam.fit(&scene.bounds),
                             Err(e) => app.set_status(e.to_string(), true),
                             _ => {}
                         }
                     }
-                    if crate::ui_kit::secondary_button(ui, app.tr("render.restore_camera")).clicked() {
+                    if crate::ui_kit::button(ui, app.tr("render.restore_camera"), crate::ui_kit::Button::Normal).clicked() {
                         let name = app.render_workspace.view.name.clone();
                         if app.run("render.settings.apply", json!({"name":name})).is_ok() {
                             app.follow_view_request(false);
                         }
                     }
-                    if crate::ui_kit::secondary_button(ui, app.tr("render.save_setup")).clicked() {
+                    if crate::ui_kit::button(ui, app.tr("render.save_setup"), crate::ui_kit::Button::Normal).clicked() {
                         let name = app.render_workspace.view.name.clone();
                         let setup = RenderSetup { camera: app.cam, ..app.render_workspace.view.draft.clone() };
                         if app.run("render.settings.set", json!({"name":name,"set":setup})).is_ok() {
@@ -234,13 +234,13 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                     if app.render_workspace.view.dirty {
                         ui.label(app.tr("render.unsaved"));
                     }
-                    if crate::ui_kit::secondary_button(ui, app.tr("render.reload_settings")).clicked() {
+                    if crate::ui_kit::button(ui, app.tr("render.reload_settings"), crate::ui_kit::Button::Normal).clicked() {
                         app.render_workspace.view.dirty = false;
                         app.render_workspace.revision = u64::MAX;
                     }
                     if app.render_workspace.view.draft.backend.as_str() != "builtin" || app.render_workspace.view.draft.mode != RenderMode::Preview {
                         ui.label(app.tr("render.unavailable_preview"));
-                        if crate::ui_kit::secondary_button(ui, app.tr("render.use_preview")).clicked() {
+                        if crate::ui_kit::button(ui, app.tr("render.use_preview"), crate::ui_kit::Button::Normal).clicked() {
                             app.render_workspace.view.draft.backend = solidcraft_engine::render::builtin_backend().id;
                             app.render_workspace.view.draft.mode = RenderMode::Preview;
                             app.render_workspace.view.dirty = true;
@@ -250,7 +250,7 @@ pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                     image_controls(app, ui);
                     ui.separator();
                     ui.small(app.tr("render.navigation_help"));
-                    if crate::ui_kit::secondary_button(ui, app.tr("render.return_design")).clicked()
+                    if crate::ui_kit::button(ui, app.tr("render.return_design"), crate::ui_kit::Button::Normal).clicked()
                         && let Err(e) = enter(app, false)
                     {
                         app.set_status(e, true);
@@ -279,7 +279,7 @@ fn image_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
         && (w, h) != size
     {
         ui.small(app.tr("render.image_too_large"));
-        if crate::ui_kit::secondary_button(ui, format!("{} {w} × {h}", app.tr("render.image_use_largest"))).clicked() {
+        if crate::ui_kit::button(ui, format!("{} {w} × {h}", app.tr("render.image_use_largest")), crate::ui_kit::Button::Normal).clicked() {
             app.render_workspace.view.draft.width = u32::try_from(w).unwrap_or(1);
             app.render_workspace.view.draft.height = u32::try_from(h).unwrap_or(1);
             app.render_workspace.view.dirty = true;
@@ -287,7 +287,7 @@ fn image_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     let transparent_label = app.tr("render.image_transparent").to_string();
     crate::ui_kit::checkbox(ui, &transparent_label, &mut app.render_workspace.view.transparent);
-    if crate::ui_kit::secondary_button(ui, app.tr("render.image_check")).clicked() {
+    if crate::ui_kit::button(ui, app.tr("cmd.render_preflight"), crate::ui_kit::Button::Normal).clicked() {
         let settings = RenderSetup { camera: app.cam, ..app.render_workspace.view.draft.clone() };
         if app.run("render.preflight", json!({"settings":settings,"transparent_background":app.render_workspace.view.transparent})).is_ok() {
             app.set_status(app.tr("render.image_supported").to_string(), false);
@@ -324,7 +324,7 @@ fn image_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
                     let total = status["progress"]["total"].as_u64().unwrap_or(1).max(1);
                     crate::ui_kit::progress(ui, "render", (done as f64 / total as f64).clamp(0.0, 1.0) as f32);
                     ui.ctx().request_repaint();
-                    if crate::ui_kit::secondary_button(ui, app.tr("render.image_cancel")).clicked() {
+                    if crate::ui_kit::button(ui, app.tr("cmd.render_cancel"), crate::ui_kit::Button::Normal).clicked() {
                         let _ = app.run("render.cancel", json!({"job":job}));
                     }
                 }
@@ -339,7 +339,7 @@ fn image_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
         }
     }
-    if crate::ui_kit::enabled_button(ui, app.tr("render.image_start"), !busy).clicked() {
+    if crate::ui_kit::button(ui, app.tr("render.image_start"), crate::ui_kit::Button::Enabled(!busy)).clicked() {
         let settings = RenderSetup { camera: app.cam, ..app.render_workspace.view.draft.clone() };
         if let Ok(reply) = app.run("render.start", json!({"settings":settings,"transparent_background":app.render_workspace.view.transparent})) {
             app.render_workspace.view.job = serde_json::from_value(reply["job"].clone()).ok();
@@ -348,7 +348,8 @@ fn image_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     let overwrite_label = app.tr("render.image_overwrite").to_string();
     crate::ui_kit::checkbox(ui, &overwrite_label, &mut app.render_workspace.view.overwrite);
-    if crate::ui_kit::enabled_button(ui, app.tr("render.image_export"), app.render_workspace.view.completed.is_some()).clicked()
+    if crate::ui_kit::button(ui, app.tr("render.image_export"), crate::ui_kit::Button::Enabled(app.render_workspace.view.completed.is_some()))
+        .clicked()
         && let Some(job) = app.render_workspace.view.completed
     {
         export_image(app, job, app.render_workspace.view.overwrite);

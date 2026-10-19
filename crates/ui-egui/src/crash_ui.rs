@@ -62,31 +62,31 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         .cards(2.0)
         .actions("", crate::i18n::tr("ui.close"), None)
         .show(ctx, true, |ui| {
-            ui_kit::note(ui, "intro", crate::i18n::tr("crash.intro"));
+            ui_kit::text(ui, crate::i18n::tr("crash.intro"), ui_kit::Text::Note("intro"));
             if let Some(d) = app.crashes.dir.clone() {
                 // A long path is cut short (hover shows it all): it must not widen the card.
                 ui_kit::label_actions(ui, &d, |ui| {
-                    if ui_kit::small_button(ui, crate::i18n::tr("crash.copy_folder")).clicked() {
+                    if ui_kit::button(ui, crate::i18n::tr("crash.copy_folder"), ui_kit::Button::Small).clicked() {
                         ctx.copy_text(d.clone());
                     }
                 });
             }
             ui_kit::divider(ui, "reports");
             if app.crashes.reports.is_empty() {
-                ui_kit::note(ui, "none", crate::i18n::tr_label("No crash reports."));
+                ui_kit::text(ui, crate::i18n::tr_label("No crash reports."), ui_kit::Text::Note("none"));
             }
             egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                 for r in &app.crashes.reports {
                     let times = if r.count > 1 { format!("  ×{}", r.count) } else { String::new() };
                     let title = format!("{}  {}{times}", r.time.replace('T', " ").trim_end_matches('Z'), kind_label(&r.kind));
                     ui_kit::label_actions(ui, &title, |ui| {
-                        if ui_kit::small_button(ui, crate::i18n::tr("crash.report")).clicked() {
+                        if ui_kit::button(ui, crate::i18n::tr("crash.report"), ui_kit::Button::Small).clicked() {
                             report = Some(r.id.clone());
                         }
-                        if ui_kit::small_button(ui, crate::i18n::tr("crash.copy_path")).clicked() {
+                        if ui_kit::button(ui, crate::i18n::tr("crash.copy_path"), ui_kit::Button::Small).clicked() {
                             ctx.copy_text(r.path.clone());
                         }
-                        if ui_kit::small_button(ui, crate::i18n::tr("ui.delete")).clicked() {
+                        if ui_kit::button(ui, crate::i18n::tr("ui.delete"), ui_kit::Button::Small).clicked() {
                             delete = Some(Some(r.id.clone()));
                         }
                     });
@@ -96,16 +96,16 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         detail = format!("{detail}{sep}{}", crate::i18n::tr("crash.replayable"));
                     }
                     if !detail.is_empty() {
-                        ui_kit::note(ui, &format!("detail:{}", r.id), &detail);
+                        ui_kit::text(ui, &detail, ui_kit::Text::Note(&format!("detail:{}", r.id)));
                     }
-                    ui_kit::text_block(ui, &format!("message:{}", r.id), &r.message, false);
+                    ui_kit::text(ui, &r.message, ui_kit::Text::Report(&format!("message:{}", r.id), false));
                     ui_kit::divider(ui, &format!("end:{}", r.id));
                 }
             });
             if !app.crashes.note.is_empty() {
-                ui_kit::note(ui, "note", &app.crashes.note);
+                ui_kit::text(ui, &app.crashes.note, ui_kit::Text::Note("note"));
             }
-            if ui_kit::enabled_button(ui, "Delete all", !app.crashes.reports.is_empty()).clicked() {
+            if ui_kit::button(ui, "Delete all", ui_kit::Button::Enabled(!app.crashes.reports.is_empty())).clicked() {
                 delete = Some(None);
             }
         });
@@ -200,7 +200,7 @@ mod tests {
         h.frames(6);
         let window = h.ctx.memory(|m| m.area_rect(egui::Id::new("sc_crash_reports"))).unwrap();
         // The frame's margins come on top of the content's maximum width.
-        assert!(window.width() <= crate::frame::WINDOW_WIDE_MAX_W + 40.0, "{} wide", window.width());
+        assert!(window.width() <= 760.0 + 40.0, "{} wide", window.width());
         let _ = std::fs::remove_dir_all(&d);
     }
 

@@ -9,7 +9,7 @@ pub(super) const LABEL: &str = "sc_form_label";
 
 /// Mark a form without global state: children inherit this tag through their UI stack.
 /// Inherited form styling and label-column identity. Tokens: `space_4/8, form_gap_y, control_height, font_label, accent, selected_bg, dialog_rule, control_fill/border/radius, text`.
-pub fn scope<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+pub(crate) fn scope<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     ui.scope_builder(egui::UiBuilder::new().ui_stack_info(egui::UiStackInfo::default().with_tag(FORM)), |ui| {
         let t = Tokens::get();
         ui.spacing_mut().item_spacing = vec2(t.space_4, t.form_gap_y);
@@ -35,13 +35,8 @@ pub fn scope<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     .inner
 }
 
-/// Detect an inherited form scope. Tokens: `none`.
-pub(crate) fn contains(ui: &Ui) -> bool {
-    ui.stack().iter().any(|node| node.tags().contains(FORM))
-}
-
 /// Read the enclosing row accessibility label. Tokens: `none`.
-pub(super) fn label(ui: &Ui) -> &str {
+pub(crate) fn label(ui: &Ui) -> &str {
     ui.stack().iter().find_map(|node| node.tags().get_downcast::<String>(LABEL)).map(String::as_str).unwrap_or("")
 }
 
@@ -53,8 +48,28 @@ pub(super) fn publish(ui: &Ui, response: &Response, kind: egui::WidgetType) {
 }
 
 /// Aligned label/control row, 24 pt today. Tokens: `control_height, form_label_width, font_label, dialog_label, space_8`.
-pub fn row<R>(ui: &mut Ui, text: &str, control: impl FnOnce(&mut Ui) -> R) -> R {
+pub(crate) fn row<R>(ui: &mut Ui, text: &str, control: impl FnOnce(&mut Ui) -> R) -> R {
     sized_row(ui, text, row_height(), control)
+}
+
+/// Declarative expression row; retains the field's completion and accepted Enter. Tokens: `row, field`.
+pub(crate) fn expr_row(ui: &mut Ui, label: &str, value: &mut String) -> bool {
+    row(ui, label, |ui| super::field(ui, value))
+}
+
+/// Expression row with an empty-value hint. Tokens: `row, hint_field`.
+pub(crate) fn hint_row(ui: &mut Ui, label: &str, value: &mut String, hint: &str) -> bool {
+    row(ui, label, |ui| super::hint_field(ui, value, hint))
+}
+
+/// Plain text row; the caller retains Enter/change ownership. Tokens: `row, text_field`.
+pub(crate) fn text_row(ui: &mut Ui, label: &str, value: &mut String, hint: &str) -> (bool, bool) {
+    row(ui, label, |ui| super::text_field(ui, value, hint))
+}
+
+/// Indexed choice row with the caller's unchanged dropdown ID. Tokens: `row, dropdown`.
+pub(crate) fn choice_row(ui: &mut Ui, label: &str, id: &str, selected: &mut usize, options: &[&str]) -> Response {
+    row(ui, label, |ui| super::dropdown(ui, id, selected, options))
 }
 
 /// Internal form geometry for controls which need several lines (e.g. text areas).
@@ -94,7 +109,7 @@ pub(super) fn sized_row<R>(ui: &mut Ui, text: &str, height: f32, control: impl F
 /// A dim one-line caption in the control column of the row labelled `aligned_to`, directly under that
 /// row's control. It says in words what a colour or an icon shows, so colour is never the only cue.
 /// Dim helper beneath a row control. Tokens: `form_icon_size, font_small, text_dim, space_8; label-column tokens`.
-pub fn caption(ui: &mut Ui, aligned_to: &str, text: &str) {
+pub(crate) fn caption(ui: &mut Ui, aligned_to: &str, text: &str) {
     let t = Tokens::get();
     let width = dimension(ui.available_width());
     let (rect, _) = ui.allocate_exact_size(vec2(width, t.form_icon_size), egui::Sense::hover());
@@ -106,7 +121,7 @@ pub fn caption(ui: &mut Ui, aligned_to: &str, text: &str) {
 
 /// Memory belongs to the enclosing dialog ID; animation is avoided so each row keeps its fixed height.
 /// Persisted disclosure with a rule and uppercase title. Tokens: `control_height, space_2, radius_sm, hover, dialog_rule, form_section_icon_size, form_gap_y, font_caption, font_section_tracking, text_dim`.
-pub fn section<R>(ui: &mut Ui, id: impl egui::AsIdSalt, title: &str, default_open: bool, add: impl FnOnce(&mut Ui) -> R) -> Option<R> {
+pub(crate) fn section<R>(ui: &mut Ui, id: impl egui::AsIdSalt, title: &str, default_open: bool, add: impl FnOnce(&mut Ui) -> R) -> Option<R> {
     let t = Tokens::get();
     ui.add_space(t.space_2);
     let id = ui.make_persistent_id(id);
@@ -134,34 +149,10 @@ pub fn section<R>(ui: &mut Ui, id: impl egui::AsIdSalt, title: &str, default_ope
     open.then(|| ui.push_id(id, add).inner)
 }
 
-/// Dim helper line beneath a header. Tokens: control_height, font_small and text_dim.
-/// Helper text below a card header. Tokens: `control_height, font_small, text_dim`.
-pub fn hint(ui: &mut Ui, key: &str, text: &str) -> Response {
-    let (rect, response) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), row_height()), egui::Sense::hover());
-    paint_text(ui, rect, text, egui::FontId::proportional(Tokens::get().font_small), Tokens::get().text_dim, false);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), text));
-    scenario::publish_rect(&format!("dialog:hint:{key}"), rect);
-    scenario::publish_handle(&format!("dialog:hint:{key}"), rect.center());
-    response.on_hover_text(text)
-}
-
-/// Wrapping explanatory text for a card's body (a rule or a caveat too long for the single-line `hint`).
-/// Tokens: `font_small, text_dim, space_4`.
-pub fn note(ui: &mut Ui, key: &str, text: &str) -> Response {
-    let t = Tokens::get();
-    let width = dimension(ui.available_width());
-    let galley = ui.painter().layout(text.to_string(), egui::FontId::proportional(t.font_small), t.text_dim, width);
-    let (rect, response) = ui.allocate_exact_size(vec2(width, galley.size().y + t.space_4 * 2.0), egui::Sense::hover());
-    ui.painter().galley(egui::pos2(rect.left(), rect.top() + t.space_4), galley, t.text_dim);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), text));
-    scenario::publish_rect(&format!("dialog:note:{key}"), rect);
-    response
-}
-
 /// Picked-item list entry with a remove action. Returns that action's Response.
 /// Tokens: control_height, space_8, font_label, text and icon-button tokens.
 /// Picked-item row with a remove action. Tokens: `control_height, space_8, font_label, text; icon-button tokens`.
-pub fn list_row(ui: &mut Ui, key: &str, text: &str) -> Response {
+pub(crate) fn list_row(ui: &mut Ui, key: &str, text: &str) -> Response {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), row_height()), egui::Sense::hover());
     let remove = egui::Rect::from_min_max(egui::pos2((rect.right() - row_height()).max(rect.left()), rect.top()), rect.max);
@@ -175,7 +166,7 @@ pub fn list_row(ui: &mut Ui, key: &str, text: &str) -> Response {
 
 /// Full-width rule; Tokens: dialog_rule. Use between groups without extra padding.
 /// Full-width rule without extra padding. Tokens: `dialog_rule`.
-pub fn divider(ui: &mut Ui, key: &str) {
+pub(crate) fn divider(ui: &mut Ui, key: &str) {
     let (rect, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), 1.0), egui::Sense::hover());
     ui.painter().hline(rect.x_range(), rect.top(), egui::Stroke::new(1.0, Tokens::get().dialog_rule));
     scenario::publish_rect(&format!("dialog:divider:{key}"), rect);
@@ -191,36 +182,16 @@ pub(super) fn named_control<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut U
 /// Publish geometry without replacing native accessibility. Tokens: `none`.
 pub(super) fn publish_geometry(ui: &Ui, response: &Response) {
     let label = label(ui);
-    scenario::publish_handle(&format!("dialog:{label}"), response.rect.center());
-    scenario::publish_rect(&format!("dialog:widget:{label}"), response.rect);
+    scenario::publish_target_as(&format!("dialog:{label}"), &format!("dialog:widget:{label}"), response.rect);
 }
 
 #[cfg(test)]
 #[path = "layout_tests.rs"]
 mod tests;
 
-/// Read-only, wrapping report text. Tokens: font_label, text/error, space_4.
-pub fn text_block(ui: &mut Ui, id: &str, text: &str, error: bool) -> Response {
-    let t = Tokens::get();
-    let response = ui
-        .add(egui::Label::new(RichText::new(text).font(egui::FontId::proportional(t.font_label)).color(if error { t.error } else { t.text })).wrap());
-    scenario::publish_rect(&format!("dialog:report:{id}"), response.rect);
-    scenario::publish_handle(&format!("dialog:report:{id}"), response.rect.center());
-    response
-}
-
-/// Inline read-only text beside actions. Tokens: font_label, text.
-pub fn inline_text(ui: &mut Ui, text: &str) -> Response {
-    let response =
-        ui.add(egui::Label::new(RichText::new(text).font(egui::FontId::proportional(Tokens::get().font_label)).color(Tokens::get().text)).truncate());
-    scenario::publish_rect(&format!("dialog:inline:{text}"), response.rect);
-    scenario::publish_handle(&format!("dialog:inline:{text}"), response.rect.center());
-    response
-}
-
 /// Large read-only licence/report with equal-height virtualized lines and horizontal overflow.
 /// Tokens: font_small, text, control_height. Only visible lines are laid out.
-pub fn text_lines(ui: &mut Ui, id: &str, text: &str) {
+pub(crate) fn text_lines(ui: &mut Ui, id: &str, text: &str) {
     let t = Tokens::get();
     let lines: Vec<_> = text.lines().collect();
     let font = egui::FontId::monospace(t.font_small);
@@ -231,4 +202,56 @@ pub fn text_lines(ui: &mut Ui, id: &str, text: &str) {
         }
     });
     scenario::publish_rect(&format!("dialog:lines:{id}"), response.inner_rect);
+}
+
+/// Read-only text variants retain their original wrapping, allocation and scenario identities.
+pub(crate) enum Text<'a> {
+    Hint(&'a str),
+    Note(&'a str),
+    Report(&'a str, bool),
+    Inline,
+    Cell,
+}
+
+pub(crate) fn text(ui: &mut Ui, text: &str, style: Text<'_>) -> Response {
+    let t = Tokens::get();
+    let fixed = matches!(style, Text::Hint(_) | Text::Cell);
+    let ink = match style {
+        Text::Hint(_) | Text::Note(_) => t.text_dim,
+        Text::Report(_, true) => t.error,
+        _ => t.text,
+    };
+    let font = egui::FontId::proportional(if matches!(style, Text::Hint(_) | Text::Note(_)) { t.font_small } else { t.font_label });
+    let response = if fixed {
+        let (rect, response) = ui.allocate_exact_size(
+            vec2(dimension(ui.available_width()), row_height()),
+            if matches!(style, Text::Cell) { egui::Sense::click() } else { egui::Sense::hover() },
+        );
+        paint_text(ui, rect, text, font, ink, false);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), text));
+        response.on_hover_text(text)
+    } else if matches!(style, Text::Note(_)) {
+        let width = dimension(ui.available_width());
+        let galley = ui.painter().layout(text.to_owned(), font, ink, width);
+        let (rect, response) = ui.allocate_exact_size(vec2(width, galley.size().y + t.space_4 * 2.0), egui::Sense::hover());
+        ui.painter().galley(egui::pos2(rect.left(), rect.top() + t.space_4), galley, ink);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), text));
+        response
+    } else {
+        let label = egui::Label::new(RichText::new(text).font(font).color(ink));
+        ui.add(if matches!(style, Text::Inline) { label.truncate() } else { label.wrap() })
+    };
+    let (kind, key) = match style {
+        Text::Hint(key) => ("hint", key),
+        Text::Note(key) => ("note", key),
+        Text::Report(key, _) => ("report", key),
+        Text::Inline => ("inline", text),
+        Text::Cell => ("cell", text),
+    };
+    let id = format!("dialog:{kind}:{key}");
+    scenario::publish_rect(&id, response.rect);
+    if !matches!(style, Text::Note(_)) {
+        scenario::publish_handle(&id, response.rect.center());
+    }
+    response
 }

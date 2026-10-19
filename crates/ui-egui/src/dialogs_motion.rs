@@ -3,6 +3,7 @@
 //! show while open (a study's pose, an explosion) is display only: pending occurrence moves,
 //! computed on a scratch copy of the design and put back when the dialog closes.
 
+use crate::ui_kit::{choice_row, expr_row, text_row};
 use std::collections::BTreeMap;
 
 use egui::{Pos2, RichText, Sense, Stroke, pos2, vec2};
@@ -12,7 +13,7 @@ use solidcraft_engine::doc::Mat;
 use solidcraft_engine::doc::joints::JointKind;
 
 use crate::SolveApp;
-use crate::dialogs::{Dialog, Kind, combo, field, form_row};
+use crate::dialogs::{Dialog, Kind, combo, form_row};
 use crate::selection::{BODIES, SelInput};
 use crate::theme::Tokens;
 
@@ -445,9 +446,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, inputs: &mut [Sel
     let mut enter = false;
     match k {
         Mo::ContactSet { name, check } => {
-            form_row(ui, "Name", |ui| {
-                crate::ui_kit::text_field(ui, name, "");
-            });
+            text_row(ui, "Name", name, "");
             let list = app.session.execute("contact.list", &json!({})).unwrap_or(Value::Null);
             form_row(ui, "Contact", |ui| {
                 let mut on = list.get("enabled").and_then(Value::as_bool).unwrap_or(false);
@@ -462,10 +461,12 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, inputs: &mut [Sel
                     ui.horizontal(|ui| {
                         let count = s.get("occurrences").and_then(Value::as_array).map_or(0, Vec::len);
                         ui.label(RichText::new(crate::i18n::format("contact.components_count", &[("count", &count.to_string())])).color(t.text_dim));
-                        if crate::ui_kit::small_button(ui, crate::i18n::tr_label(if off { "Unsuppress" } else { "Suppress" })).clicked() {
+                        if crate::ui_kit::button(ui, crate::i18n::tr_label(if off { "Unsuppress" } else { "Suppress" }), crate::ui_kit::Button::Small)
+                            .clicked()
+                        {
                             let _ = app.run("contact.edit", json!({"set": n, "suppressed": !off}));
                         }
-                        if crate::ui_kit::small_button(ui, crate::i18n::tr_label("×"))
+                        if crate::ui_kit::button(ui, crate::i18n::tr_label("×"), crate::ui_kit::Button::Small)
                             .on_hover_text(crate::i18n::tr_label("Delete the set"))
                             .clicked()
                         {
@@ -475,7 +476,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, inputs: &mut [Sel
                 });
             }
             ui.vertical(|ui| {
-                if crate::ui_kit::secondary_button(ui, crate::i18n::tr_label("Check collisions")).clicked() {
+                if crate::ui_kit::button(ui, crate::i18n::tr_label("Check collisions"), crate::ui_kit::Button::Normal).clicked() {
                     *check = Some(app.session.execute("contact.check", &json!({})).unwrap_or_else(|e| json!({"error": e.to_string()})));
                 }
             });
@@ -506,9 +507,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, inputs: &mut [Sel
         }
         Mo::MotionStudy { .. } => enter = motion_study_rows(app, ui, k, inputs, t),
         Mo::Explode { name, scale, shown, saved, error } => {
-            form_row(ui, "Name", |ui| {
-                crate::ui_kit::text_field(ui, name, "");
-            });
+            text_row(ui, "Name", name, "");
             form_row(ui, "Explode", |ui| {
                 ui.spacing_mut().slider_width = 160.0;
                 crate::ui_kit::slider(ui, scale, 0.0..=2.0);
@@ -547,9 +546,7 @@ fn motion_study_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, inputs: 
         let labels: Vec<&str> = std::iter::once("New study").chain(studies.iter().map(|(_, n)| n.as_str())).collect();
         let was = study.as_ref().and_then(|id| studies.iter().position(|(x, _)| x == id)).map_or(0, |i| i + 1);
         let mut pick = was;
-        form_row(ui, "Study", |ui| {
-            combo(ui, "ms_study", &labels, &mut pick);
-        });
+        choice_row(ui, "Study", "ms_study", &mut pick, &labels);
         if pick != was {
             match pick.checked_sub(1).and_then(|i| studies.get(i)).map(|(id, _)| study_tracks(&app.session, id, true)) {
                 Some(Ok((id, n, st, t))) => (*study, *name, *steps, *tracks, *shown, *playing) = (Some(id.to_string()), n, st, t, None, false),
@@ -558,12 +555,8 @@ fn motion_study_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, inputs: 
             }
         }
     }
-    form_row(ui, "Name", |ui| {
-        crate::ui_kit::text_field(ui, name, "");
-    });
-    form_row(ui, "Steps", |ui| {
-        enter |= field(ui, steps);
-    });
+    text_row(ui, "Name", name, "");
+    enter |= expr_row(ui, "Steps", steps);
     let total = steps.trim().parse::<u32>().unwrap_or(100).clamp(1, 100_000);
     let moving = joints_moving(app);
     if moving.is_empty() {
@@ -635,7 +628,10 @@ fn motion_study_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, inputs: 
             ui.horizontal(|ui| {
                 let width = (ui.available_width() - t.control_height - t.space_8).max(0.0);
                 ui.allocate_ui(vec2(width, t.control_height), |ui| combo(ui, &format!("ms_joint{ti}"), &refs, &mut pos));
-                if crate::ui_kit::small_button(ui, crate::i18n::tr_label("×")).on_hover_text(crate::i18n::tr_label("Remove the track")).clicked() {
+                if crate::ui_kit::button(ui, crate::i18n::tr_label("×"), crate::ui_kit::Button::Small)
+                    .on_hover_text(crate::i18n::tr_label("Remove the track"))
+                    .clicked()
+                {
                     remove = Some(ti);
                 }
             });
@@ -658,13 +654,11 @@ fn motion_study_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, inputs: 
         // The key at this step, if any: its value.
         if let Some(p) = tr.points.iter_mut().find(|(s, _)| *s == now) {
             // The key's value (Enter commits it; OK makes the study).
-            form_row(ui, "Value", |ui| {
-                let _ = field(ui, &mut p.1);
-            });
+            let _ = expr_row(ui, "Value", &mut p.1);
         }
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
-                if crate::ui_kit::small_button(ui, crate::i18n::tr_label("Key here"))
+                if crate::ui_kit::button(ui, crate::i18n::tr_label("Key here"), crate::ui_kit::Button::Small)
                     .on_hover_text(crate::i18n::tr_label("Add a key at this step with the joint's value now"))
                     .clicked()
                     && !tr.points.iter().any(|(s, _)| *s == now)
@@ -674,7 +668,7 @@ fn motion_study_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, inputs: 
                     tr.points.push((now, format!("0 {unit}")));
                     tr.points.sort_by_key(|p| p.0);
                 }
-                if crate::ui_kit::small_button(ui, crate::i18n::tr_label("Delete key")).clicked() {
+                if crate::ui_kit::button(ui, crate::i18n::tr_label("Delete key"), crate::ui_kit::Button::Small).clicked() {
                     tr.points.retain(|(s, _)| *s != now);
                 }
             });
@@ -686,7 +680,7 @@ fn motion_study_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, inputs: 
     let mut export = false;
     ui.vertical(|ui| {
         ui.horizontal(|ui| {
-            if crate::ui_kit::secondary_button(ui, crate::i18n::tr_label("Add Key"))
+            if crate::ui_kit::button(ui, crate::i18n::tr_label("Add Key"), crate::ui_kit::Button::Normal)
                 .on_hover_text(crate::i18n::tr_label("Key a joint's value at this step"))
                 .clicked()
                 && let Some((ji, _, kind)) = moving.first()
@@ -694,7 +688,7 @@ fn motion_study_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, inputs: 
                 let unit = if kind.is_angle(0) { "deg" } else { "mm" };
                 tracks.push(Track { joint: *ji, index: 0, points: vec![(now, format!("0 {unit}"))] });
             }
-            export = crate::ui_kit::secondary_button(ui, crate::i18n::tr_label("Export Animation…"))
+            export = crate::ui_kit::button(ui, crate::i18n::tr_label("Export Animation…"), crate::ui_kit::Button::Normal)
                 .on_hover_text(crate::i18n::tr_label("Save the study as an animated GIF, seen as the viewport shows it"))
                 .clicked();
         });

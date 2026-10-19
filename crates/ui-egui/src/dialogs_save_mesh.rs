@@ -7,15 +7,16 @@
 //! for a program and adds it at the top; "Custom…" itself is never the selection. Pressing Delete
 //! over a program the user added removes it.
 
+use crate::selection::SelectionExt as _;
+use crate::ui_kit::choice_row;
 use std::collections::HashMap;
 
 use egui::{Color32, Sense, vec2};
 use serde_json::{Value, json};
-use solidcraft_engine::Sel;
 use solidcraft_engine::slicers::{self, Slicer};
 
 use crate::SolveApp;
-use crate::dialogs::{Kind, combo, form_row};
+use crate::dialogs::{Kind, form_row};
 use crate::selection::{BODIES, SelInput};
 use crate::theme::Tokens;
 
@@ -150,9 +151,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut SaveMesh) -> bool {
         }
         k.send &= !entries.is_empty();
     }
-    form_row(ui, "Format", |ui| {
-        combo(ui, "sm_format", &FORMATS.map(|f| f.0), &mut k.format);
-    });
+    choice_row(ui, "Format", "sm_format", &mut k.format, &FORMATS.map(|f| f.0));
 
     // A browser has no installed programs to send a file to.
     if app.services.pick_program.is_none() {
@@ -272,18 +271,11 @@ fn add_custom(app: &mut SolveApp, path: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn bodies(inputs: &[SelInput]) -> Vec<String> {
-    inputs
-        .first()
-        .map(|i| i.items.iter().filter_map(|s| if let Sel::Body { name } = s { Some(name.clone()) } else { None }).collect())
-        .unwrap_or_default()
-}
-
 /// What the Save (or Send) button asks `file.save_mesh` to do, without the file name.
 pub fn commands(k: &SaveMesh, inputs: &[SelInput]) -> Result<Vec<(String, Value)>, String> {
     let format = FORMATS.get(k.format).map_or("stl", |f| f.1);
     let mut p = json!({ "format": format });
-    let names = bodies(inputs);
+    let names = crate::selection::items(inputs, 0).body_names();
     if names.is_empty() {
         return Err(crate::i18n::tr("ui.save_mesh_pick_bodies").into());
     }
@@ -299,7 +291,7 @@ pub fn commands(k: &SaveMesh, inputs: &[SelInput]) -> Result<Vec<(String, Value)
 
 /// Save and Send need at least one body.
 pub fn ready(inputs: &[SelInput]) -> bool {
-    !bodies(inputs).is_empty()
+    !crate::selection::items(inputs, 0).body_names().is_empty()
 }
 
 /// The button's label: Save, or Send when the file goes to a slicer.
@@ -312,7 +304,7 @@ pub fn button(k: &SaveMesh) -> &'static str {
 pub fn run(app: &mut SolveApp, k: &SaveMesh, inputs: &[SelInput]) -> Result<(), String> {
     let (_, params) = commands(k, inputs)?.into_iter().next().ok_or("nothing to save")?;
     let (format, ext) = FORMATS.get(k.format).map_or(("stl", "stl"), |f| (f.1, f.2));
-    let name = bodies(inputs).first().cloned().unwrap_or_else(|| app.session.doc.name.clone());
+    let name = crate::selection::items(inputs, 0).body_names().first().cloned().unwrap_or_else(|| app.session.doc.name.clone());
     let p = &mut app.preferences;
     p.save_mesh_format = format.into();
     p.save_mesh_send = k.send;

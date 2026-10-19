@@ -1,23 +1,11 @@
-//! The one place windows are made. Every command dialog, panel and pop-up window comes from
-//! here, so they all shrink to their content within the same width limits (a test checks that no
-//! other file creates an `egui::Window`, and that every dialog stays within the limits).
-//!
-//! - [`docked`]: command dialogs and command panels, flush to the right edge of the viewport.
-//! - [`docked_on`]: the same, against either edge ([`Side`]), with [`dock_frame`] for its
-//!   chrome. A dialog opened while the Sketch Palette holds the right edge takes the left.
-//! - [`window`]: floating windows (Preferences, Parameters, prompts…), centred by default.
-//! - [`right_aligned`]: right-align a row's last items without widening the window (a
-//!   right-to-left layout would stretch it to its maximum width).
-//! - [`heading`]: a panel's title row and its section headings, each on a band darker than the
-//!   panel ([`Level`]), so every dialog marks them the same way.
+//! Shared dock dragging, bounded anchors and tokenised surfaces for `ui_kit::Panel`,
+//! plus bounded floating windows for BOM, Messages and 3D mouse calibration.
 
 use egui::{Align2, Pos2, Ui, WidgetText, vec2};
 
 /// Width limits of a docked command dialog.
 pub const DIALOG_MIN_W: f32 = 260.0;
 pub const DIALOG_MAX_W: f32 = 380.0;
-/// Docked dialogs holding a table (motion study, configurations, exploded views).
-pub const DIALOG_WIDE_MAX_W: f32 = 560.0;
 /// Floating windows: prompts and panels, and those holding a table (Parameters, Keyboard
 /// Shortcuts).
 pub const WINDOW_MAX_W: f32 = 460.0;
@@ -61,35 +49,6 @@ pub fn dock_frame(ctx: &egui::Context, side: Side) -> egui::Frame {
         .stroke(egui::Stroke::new(1.0, t.dialog_border))
         .corner_radius(corner_radius)
         .shadow(egui::Shadow { offset: [shadow_x, 2], blur: 8, spread: 0, color: egui::Color32::from_black_alpha(40) })
-}
-
-/// A command dialog docked at `anchor` (its top right corner), shrink-wrapped to its content.
-pub fn docked<'a>(title: impl Into<WidgetText>, id: egui::Id, anchor: Pos2, max_height: f32, width: Width) -> egui::Window<'a> {
-    docked_on(title, id, anchor, max_height, width, Side::Right)
-}
-
-/// A command dialog docked against `side` at `anchor` (its top corner on that side),
-/// shrink-wrapped to its content.
-pub fn docked_on<'a>(title: impl Into<WidgetText>, id: egui::Id, anchor: Pos2, max_height: f32, width: Width, side: Side) -> egui::Window<'a> {
-    let max = match width {
-        Width::Normal => DIALOG_MAX_W,
-        Width::Wide => DIALOG_WIDE_MAX_W,
-    };
-    let pivot = match side {
-        Side::Right => Align2::RIGHT_TOP,
-        Side::Left => Align2::LEFT_TOP,
-    };
-    egui::Window::new(title)
-        .enabled(!crate::issue_report::cad_input_blocked())
-        .id(id)
-        .title_bar(false)
-        .pivot(pivot)
-        .fixed_pos(anchor)
-        .constrain(false)
-        .auto_sized()
-        .collapsible(false)
-        .max_width(max)
-        .max_height(max_height.max(120.0))
 }
 
 /// How far the open docked dialog titled `title` was dragged from its docked place (#1335);
@@ -165,78 +124,9 @@ pub fn window<'a>(ctx: &egui::Context, title: impl Into<WidgetText>, width: Widt
         .max_width(max)
 }
 
-/// Add a button drawn with its own outline (`Button::stroke`) of `width`, keeping the same size
-/// in every state (#1335). egui sizes a button's padding as the spacing minus the *theme's*
-/// outline width for the state (none while idle, 1 px hovered), which keeps a themed button's
-/// size steady, but a button with its own outline then lost a pixel of padding each side on
-/// hover: it shrank, and the panel around it with it.
-pub fn add_outlined(ui: &mut Ui, button: egui::Button<'_>, width: f32) -> egui::Response {
-    ui.scope(|ui| {
-        let w = &mut ui.visuals_mut().widgets;
-        for state in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
-            state.bg_stroke.width = width;
-        }
-        ui.add(button)
-    })
-    .inner
-}
-
 /// Floating model controls share the report's read-only drawing boundary with windows.
 pub fn area(id: egui::Id) -> egui::Area {
     egui::Area::new(id).enabled(!crate::issue_report::cad_input_blocked())
-}
-
-/// Heading levels inside a panel: its title, and the sections below it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Level {
-    /// The panel's title row (`Tokens::heading_bg`).
-    Title,
-    /// A section heading (`Tokens::subheading_bg`).
-    Section,
-}
-
-/// Horizontal inner margin of a heading band, on each side.
-pub const HEADING_MARGIN: f32 = 4.0;
-
-/// A heading row drawn on a band `width` wide (a content width, so the band never widens the
-/// window); `add` lays out the row left to right in `width - 2 * HEADING_MARGIN`.
-pub fn heading<R>(ui: &mut Ui, level: Level, width: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
-    let t = crate::theme::Tokens::get();
-    let fill = match level {
-        Level::Title => t.heading_bg,
-        Level::Section => t.subheading_bg,
-    };
-    let inner = (width - 2.0 * HEADING_MARGIN).max(0.0);
-    egui::Frame::new()
-        .fill(fill)
-        .corner_radius(3)
-        .inner_margin(egui::Margin::symmetric(HEADING_MARGIN as i8, 1))
-        .show(ui, |ui| {
-            ui.set_width(inner);
-            ui.horizontal(add).inner
-        })
-        .inner
-}
-
-/// The width a window's content had last frame (at least `min`), for laying out rows that end at
-/// the right edge.
-pub fn content_width(ui: &Ui, key: egui::Id, min: f32) -> f32 {
-    ui.ctx().data(|d| d.get_temp::<f32>(key)).unwrap_or(min).max(min)
-}
-
-/// Remember the content width for next frame (call at the end of the window's content).
-pub fn remember_width(ui: &Ui, key: egui::Id) {
-    let w = ui.min_rect().width();
-    ui.ctx().data_mut(|d| d.insert_temp(key, w));
-}
-
-/// In a horizontal row: push what `add` draws (`width` wide) to the right edge of a content
-/// `total` wide, without making the row any wider than that.
-pub fn right_aligned<R>(ui: &mut Ui, total: f32, width: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
-    let used = ui.min_rect().width();
-    let gap = (total - used - width - ui.spacing().item_spacing.x).max(0.0);
-    ui.add_space(gap);
-    add(ui)
 }
 
 /// Shared rounded surface for floating shell cards.
@@ -337,7 +227,7 @@ mod tests {
 
     /// Windows are made in this file only, so none can skip the width limits.
     #[test]
-    fn windows_come_from_the_frame_helper() {
+    fn windows_come_from_ui_kit_panel() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut bad = Vec::new();
         for e in std::fs::read_dir(&dir).unwrap() {
@@ -349,6 +239,6 @@ mod tests {
                 }
             }
         }
-        assert!(bad.is_empty(), "use crate::frame::{{docked, window}} instead of egui::Window::new in {bad:?}");
+        assert!(bad.is_empty(), "use ui_kit::Panel instead of egui::Window::new in {bad:?}");
     }
 }

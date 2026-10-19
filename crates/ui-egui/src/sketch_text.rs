@@ -472,7 +472,7 @@ pub(crate) fn rows(ui: &mut egui::Ui, k: &mut Tx, inputs: &mut [SelInput], activ
             TextAlign::Right => 2,
         };
         let labels = ["sketch_text.align_left", "sketch_text.align_center", "sketch_text.align_right"].map(crate::i18n::tr);
-        ui_kit::segmented_compact(ui, &mut selected, &labels);
+        ui_kit::segmented(ui, &mut selected, &labels, ui_kit::Segments { compact: true, ..Default::default() });
         k.style.align = match selected {
             1 => TextAlign::Center,
             2 => TextAlign::Right,
@@ -488,7 +488,7 @@ pub(crate) fn rows(ui: &mut egui::Ui, k: &mut Tx, inputs: &mut [SelInput], activ
     let on_path = k.style.path.is_some();
     let (xy, rest) = k.values.split_at_mut(2);
     if let [x, y] = xy {
-        let response = ui.add_enabled_ui(!on_path, |ui| ui_kit::value_pair(ui, "Position", [x, y], ["X", "Y"]));
+        let response = ui.add_enabled_ui(!on_path, |ui| ui_kit::value_pair(ui, "Position", [x, y], ["X", "Y"], None));
         enter |= response.inner;
         if on_path {
             response.response.on_disabled_hover_text(crate::i18n::tr("sketch_text.on_path"));
@@ -512,7 +512,8 @@ fn path_row(ui: &mut egui::Ui, k: &mut Tx, inputs: &mut [SelInput], active: &mut
     ui_kit::row(ui, "Path", |ui| {
         let on = k.style.path.is_some();
         let text = if on { crate::i18n::format("dialog.selected_count", &[("count", "1")]) } else { crate::i18n::tr("dialog.select").into() };
-        let chip = ui_kit::selection_field_state(ui, &text, k.picking, on).on_hover_text(crate::i18n::tr("sketch_text.path_hint"));
+        let chip = ui_kit::selection_field(ui, &text, ui_kit::Selection { active: k.picking, filled: on })
+            .on_hover_text(crate::i18n::tr("sketch_text.path_hint"));
         let chip_rect = chip.rect;
         crate::scenario::publish_handle("dialog:Path", chip.rect.center());
         if chip.clicked() {
@@ -664,13 +665,7 @@ mod tests {
     use crate::scenario::Harness;
 
     fn setup() -> (Harness, String, String) {
-        let mut h = Harness::new();
-        h.app.home.open = false;
-        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
-        let result = h.app.run("sketch.text", json!({"text":"I","at":[0,0],"height":10})).unwrap();
-        let link = result["link"].as_str().unwrap().to_owned();
-        let curve = result["curves"][0].as_str().unwrap().to_owned();
-        h.app.session.selection = vec![Sel::SketchCurve { id: curve.clone() }];
+        let (mut h, link, curve) = crate::test_support::selected_text("I", [0, 0]);
         h.frames(3);
         (h, link, curve)
     }

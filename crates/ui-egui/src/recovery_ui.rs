@@ -59,26 +59,25 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let (closed, action) = ui_kit::Prompt::new(egui::Id::new("sc_recover_prompt"), "restore", crate::i18n::tr_label("Recover unsaved design?"))
         .actions("", crate::i18n::tr_label("Later"), None)
         .show(ctx, true, |ui| {
-            ui_kit::text_block(
+            ui_kit::text(
                 ui,
-                "intro",
                 crate::i18n::tr_label("SolidCraft closed before these designs were saved. Their last autosave can be opened."),
-                false,
+                ui_kit::Text::Report("intro", false),
             );
             for (index, e) in app.recoverable.iter().take(20).enumerate() {
                 ui_kit::divider(ui, &format!("entry:{index}"));
                 ui_kit::label_actions(ui, &e.name, |ui| {
-                    if ui_kit::secondary_button(ui, crate::i18n::tr_label("Recover")).clicked() {
+                    if ui_kit::button(ui, crate::i18n::tr_label("Recover"), ui_kit::Button::Normal).clicked() {
                         act = Some((e.clone(), true));
                     }
-                    if ui_kit::secondary_button(ui, crate::i18n::tr_label("Discard")).clicked() {
+                    if ui_kit::button(ui, crate::i18n::tr_label("Discard"), ui_kit::Button::Normal).clicked() {
                         act = Some((e.clone(), false));
                     }
                 });
                 let file = e.path.clone().unwrap_or_else(|| crate::i18n::tr("recovery.never_saved").to_string());
                 let detail =
                     crate::i18n::format("recovery.detail", &[("file", &file), ("features", &e.features.to_string()), ("when", &ago(e.saved_at))]);
-                ui_kit::note(ui, &format!("detail:{index}"), &detail);
+                ui_kit::text(ui, &detail, ui_kit::Text::Note(&format!("detail:{index}")));
             }
         });
     let later = closed || action != ui_kit::Action::None;

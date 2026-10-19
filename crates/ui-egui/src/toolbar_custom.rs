@@ -285,7 +285,7 @@ pub fn window(app: &mut SolveApp, ctx: &egui::Context) {
         .cards(2.0)
         .actions("", "Close", None)
         .show(ctx, true, |ui| {
-            ui_kit::note(ui, "customize", &crate::i18n::format("toolbar.customize_note", &[("tab", app.tr_label(&tab))]));
+            ui_kit::text(ui, &crate::i18n::format("toolbar.customize_note", &[("tab", app.tr_label(&tab))]), ui_kit::Text::Note("customize"));
             egui::ScrollArea::vertical()
                 .max_height(
                     (ctx.content_rect().height() - crate::theme::Tokens::get().control_height * 8.0)
@@ -309,9 +309,8 @@ pub fn window(app: &mut SolveApp, ctx: &egui::Context) {
                         });
                     }
                 });
-            let reset = ui_kit::secondary_button(ui, crate::i18n::tr_label("Reset Toolbar"));
-            crate::scenario::publish_rect("customize:reset", reset.rect);
-            crate::scenario::publish_handle("customize:reset", reset.rect.center());
+            let reset = ui_kit::button(ui, crate::i18n::tr_label("Reset Toolbar"), ui_kit::Button::Normal);
+            crate::scenario::publish_target("customize:reset", reset.rect);
             reset_tab |= reset.clicked();
         });
     for (id, on) in changes {

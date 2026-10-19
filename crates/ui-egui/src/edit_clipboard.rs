@@ -40,16 +40,6 @@ fn sketch_selection(app: &SolveApp) -> Vec<String> {
         .collect()
 }
 
-/// Is there something Copy would copy?
-pub fn can_copy(app: &SolveApp) -> bool {
-    if app.session.active_sketch.is_some() { !sketch_selection(app).is_empty() } else { !crate::timeline::selected_feature_ids(app).is_empty() }
-}
-
-/// Is there something Paste would paste here?
-pub fn can_paste(app: &SolveApp) -> bool {
-    if app.session.active_sketch.is_some() { app.session.sketch_clipboard.is_some() } else { !app.session.clipboard.is_empty() }
-}
-
 /// Copy the selection: sketch geometry in a sketch, otherwise timeline features.
 pub fn copy(app: &mut SolveApp) -> bool {
     if app.session.active_sketch.is_some() {

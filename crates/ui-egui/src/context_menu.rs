@@ -262,31 +262,6 @@ fn body_feature(app: &SolveApp, body: &str) -> Option<u64> {
     app.session.world_state().body(body).map(|b| b.feature)
 }
 
-/// The bodies a target stands for.
-pub fn target_bodies(app: &SolveApp, target: &Target) -> Vec<String> {
-    match target {
-        Target::Viewport => touched_bodies(app),
-        Target::Body { name } => vec![name.clone()],
-        Target::Component { id } => component_bodies(app, *id),
-        Target::Occurrence { path } => app.session.occurrence_bodies(path, true).unwrap_or_default(),
-        Target::Group { id, .. } => crate::browser::group_bodies(app, *id),
-        Target::Sketch { .. }
-        | Target::Plane { .. }
-        | Target::OriginPlane { .. }
-        | Target::Folder { .. }
-        | Target::Canvas { .. }
-        | Target::Origin
-        | Target::Units
-        | Target::Joint { .. }
-        | Target::ToolbarCommand { .. }
-        | Target::Toolbar
-        | Target::Workspace
-        | Target::NamedViews
-        | Target::NamedView { .. }
-        | Target::Section => Vec::new(),
-    }
-}
-
 /// Bodies in a component and its subcomponents.
 pub fn component_bodies(app: &SolveApp, id: u64) -> Vec<String> {
     let doc = &app.session.doc;
@@ -1767,8 +1742,7 @@ fn workspace_menu(ui: &mut egui::Ui, items: &[Item], key_row: Option<usize>, hei
                 let (r, resp) = ui
                     .allocate_exact_size(vec2(450.0, if planned { 60.0 } else { 72.0 }), if item.enabled { Sense::click() } else { Sense::hover() });
                 for handle in [format!("menu:{}", item.id), format!("workspace:menu:{slug}")] {
-                    crate::scenario::publish_handle(&handle, r.center());
-                    crate::scenario::publish_rect(&handle, r);
+                    crate::scenario::publish_target(&handle, r);
                 }
                 if current || (item.enabled && (resp.hovered() || key_row == Some(k))) {
                     ui.painter().rect_filled(r, 5.0, soft);

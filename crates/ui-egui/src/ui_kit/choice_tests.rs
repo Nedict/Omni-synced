@@ -9,7 +9,7 @@ fn segmented_click_changes_selection_and_keeps_all_choices_visible() {
     let ctx = crate::fonts::test_context();
     let mut selected = 0;
     let mut draw = |ui: &mut Ui| {
-        row(ui, "Continuity", |ui| segmented(ui, &mut selected, &["G1", "G2", "G3"]));
+        row(ui, "Continuity", |ui| segmented(ui, &mut selected, &["G1", "G2", "G3"], Default::default()));
     };
     frame(&ctx, vec![], &mut draw);
     let pos = scenario::handle_at("dialog:Continuity:G2").unwrap();

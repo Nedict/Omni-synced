@@ -146,10 +146,10 @@ fn clicked_image_controls_complete_cancel_and_export_without_dirtying_the_design
         let mut h = Harness::new();
         h.app.preferences.language = language.into();
         h.frames(1);
-        let check = h.app.tr("render.image_check").to_string();
+        let check = h.app.tr("cmd.render_preflight").to_string();
         let start = h.app.tr("render.image_start").to_string();
         let export = h.app.tr("render.image_export").to_string();
-        let cancel = h.app.tr("render.image_cancel").to_string();
+        let cancel = h.app.tr("cmd.render_cancel").to_string();
         h.call("ui.resize", json!({"width":1600,"height":1400}));
         enter(&mut h.app, true).unwrap();
         h.app.render_workspace.view.draft.width = 16;

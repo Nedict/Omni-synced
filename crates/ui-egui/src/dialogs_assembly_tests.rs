@@ -8,13 +8,7 @@ use crate::dialogs::{apply_commands, face_sel, preview_commands};
 /// Components A (grounded) and B: a 20 x 20 x 10 box each, B 30 mm along X.
 fn two_boxes() -> SolveApp {
     let mut s = Session::default();
-    for (name, x) in [("A", 0), ("B", 30)] {
-        s.execute("component.activate", &json!({"component": "root"})).unwrap();
-        s.execute("component.create", &json!({ "name": name })).unwrap();
-        s.execute("solid.box", &json!({"length": 20, "width": 20, "height": 10, "corner": [x, 0, 0]})).unwrap();
-    }
-    s.execute("component.activate", &json!({"component": "root"})).unwrap();
-    s.execute("occurrence.ground", &json!({"occurrence": "A:1", "grounded": true})).unwrap();
+    crate::test_support::grounded_boxes(&[("A", 0), ("B", 30)], |id, p| s.execute(id, &p).unwrap());
     SolveApp::new(s, Services::default())
 }
 

@@ -182,26 +182,26 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             false,
             true,
             |ui| {
-                ui_kit::hint(ui, "manage", crate::i18n::tr("manage.parameters_hint"));
+                ui_kit::text(ui, crate::i18n::tr("manage.parameters_hint"), ui_kit::Text::Hint("manage"));
                 ui_kit::row(ui, "Filter", |ui| {
                     let id = ui.make_persistent_id("parameter_filter");
                     ui_kit::search_field(ui, id, &mut d.filter, "Filter");
                 });
                 ui.horizontal_wrapped(|ui| {
-                    if ui_kit::secondary_button(ui, crate::i18n::tr_label("Import…"))
+                    if ui_kit::button(ui, crate::i18n::tr_label("Import…"), ui_kit::Button::Normal)
                         .on_hover_text(crate::i18n::tr_label("CSV or JSON: updates existing parameters, adds new ones"))
                         .clicked()
                     {
                         app.pick_open_command("parameters.import", json!({}), &[]);
                     }
                     for (label, ext) in [("Export CSV…", "csv"), ("Export JSON…", "json")] {
-                        if ui_kit::secondary_button(ui, crate::i18n::tr_label(label)).clicked() {
+                        if ui_kit::button(ui, crate::i18n::tr_label(label), ui_kit::Button::Normal).clicked() {
                             app.pick_save_command(&format!("parameters.{ext}"), &[ext], "parameters.export", json!({"format": ext}));
                         }
                     }
                 });
                 if let Some(error) = &d.error {
-                    ui_kit::text_block(ui, "parameters_error", error, true);
+                    ui_kit::text(ui, error, ui_kit::Text::Report("parameters_error", true));
                 }
                 let filter = d.filter.to_ascii_lowercase();
                 let visible: Vec<_> = all
@@ -279,14 +279,15 @@ fn new_check(app: &mut SolveApp, d: &mut ParamsDialog, unit: &str) -> Result<Str
 }
 
 fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&Row], salt: &str) {
+    let units: Vec<_> = UNITS.iter().map(|unit| unit_label(unit)).collect();
     let columns = [
-        Column { label: "", width: 1.6 },
-        Column { label: "Name", width: 1.1 },
-        Column { label: "Unit", width: 0.65 },
-        Column { label: "Expression", width: 1.6 },
-        Column { label: "Value", width: 1.2 },
-        Column { label: "Comment", width: 1.5 },
-        Column { label: "Actions", width: 0.7 },
+        Column::new("", 1.6),
+        Column::new("Name", 1.1),
+        Column::new("Unit", 0.65).min_content_width(ui_kit::ContentWidth::dropdown(ui, &units)),
+        Column::new("Expression", 1.6),
+        Column::new("Value", 1.2),
+        Column::new("Comment", 1.5),
+        Column::new("Actions", 0.7).min_content_width(ui_kit::ContentWidth::button(ui, "Delete")),
     ];
     ui_kit::table(ui, salt, &columns, crate::i18n::tr("manage.empty"), |ui, table| {
         for (index, r) in rows.iter().enumerate() {
@@ -297,7 +298,7 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
             table.row_visible(ui, &r.name, false, busy, |row| {
                 row.cell(|ui| {
                     let star = if r.favorite { "★" } else { "☆" };
-                    if ui_kit::small_button(ui, star).on_hover_text(crate::i18n::tr_label("Favourite")).clicked() {
+                    if ui_kit::button(ui, star, ui_kit::Button::Small).on_hover_text(crate::i18n::tr_label("Favourite")).clicked() {
                         d.error = app.run("parameters.favorite", json!({"name": r.name, "favorite": !r.favorite})).err();
                     }
                     if salt == "user" {
@@ -305,7 +306,8 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
                             ("▲", "Move up", index.checked_sub(1).and_then(|i| rows.get(i)), "before"),
                             ("▼", "Move down", rows.get(index + 1), "after"),
                         ] {
-                            let response = ui_kit::enabled_button(ui, glyph, neighbour.is_some()).on_hover_text(crate::i18n::tr_label(tip));
+                            let response =
+                                ui_kit::button(ui, glyph, ui_kit::Button::Enabled(neighbour.is_some())).on_hover_text(crate::i18n::tr_label(tip));
                             crate::scenario::publish_handle(&format!("param:{side}:{}", r.name), response.rect.center());
                             if response.clicked()
                                 && let Some(neighbour) = neighbour
@@ -332,7 +334,7 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
                         }
                     }
                     _ => {
-                        let response = ui_kit::cell_text(ui, &r.name).on_hover_text(crate::i18n::tr_label("Double-click to rename"));
+                        let response = ui_kit::text(ui, &r.name, ui_kit::Text::Cell).on_hover_text(crate::i18n::tr_label("Double-click to rename"));
                         crate::scenario::publish_handle(&format!("param:name:{}", r.name), response.rect.center());
                         if response.double_clicked() {
                             d.renaming = Some((r.name.clone(), r.name.clone()));
@@ -343,15 +345,14 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
                     if r.source == "user" {
                         let mut selected = UNITS.iter().position(|u| *u == r.unit).unwrap_or(0);
                         let before = selected;
-                        let labels: Vec<_> = UNITS.iter().map(|u| unit_label(u)).collect();
-                        ui_kit::dropdown(ui, &format!("punit:{salt}:{}", r.name), &mut selected, &labels);
+                        ui_kit::dropdown(ui, &format!("punit:{salt}:{}", r.name), &mut selected, &units);
                         if selected != before
                             && let Some(unit) = UNITS.get(selected)
                         {
                             d.error = app.run("parameters.change", json!({"name":r.name,"expression":r.expression,"unit":unit})).err();
                         }
                     } else {
-                        ui_kit::cell_text(ui, unit_label(&r.unit));
+                        ui_kit::text(ui, unit_label(&r.unit), ui_kit::Text::Cell);
                     }
                 });
                 let mut expression = d.editing.get(&r.name).cloned().unwrap_or_else(|| r.expression.clone());
@@ -393,7 +394,7 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
                         (Some(Ok(value)), _) => (value.clone(), false),
                         (None, None) => (show_value(r), false),
                     };
-                    ui_kit::text_block(ui, &format!("value:{}", r.name), &text, error).on_hover_text(&text);
+                    ui_kit::text(ui, &text, ui_kit::Text::Report(&format!("value:{}", r.name), error)).on_hover_text(&text);
                 });
                 row.cell(|ui| {
                     let mut comment = d.comments.get(&r.name).cloned().unwrap_or_else(|| r.comment.clone());
@@ -412,7 +413,7 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
                     }
                 });
                 row.cell(|ui| {
-                    if r.source == "user" && ui_kit::small_button(ui, crate::i18n::tr_label("Delete")).clicked() {
+                    if r.source == "user" && ui_kit::button(ui, crate::i18n::tr_label("Delete"), ui_kit::Button::Small).clicked() {
                         d.error = app.run("parameters.delete", json!({"name":r.name})).err();
                     }
                 });
@@ -464,13 +465,13 @@ fn add_row(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog) {
         Ok(value) => (value, false),
         Err(message) => (message, true),
     };
-    ui_kit::row(ui, "Value", |ui| ui_kit::text_block(ui, "new_value", text, error).on_hover_text(text));
+    ui_kit::row(ui, "Value", |ui| ui_kit::text(ui, text, ui_kit::Text::Report("new_value", error)).on_hover_text(text));
     let comment = ui_kit::row(ui, "Comment", |ui| ui_kit::cell_editor(ui, comment_id, &mut d.new_comment, "Comment", false));
     crate::scenario::publish_handle("param:new:comment", comment.rect.center());
     // Enter from name/comment owns submission too, not the panel footer.
     submit |= enter_for(ui, focused_id.is_some());
     let valid = !d.new_name.trim().is_empty() && live.is_ok();
-    if ui_kit::enabled_button(ui, "Add", valid).clicked() || submit {
+    if ui_kit::button(ui, "Add", ui_kit::Button::Enabled(valid)).clicked() || submit {
         if let Err(error) = &live {
             d.error = Some(error.clone());
             if let Some(id) = focused_id {
@@ -553,6 +554,7 @@ pub(crate) fn word_before(text: &str, cursor: usize) -> (usize, String) {
 }
 
 /// Suggestions for the word being typed.
+#[cfg(test)]
 pub fn suggestions(ctx: &egui::Context, word: &str) -> Vec<Suggestion> {
     suggestions_for(ctx, word, false)
 }

@@ -18,6 +18,93 @@ fn fixture() -> Harness {
     h
 }
 
+fn painted_frame(h: &mut Harness) -> egui::FullOutput {
+    let mut output = h.ctx.run_ui(egui::RawInput { screen_rect: Some(h.ctx.content_rect()), focused: true, ..Default::default() }, |ui| {
+        h.app.logic(ui.ctx());
+        h.app.ui(ui);
+    });
+    output.textures_delta.clear();
+    output
+}
+
+fn painted_text<'a>(output: &'a egui::FullOutput, text: &str, within: egui::Rect) -> &'a egui::epaint::TextShape {
+    fn find<'a>(shape: &'a egui::Shape, text: &str, within: egui::Rect) -> Option<&'a egui::epaint::TextShape> {
+        match shape {
+            egui::Shape::Text(shape) if shape.galley.job.text == text && within.contains(shape.pos) => Some(shape),
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| find(shape, text, within)),
+            _ => None,
+        }
+    }
+    output.shapes.iter().find_map(|shape| find(&shape.shape, text, within)).unwrap_or_else(|| panic!("missing painted {text:?} in {within:?}"))
+}
+
+#[test]
+fn parameter_columns_fit_controls_and_headers_share_cell_left_edges() {
+    for layout in [LayoutMode::Docked, LayoutMode::Floating] {
+        let mut h = fixture();
+        h.call("ui.set", json!({"layout":layout}));
+        h.app.start("parameters.change");
+        h.frames(4);
+        let output = painted_frame(&mut h);
+        for label in ["Name", "Unit", "Expression", "Value", "Comment", "Actions"] {
+            let header = scenario::rect_of(&format!("dialog:column:user:{label}")).unwrap();
+            let cell = scenario::rect_of(&format!("dialog:table:user:width:cell:{label}")).unwrap();
+            assert_eq!(header.left(), cell.left(), "{label}: {layout:?}");
+            assert_eq!(header.width(), cell.width());
+            let text = painted_text(&output, label, header);
+            assert!((text.pos.x - cell.left()).abs() <= 0.5, "{label}: painted header starts at {:?}, cell {cell:?}", text.pos);
+            assert!(!text.galley.elided);
+        }
+        let unit = scenario::rect_of("dialog:table:user:width:cell:Unit").unwrap();
+        let mm = painted_text(&output, "mm", unit);
+        assert!(!mm.galley.elided, "mm must be painted without an ellipsis");
+        let spacing = egui::style::Spacing::default();
+        assert!(unit.width() >= mm.galley.size().x + 2.0 * Tokens::get().space_8 + spacing.icon_width + spacing.icon_spacing);
+        assert!(mm.pos.x + mm.galley.size().x + Tokens::get().space_8 + spacing.icon_width + spacing.icon_spacing <= unit.right());
+        let actions = scenario::rect_of("dialog:table:user:width:cell:Actions").unwrap();
+        let delete = painted_text(&output, "Delete", actions);
+        assert!(!delete.galley.elided, "Delete must be painted without an ellipsis");
+        assert!(actions.contains_rect(scenario::rect_of("dialog:button:Actions:Delete").unwrap()));
+        // More content widens the scroll area, never the card.
+        h.call("ui.resize", json!({"width":640,"height":1000}));
+        h.frames(4);
+        assert!(h.ctx.content_rect().contains_rect(scenario::rect_of("dialog:header").unwrap()));
+        assert_eq!(scenario::rect_of("dialog:column:user:Unit").unwrap().width(), unit.width());
+    }
+}
+
+#[test]
+fn configuration_columns_align_values_status_and_remove_actions() {
+    let mut h = fixture();
+    h.app.run("parameters.change", json!({"name":"width","expression":"80 mm"})).unwrap();
+    h.app.run("config.configure", json!({"params":["width"]})).unwrap();
+    h.app.start("config.table");
+    h.frames(4);
+    let output = painted_frame(&mut h);
+    for label in ["Configuration", "width", "Actions"] {
+        let header = scenario::rect_of(&format!("dialog:column:configuration_table:{label}")).unwrap();
+        for row in ["Default", "columns"] {
+            let cell = scenario::rect_of(&format!("dialog:table:configuration_table:{row}:cell:{label}")).unwrap();
+            assert_eq!(header.left(), cell.left());
+            assert_eq!(header.width(), cell.width());
+        }
+        assert!((painted_text(&output, label, header).pos.x - header.left()).abs() <= 0.5);
+    }
+    let name = scenario::rect_of("dialog:table:configuration_table:Default:cell:Configuration").unwrap();
+    let active = painted_text(&output, "Active", name);
+    assert!(!active.galley.elided);
+    assert!(active.pos.x + active.galley.size().x <= name.right());
+    let value = scenario::rect_of("dialog:table:configuration_table:Default:cell:width").unwrap();
+    assert!(!painted_text(&output, "80 mm", value).galley.elided);
+    let remove_cell = scenario::rect_of("dialog:table:configuration_table:columns:cell:width").unwrap();
+    let remove = scenario::rect_of("dialog:button:width:×").unwrap();
+    assert!(remove_cell.contains_rect(remove));
+    let action_label = scenario::rect_of("dialog:table:configuration_table:columns:cell:Configuration").unwrap();
+    assert!(!painted_text(&output, "Remove the column", action_label).galley.elided);
+    h.step(&json!({"click":[remove.center().x,remove.center().y]})).unwrap();
+    assert!(h.app.session.doc.configs.columns.is_empty(), "the column action remains interactive");
+}
+
 fn chrome(h: &Harness) {
     for key in ["dialog:close", "dialog:ok", "dialog:cancel"] {
         assert!(scenario::handle_at(key).is_some(), "missing {key}");

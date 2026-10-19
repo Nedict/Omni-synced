@@ -23,14 +23,13 @@ thread_local! {
 }
 
 /// Option keys and existing localized labels. The five primary design rows are selected below;
-/// the remaining display options live in More. Dedicated point/profile ids avoid collisions
-/// with selection-field translations elsewhere in the UI.
+/// the remaining display options live in More. Point/profile labels share the dialog IDs.
 pub const TOGGLES: [(&str, &str); 10] = [
     ("grid", "Sketch Grid"),
     ("snap", "Snap"),
     ("slice", "Slice"),
-    ("show_profile", "ui.palette_profile"),
-    ("show_points", "ui.palette_points"),
+    ("show_profile", "ui.profile"),
+    ("show_points", "ui.points"),
     ("show_dimensions", "Dimensions"),
     ("show_constraints", "Constraints"),
     ("show_projected", "Projected Geometries"),
@@ -378,7 +377,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     ui.horizontal(|ui| {
                         let text = crate::i18n::format("sketch.untied_ends", &[("count", &untied_ends.to_string())]);
                         ui.label(egui::RichText::new(text).size(t.font_small).color(t.warning)).on_hover_text(app.tr("ui.untied_ends_tip"));
-                        let button = crate::ui_kit::secondary_button(ui, "ui.tie_ends").on_hover_text(app.tr("ui.tie_ends_tip"));
+                        let button = crate::ui_kit::button(ui, "ui.tie_ends", crate::ui_kit::Button::Normal).on_hover_text(app.tr("ui.tie_ends_tip"));
                         crate::scenario::publish_handle("sketch_palette:tie_ends", button.rect.center());
                         tie = button.clicked();
                     });

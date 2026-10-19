@@ -91,11 +91,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let (closed, action) = ui_kit::Prompt::new(egui::Id::new("sc_install_steps"), "web", crate::i18n::tr("install.title"))
         .actions("", crate::i18n::tr("install.done"), None)
         .show(ctx, true, |ui| {
-            ui_kit::text_block(ui, "intro", crate::i18n::tr("install.steps_intro"), false);
+            ui_kit::text(ui, crate::i18n::tr("install.steps_intro"), ui_kit::Text::Report("intro", false));
             for (i, id) in lines.iter().enumerate() {
-                ui_kit::text_block(ui, &format!("step:{i}"), &format!("{}. {}", i + 1, crate::i18n::tr(id)), false);
+                ui_kit::text(ui, &format!("{}. {}", i + 1, crate::i18n::tr(id)), ui_kit::Text::Report(&format!("step:{i}"), false));
             }
-            ui_kit::note(ui, "after", crate::i18n::tr(after));
+            ui_kit::text(ui, crate::i18n::tr(after), ui_kit::Text::Note("after"));
         });
     if closed || action != ui_kit::Action::None {
         app.install_steps = None;

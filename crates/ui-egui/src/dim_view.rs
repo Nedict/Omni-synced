@@ -663,7 +663,7 @@ fn edit_box(app: &mut SolveApp, ctx: &egui::Context) {
         egui::Frame::popup(ui.style()).fill(Tokens::get().dialog_body).inner_margin(Tokens::get().space_4).show(ui, |ui| {
             crate::ui_kit::scope(ui, |ui| {
                 ui.set_max_width(popup_width);
-                crate::ui_kit::inline_text(ui, &crate::i18n::format("dialog.dimension_name", &[("name", &e.param)]))
+                crate::ui_kit::text(ui, &crate::i18n::format("dialog.dimension_name", &[("name", &e.param)]), crate::ui_kit::Text::Inline)
                     .on_hover_text(crate::i18n::tr("dialog.dimension_insert_hint"));
                 let r = crate::ui_kit::cell_editor(ui, id, &mut e.expr, "", false);
                 crate::theme::TabAccent::number_focus(ui, &r);
@@ -678,7 +678,7 @@ fn edit_box(app: &mut SolveApp, ctx: &egui::Context) {
                     live.typed |= r.changed() || completed;
                 }
                 if let Some(error) = e.draft.as_ref().and_then(|d| d.error.as_ref()) {
-                    crate::ui_kit::text_block(ui, "dimension_error", error, true);
+                    crate::ui_kit::text(ui, error, crate::ui_kit::Text::Report("dimension_error", true));
                 }
                 if e.fresh == FRESH {
                     // The whole value is selected, so typing replaces it.

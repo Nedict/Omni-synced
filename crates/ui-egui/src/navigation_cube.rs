@@ -214,8 +214,7 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
         }
     }
     let home = Rect::from_center_size(c + vec2(-65.0, -65.0) * scale, vec2(26.0, 26.0) * scale);
-    crate::scenario::publish_rect("axis_view:home", home);
-    crate::scenario::publish_handle("axis_view:home", home.center());
+    crate::scenario::publish_target("axis_view:home", home);
     let home_hover = control(app, ui, home, "home", "Home: isometric view and fit model");
     if active {
         icons::paint(&painter, home.shrink(4.0 * scale), "home", if home_hover { t.accent } else { t.cube_face }, t.cube_face, t.accent);

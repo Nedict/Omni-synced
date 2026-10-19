@@ -59,16 +59,39 @@ pub(super) fn configurations_rows(
         }))
         .chain(std::iter::once(crate::i18n::tr_label("Actions").to_owned()))
         .collect();
-    let columns: Vec<_> = labels.iter().map(|label| ui_kit::Column { label, width: 2.0 }).collect();
+    let gap = ui.spacing().item_spacing.x;
+    let name_width = tb.rows.iter().map(|(name, _)| ui_kit::ContentWidth::label(ui, name)).fold(0.0, f32::max);
+    let status_width = (ui_kit::ContentWidth::label(ui, "Active") + gap + ui_kit::ContentWidth::button(ui, "Apply"))
+        .max(ui_kit::ContentWidth::button(ui, "Activate"));
+    let columns: Vec<_> = labels
+        .iter()
+        .enumerate()
+        .map(|(index, label)| {
+            let min_width = if index == 0 {
+                (name_width + gap + status_width).max(ui_kit::ContentWidth::label(ui, "Remove the column"))
+            } else if index <= tb.columns.len() {
+                tb.rows
+                    .iter()
+                    .filter_map(|(_, values)| values.get(index - 1))
+                    .map(|value| ui_kit::ContentWidth::editor(ui, value))
+                    .fold(ui_kit::ContentWidth::button(ui, "×"), f32::max)
+            } else {
+                ui_kit::ContentWidth::button(ui, "×")
+            };
+            ui_kit::Column::new(label, 2.0).min_content_width(min_width)
+        })
+        .collect();
     ui_kit::table(ui, "configuration_table", &columns, crate::i18n::tr("manage.empty"), |ui, table| {
-        // Column actions are ordinary cells, so they share the header's exact widths.
+        // The column-action band shares the header's exact widths without posing as a data row.
         if !tb.columns.is_empty() {
-            table.row(ui, "columns", false, |row| {
-                row.cell(|_| {});
+            table.column_actions(ui, |row| {
+                row.cell(|ui| {
+                    ui_kit::text(ui, crate::i18n::tr_label("Remove the column"), ui_kit::Text::Cell);
+                });
                 for c in &tb.columns {
                     row.cell(|ui| {
                         let (kind, name) = column_parts(c);
-                        if ui_kit::small_button(ui, "×").on_hover_text(crate::i18n::tr_label("Remove the column")).clicked() {
+                        if ui_kit::button(ui, "×", ui_kit::Button::Normal).on_hover_text(crate::i18n::tr_label("Remove the column")).clicked() {
                             let key = if kind == "suppress" { "feature" } else { kind };
                             run(app, error, "config.column", json!({key:if kind == "face_appearance" {c.as_str()} else {name},"delete":true}));
                         }
@@ -81,25 +104,30 @@ pub(super) fn configurations_rows(
             let active = tb.active.as_deref() == Some(name.as_str());
             table.row(ui, name, active, |row| {
                 row.cell(|ui| {
-                    // Reserve space for Activate/Apply even when the row name is long.
-                    ui_kit::label_actions(ui, name, |ui| {
-                        if active {
-                            ui_kit::inline_text(ui, crate::i18n::tr_label("Active"));
-                            if v.get("matches").and_then(Value::as_bool) == Some(false) {
-                                let apply = ui_kit::small_button(ui, crate::i18n::tr_label("Apply"));
-                                crate::scenario::publish_handle(&format!("config:activate:{name}"), apply.rect.center());
-                                if apply.clicked() {
-                                    run(app, error, "config.activate", json!({"row":name}));
-                                }
-                            }
-                        } else {
-                            let activate = ui_kit::small_button(ui, crate::i18n::tr_label("Activate"));
-                            crate::scenario::publish_handle(&format!("config:activate:{name}"), activate.rect.center());
-                            if activate.clicked() {
+                    // A measured name slot keeps status/actions inside the Configuration column.
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(name_width, ui_kit::row_height()),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui_kit::text(ui, name, ui_kit::Text::Cell);
+                        },
+                    );
+                    if active {
+                        ui_kit::text(ui, crate::i18n::tr_label("Active"), ui_kit::Text::Inline);
+                        if v.get("matches").and_then(Value::as_bool) == Some(false) {
+                            let apply = ui_kit::button(ui, crate::i18n::tr_label("Apply"), ui_kit::Button::Small);
+                            crate::scenario::publish_handle(&format!("config:activate:{name}"), apply.rect.center());
+                            if apply.clicked() {
                                 run(app, error, "config.activate", json!({"row":name}));
                             }
                         }
-                    });
+                    } else {
+                        let activate = ui_kit::button(ui, crate::i18n::tr_label("Activate"), ui_kit::Button::Small);
+                        crate::scenario::publish_handle(&format!("config:activate:{name}"), activate.rect.center());
+                        if activate.clicked() {
+                            run(app, error, "config.activate", json!({"row":name}));
+                        }
+                    }
                 });
                 for (column, value) in tb.columns.iter().zip(values) {
                     row.cell(|ui| {
@@ -125,7 +153,7 @@ pub(super) fn configurations_rows(
                                 } else {
                                     "Default material"
                                 };
-                                if ui_kit::secondary_button(ui, crate::i18n::tr_label(follow)).clicked() {
+                                if ui_kit::button(ui, crate::i18n::tr_label(follow), ui_kit::Button::Normal).clicked() {
                                     choice = Some("Default".to_owned());
                                     ui.close();
                                 }
@@ -135,7 +163,7 @@ pub(super) fn configurations_rows(
                                     solidcraft_engine::doc::appearance::LIBRARY.iter().map(|(name, _, _)| *name).collect()
                                 };
                                 for name in choices {
-                                    if ui_kit::secondary_button(ui, name).clicked() {
+                                    if ui_kit::button(ui, name, ui_kit::Button::Normal).clicked() {
                                         choice = Some(name.to_owned());
                                         ui.close();
                                     }
@@ -165,7 +193,7 @@ pub(super) fn configurations_rows(
                     });
                 }
                 row.cell(|ui| {
-                    if ui_kit::small_button(ui, "×").on_hover_text(crate::i18n::tr_label("Delete the row")).clicked() {
+                    if ui_kit::button(ui, "×", ui_kit::Button::Small).on_hover_text(crate::i18n::tr_label("Delete the row")).clicked() {
                         run(app, error, "config.row", json!({"name":name,"delete":true}));
                     }
                 });
@@ -180,7 +208,7 @@ pub(super) fn configurations_rows(
     ui.horizontal_wrapped(|ui| {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
 
-        if ui_kit::secondary_button(ui, crate::i18n::tr_label("Add Row"))
+        if ui_kit::button(ui, crate::i18n::tr_label("Add Row"), ui_kit::Button::Normal)
             .on_hover_text(crate::i18n::tr_label("A new configuration, a copy of the active one"))
             .clicked()
         {
@@ -229,13 +257,17 @@ pub(super) fn configurations_rows(
         ui_kit::action_menu(ui, "Add Column", |ui| {
             egui::ScrollArea::vertical().max_height(ui_kit::row_height() * 12.0).show(ui, |ui| {
                 for (label, p) in &options {
-                    if ui_kit::secondary_button(ui, label.as_str()).clicked() {
+                    if ui_kit::button(ui, label.as_str(), ui_kit::Button::Normal).clicked() {
                         pick = Some(p.clone());
                         ui.close();
                     }
                 }
                 ui_kit::action_menu(ui, "Face Appearance", |ui| {
-                    ui_kit::note(ui, "semantic_faces", crate::i18n::tr_label("Semantic faces share their appearance across instances."));
+                    ui_kit::text(
+                        ui,
+                        crate::i18n::tr_label("Semantic faces share their appearance across instances."),
+                        ui_kit::Text::Note("semantic_faces"),
+                    );
                     let state = app.session.model.state();
                     for body in &state.bodies {
                         if body.body.is_mesh() {
@@ -269,7 +301,7 @@ pub(super) fn configurations_rows(
                                         continue;
                                     }
                                     let Some((_, role)) = target.name.split_once(':') else { continue };
-                                    if ui_kit::secondary_button(ui, role).clicked() {
+                                    if ui_kit::button(ui, role, ui_kit::Button::Normal).clicked() {
                                         pick = Some(json!({"face_appearance":{"target":target}}));
                                         ui.close();
                                     }
@@ -308,19 +340,18 @@ pub(super) fn configurations_rows(
     configuration_rules_ui::show(ui, app, error, rule_editor);
     if let Some(styles) = v["style_status"].as_array() {
         for style in styles.iter().filter(|style| style["dormant"].as_bool() == Some(true)) {
-            ui_kit::text_block(
+            ui_kit::text(
                 ui,
-                "dormant",
                 &format!("{}: appearance dormant while its feature is suppressed", style["target"].as_str().unwrap_or("Face")),
-                false,
+                ui_kit::Text::Report("dormant", false),
             );
         }
     }
     if let Some(message) = v["style_error"].as_str() {
-        ui_kit::text_block(ui, "style_error", message, true);
+        ui_kit::text(ui, message, ui_kit::Text::Report("style_error", true));
     }
     if let Some(message) = error {
-        ui_kit::text_block(ui, "config_error", message, true);
+        ui_kit::text(ui, message, ui_kit::Text::Report("config_error", true));
     }
     // Table cells and rule editors own Enter. As in the legacy wide manager, it
     // commits an edited cell without also submitting the enclosing card.

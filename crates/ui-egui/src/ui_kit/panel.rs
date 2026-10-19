@@ -4,13 +4,13 @@ use crate::{scenario, theme::Tokens};
 use egui::{Ui, vec2};
 
 /// Feature title/icon/close band. Tokens: `form_header_height, form_icon_size, form_close_size, form_inset, font_label, text, dialog_rule, space_8/10; icon_button_at tokens`.
-pub fn header(ui: &mut Ui, icon: &str, title: &str, on_close: impl FnOnce()) {
+pub(crate) fn header(ui: &mut Ui, icon: &str, title: &str, on_close: impl FnOnce()) {
     header_impl(ui, icon, title, None, on_close);
 }
 
 /// Optional fold action for managers which historically hide their inputs without losing edits.
 /// Tokens: header tokens and space_4; retains the legacy chevron accessibility identities.
-pub fn collapsible_header(ui: &mut Ui, icon: &str, title: &str, collapsed: &mut bool, on_close: impl FnOnce()) {
+pub(crate) fn collapsible_header(ui: &mut Ui, icon: &str, title: &str, collapsed: &mut bool, on_close: impl FnOnce()) {
     header_impl(ui, icon, title, Some(collapsed), on_close);
 }
 
@@ -257,7 +257,13 @@ impl<'a> Panel<'a> {
                 })
                 .inner
             };
-            let action = super::footer_with_status(ui, self.ok, self.cancel, valid && !state.applying, heading.apply_label, state.text.as_deref());
+            let action = super::footer(
+                ui,
+                self.ok,
+                self.cancel,
+                valid && !state.applying,
+                super::Footer { apply: heading.apply_label, status: state.text.as_deref(), selected: None },
+            );
             if state.busy {
                 let rect = egui::Rect::from_min_size(
                     egui::pos2(ui.min_rect().left(), ui.min_rect().bottom() - super::row_height()),
@@ -443,7 +449,8 @@ impl<'a> Prompt<'a> {
                 if !self.escape_closes {
                     ui.ctx().input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
                 }
-                let action = super::footer_selected(ui, self.ok, self.cancel, valid, self.apply, self.selected);
+                let action =
+                    super::footer(ui, self.ok, self.cancel, valid, super::Footer { apply: self.apply, status: None, selected: self.selected });
                 (close, action)
             })
         });

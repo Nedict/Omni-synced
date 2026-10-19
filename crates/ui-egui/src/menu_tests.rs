@@ -1,17 +1,12 @@
 //! Context menu tests: what the menus offer for each target, and that their items act.
 
+use crate::test_support::sample_app;
 use egui::pos2;
 use serde_json::json;
 use solidcraft_engine::Session;
 
 use crate::context_menu::{self, Item, Target};
 use crate::{Services, SolveApp};
-
-fn sample_app() -> SolveApp {
-    let mut s = Session::default();
-    s.run_script(&solidcraft_engine::sample::script()).unwrap();
-    SolveApp::new(s, Services::default())
-}
 
 #[test]
 fn properties_leave_with_the_document_but_survive_a_failed_open() {

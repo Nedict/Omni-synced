@@ -8,27 +8,15 @@ use super::{
 use crate::{scenario, theme::Tokens};
 use egui::{Ui, vec2};
 
-/// Segments share the row equally. When the longest label would not fit its segment (several long
-/// choices in a narrow card), the choice is a dropdown instead of overlapping or clipped text.
-/// Equal text choices, falling back to dropdown when labels cannot fit. Tokens: `control_height, control_fill/border/radius, font_label, selected_bg/ink, hover, text, space_8`.
-pub fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str]) -> bool {
-    segmented_states(ui, selected, options, &[])
+/// Text segments retain mixed states and optional compact clipping instead of dropdown fallback.
+#[derive(Default)]
+pub(crate) struct Segments<'a> {
+    pub states: &'a [bool],
+    pub compact: bool,
 }
 
-/// Optional per-segment states preserve mixed selections in command-backed controls.
-/// Segmented choices with mixed per-choice state. Tokens: `same as segmented`.
-pub(crate) fn segmented_states(ui: &mut Ui, selected: &mut usize, options: &[&str], states: &[bool]) -> bool {
-    segments(ui, selected, options, states, false)
-}
-
-/// Always-visible compact choices for short modes with established per-choice handles.
-/// Long translated labels clip within their segment and remain available as tooltips.
-/// Tokens: segmented tokens, space_4. Prefer segmented when dropdown fallback is appropriate.
-pub fn segmented_compact(ui: &mut Ui, selected: &mut usize, options: &[&str]) -> bool {
-    segments(ui, selected, options, &[], true)
-}
-
-fn segments(ui: &mut Ui, selected: &mut usize, options: &[&str], states: &[bool], compact: bool) -> bool {
+pub(crate) fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str], config: Segments<'_>) -> bool {
+    let Segments { states, compact } = config;
     let t = Tokens::get();
     let segment_width = dimension(ui.available_width()) / options.len().max(1) as f32;
     let widest = options
@@ -75,15 +63,14 @@ fn segments(ui: &mut Ui, selected: &mut usize, options: &[&str], states: &[bool]
         }
     }
     ui.painter().rect_stroke(rect, t.control_radius, egui::Stroke::new(1.0, t.control_border), egui::StrokeKind::Inside);
-    scenario::publish_rect(&format!("dialog:segments:{}", label(ui)), rect);
-    scenario::publish_handle(&format!("dialog:{}", label(ui)), rect.center());
+    scenario::publish_target_as(&format!("dialog:{}", label(ui)), &format!("dialog:segments:{}", label(ui)), rect);
     clicked
 }
 
 /// One segment of [`segmented_icons`]: a stable key (also the accessible fallback text), the icon
 /// master to draw and the hover text. The icon's colours come from the palette (its roles and the
 /// accent assigned to its id in `palette.toml`), not from the caller.
-pub struct IconSegment {
+pub(crate) struct IconSegment {
     pub key: &'static str,
     pub icon: &'static str,
     pub tip: String,
@@ -92,7 +79,7 @@ pub struct IconSegment {
 /// A row of equal icon segments in the segmented control's frame. `states` says which segments are on
 /// (several may be, for a mixed selection); without it `selected` is. True when a segment was clicked.
 /// Equal icon choices with mixed state. Tokens: `segmented tokens, space_4/12, icon/fill, accent; icon palette`.
-pub fn segmented_icons(ui: &mut Ui, selected: &mut usize, options: &[IconSegment], states: &[bool]) -> bool {
+pub(crate) fn segmented_icons(ui: &mut Ui, selected: &mut usize, options: &[IconSegment], states: &[bool]) -> bool {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), row_height()), egui::Sense::hover());
     ui.painter().rect_filled(rect, t.control_radius, t.control_fill);
@@ -127,13 +114,12 @@ pub fn segmented_icons(ui: &mut Ui, selected: &mut usize, options: &[IconSegment
         }
     }
     ui.painter().rect_stroke(rect, t.control_radius, egui::Stroke::new(1.0, t.control_border), egui::StrokeKind::Inside);
-    scenario::publish_rect(&format!("dialog:segments:{}", label(ui)), rect);
-    scenario::publish_handle(&format!("dialog:{}", label(ui)), rect.center());
+    scenario::publish_target_as(&format!("dialog:{}", label(ui)), &format!("dialog:segments:{}", label(ui)), rect);
     clicked
 }
 
 /// Compact checkbox options in bounded columns. Tokens: `form_checkbox_height, control_fill/border, radius_sm, accent, on_accent, font_body, text, space_2/3/6/8/14`.
-pub fn checkbox_grid(ui: &mut Ui, items: &mut [(&str, &mut bool)], columns: usize) {
+pub(crate) fn checkbox_grid(ui: &mut Ui, items: &mut [(&str, &mut bool)], columns: usize) {
     let t = Tokens::get();
     let columns = columns.clamp(1, items.len().max(1));
     let width = ((dimension(ui.available_width()) - t.space_8 * columns.saturating_sub(1) as f32) / columns as f32).max(0.0);
@@ -166,8 +152,7 @@ pub fn checkbox_grid(ui: &mut Ui, items: &mut [(&str, &mut bool)], columns: usiz
                 let text_rect = egui::Rect::from_min_max(egui::pos2((square.right() + t.space_6).min(rect.right()), rect.top()), rect.max);
                 paint_text(ui, text_rect, text, egui::FontId::proportional(t.font_body), t.text, false);
                 response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), **value, translated));
-                scenario::publish_handle(&format!("dialog:{label}"), rect.center());
-                scenario::publish_rect(&format!("dialog:checkbox:{label}"), rect);
+                scenario::publish_target_as(&format!("dialog:{label}"), &format!("dialog:checkbox:{label}"), rect);
             }
         });
     }
@@ -175,13 +160,13 @@ pub fn checkbox_grid(ui: &mut Ui, items: &mut [(&str, &mut bool)], columns: usiz
 
 /// Shared expanded options band for feature dialogs.
 /// Expanded two-column Options disclosure. Tokens: `section and checkbox_grid tokens`.
-pub fn options(ui: &mut Ui, id: &str, items: &mut [(&str, &mut bool)]) {
+pub(crate) fn options(ui: &mut Ui, id: &str, items: &mut [(&str, &mut bool)]) {
     section(ui, id, "Options", true, |ui| checkbox_grid(ui, items, 2));
 }
 
 /// Entire row is the checkbox hit target, including its label on the left.
 /// Full-row target with label left and box right; returns clicked. Tokens: `control_height, control_radius, hover, radius_sm, accent, control_fill/border, on_accent, font_label, text, space_2/3/6/14`.
-pub fn checkbox_row(ui: &mut egui::Ui, key: &str, label: &str, on: bool) -> bool {
+pub(crate) fn checkbox_row(ui: &mut egui::Ui, key: &str, label: &str, on: bool) -> bool {
     let t = Tokens::get();
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), t.control_height), egui::Sense::click());
     let square = egui::Rect::from_center_size(egui::pos2(rect.right() - t.space_14 / 2.0, rect.center().y), vec2(t.space_14, t.space_14));
@@ -206,15 +191,14 @@ pub fn checkbox_row(ui: &mut egui::Ui, key: &str, label: &str, on: bool) -> bool
         .with_clip_rect(ui.clip_rect().intersect(egui::Rect::from_min_max(rect.min, egui::pos2(square.left() - t.space_6, rect.bottom()))));
     painter.text(rect.left_center(), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(t.font_label), t.text);
     response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), on, label));
-    crate::scenario::publish_handle(&format!("sketch_palette:toggle:{key}"), rect.center());
-    crate::scenario::publish_rect(&format!("sketch_palette:toggle:{key}"), rect);
+    crate::scenario::publish_target(&format!("sketch_palette:toggle:{key}"), rect);
     response.on_hover_text(label).clicked()
 }
 
 /// Standard inline checkbox; inherits scope's font_label, accent, control and text tokens.
 /// Use checkbox_row for a full-width label-left/box-right palette option.
 /// Inline native checkbox retaining existing accessibility and sizing. Tokens: `scope control/font/accent tokens`.
-pub fn checkbox(ui: &mut Ui, label: &str, value: &mut bool) -> egui::Response {
+pub(crate) fn checkbox(ui: &mut Ui, label: &str, value: &mut bool) -> egui::Response {
     let response = ui.checkbox(value, label);
     super::layout::publish_geometry(ui, &response);
     response
@@ -222,7 +206,7 @@ pub fn checkbox(ui: &mut Ui, label: &str, value: &mut bool) -> egui::Response {
 
 /// Compact bold/italic toggles for text. Tokens: scope font/control tokens.
 /// The glyphs keep the familiar B/I treatment; accessible names use translated style names.
-pub fn text_emphasis(ui: &mut Ui, bold: &mut bool, italic: &mut bool) {
+pub(crate) fn text_emphasis(ui: &mut Ui, bold: &mut bool, italic: &mut bool) {
     use crate::fonts::RichTextExt as _;
     for (key, text, value, id) in [
         ("Bold", egui::RichText::new("B").semibold(), bold, "sketch_text.bold"),
@@ -230,13 +214,12 @@ pub fn text_emphasis(ui: &mut Ui, bold: &mut bool, italic: &mut bool) {
     ] {
         let response = ui.toggle_value(value, text).on_hover_text(crate::i18n::tr(id));
         response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), *value, crate::i18n::tr(id)));
-        scenario::publish_handle(&format!("dialog:{key}"), response.rect.center());
-        scenario::publish_rect(&format!("dialog:emphasis:{key}"), response.rect);
+        scenario::publish_target_as(&format!("dialog:{key}"), &format!("dialog:emphasis:{key}"), response.rect);
     }
 }
 
 /// A command variant supplied by the panel; the kit only draws and returns its key.
-pub struct ToolChoice<'a> {
+pub(crate) struct ToolChoice<'a> {
     pub key: &'a str,
     pub icon: &'a str,
     pub label: &'a str,
@@ -245,7 +228,7 @@ pub struct ToolChoice<'a> {
 
 /// Wrapped creation-mode icon choices. Tokens: sketch_mode_*, sketch_accent, control_*, icon, spacing.
 /// Wrapped command-variant icons, supplied with enabled state. Tokens: `sketch_mode_size/radius/border/tint, sketch_accent, control_fill/border, icon/fill, space_4/6`.
-pub fn tool_choices<'a>(ui: &mut Ui, label: &str, current: &str, choices: &[ToolChoice<'a>]) -> Option<&'a str> {
+pub(crate) fn tool_choices<'a>(ui: &mut Ui, label: &str, current: &str, choices: &[ToolChoice<'a>]) -> Option<&'a str> {
     let t = Tokens::get();
     let mut start = None;
     ui.label(label);
@@ -264,8 +247,7 @@ pub fn tool_choices<'a>(ui: &mut Ui, label: &str, current: &str, choices: &[Tool
                     .min_size(vec2(t.sketch_mode_size, t.sketch_mode_size)),
             );
             crate::icons::paint(ui.painter(), response.rect.shrink(t.space_6), choice.icon, t.icon, t.icon_fill, t.sketch_accent);
-            scenario::publish_handle(&format!("sketch_palette:feature:{}", choice.key), response.rect.center());
-            scenario::publish_rect(&format!("sketch_palette:feature:{}", choice.key), response.rect);
+            scenario::publish_target(&format!("sketch_palette:feature:{}", choice.key), response.rect);
             response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, on, choice.label));
             if response.on_hover_text(choice.label).clicked() && enabled {
                 start = Some(choice.key);
@@ -277,7 +259,7 @@ pub fn tool_choices<'a>(ui: &mut Ui, label: &str, current: &str, choices: &[Tool
 
 /// Independent selected icon action, used for pattern direction/centering.
 /// Tokens: control_height, space_3/4/24, icon/fill, accent; inherited control surface tokens.
-pub fn toggle_icon(ui: &mut Ui, row: &str, label: &str, selected: &mut bool, icon: &str) -> egui::Response {
+pub(crate) fn toggle_icon(ui: &mut Ui, row: &str, label: &str, selected: &mut bool, icon: &str) -> egui::Response {
     // Tab moves between value fields; Enter after a value edit applies the dialog.
     let t = Tokens::get();
     let response =
@@ -298,17 +280,16 @@ mod tests;
 
 /// Selectable list item retaining checked state and full text as an accessible label.
 /// Tokens: control_height and scope selection/control/font tokens.
-pub fn list_picker(ui: &mut Ui, key: &str, text: &str, selected: bool) -> egui::Response {
+pub(crate) fn list_picker(ui: &mut Ui, key: &str, text: &str, selected: bool) -> egui::Response {
     let response =
         ui.add_sized(egui::vec2(super::metrics::dimension(ui.available_width()), super::row_height()), egui::Button::selectable(selected, text));
-    crate::scenario::publish_handle(&format!("dialog:list:{key}"), response.rect.center());
-    crate::scenario::publish_rect(&format!("dialog:list:{key}"), response.rect);
+    crate::scenario::publish_target(&format!("dialog:list:{key}"), response.rect);
     response
 }
 
 /// A reusable draggable document-colour sample; caller supplies the existing domain payload.
 /// Tokens: control_height/radius, border, accent, hover.
-pub fn color_swatch<T: Send + Sync + 'static>(
+pub(crate) fn color_swatch<T: Send + Sync + 'static>(
     ui: &mut Ui,
     id: egui::Id,
     color: egui::Color32,
@@ -343,7 +324,7 @@ pub fn color_swatch<T: Send + Sync + 'static>(
 }
 
 /// Wrapped samples with common token spacing. Keeps native drag-and-drop payloads intact.
-pub fn swatch_grid<T>(ui: &mut Ui, values: &[T], mut each: impl FnMut(&mut Ui, &T)) {
+pub(crate) fn swatch_grid<T>(ui: &mut Ui, values: &[T], mut each: impl FnMut(&mut Ui, &T)) {
     let t = Tokens::get();
     let columns = ((super::metrics::dimension(ui.available_width()) + t.space_4) / (t.control_height + t.space_4)).floor().clamp(1.0, 64.0) as usize;
     ui.vertical(|ui| {
@@ -359,7 +340,7 @@ pub fn swatch_grid<T>(ui: &mut Ui, values: &[T], mut each: impl FnMut(&mut Ui, &
 }
 
 /// A completion/suggestion entry; text and detail are application-supplied data.
-pub struct PopupOption<'a> {
+pub(crate) struct PopupOption<'a> {
     pub text: &'a str,
     pub detail: &'a str,
     pub color: egui::Color32,
@@ -367,7 +348,14 @@ pub struct PopupOption<'a> {
 
 /// Focus-neutral suggestion popup. The owner handles navigation and completion semantics.
 /// Tokens: space_2, form_label_width, control_height, text_dim, scope control/font tokens.
-pub fn popup_list(ctx: &egui::Context, id: egui::Id, anchor: egui::Rect, selected: usize, options: &[PopupOption<'_>], hint: &str) -> Option<usize> {
+pub(crate) fn popup_list(
+    ctx: &egui::Context,
+    id: egui::Id,
+    anchor: egui::Rect,
+    selected: usize,
+    options: &[PopupOption<'_>],
+    hint: &str,
+) -> Option<usize> {
     let t = crate::theme::Tokens::get();
     let mut chosen = None;
     let area = crate::frame::area(id).order(egui::Order::Tooltip).fixed_pos(anchor.left_bottom() + egui::vec2(0.0, t.space_2)).show(ctx, |ui| {
@@ -383,13 +371,13 @@ pub fn popup_list(ctx: &egui::Context, id: egui::Id, anchor: egui::Rect, selecte
                         .on_hover_text(option.detail);
                     crate::scenario::publish_handle(&format!("dialog:suggestion:{index}"), response.rect.center());
                     if index == selected {
-                        super::note(ui, "completion_detail", option.detail);
+                        super::text(ui, option.detail, super::Text::Note("completion_detail"));
                     }
                     if response.clicked() {
                         chosen = Some(index);
                     }
                 }
-                super::note(ui, "completion_hint", hint);
+                super::text(ui, hint, super::Text::Note("completion_hint"));
             })
         });
     });

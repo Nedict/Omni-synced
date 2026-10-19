@@ -3,6 +3,7 @@
 //! Picking a hole (its wall or rim) seats the part in it with a rigid joint; without one the part
 //! goes at the origin. The live preview shows it placed.
 
+use crate::ui_kit::{choice_row, text_row};
 use egui::vec2;
 use serde_json::{Value, json};
 use solidcraft_engine::{Sel, Session};
@@ -123,7 +124,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
     };
     if lib.is_empty() {
         ui.vertical(|ui| {
-            crate::ui_kit::note(ui, "parts_unavailable", crate::i18n::tr_label("the parts library is not available"));
+            crate::ui_kit::text(ui, crate::i18n::tr_label("the parts library is not available"), crate::ui_kit::Text::Note("parts_unavailable"));
         });
         return false;
     }
@@ -131,18 +132,14 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
         lib.iter().map(|f| if f.standard.is_empty() { f.name.clone() } else { format!("{} ({})", f.name, f.standard) }).collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let before = k.family;
-    form_row(ui, "Type", |ui| {
-        combo(ui, "pt_family", &refs, &mut k.family);
-    });
+    choice_row(ui, "Type", "pt_family", &mut k.family, &refs);
     if k.family != before {
         k.size = 0;
         k.length = None;
     }
     let Some(f) = lib.get(k.family) else { return false };
     let sizes: Vec<&str> = f.sizes.iter().map(|s| s.0.as_str()).collect();
-    form_row(ui, "Size", |ui| {
-        combo(ui, "pt_size", &sizes, &mut k.size);
-    });
+    choice_row(ui, "Size", "pt_size", &mut k.size, &sizes);
     if let Some(ls) = &f.lengths {
         let mut labels = vec!["Default".to_string()];
         labels.extend(ls.iter().map(|l| crate::prefs::show_mm(app, *l, 1)));
@@ -153,9 +150,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
             k.length = i.checked_sub(1);
         });
     }
-    form_row(ui, "Name", |ui| {
-        crate::ui_kit::text_field(ui, &mut k.name, "automatic");
-    });
+    text_row(ui, "Name", &mut k.name, "automatic");
     // The part, and its table values.
     let key = (k.family, k.size, k.length);
     let tex_id = egui::Id::new("sc_part_picture");
@@ -177,7 +172,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
             ui.add(egui::Image::new(&tx).fit_to_exact_size(vec2(180.0, 112.0)).corner_radius(t.radius_sm));
         }
         None => {
-            crate::ui_kit::note(ui, "parts_picture", crate::i18n::tr_label("no picture"));
+            crate::ui_kit::text(ui, crate::i18n::tr_label("no picture"), crate::ui_kit::Text::Note("parts_picture"));
         }
     });
     if let Some((_, row)) = f.sizes.get(k.size)
@@ -185,13 +180,21 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
     {
         for (key, v) in o.iter().filter(|(key, _)| key.as_str() != "size") {
             form_row(ui, &key.replace('_', " "), |ui| {
-                crate::ui_kit::cell_text(ui, &v.as_f64().map(|x| crate::prefs::show_mm(app, x, 1)).unwrap_or_else(|| v.to_string()));
+                crate::ui_kit::text(
+                    ui,
+                    &v.as_f64().map(|x| crate::prefs::show_mm(app, x, 1)).unwrap_or_else(|| v.to_string()),
+                    crate::ui_kit::Text::Cell,
+                );
             });
         }
     }
     if inputs.first().is_some_and(|i| i.items.is_empty()) {
         ui.vertical(|ui| {
-            crate::ui_kit::note(ui, "parts_placement", crate::i18n::tr_label("pick a hole to seat it, or OK places it at the origin"));
+            crate::ui_kit::text(
+                ui,
+                crate::i18n::tr_label("pick a hole to seat it, or OK places it at the origin"),
+                crate::ui_kit::Text::Note("parts_placement"),
+            );
         });
     }
     false

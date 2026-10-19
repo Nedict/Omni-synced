@@ -246,8 +246,7 @@ pub(crate) fn offer_pill(
     let response = ui.interact(rect, ui.id().with(("sc_offer_pill", handle)), Sense::click());
     let name = label.map(|(text, _)| text).or(labels.first().copied()).unwrap_or_default().to_string();
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &name));
-    crate::scenario::publish_handle(handle, rect.center());
-    crate::scenario::publish_rect(handle, rect);
+    crate::scenario::publish_target(handle, rect);
     let hot = response.hovered() || response.has_focus();
     let fill = if hot { t.app_bar_hover_button } else { t.accent };
     let radius = PILL_HEIGHT / 2.0;
@@ -305,8 +304,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         crate::scenario::publish_handle("appbar:home", home.center());
         crate::scenario::publish_handle("titlebar:home", home.center());
         // Compatibility for scenarios that used the former Home tab.
-        crate::scenario::publish_handle("tab:home", home.center());
-        crate::scenario::publish_rect("titlebar:home", home);
+        crate::scenario::publish_target_as("tab:home", "titlebar:home", home);
         crate::scenario::publish_rect("appbar:home", home);
         if idle && (home_response.hovered() || home_response.has_focus()) {
             ui.painter().rect_filled(home.shrink(3.0), t.radius_sm, t.app_bar_hover_button);
@@ -329,8 +327,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
             let resp = ui.interact(br, ui.id().with(("ab", "file")), if idle { Sense::click() } else { Sense::hover() });
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, idle, &label));
             crate::scenario::publish_handle("appbar:file", br.center());
-            crate::scenario::publish_handle("appbar:folder", br.center());
-            crate::scenario::publish_rect("appbar:file", br);
+            crate::scenario::publish_target_as("appbar:folder", "appbar:file", br);
             let open = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("sc_file_menu")).unwrap_or(false));
             if idle && (resp.hovered() || resp.has_focus() || open) {
                 ui.painter().rect_filled(br, t.radius_sm, t.app_bar_hover);
@@ -346,10 +343,8 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
             let br = Rect::from_center_size(pos2(at, r.center().y), vec2(width, 32.0));
             let resp = ui.interact(br, ui.id().with(("ab", icon)), if enabled { Sense::click() } else { Sense::hover() });
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tip));
-            crate::scenario::publish_handle(&format!("appbar:{icon}"), br.center());
-            crate::scenario::publish_rect(&format!("appbar:{icon}"), br);
-            crate::scenario::publish_handle(&format!("titlebar:{icon}"), br.center());
-            crate::scenario::publish_rect(&format!("titlebar:{icon}"), br);
+            crate::scenario::publish_target(&format!("appbar:{icon}"), br);
+            crate::scenario::publish_target(&format!("titlebar:{icon}"), br);
             if enabled && (resp.hovered() || resp.has_focus()) {
                 ui.painter().rect_filled(br.shrink(3.0), t.radius_sm, t.app_bar_hover_button);
             }
@@ -424,8 +419,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         crate::documents::tabs(app, &mut tabs_ui, r, tabs_start, tabs_end);
         let response = ui.interact(report, ui.id().with("sc_report_button"), Sense::click());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), report_text));
-        crate::scenario::publish_handle("titlebar:report", report.center());
-        crate::scenario::publish_rect("titlebar:report", report);
+        crate::scenario::publish_target("titlebar:report", report);
         ui.painter().rect_filled(report, t.radius_sm, if response.hovered() || response.has_focus() { t.app_bar_hover_button } else { t.app_bar });
         ui.painter().rect_stroke(report, t.radius_sm, Stroke::new(1.0, t.app_bar_separator), egui::StrokeKind::Inside);
         let icon = Rect::from_center_size(pos2(report.left() + 14.0, report.center().y), vec2(18.0, 18.0));
@@ -778,8 +772,7 @@ fn ribbon_tabs(app: &mut SolveApp, ui: &mut egui::Ui, row: Rect) {
         vec2(search_width, TAB_ROW_HEIGHT - 2.0 * inset),
     );
     let resp = ui.interact(search, ui.id().with("ribbon_search"), Sense::click());
-    crate::scenario::publish_handle("ribbon:search", search.center());
-    crate::scenario::publish_rect("ribbon:search", search);
+    crate::scenario::publish_target("ribbon:search", search);
     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("sc_ribbon_search"), search));
     ui.painter().rect(search, corner, t.field, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     // The existing zoom glyph is the icon system's magnifier; no new artwork.
@@ -857,8 +850,7 @@ fn ribbon_tabs(app: &mut SolveApp, ui: &mut egui::Ui, row: Rect) {
                         active || contextual,
                     );
                     if ui.clip_rect().contains(tr.center()) {
-                        crate::scenario::publish_handle(&format!("tab:{tab}"), tr.center());
-                        crate::scenario::publish_rect(&format!("tab:{tab}"), tr);
+                        crate::scenario::publish_target(&format!("tab:{tab}"), tr);
                         crate::scenario::publish_rect(&format!("toolbar_tab:{tab}"), tr);
                         let aliases: &[&str] = match tab {
                             "MODEL" => &["SOLID", "PLASTIC"],
@@ -954,8 +946,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
         crate::scenario::publish_rect("toolbar", r);
         crate::scenario::publish_rect("workspace_switcher", ws);
-        crate::scenario::publish_rect("ribbon:workspace", ws);
-        crate::scenario::publish_handle("ribbon:workspace", ws.center());
+        crate::scenario::publish_target("ribbon:workspace", ws);
         ribbon_tabs(app, ui, Rect::from_min_max(pos2(ribbon_left, r.top()), pos2(r.right(), r.top() + TAB_ROW_HEIGHT)));
         // Panels.
         let tab = app.ui.tab.clone();
@@ -1192,8 +1183,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                         if info.enabled { 1.0 } else { 0.35 },
                     );
                     for prefix in ["toolbar", "button", "ribbon:constraint"] {
-                        crate::scenario::publish_handle(&format!("{prefix}:{}", c.id), cell.center());
-                        crate::scenario::publish_rect(&format!("{prefix}:{}", c.id), cell);
+                        crate::scenario::publish_target(&format!("{prefix}:{}", c.id), cell);
                     }
                     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, info.enabled, app.tr_label(c.label)));
                     if resp.drag_started() {
@@ -1222,8 +1212,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             );
             let lresp = ui.interact(lr, ui.id().with(("panel", panel)), Sense::click());
             crate::scenario::publish_handle(&format!("panel:{tab}:{panel}"), lr.center());
-            crate::scenario::publish_handle(&format!("ribbon:section:{tab}:{panel}"), lr.center());
-            crate::scenario::publish_rect(&format!("ribbon:section:{tab}:{panel}"), lr);
+            crate::scenario::publish_target(&format!("ribbon:section:{tab}:{panel}"), lr);
             let panel_open = ui.ctx().data(|d| d.get_temp::<egui::Id>(egui::Id::new("sc_panel_open"))) == Some(popup_id);
             let accent = crate::theme::TabAccent::for_tab(&t, &tab);
             let hot = lresp.hovered() && enabled_panel;
@@ -1386,8 +1375,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                         });
                     }
                 });
-                crate::scenario::publish_handle("toolbar:overflow", response.response.rect.center());
-                crate::scenario::publish_rect("toolbar:overflow", response.response.rect);
+                crate::scenario::publish_target("toolbar:overflow", response.response.rect);
                 response.response.on_hover_text(crate::i18n::tr_label("More toolbar panels"));
             });
         }
@@ -1437,8 +1425,7 @@ fn assistant_button(app: &mut SolveApp, ui: &mut egui::Ui, at: Rect) {
     use crate::agent_chat::AssistantMark;
     let t = Tokens::get();
     let resp = ui.interact(at, ui.id().with("assistant_button"), Sense::click());
-    crate::scenario::publish_handle("titlebar:assistant", at.center());
-    crate::scenario::publish_rect("titlebar:assistant", at);
+    crate::scenario::publish_target("titlebar:assistant", at);
     let mark = crate::agent_chat::assistant_mark(app);
     let tip = crate::agent_chat::assistant_tip(mark);
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &tip));

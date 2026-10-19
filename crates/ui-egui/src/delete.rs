@@ -114,11 +114,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         .actions("Delete", "Cancel", None)
         .show(ctx, true, |ui| {
             if shared {
-                ui_kit::text_block(
+                ui_kit::text(
                     ui,
-                    "shared",
                     crate::i18n::tr_label("This child is shared. Deleting it removes it from every copy of its parent."),
-                    false,
+                    ui_kit::Text::Report("shared", false),
                 );
             }
             for (key, heading, names, error) in
@@ -127,13 +126,17 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 if names.is_empty() {
                     continue;
                 }
-                ui_kit::text_block(ui, key, crate::i18n::tr_label(heading), error);
+                ui_kit::text(ui, crate::i18n::tr_label(heading), ui_kit::Text::Report(key, error));
                 for name in names.iter().take(MAX_LISTED) {
-                    ui_kit::text_block(ui, &format!("{key}:{name}"), &format!("  • {name}"), error);
+                    ui_kit::text(ui, &format!("  • {name}"), ui_kit::Text::Report(&format!("{key}:{name}"), error));
                 }
                 if names.len() > MAX_LISTED {
                     let more = (names.len() - MAX_LISTED).to_string();
-                    ui_kit::text_block(ui, &format!("{key}:more"), &crate::i18n::format("delete.and_more", &[("count", &more)]), error);
+                    ui_kit::text(
+                        ui,
+                        &crate::i18n::format("delete.and_more", &[("count", &more)]),
+                        ui_kit::Text::Report(&format!("{key}:more"), error),
+                    );
                 }
             }
         });

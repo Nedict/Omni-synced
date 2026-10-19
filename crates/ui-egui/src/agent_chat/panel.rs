@@ -186,9 +186,9 @@ fn gallery_window(app: &mut SolveApp, ctx: &egui::Context) {
     let modal = egui::Modal::new(Id::new("sc_agent_chat_gallery")).show(ctx, |ui| {
         ui.set_max_width(max.x);
         ui.horizontal(|ui| {
-            let prev = ui_kit::enabled_button(ui, tr("ui.agent_chat_previous_picture"), count > 1);
+            let prev = ui_kit::button(ui, tr("ui.agent_chat_previous_picture"), ui_kit::Button::Enabled(count > 1));
             crate::scenario::publish_handle("agent_chat:gallery_prev", prev.rect.center());
-            let next = ui_kit::enabled_button(ui, tr("ui.agent_chat_next_picture"), count > 1);
+            let next = ui_kit::button(ui, tr("ui.agent_chat_next_picture"), ui_kit::Button::Enabled(count > 1));
             crate::scenario::publish_handle("agent_chat:gallery_next", next.rect.center());
             if prev.clicked() {
                 step = -1;
@@ -505,9 +505,9 @@ fn header(app: &mut SolveApp, ui: &mut egui::Ui, left: bool) {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 let b = if state.running() {
-                    ui_kit::secondary_button(ui, tr("ui.agent_chat_stop")).on_hover_text(tr("ui.agent_chat_stop_tip"))
+                    ui_kit::button(ui, tr("ui.agent_chat_stop"), ui_kit::Button::Normal).on_hover_text(tr("ui.agent_chat_stop_tip"))
                 } else {
-                    ui_kit::secondary_button(ui, tr("ui.agent_chat_connect"))
+                    ui_kit::button(ui, tr("ui.agent_chat_connect"), ui_kit::Button::Normal)
                 };
                 crate::scenario::publish_handle("agent_chat:connect", b.rect.center());
                 if b.clicked() {
@@ -582,14 +582,14 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
     if app.agent_chat.confirm_new {
         ui_kit::scope(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui_kit::text_block(ui, "new_chat", tr("ui.agent_chat_new_confirm"), false);
+            ui_kit::text(ui, tr("ui.agent_chat_new_confirm"), ui_kit::Text::Report("new_chat", false));
             ui.horizontal(|ui| {
-                let yes = ui_kit::secondary_button(ui, tr("ui.agent_chat_new_yes"));
+                let yes = ui_kit::button(ui, tr("ui.agent_chat_new"), ui_kit::Button::Normal);
                 crate::scenario::publish_handle("agent_chat:new_confirm", yes.rect.center());
                 if yes.clicked() {
                     new_chat(app);
                 }
-                if ui_kit::secondary_button(ui, tr("ui.agent_chat_cancel")).clicked() {
+                if ui_kit::button(ui, tr("ui.agent_chat_cancel"), ui_kit::Button::Normal).clicked() {
                     app.agent_chat.confirm_new = false;
                 }
             });
@@ -651,7 +651,7 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
             add_menu(app, ui);
             // A message waits for files still being read.
             let reading = !app.agent_chat.loading.is_empty();
-            let send_b = ui_kit::enabled_button(ui, tr(if busy { "ui.agent_chat_queue" } else { "ui.agent_chat_send" }), !reading)
+            let send_b = ui_kit::button(ui, tr(if busy { "ui.agent_chat_queue" } else { "ui.agent_chat_send" }), ui_kit::Button::Enabled(!reading))
                 .on_disabled_hover_text(tr("ui.agent_chat_files_loading"));
             crate::scenario::publish_handle("agent_chat:send", send_b.rect.center());
             send_clicked = send_b.clicked();
@@ -820,19 +820,19 @@ fn picker(app: &mut SolveApp, ui: &mut egui::Ui) {
     let all = agents::entries(app);
     let current = agents::current(app);
     ui.horizontal(|ui| {
-        ui_kit::inline_text(ui, tr("ui.agent_chat_pick"));
+        ui_kit::text(ui, tr("ui.agent_chat_pick"), ui_kit::Text::Inline);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let refreshing = app.agent_chat.detecting.is_some();
-            if ui_kit::enabled_button(ui, tr("ui.agent_chat_refresh"), !refreshing).clicked() {
+            if ui_kit::button(ui, tr("ui.agent_chat_refresh"), ui_kit::Button::Enabled(!refreshing)).clicked() {
                 refresh(app, ui.ctx());
             }
-            if ui_kit::small_button(ui, tr("ui.ai_add_agent")).clicked() {
+            if ui_kit::button(ui, tr("ui.ai_add_agent"), ui_kit::Button::Small).clicked() {
                 super::settings::open_add(app);
             }
         });
     });
     if app.agent_chat.detecting.is_some() {
-        ui_kit::note(ui, "detecting", tr("ui.agent_chat_detecting"));
+        ui_kit::text(ui, tr("ui.agent_chat_detecting"), ui_kit::Text::Note("detecting"));
     }
     for e in &all {
         let selected = current.as_ref().is_some_and(|c| c.id == e.id);
@@ -848,12 +848,12 @@ fn picker(app: &mut SolveApp, ui: &mut egui::Ui) {
         ui_kit::section(ui, "sc_agent_missing", heading, all.is_empty(), |ui| {
             for m in missing {
                 ui.horizontal(|ui| {
-                    ui_kit::inline_text(ui, m.name);
-                    if ui_kit::small_button(ui, tr("ui.agent_chat_copy")).on_hover_text(m.install).clicked() {
+                    ui_kit::text(ui, m.name, ui_kit::Text::Inline);
+                    if ui_kit::button(ui, tr("ui.agent_chat_copy"), ui_kit::Button::Small).on_hover_text(m.install).clicked() {
                         ui.ctx().copy_text(m.install.to_string());
                     }
                 });
-                ui_kit::text_block(ui, m.name, m.install, false);
+                ui_kit::text(ui, m.install, ui_kit::Text::Report(m.name, false));
             }
         });
     }
@@ -863,41 +863,45 @@ fn picker(app: &mut SolveApp, ui: &mut egui::Ui) {
 fn auth_box(app: &mut SolveApp, ui: &mut egui::Ui) {
     ui_kit::section(ui, "authentication", tr("ui.agent_chat_auth_title"), true, |ui| {
         ui.set_width(ui.available_width());
-        ui_kit::note(ui, "auth_needed", tr("ui.agent_chat_auth_needed"));
+        ui_kit::text(ui, tr("ui.agent_chat_auth_needed"), ui_kit::Text::Note("auth_needed"));
         let methods = app.agent_chat.auth.clone();
         let base = app.agent_chat.argv.iter().map(|a| quote(a)).collect::<Vec<_>>().join(" ");
         if methods.is_empty() {
-            ui_kit::note(ui, "auth_none", tr("ui.agent_chat_auth_none"));
+            ui_kit::text(ui, tr("ui.agent_chat_auth_none"), ui_kit::Text::Note("auth_none"));
         }
         for m in methods {
             ui.add_space(crate::theme::Tokens::get().space_4);
             let desc = m.description.trim();
-            ui_kit::text_block(ui, &m.id, &if desc.is_empty() || desc == m.name { m.name.clone() } else { format!("{} — {desc}", m.name) }, false);
+            ui_kit::text(
+                ui,
+                &if desc.is_empty() || desc == m.name { m.name.clone() } else { format!("{} — {desc}", m.name) },
+                ui_kit::Text::Report(&m.id, false),
+            );
             match &m.kind {
                 acp::AuthKind::Terminal { args, .. } => {
-                    ui_kit::note(ui, "terminal", tr("ui.agent_chat_auth_terminal"));
+                    ui_kit::text(ui, tr("ui.agent_chat_auth_terminal"), ui_kit::Text::Note("terminal"));
                     let cmd = format!("{base} {}", args.iter().map(|a| quote(a)).collect::<Vec<_>>().join(" "));
                     ui.horizontal_wrapped(|ui| {
-                        ui_kit::text_block(ui, "auth_command", &cmd, false);
-                        if ui_kit::small_button(ui, tr("ui.agent_chat_copy")).clicked() {
+                        ui_kit::text(ui, &cmd, ui_kit::Text::Report("auth_command", false));
+                        if ui_kit::button(ui, tr("ui.agent_chat_copy"), ui_kit::Button::Small).clicked() {
                             ui.ctx().copy_text(cmd.clone());
                         }
                     });
                 }
                 acp::AuthKind::Agent => {
-                    let b = ui_kit::secondary_button(ui, trf("ui.agent_chat_auth_agent", &[("name", &m.name)]));
+                    let b = ui_kit::button(ui, trf("ui.agent_chat_auth_agent", &[("name", &m.name)]), ui_kit::Button::Normal);
                     crate::scenario::publish_handle(&format!("agent_chat:auth:{}", m.id), b.rect.center());
                     if b.clicked() {
                         app.agent_chat.authenticate(&m.id);
                     }
                 }
                 acp::AuthKind::EnvVar { vars } => {
-                    ui_kit::text_block(ui, "auth_environment", &trf("ui.agent_chat_auth_env", &[("vars", &vars.join(", "))]), false);
+                    ui_kit::text(ui, &trf("ui.agent_chat_auth_env", &[("vars", &vars.join(", "))]), ui_kit::Text::Report("auth_environment", false));
                 }
             }
         }
         ui.add_space(crate::theme::Tokens::get().space_4);
-        if ui_kit::secondary_button(ui, tr("ui.agent_chat_auth_retry")).clicked() {
+        if ui_kit::button(ui, tr("ui.agent_chat_auth_retry"), ui_kit::Button::Normal).clicked() {
             connect(app, ui.ctx());
         }
     });
@@ -969,7 +973,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
                                     let r = if o.kind.starts_with("allow") {
                                         ui_kit::primary_button(ui, &o.name)
                                     } else {
-                                        ui_kit::secondary_button(ui, &o.name)
+                                        ui_kit::button(ui, &o.name, ui_kit::Button::Normal)
                                     };
                                     crate::scenario::publish_handle(&format!("agent_chat:permission:{}", o.id), r.rect.center());
                                     if r.clicked() {
@@ -996,9 +1000,9 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
                         None => {
                             ui.horizontal(|ui| {
                                 let allow = ui_kit::primary_button(ui, tr("ui.agent_chat_allow"));
-                                let always = ui_kit::secondary_button(ui, tr("ui.ai_always_allow"))
+                                let always = ui_kit::button(ui, tr("ui.ai_always_allow"), ui_kit::Button::Normal)
                                     .on_hover_text(trf("ui.ai_always_allow_tip", &[("tool", tool)]));
-                                let deny = ui_kit::secondary_button(ui, tr("ui.agent_chat_deny"));
+                                let deny = ui_kit::button(ui, tr("ui.agent_chat_deny"), ui_kit::Button::Normal);
                                 crate::scenario::publish_handle("agent_chat:allow", allow.rect.center());
                                 crate::scenario::publish_handle("agent_chat:always", always.rect.center());
                                 crate::scenario::publish_handle("agent_chat:deny", deny.rect.center());
@@ -1023,7 +1027,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
                     if *undone {
                         ui.label(RichText::new(tr("ui.agent_chat_undone")).color(t.text_dim).size(crate::theme::Tokens::get().font_caption));
                     } else if Arc::ptr_eq(doc, &current_doc) {
-                        let b = ui_kit::secondary_button(ui, tr("ui.agent_chat_undo_changes")).on_hover_text(tr("ui.ai_undo_tip"));
+                        let b = ui_kit::button(ui, tr("ui.agent_chat_undo_changes"), ui_kit::Button::Normal).on_hover_text(tr("ui.ai_undo_tip"));
                         crate::scenario::publish_handle("agent_chat:undo", b.rect.center());
                         if b.clicked() {
                             undo = Some(n);
@@ -1053,13 +1057,13 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let tag = if stopped && !busy { "ui.agent_chat_queued_stopped" } else { "ui.agent_chat_queued" };
                 ui.label(RichText::new(tr(tag)).color(t.accent).semibold().size(crate::theme::Tokens::get().font_small));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let x = ui_kit::small_button(ui, "×").on_hover_text(tr("ui.agent_chat_remove"));
+                    let x = ui_kit::button(ui, "×", ui_kit::Button::Small).on_hover_text(tr("ui.agent_chat_remove"));
                     crate::scenario::publish_handle(&format!("agent_chat:pending_remove:{n}"), x.rect.center());
                     if x.clicked() {
                         remove = Some(n);
                     }
                     if editing.as_ref().is_none_or(|(i, _)| *i != n) {
-                        let e = ui_kit::small_button(ui, tr("ui.agent_chat_edit"));
+                        let e = ui_kit::button(ui, tr("ui.agent_chat_edit"), ui_kit::Button::Small);
                         crate::scenario::publish_handle(&format!("agent_chat:pending_edit:{n}"), e.rect.center());
                         if e.clicked() {
                             start_edit = Some((n, p.text.clone()));
@@ -1072,10 +1076,10 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
                     let te = ui_kit::message_field(ui, Id::new(("sc_agent_pending_input", n)), buf, "");
                     crate::scenario::publish_rect("agent_chat:pending_input", te.rect);
                     ui.horizontal(|ui| {
-                        if ui_kit::secondary_button(ui, tr("ui.agent_chat_save")).clicked() {
+                        if ui_kit::button(ui, tr("ui.agent_chat_save"), ui_kit::Button::Normal).clicked() {
                             edit_done = Some((n, Some(buf.clone())));
                         }
-                        if ui_kit::secondary_button(ui, tr("ui.agent_chat_cancel")).clicked() {
+                        if ui_kit::button(ui, tr("ui.agent_chat_cancel"), ui_kit::Button::Normal).clicked() {
                             edit_done = Some((n, None));
                         }
                     });
@@ -1095,7 +1099,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
     if !app.agent_chat.pending.is_empty() && editing.is_none() {
         ui.horizontal(|ui| {
             if busy {
-                let b = ui_kit::secondary_button(ui, tr("ui.agent_chat_send_now")).on_hover_text(tr("ui.agent_chat_send_now_tip"));
+                let b = ui_kit::button(ui, tr("ui.agent_chat_send_now"), ui_kit::Button::Normal).on_hover_text(tr("ui.agent_chat_send_now_tip"));
                 crate::scenario::publish_handle("agent_chat:send_now", b.rect.center());
                 send_now_clicked = b.clicked();
             } else {
@@ -1302,8 +1306,7 @@ fn chip(ui: &mut egui::Ui, thumbs: &mut std::collections::HashMap<u64, egui::Tex
             });
         },
     );
-    crate::scenario::publish_rect(&format!("agent_chat:file:{i}"), r.response.rect);
-    crate::scenario::publish_handle(&format!("agent_chat:file:{i}"), r.response.rect.center());
+    crate::scenario::publish_target(&format!("agent_chat:file:{i}"), r.response.rect);
     clicked
 }
 
@@ -1313,9 +1316,9 @@ fn chip(ui: &mut egui::Ui, thumbs: &mut std::collections::HashMap<u64, egui::Tex
 fn add_menu(app: &mut SolveApp, ui: &mut egui::Ui) {
     let (mut choose, mut paste) = (false, false);
     let r = ui_kit::action_menu(ui, "+", |ui| {
-        let a = ui_kit::secondary_button(ui, tr("ui.agent_chat_add_file"));
+        let a = ui_kit::button(ui, tr("ui.agent_chat_add_file"), ui_kit::Button::Normal);
         crate::scenario::publish_handle("agent_chat:add_file", a.rect.center());
-        let b = ui_kit::secondary_button(ui, tr("ui.agent_chat_paste_picture"));
+        let b = ui_kit::button(ui, tr("ui.agent_chat_paste_picture"), ui_kit::Button::Normal);
         crate::scenario::publish_handle("agent_chat:paste_picture", b.rect.center());
         if a.clicked() {
             choose = true;

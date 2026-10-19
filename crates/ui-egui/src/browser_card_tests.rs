@@ -54,11 +54,10 @@ fn selected_row_paints_tab_soft_fill_and_accent_text_in_both_layouts() {
             crate::theme::TabAccent::publish(&app, &ctx);
             let accent = crate::theme::TabAccent::for_tab(&Tokens::get(), tab);
             let mut row_rect = Rect::NOTHING;
-            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let out = crate::test_support::frame(&ctx, egui::RawInput::default(), |ui| {
                 let row = Row { selected: true, label: "Selected body", dim: true, color: Some(Tokens::get().error), ..Default::default() };
                 row_rect = draw_row(ui, egui::Id::new("selected-row"), &row).rect.unwrap();
             });
-            out.textures_delta.clear();
             assert_eq!(row_rect.height(), 26.0);
             assert!(out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Rect(r) if r.rect == row_rect && r.fill == accent.soft)));
             assert!(
@@ -171,11 +170,10 @@ fn one_browser_keeps_its_resized_width_across_layouts_and_overlay_preferences() 
 fn browser_title_uses_a_single_semibold_run() {
     let ctx = crate::fonts::test_context();
     let mut app = SolveApp::new(Default::default(), Default::default());
-    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+    let output = crate::test_support::frame(&ctx, egui::RawInput::default(), |ui| {
         ui.set_width(250.0);
         browser_header(&mut app, ui, true);
     });
-    output.textures_delta.clear();
     let title = crate::i18n::tr("ui.browser_title");
     let titles: Vec<_> = output
         .shapes

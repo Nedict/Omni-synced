@@ -773,7 +773,7 @@ pub fn button(app: &mut SolveApp, ui: &mut egui::Ui, span: egui::Rect, labeled: 
     let full = crate::i18n::format("update.button_version", &[("version", &version)]);
     let labels = [full.as_str(), crate::i18n::tr("update.button")];
     let (rect, response) = crate::toolbar::offer_pill(ui, span, labeled, &labels, TAB_ROOM, "update", "titlebar:update")?;
-    if response.on_hover_text(crate::i18n::format("update.button_tip", &[("version", &version)])).clicked() {
+    if response.on_hover_text(crate::i18n::format("update.available", &[("version", &version)])).clicked() {
         app.updater.open = !app.updater.open;
     }
     Some(rect)
@@ -818,13 +818,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let mut also_download = false;
     let (closed, answer) =
         ui_kit::Prompt::new(id, "update", crate::i18n::tr("update.title")).cards(1.7).actions(ok, cancel, apply).show(ctx, true, |ui| {
-            ui_kit::text_block(ui, "available", &crate::i18n::format("update.available", &[("version", release.version())]), false);
-            ui_kit::note(ui, "have", &crate::i18n::format("update.you_have", &[("version", current_version())]));
+            ui_kit::text(ui, &crate::i18n::format("update.available", &[("version", release.version())]), ui_kit::Text::Report("available", false));
+            ui_kit::text(ui, &crate::i18n::format("update.you_have", &[("version", current_version())]), ui_kit::Text::Note("have"));
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 egui::ScrollArea::vertical().max_height(260.0).auto_shrink([false, true]).show(ui, |ui| {
                     if release.notes.trim().is_empty() {
-                        ui_kit::note(ui, "no_notes", crate::i18n::tr("update.no_notes"));
+                        ui_kit::text(ui, crate::i18n::tr("update.no_notes"), ui_kit::Text::Note("no_notes"));
                     } else {
                         markdown(ui, &release.notes, &t);
                     }
@@ -836,46 +836,49 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     InstallKind::Deb | InstallKind::Rpm | InstallKind::Snap { store: false } => "update.package_hint",
                     _ => "update.system_hint",
                 };
-                ui_kit::text_block(ui, "how", &crate::i18n::format(how, &[("kind", kind.label())]), false);
+                ui_kit::text(ui, &crate::i18n::format(how, &[("kind", kind.label())]), ui_kit::Text::Report("how", false));
                 ui_kit::label_actions(ui, &cmd, |ui| {
-                    if ui_kit::small_button(ui, crate::i18n::tr("update.copy")).clicked() {
+                    if ui_kit::button(ui, crate::i18n::tr("update.copy"), ui_kit::Button::Small).clicked() {
                         ui.ctx().copy_text(cmd.clone());
                     }
                 });
             } else if let Some(name) = asset.as_ref().filter(|_| app.updater.installed.as_ref().is_none_or(|r| r.is_err())) {
-                ui_kit::note(ui, "file", &crate::i18n::format("update.file", &[("file", name)]));
+                ui_kit::text(ui, &crate::i18n::format("update.file", &[("file", name)]), ui_kit::Text::Note("file"));
             }
             match (&state, &app.updater.installed, &app.updater.job) {
                 (State::Downloading, _, Some((_, progress))) => {
                     let done = progress.done.load(std::sync::atomic::Ordering::Relaxed);
                     let total = progress.total.load(std::sync::atomic::Ordering::Relaxed).max(1);
                     let mb = |b: u64| format!("{:.1}", b as f64 / 1_048_576.0);
-                    ui_kit::text_block(
+                    ui_kit::text(
                         ui,
-                        "downloading",
                         &crate::i18n::format("update.downloading", &[("done", &mb(done)), ("total", &mb(total))]),
-                        false,
+                        ui_kit::Text::Report("downloading", false),
                     );
                     ui_kit::progress(ui, "download", done as f32 / total as f32);
                     ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
                 }
                 (State::Restart, ..) => {
-                    ui_kit::text_block(ui, "installed", &crate::i18n::format("update.installed", &[("version", release.version())]), false);
+                    ui_kit::text(
+                        ui,
+                        &crate::i18n::format("update.installed", &[("version", release.version())]),
+                        ui_kit::Text::Report("installed", false),
+                    );
                 }
                 (_, Some(Ok(install::Outcome::Installer(..))), _) => {
-                    ui_kit::text_block(ui, "installer", crate::i18n::tr("update.installer_started"), false);
+                    ui_kit::text(ui, crate::i18n::tr("update.installer_started"), ui_kit::Text::Report("installer", false));
                 }
                 (_, Some(Ok(install::Outcome::Opened(_))), _) => {
-                    ui_kit::text_block(ui, "dmg", crate::i18n::tr("update.dmg_opened"), false);
+                    ui_kit::text(ui, crate::i18n::tr("update.dmg_opened"), ui_kit::Text::Report("dmg", false));
                 }
                 (_, Some(Err(e)), _) => {
-                    ui_kit::text_block(ui, "failed", &crate::i18n::format("update.install_failed", &[("error", e)]), true);
+                    ui_kit::text(ui, &crate::i18n::format("update.install_failed", &[("error", e)]), ui_kit::Text::Report("failed", true));
                 }
                 _ => {}
             }
             // With a one-click install the footer's main action installs; the download stays one click away.
             if state == State::Offer && one_click {
-                also_download = ui_kit::secondary_button(ui, download).clicked();
+                also_download = ui_kit::button(ui, download, ui_kit::Button::Normal).clicked();
             }
         });
     if let Some(area) = ctx.memory(|m| m.area_rect(id)) {
@@ -942,7 +945,7 @@ pub fn prefs_rows(app: &mut SolveApp, ui: &mut egui::Ui) {
     });
     ui.horizontal(|ui| {
         let busy = app.updater.status == Status::Checking;
-        let r = ui_kit::enabled_button(ui, crate::i18n::tr("update.check_now"), can && !busy);
+        let r = ui_kit::button(ui, crate::i18n::tr("update.check_now"), ui_kit::Button::Enabled(can && !busy));
         crate::scenario::publish_rect("prefs:check_now", r.rect);
         if r.clicked() {
             let ctx = ui.ctx().clone();
@@ -957,7 +960,7 @@ pub fn prefs_rows(app: &mut SolveApp, ui: &mut egui::Ui) {
             (Status::Idle, None) => String::new(),
         };
         if !status.is_empty() {
-            ui_kit::inline_text(ui, &status);
+            ui_kit::text(ui, &status, ui_kit::Text::Inline);
         }
     });
     let note = if can {
@@ -967,10 +970,10 @@ pub fn prefs_rows(app: &mut SolveApp, ui: &mut egui::Ui) {
     } else {
         crate::i18n::format("update.prefs_dev", &[("version", current_version())])
     };
-    ui_kit::note(ui, "updates", &note);
+    ui_kit::text(ui, &note, ui_kit::Text::Note("updates"));
     if let Some(v) = offered_or_newer(app)
         && offered(app).is_none()
-        && ui_kit::secondary_button(ui, crate::i18n::format("update.show", &[("version", &v)])).clicked()
+        && ui_kit::button(ui, crate::i18n::format("update.show", &[("version", &v)]), ui_kit::Button::Normal).clicked()
     {
         app.updater.open = true;
     }

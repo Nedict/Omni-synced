@@ -170,10 +170,10 @@ pub fn panel(app: &mut SolveApp, ctx: &egui::Context) {
             draft.candidate.is_some() && app.preview.error.is_none(),
             |ui| {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                ui_kit::hint(
+                ui_kit::text(
                     ui,
-                    "tool",
                     crate::i18n::tr_label("Choose a new plane. Sketch geometry and dimensions stay unchanged in its two-dimensional coordinates."),
+                    ui_kit::Text::Hint("tool"),
                 );
                 let saved_plane = match &status {
                     FaceAttachmentStatus::Healthy { plane, target, path } => {
@@ -212,7 +212,9 @@ pub fn panel(app: &mut SolveApp, ctx: &egui::Context) {
                     let author = app.session.doc.feature(sketch).map(|feature| feature.component);
                     let available = author == Some(app.session.active_component);
                     if ui
-                        .add_enabled_ui(available, |ui| ui_kit::secondary_button(ui, crate::i18n::tr_label("Use active author placement")))
+                        .add_enabled_ui(available, |ui| {
+                            ui_kit::button(ui, crate::i18n::tr_label("Use active author placement"), ui_kit::Button::Normal)
+                        })
                         .inner
                         .clicked()
                     {
@@ -225,7 +227,7 @@ pub fn panel(app: &mut SolveApp, ctx: &egui::Context) {
                 }
                 ui_kit::row(ui, "Plane", |ui| {
                     let text = if draft.candidate.is_some() { draft.label.as_str() } else { crate::i18n::tr("dialog.select") };
-                    let response = ui_kit::selection_field_state(ui, text, true, draft.candidate.is_some());
+                    let response = ui_kit::selection_field(ui, text, ui_kit::Selection { active: true, filled: draft.candidate.is_some() });
                     if response
                         .on_hover_text(crate::i18n::tr_label(
                             "Choose a new plane. Sketch geometry and dimensions stay unchanged in its two-dimensional coordinates.",
@@ -239,18 +241,22 @@ pub fn panel(app: &mut SolveApp, ctx: &egui::Context) {
                 });
                 ui.horizontal_wrapped(|ui| {
                     for plane in ["XY", "XZ", "YZ"] {
-                        if ui_kit::secondary_button(ui, crate::i18n::format("sketch_panel.use_plane", &[("plane", plane)])).clicked() {
+                        if ui_kit::button(ui, crate::i18n::format("sketch_panel.use_plane", &[("plane", plane)]), ui_kit::Button::Normal).clicked() {
                             draft.choose(json!(plane), plane.into());
                         }
                     }
                 });
                 for feature in &app.session.doc.features {
-                    if matches!(feature.kind, FeatureKind::ConstructionPlane { .. }) && ui_kit::secondary_button(ui, &feature.name).clicked() {
+                    if matches!(feature.kind, FeatureKind::ConstructionPlane { .. })
+                        && ui_kit::button(ui, &feature.name, ui_kit::Button::Normal).clicked()
+                    {
                         draft.choose(json!(feature.name), feature.name.clone());
                     }
                 }
                 if ui
-                    .add_enabled_ui(selected.is_some(), |ui| ui_kit::secondary_button(ui, crate::i18n::tr_label("Reattach selected face")))
+                    .add_enabled_ui(selected.is_some(), |ui| {
+                        ui_kit::button(ui, crate::i18n::tr_label("Reattach selected face"), ui_kit::Button::Normal)
+                    })
                     .inner
                     .clicked()
                     && let Some(selection @ Sel::Face { .. }) = &selected
@@ -260,7 +266,9 @@ pub fn panel(app: &mut SolveApp, ctx: &egui::Context) {
                     draft.choose(plane, label);
                 }
                 if ui
-                    .add_enabled_ui(saved_plane.is_some(), |ui| ui_kit::secondary_button(ui, crate::i18n::tr_label("Use saved fixed plane")))
+                    .add_enabled_ui(saved_plane.is_some(), |ui| {
+                        ui_kit::button(ui, crate::i18n::tr_label("Use saved fixed plane"), ui_kit::Button::Normal)
+                    })
                     .inner
                     .clicked()
                     && let Some(plane) = saved_plane
@@ -269,7 +277,9 @@ pub fn panel(app: &mut SolveApp, ctx: &egui::Context) {
                     draft.error = Some(error);
                 }
                 if ui
-                    .add_enabled_ui(selected.is_some(), |ui| ui_kit::secondary_button(ui, crate::i18n::tr_label("Use selected face as fixed plane")))
+                    .add_enabled_ui(selected.is_some(), |ui| {
+                        ui_kit::button(ui, crate::i18n::tr_label("Use selected face as fixed plane"), ui_kit::Button::Normal)
+                    })
                     .inner
                     .clicked()
                     && let Some(selection) = &selected

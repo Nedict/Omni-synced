@@ -639,6 +639,7 @@ pub fn doc_for(master: &str, px: u32) -> Option<&'static Doc> {
 }
 
 /// Every master id (not the small variants), for tests and tooling.
+#[cfg(test)]
 pub fn master_ids() -> Vec<&'static str> {
     let mut v: Vec<_> = table().0.keys().copied().collect();
     v.sort_unstable();

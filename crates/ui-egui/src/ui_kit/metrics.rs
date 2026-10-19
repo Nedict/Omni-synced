@@ -4,12 +4,12 @@ use crate::theme::Tokens;
 use egui::Ui;
 
 /// Row height for controls. Tokens: `control_height`.
-pub fn row_height() -> f32 {
+pub(crate) fn row_height() -> f32 {
     Tokens::get().control_height
 }
 
 /// Feature heading height. Tokens: `form_header_height`.
-pub fn header_height() -> f32 {
+pub(crate) fn header_height() -> f32 {
     Tokens::get().form_header_height
 }
 
@@ -28,9 +28,32 @@ pub(super) const LABEL_ACTIONS_SHARE: f32 = 0.45;
 const LABEL_COLUMN_MAX: f32 = 1.6;
 
 /// Measured width of a label in the form label font. Tokens: `font_label, dialog_label`.
-fn natural_label_width(ui: &Ui, text: &str) -> f32 {
+pub(super) fn label_width(ui: &Ui, text: &str) -> f32 {
     let t = Tokens::get();
     ui.painter().layout_no_wrap(crate::i18n::tr_label(text).to_string(), egui::FontId::proportional(t.font_label), t.dialog_label).size().x.ceil()
+}
+
+/// Minimum content widths for table controls, including their token/native control metrics.
+pub(crate) struct ContentWidth;
+
+impl ContentWidth {
+    pub(crate) fn label(ui: &Ui, text: &str) -> f32 {
+        label_width(ui, text)
+    }
+
+    pub(crate) fn button(ui: &Ui, label: &str) -> f32 {
+        label_width(ui, label) + 2.0 * ui.spacing().button_padding.x
+    }
+
+    pub(crate) fn dropdown(ui: &Ui, options: &[&str]) -> f32 {
+        let text = options.iter().map(|text| label_width(ui, text)).fold(0.0, f32::max);
+        text + 2.0 * ui.spacing().button_padding.x + ui.spacing().icon_width + ui.spacing().icon_spacing
+    }
+
+    pub(crate) fn editor(ui: &Ui, value: &str) -> f32 {
+        let t = Tokens::get();
+        ui.painter().layout_no_wrap(value.to_owned(), egui::FontId::monospace(t.font_label), t.text).size().x.ceil() + 2.0 * t.form_inset
+    }
 }
 
 /// Width of a table header column, measured directly: it never touches the form's shared label-column state.
@@ -38,7 +61,7 @@ fn natural_label_width(ui: &Ui, text: &str) -> f32 {
 pub(super) fn header_column(ui: &Ui, text: &str) -> f32 {
     let t = Tokens::get();
     let base = t.form_label_width;
-    (natural_label_width(ui, text) + t.space_4).clamp(base, base * LABEL_COLUMN_MAX).min(base * TABLE_COLUMN_BASIS * 0.5)
+    (label_width(ui, text) + t.space_4).clamp(base, base * LABEL_COLUMN_MAX).min(base * TABLE_COLUMN_BASIS * 0.5)
 }
 
 /// Allocate exactly one control-height row. Long labels elide; controls cannot widen the card.
@@ -50,7 +73,7 @@ pub(super) fn header_column(ui: &Ui, text: &str) -> f32 {
 pub(super) fn label_column(ui: &Ui, text: &str, row_width: f32) -> f32 {
     let t = Tokens::get();
     let base = t.form_label_width;
-    let natural = natural_label_width(ui, text);
+    let natural = label_width(ui, text);
     let widest = match ui.stack().iter().find(|node| node.tags().contains(FORM)).map(|node| node.id) {
         Some(form) => {
             let key = form.with("label_column");

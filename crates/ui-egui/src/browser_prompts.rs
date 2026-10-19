@@ -48,7 +48,11 @@ pub(crate) fn occurrence_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
         .actions("Capture All Positions", "Cancel", Some("Revert All Positions"))
         .show(&ctx, true, |ui| {
             if shared {
-                ui_kit::note(ui, "shared", crate::i18n::tr_label("This child is shared. Position changes apply to every copy of its parent."));
+                ui_kit::text(
+                    ui,
+                    crate::i18n::tr_label("This child is shared. Position changes apply to every copy of its parent."),
+                    ui_kit::Text::Note("shared"),
+                );
             }
             for (k, axis) in ["X distance", "Y distance", "Z distance"].into_iter().enumerate() {
                 if let Some(v) = m.translate.get_mut(k) {
@@ -103,8 +107,8 @@ pub(crate) fn capture_prompt(app: &mut SolveApp, ctx: &egui::Context) {
             } else {
                 crate::i18n::format("browser.capture_many", &[("count", &n.to_string())])
             };
-            ui_kit::text_block(ui, "question", &question, false);
-            ui_kit::note(ui, "capture", crate::i18n::tr("browser.capture_note"));
+            ui_kit::text(ui, &question, ui_kit::Text::Report("question", false));
+            ui_kit::text(ui, crate::i18n::tr("browser.capture_note"), ui_kit::Text::Note("capture"));
         });
     let answer = match action {
         ui_kit::Action::Ok => Some("capture"),

@@ -3,7 +3,7 @@ use crate::{fonts::RichTextExt as _, theme::Tokens};
 use egui::{RichText, Stroke, vec2};
 
 /// Status content for a named card. `key` is the scenario namespace, `fraction` is clamped.
-pub struct StatusHeader<'a> {
+pub(crate) struct StatusHeader<'a> {
     pub icon: &'a str,
     pub text: &'a str,
     pub complete: bool,
@@ -13,7 +13,7 @@ pub struct StatusHeader<'a> {
 /// Card identity, status dot/text and progress meter; use for solver/selection state.
 /// Tokens: font_label, text/dim, accent, dialog_rule, sketch_accent, form_icon_size, spacing.
 /// Name, status dot/text and meter for a card. Tokens: `font_label, text/dim, accent, dialog_rule, sketch_accent, form_icon_size, space_3/4/6/8/10`.
-pub fn status_header(ui: &mut egui::Ui, key: &str, name: &str, status: StatusHeader<'_>) -> egui::Response {
+pub(crate) fn status_header(ui: &mut egui::Ui, key: &str, name: &str, status: StatusHeader<'_>) -> egui::Response {
     let fraction = if status.fraction.is_finite() { status.fraction.clamp(0.0, 1.0) } else { 0.0 };
     let t = Tokens::get();
     let response = egui::Frame::NONE
@@ -41,15 +41,14 @@ pub fn status_header(ui: &mut egui::Ui, key: &str, name: &str, status: StatusHea
         })
         .response;
     ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), Stroke::new(1.0, t.dialog_rule));
-    crate::scenario::publish_rect(&format!("{key}:status_header"), response.rect);
-    crate::scenario::publish_handle(&format!("{key}:status_header"), response.rect.center());
+    crate::scenario::publish_target(&format!("{key}:status_header"), response.rect);
     response
 }
 
 /// Determinate progress bar for a running operation (a download, a file load), full width and
 /// `space_6` tall; `fraction` is clamped (non-finite counts as zero). Pair it with a `text_block`
 /// that names the step. Tokens: `space_3/6, dialog_rule, accent`.
-pub fn progress(ui: &mut egui::Ui, key: &str, fraction: f32) -> egui::Response {
+pub(crate) fn progress(ui: &mut egui::Ui, key: &str, fraction: f32) -> egui::Response {
     let t = Tokens::get();
     let fraction = if fraction.is_finite() { fraction.clamp(0.0, 1.0) } else { 0.0 };
     let (bar, response) = ui.allocate_exact_size(vec2(ui.available_width().max(0.0), t.space_6), egui::Sense::hover());

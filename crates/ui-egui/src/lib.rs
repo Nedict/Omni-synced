@@ -26,6 +26,7 @@ pub mod crash_ui;
 pub mod deferred;
 pub mod delete;
 pub mod design_properties;
+mod dialog_descriptor;
 pub mod dialogs;
 pub mod dialogs_appearance;
 pub mod dialogs_assembly;
@@ -148,6 +149,9 @@ pub mod render_workspace;
 mod revolve_edit_tests;
 #[cfg(test)]
 mod revolve_manipulator_tests;
+mod rule_editor;
+#[cfg(test)]
+mod rule_editor_tests;
 pub mod scenario;
 pub mod select_other;
 pub mod selection;
@@ -1696,6 +1700,8 @@ pub fn now_ms() -> f64 {
 
 #[cfg(test)]
 mod picker_test_support;
+#[cfg(test)]
+mod test_support;
 
 /// A SolidCraft design file (`.solidcraft`, or a design saved as JSON), as opposed to a STEP or
 /// mesh file.

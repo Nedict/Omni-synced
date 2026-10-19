@@ -6,6 +6,7 @@
 //! component shows where it goes, and with Animate the joint plays its motion.
 
 use crate::fonts::RichTextExt as _;
+use crate::ui_kit::{choice_row, expr_row, text_row};
 use egui::{Color32, Pos2, RichText, Stroke, vec2};
 use serde_json::{Value, json};
 use solidcraft_engine::Sel;
@@ -17,13 +18,14 @@ use solidcraft_engine::geom::{Aabb3, Mesh, Vec3};
 use crate::SolveApp;
 use crate::dialogs::{Dialog, Kind, combo, field, form_row};
 use crate::preview::{Built, Colors};
-use crate::selection::{BODIES, EDGES, FACES, SelInput, VERTICES};
+use crate::selection::{BODIES, EDGES, FACES, SelInput, SelectionExt as _, VERTICES, items as sel_items, point_value as pt, polyline_mid};
 use crate::theme::Tokens;
 
 use crate::viewport::Proj;
 
 #[path = "dialogs_trace.rs"]
 mod trace;
+pub(crate) use trace::stop_text;
 pub use trace::{TraceForm, picked_point};
 
 /// Joint types in the order the Type box lists them (command names).
@@ -298,9 +300,7 @@ fn current_values(s: &Session, index: usize) -> Vec<String> {
 
 /// A value with its unit, without trailing zeros ("12 mm", "37.5 deg").
 pub(crate) fn num(v: f64, unit: &str) -> String {
-    let s = format!("{v:.4}");
-    let s = s.trim_end_matches('0').trim_end_matches('.');
-    format!("{} {unit}", if s == "-0" { "0" } else { s })
+    format!("{} {unit}", crate::dialogs_coupling::trim(v))
 }
 
 /// The Edit Joint dialog for a joint (by id).
@@ -386,10 +386,6 @@ pub struct SnapPt {
     pub param: Value,
 }
 
-fn pt(v: Vec3) -> Value {
-    json!([v.x, v.y, v.z])
-}
-
 /// The occurrence placing a body (0: the root design), when the body is its primary instance.
 pub(crate) fn occurrence_of_body(s: &Session, body: &str) -> Option<u64> {
     let st = s.world_state();
@@ -419,19 +415,6 @@ pub fn circle_of(pts: &[Vec3]) -> Option<(Vec3, Vec3)> {
     let tol = (r * 2e-3).max(1e-6);
     let normal = nn.normalized()?;
     pts.iter().all(|p| (p.dist(center) - r).abs() < tol && (*p - center).dot(normal).abs() < tol).then_some((center, normal))
-}
-
-fn polyline_mid(pts: &[Vec3]) -> Vec3 {
-    let len: f64 = pts.windows(2).map(|w| w[0].dist(w[1])).sum();
-    let mut acc = 0.0;
-    for w in pts.windows(2) {
-        let l = w[0].dist(w[1]);
-        if acc + l >= len * 0.5 && l > 0.0 {
-            return w[0].lerp(w[1], (len * 0.5 - acc) / l);
-        }
-        acc += l;
-    }
-    pts.first().copied().unwrap_or_default()
 }
 
 /// Normal of the mesh face `f` near `p`.
@@ -519,9 +502,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
     let problem = joint_problem(app, k, inputs);
     match k {
         Asm::NewComponent { name, activate } => {
-            form_row(ui, "Name", |ui| {
-                enter |= crate::ui_kit::text_field(ui, name, crate::i18n::tr_label("Component1")).0;
-            });
+            enter |= text_row(ui, "Name", name, crate::i18n::tr_label("Component1")).0;
             crate::ui_kit::options(ui, "component_options", &mut [("Activate", activate)]);
         }
         Asm::Joint(f) => {
@@ -534,7 +515,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
                 ui.vertical(|ui| {
                     ui.add(egui::Label::new(RichText::new(why).color(t.warning)).wrap());
                     if !bodies.is_empty()
-                        && crate::ui_kit::secondary_button(ui, crate::i18n::tr("cmd.component_from_bodies"))
+                        && crate::ui_kit::button(ui, crate::i18n::tr("cmd.component_from_bodies"), crate::ui_kit::Button::Normal)
                             .on_hover_text(crate::i18n::tr("joint.from_bodies_hint"))
                             .clicked()
                     {
@@ -546,22 +527,16 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             form_row(ui, "Motion", |ui| {
                 ui.label("");
             });
-            form_row(ui, "Type", |ui| {
-                combo(ui, "jt_type", &TYPE_LABELS, &mut f.kind);
-            });
+            choice_row(ui, "Type", "jt_type", &mut f.kind, &TYPE_LABELS);
             f.fit_limits();
             if !f.as_built {
-                form_row(ui, "Angle", |ui| {
-                    enter |= field(ui, &mut f.angle);
-                });
+                enter |= expr_row(ui, "Angle", &mut f.angle);
                 crate::ui_kit::section(ui, "joint_position", "Position", false, |ui| {
                     for (l, v) in ["Offset X", "Offset Y", "Offset Z"].iter().zip(f.offset.iter_mut()) {
                         if f.editing.is_some() && *l != "Offset Z" {
                             continue;
                         }
-                        form_row(ui, l, |ui| {
-                            enter |= field(ui, v);
-                        });
+                        enter |= expr_row(ui, l, v);
                     }
                 });
                 crate::ui_kit::options(ui, "joint_options", &mut [("Flip", &mut f.flip)]);
@@ -570,7 +545,8 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             if kind != JointKind::Rigid {
                 form_row(ui, "Animate", |ui| {
                     let label = if f.animate { "■ Stop" } else { "▶ Play" };
-                    if crate::ui_kit::secondary_button(ui, label).on_hover_text("Play the joint's motion in the view").clicked() {
+                    if crate::ui_kit::button(ui, label, crate::ui_kit::Button::Normal).on_hover_text("Play the joint's motion in the view").clicked()
+                    {
                         f.animate = !f.animate;
                     }
                 });
@@ -581,12 +557,8 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
                             crate::ui_kit::checkbox(ui, "", on);
                         });
                         if *on {
-                            form_row(ui, "  Minimum", |ui| {
-                                enter |= field(ui, lo);
-                            });
-                            form_row(ui, "  Maximum", |ui| {
-                                enter |= field(ui, hi);
-                            });
+                            enter |= expr_row(ui, "  Minimum", lo);
+                            enter |= expr_row(ui, "  Maximum", hi);
                         }
                     }
                 });
@@ -601,9 +573,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             }
         }
         Asm::JointOrigin { name, .. } => {
-            form_row(ui, "Name", |ui| {
-                enter |= crate::ui_kit::text_field(ui, name, crate::i18n::tr_label("Joint Origin1")).0;
-            });
+            enter |= text_row(ui, "Name", name, crate::i18n::tr_label("Joint Origin1")).0;
         }
         Asm::RigidGroup => {}
         Asm::Drive { joint, values, focus } => {
@@ -619,9 +589,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
                 list.iter().filter_map(|i| s.doc.assembly.joints.get(*i)).map(|j| format!("{} ({:?})", j.name, j.kind)).collect();
             let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
             let mut pos = list.iter().position(|i| i == joint).unwrap_or(0);
-            form_row(ui, "Joint", |ui| {
-                combo(ui, "drv_joint", &refs, &mut pos);
-            });
+            choice_row(ui, "Joint", "drv_joint", &mut pos, &refs);
             let pick = list.get(pos).copied().unwrap_or(0);
             if pick != *joint || values.is_empty() {
                 *joint = pick;
@@ -702,9 +670,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             }
             let labels: Vec<&str> = joints.iter().map(|j| j.name.as_str()).collect();
             for (l, sel, idx, id) in [("Joint 1", &mut *a, &mut *ia, "ml_a"), ("Joint 2", &mut *b, &mut *ib, "ml_b")] {
-                form_row(ui, l, |ui| {
-                    combo(ui, id, &labels, sel);
-                });
+                choice_row(ui, l, id, sel, &labels);
                 let dofs = joints.get(*sel).map(|j| j.kind.dofs()).unwrap_or(&[]);
                 if dofs.len() > 1 {
                     form_row(ui, "  Value", |ui| {
@@ -716,23 +682,23 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
                     *idx = 0;
                 }
             }
-            form_row(ui, "Ratio", |ui| {
-                enter |= field(ui, ratio);
-            });
-            form_row(ui, "Offset", |ui| {
-                enter |= field(ui, offset);
-            });
+            enter |= expr_row(ui, "Ratio", ratio);
+            enter |= expr_row(ui, "Offset", offset);
         }
         Asm::Coupling(f) => enter |= crate::dialogs_coupling::rows(app, ui, f, inputs),
         Asm::Cam(f) => enter |= crate::dialogs_coupling::cam::rows(app, ui, f, inputs),
         Asm::Interference { result, overlaps, of, clearance } => {
             let picked: Vec<Sel> = inputs.first().map(|i| i.items.clone()).unwrap_or_default();
-            form_row(ui, "Clearance", |ui| {
-                enter |= field(ui, clearance);
-            });
+            enter |= expr_row(ui, "Clearance", clearance);
             form_row(ui, "", |ui| {
                 let stale = result.is_some() && *of != picked;
-                if crate::ui_kit::secondary_button(ui, crate::i18n::tr(if stale { "dialog.compute_again" } else { "dialog.compute" })).clicked() {
+                if crate::ui_kit::button(
+                    ui,
+                    crate::i18n::tr(if stale { "dialog.compute_again" } else { "dialog.compute" }),
+                    crate::ui_kit::Button::Normal,
+                )
+                .clicked()
+                {
                     let (r, o) = interference(app, &picked, clearance);
                     *result = Some(r);
                     *overlaps = o;
@@ -756,7 +722,7 @@ fn capital(s: &str) -> String {
 /// Run the check (overlaps, pairs closer than the clearance, each body's nearest neighbour) and
 /// find the overlapping volumes (world placement) to show in red.
 fn interference(app: &mut SolveApp, picked: &[Sel], clearance: &str) -> (Value, Vec<Mesh>) {
-    let names: Vec<String> = picked.iter().filter_map(|x| if let Sel::Body { name } = x { Some(name.clone()) } else { None }).collect();
+    let names: Vec<String> = picked.body_names();
     let (scale, _) = crate::prefs::unit_scale(&app.session.doc.units);
     let clearance = match crate::prefs::parse_length_mm(clearance, scale) {
         Some(v) if v >= 0.0 => v,
@@ -851,10 +817,6 @@ fn interference_rows(app: &SolveApp, ui: &mut egui::Ui, r: &Value) {
 
 // ---- commands ----
 
-fn sel_items(inputs: &[SelInput], i: usize) -> &[Sel] {
-    inputs.get(i).map(|x| x.items.as_slice()).unwrap_or(&[])
-}
-
 /// The body a pick is on.
 pub(crate) fn body_of(sel: &Sel) -> Option<&str> {
     match sel {
@@ -917,8 +879,7 @@ pub fn commands(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Result<Vec<(Str
     let cmd = |id: &str, p: Value| vec![(id.to_string(), p)];
     Ok(match k {
         Asm::NewComponent { name, activate } => {
-            let bodies: Vec<String> =
-                sel_items(inputs, 0).iter().filter_map(|x| if let Sel::Body { name } = x { Some(name.clone()) } else { None }).collect();
+            let bodies: Vec<String> = sel_items(inputs, 0).body_names();
             if bodies.is_empty() {
                 let mut p = json!({ "activate": activate });
                 if !name.trim().is_empty() {
@@ -1217,20 +1178,20 @@ fn joint_menu(
     open: &mut Option<Dialog>,
     run: &mut Option<(&'static str, Value)>,
 ) {
-    if crate::ui_kit::secondary_button(ui, crate::i18n::tr_label("Edit Joint")).clicked() {
+    if crate::ui_kit::button(ui, crate::i18n::tr_label("Edit Joint"), crate::ui_kit::Button::Normal).clicked() {
         *open = edit_joint(app, id);
         ui.close();
     }
-    if kind != JointKind::Rigid && crate::ui_kit::secondary_button(ui, crate::i18n::tr_label("Drive Joint")).clicked() {
+    if kind != JointKind::Rigid && crate::ui_kit::button(ui, crate::i18n::tr_label("Drive Joint"), crate::ui_kit::Button::Normal).clicked() {
         *open = drive_joint(app, id);
         ui.close();
     }
-    if crate::ui_kit::secondary_button(ui, crate::i18n::tr_label(if suppressed { "Unsuppress" } else { "Suppress" })).clicked() {
+    if crate::ui_kit::button(ui, crate::i18n::tr_label(if suppressed { "Unsuppress" } else { "Suppress" }), crate::ui_kit::Button::Normal).clicked() {
         *run = Some(("joint.edit", json!({"joint": id, "suppressed": !suppressed})));
         ui.close();
     }
     ui.separator();
-    if crate::ui_kit::secondary_button(ui, crate::i18n::tr_label("Delete")).clicked() {
+    if crate::ui_kit::button(ui, crate::i18n::tr_label("Delete"), crate::ui_kit::Button::Normal).clicked() {
         *run = Some(("joint.delete", json!({ "joint": id })));
         ui.close();
     }

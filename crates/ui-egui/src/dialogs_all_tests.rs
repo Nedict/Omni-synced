@@ -102,7 +102,7 @@ fn check_form(command: &str, labels: &[&str]) {
                 ui_kit::scope(ui, |ui| {
                     ui_kit::header(ui, spec.icon, tr(spec.label), || {});
                     rows(&mut h.app, &h.ctx, &mut d, ui);
-                    ui_kit::footer(ui, "OK", "Cancel", true, None);
+                    ui_kit::footer(ui, "OK", "Cancel", true, ui_kit::Footer::default());
                 });
             },
         );
@@ -175,7 +175,7 @@ fn check_form(command: &str, labels: &[&str]) {
     assert!(scenario::handle_at("dialog:cancel").is_some());
     let mut out = h.ctx.run_ui(egui::RawInput::default(), |ui| {
         ui_kit::scope(ui, |ui| {
-            assert_eq!(ui_kit::footer(ui, "OK", "Cancel", false, None), ui_kit::Action::None);
+            assert_eq!(ui_kit::footer(ui, "OK", "Cancel", false, ui_kit::Footer::default()), ui_kit::Action::None);
         });
     });
     out.textures_delta.clear();

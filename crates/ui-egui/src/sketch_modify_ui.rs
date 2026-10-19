@@ -348,10 +348,10 @@ fn alignment(ui: &mut egui::Ui, label: &str, alignment: &mut PatternAlignment, r
 }
 
 fn pattern_hint(ui: &mut egui::Ui) {
-    ui_kit::note(
+    ui_kit::text(
         ui,
-        "pattern",
         crate::i18n::tr_label("Counts include the original. Center balances copies; Flip chooses the extra side for even totals."),
+        ui_kit::Text::Note("pattern"),
     );
 }
 
@@ -376,7 +376,7 @@ pub fn rows(ui: &mut egui::Ui, k: &mut Mod) -> bool {
         }
         Mod::Mirror => {}
         Mod::Move { x, y, angle, copy } => {
-            enter |= ui_kit::value_pair_named(ui, "Position", [x, y], ["X", "Y"], ["X Distance", "Y Distance"]);
+            enter |= ui_kit::value_pair(ui, "Position", [x, y], ["X", "Y"], Some(["X Distance", "Y Distance"]));
             enter |= number(ui, "Angle", angle);
             ui_kit::options(ui, "move_options", &mut [("Create Copy", copy)]);
         }

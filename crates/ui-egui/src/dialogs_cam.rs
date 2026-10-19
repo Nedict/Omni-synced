@@ -14,7 +14,7 @@ use super::{ROUND, joint_row, occurrence, pick, picked_radius, trim, turn};
 use crate::SolveApp;
 use crate::dialogs::{combo, field, form_row};
 use crate::dialogs_assembly::Asm;
-use crate::selection::{EDGES, FACES, PROFILES, SelInput, VERTICES};
+use crate::selection::{EDGES, FACES, PROFILES, SelInput, SelectionExt as _, VERTICES};
 use crate::theme::Tokens;
 
 /// The follower types, as `joint.cam` takes them, and their labels.
@@ -125,7 +125,8 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, f: &mut CamForm, inputs: &[Se
     crate::ui_kit::options(ui, "cam_options", &mut [("Other side", &mut f.flip)]);
     form_row(ui, "Animate", |ui| {
         let label = if f.animate { "■ Stop" } else { "▶ Play" };
-        let r = crate::ui_kit::secondary_button(ui, label).on_hover_text(crate::i18n::tr_label("Play the joint's motion in the view"));
+        let r = crate::ui_kit::button(ui, label, crate::ui_kit::Button::Normal)
+            .on_hover_text(crate::i18n::tr_label("Play the joint's motion in the view"));
         crate::scenario::publish_handle("dialog:Animate", r.rect.center());
         if r.clicked() {
             f.animate = !f.animate;
@@ -151,8 +152,7 @@ pub fn commands(app: &SolveApp, f: &CamForm, inputs: &[SelInput]) -> Result<Vec<
     let profile = match items.first() {
         Some(Sel::Profile { sketch, index }) => json!({"sketch": sketch, "index": index}),
         Some(Sel::Edge { body, .. }) => {
-            let pts: Vec<Value> =
-                items.iter().filter_map(|x| if let Sel::Edge { point, .. } = x { Some(json!([point.x, point.y, point.z])) } else { None }).collect();
+            let pts: Vec<Value> = items.edge_points().into_iter().map(crate::selection::point_value).collect();
             let mut p = json!({ "edges": pts });
             if let Some(o) = occurrence(s, body) {
                 p["occurrence"] = json!(o);

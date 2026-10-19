@@ -1,3 +1,4 @@
+use crate::test_support::run_all;
 use serde_json::json;
 use solidcraft_engine::Session;
 
@@ -14,12 +15,6 @@ fn plate(mode: crate::shell::LayoutMode) -> SolveApp {
     let mut app = SolveApp::new(s, Services::default());
     app.ui.layout = mode;
     app
-}
-
-fn run_all(app: &mut SolveApp, c: Vec<(String, Value)>) {
-    for (id, p) in c {
-        app.run(&id, p).unwrap();
-    }
 }
 
 /// The picks decide the flange: a profile makes the base, edges then edge flanges with the
@@ -154,19 +149,11 @@ fn shallow_pocket_overlay_labels_depth_without_drawing_a_through_void() {
         let Kind::Sheet(Sm::FlatPattern { data, .. }) = &mut dialog.kind else { panic!("flat dialog") };
         *data = Some(Ok(flat));
         let ctx = crate::fonts::test_context();
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let output = crate::test_support::frame(&ctx, egui::RawInput::default(), |ui| {
             let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("flat-pocket-test")));
             assert!(overlay(&mut app, &painter, Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0)), &dialog));
         });
-        output.textures_delta.clear();
-        let texts: Vec<&str> = output
-            .shapes
-            .iter()
-            .filter_map(|s| match &s.shape {
-                egui::Shape::Text(text) => Some(text.galley.text()),
-                _ => None,
-            })
-            .collect();
+        let texts: Vec<_> = crate::test_support::text_shapes(&output).map(|text| text.galley.text()).collect();
         assert!(texts.contains(&"Bottom pocket: 1.00 mm deep"));
         assert!(texts.contains(&"Pocket boundary (material remains)"));
         let paths: Vec<_> = output
@@ -217,12 +204,12 @@ fn flat_pattern_islands_fit_before_the_actual_command_panel() {
         for _ in 0..3 {
             output =
                 ctx.run_ui(egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))), ..Default::default() }, |ui| {
-                    crate::frame::docked("FLAT PATTERN", id, pos2(1400.0, 294.0), 540.0, crate::frame::Width::Normal).min_width(360.0).show(
-                        ui.ctx(),
-                        |ui| {
+                    crate::ui_kit::Panel::new("FLAT PATTERN", id, pos2(1400.0, 294.0), viewport, crate::frame::Side::Right, egui::Frame::NONE)
+                        .width(360.0)
+                        .window()
+                        .show(ui.ctx(), |ui| {
                             ui.label("Flat size: 50 × 10 × 2.5 mm");
-                        },
-                    );
+                        });
                     let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("island-fit")));
                     assert!(overlay(
                         &mut app,
@@ -274,19 +261,12 @@ fn coincident_top_and_bottom_pocket_depths_share_a_readable_annotation() {
         let Kind::Sheet(Sm::FlatPattern { data, .. }) = &mut dialog.kind else { panic!("flat dialog") };
         *data = Some(Ok(flat));
         let ctx = crate::fonts::test_context();
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let output = crate::test_support::frame(&ctx, egui::RawInput::default(), |ui| {
             let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("coincident-pocket-test")));
             assert!(overlay(&mut app, &painter, Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0)), &dialog));
         });
-        output.textures_delta.clear();
-        let labels: Vec<_> = output
-            .shapes
-            .iter()
-            .filter_map(|shape| match &shape.shape {
-                egui::Shape::Text(text) if text.galley.text().contains("pocket:") => Some(text.galley.text()),
-                _ => None,
-            })
-            .collect();
+        let labels: Vec<_> =
+            crate::test_support::text_shapes(&output).map(|text| text.galley.text()).filter(|text| text.contains("pocket:")).collect();
         assert_eq!(labels.len(), 1, "coincident depths must not overwrite one another");
         assert!(labels[0].contains("Top pocket: 1.00 mm deep"));
         assert!(labels[0].contains("Bottom pocket: 0.50 mm deep"));
@@ -635,8 +615,7 @@ fn frame(app: &mut SolveApp, ctx: &egui::Context, time: &mut f64, mods: egui::Mo
         events,
         ..Default::default()
     };
-    let mut out = ctx.run_ui(raw, |ui| crate::viewport::show(app, ui));
-    out.textures_delta.clear();
+    crate::test_support::frame(ctx, raw, |ui| crate::viewport::show(app, ui));
 }
 
 /// The same pan and zoom input moves the flat pattern's view exactly as it moves the Design

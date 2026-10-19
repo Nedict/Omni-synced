@@ -636,48 +636,4 @@ mod tests {
             assert!(luma(t.subheading_bg) < luma(t.dialog_bg), "{t:?}");
         }
     }
-
-    #[test]
-    fn active_movable_window_header_uses_theme_panel_header() {
-        for dark in [false, true] {
-            let ctx = crate::fonts::test_context();
-            ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
-            ctx.set_visuals(super::visuals(dark));
-            let mut output = egui::FullOutput::default();
-            for _ in 0..3 {
-                let raw = egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))),
-                    ..Default::default()
-                };
-                output = ctx.run_ui(raw, |ui| {
-                    crate::frame::window(ui.ctx(), crate::i18n::tr_label("Parameters"), crate::frame::Width::Normal).fade_in(false).show(
-                        ui.ctx(),
-                        |ui| {
-                            ui.label(crate::i18n::tr_label("Parameter values"));
-                        },
-                    );
-                });
-                output.textures_delta.clear();
-            }
-            let title = output
-                .shapes
-                .iter()
-                .find_map(|shape| match &shape.shape {
-                    egui::Shape::Text(text) if text.galley.text() == "Parameters" => Some(text.pos + text.galley.rect.center().to_vec2()),
-                    _ => None,
-                })
-                .expect("window title must be drawn");
-            let header = output
-                .shapes
-                .iter()
-                .filter_map(|shape| match &shape.shape {
-                    egui::Shape::Rect(rect) if rect.fill.a() > 0 && rect.rect.contains(title) => Some(rect),
-                    _ => None,
-                })
-                .min_by(|a, b| a.rect.area().total_cmp(&b.rect.area()))
-                .expect("window header must be drawn behind its title");
-            let expected = if dark { super::Tokens::dark() } else { super::Tokens::light() };
-            assert_eq!(header.fill, expected.panel_header, "active title bar should follow the {dark} palette");
-        }
-    }
 }

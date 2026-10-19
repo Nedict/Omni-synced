@@ -2,13 +2,14 @@
 //! twist over the path's length, the profile's scale at the end, and guide rails with how they
 //! reshape the profile.
 
+use crate::selection::SelectionExt as _;
+use crate::ui_kit::{choice_row, expr_row};
 use serde_json::{Value, json};
 use solidcraft_engine::Sel;
 use solidcraft_engine::doc::{Expr, Mat, RailFit, SweepOrientation, SweepRail};
 use solidcraft_engine::geom::Vec3;
 
 use crate::SolveApp;
-use crate::dialogs::{combo, field, form_row};
 use crate::selection::{AXES, CURVES, EDGES, SelInput};
 
 /// The orientation choices, in combo order: perpendicular, parallel, a direction.
@@ -107,20 +108,12 @@ pub fn rows(ui: &mut egui::Ui, o: &mut SweepOpts, id: &str) -> bool {
 /// feature's own rows (such as its operation) stay above the section.
 pub fn rows_with(ui: &mut egui::Ui, o: &mut SweepOpts, id: &str, between: impl FnOnce(&mut egui::Ui)) -> bool {
     let mut enter = false;
-    form_row(ui, "Orientation", |ui| {
-        combo(ui, &format!("{id}_orient"), &ORIENTATIONS, &mut o.orientation);
-    });
+    choice_row(ui, "Orientation", &format!("{id}_orient"), &mut o.orientation, &ORIENTATIONS);
     between(ui);
     crate::ui_kit::section(ui, id, "Advanced", false, |ui| {
-        form_row(ui, "Twist", |ui| {
-            enter |= field(ui, &mut o.twist);
-        });
-        form_row(ui, "End Scale", |ui| {
-            enter |= field(ui, &mut o.scale);
-        });
-        form_row(ui, "Rail Fit", |ui| {
-            combo(ui, &format!("{id}_rail_fit"), &RAIL_FITS, &mut o.rail_fit);
-        });
+        enter |= expr_row(ui, "Twist", &mut o.twist);
+        enter |= expr_row(ui, "End Scale", &mut o.scale);
+        choice_row(ui, "Rail Fit", &format!("{id}_rail_fit"), &mut o.rail_fit, &RAIL_FITS);
     });
     enter
 }
@@ -132,7 +125,7 @@ pub fn rows_with(ui: &mut egui::Ui, o: &mut SweepOpts, id: &str, between: impl F
 pub fn params(app: &SolveApp, o: &SweepOpts, picked: Option<&Sel>, rails: [&[Sel]; 2], p: &mut Value) -> Result<(), String> {
     let mut given = Vec::new();
     for sels in rails {
-        let curves: Vec<String> = sels.iter().filter_map(|x| if let Sel::SketchCurve { id } = x { Some(id.clone()) } else { None }).collect();
+        let curves: Vec<String> = sels.curve_ids();
         if curves.is_empty() {
             continue;
         }

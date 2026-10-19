@@ -109,14 +109,14 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &[SelInpu
         #[cfg(target_arch = "wasm32")]
         {
             let _ = inputs;
-            ui_kit::note(
+            ui_kit::text(
                 ui,
-                "library_platform",
                 crate::i18n::tr_label("Open local libraries in the desktop app. You can export this design's library here."),
+                ui_kit::Text::Note("library_platform"),
             );
         }
         ui_kit::checkbox(ui, crate::i18n::tr_label("Replace existing library file"), &mut k.local.overwrite);
-        let save = ui_kit::secondary_button(ui, crate::i18n::tr_label("Export design library..."));
+        let save = ui_kit::button(ui, crate::i18n::tr_label("Export design library..."), ui_kit::Button::Normal);
         crate::scenario::publish_handle("library:export", save.rect.center());
         if save.clicked() {
             if app.services.pick_save.is_some() {
@@ -125,10 +125,10 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &[SelInpu
                 export(app, k, k.local.path.clone(), k.local.overwrite);
             }
         }
-        ui_kit::note(
+        ui_kit::text(
             ui,
-            "library_export",
             crate::i18n::tr_label("Apply your appearance first. Exports assigned appearances and materials created in this design."),
+            ui_kit::Text::Note("library_export"),
         );
     });
 }
@@ -145,10 +145,10 @@ fn import_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &[SelI
         k.local.selected = None;
     }
     ui.horizontal(|ui| {
-        if ui_kit::secondary_button(ui, crate::i18n::tr_label("Open library...")).clicked() {
+        if ui_kit::button(ui, crate::i18n::tr_label("Open library..."), ui_kit::Button::Normal).clicked() {
             open_library(app, k.local.token.clone());
         }
-        let load_button = ui_kit::enabled_button(ui, "Load library", !k.local.path.is_empty());
+        let load_button = ui_kit::button(ui, "Load library", ui_kit::Button::Enabled(!k.local.path.is_empty()));
         crate::scenario::publish_handle("library:load", load_button.rect.center());
         if load_button.clicked() {
             k.local.catalog = None;
@@ -157,7 +157,7 @@ fn import_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &[SelI
         }
     });
     if let Some(catalog) = &k.local.catalog {
-        ui_kit::text_block(ui, "library_name", &catalog.name, false);
+        ui_kit::text(ui, &catalog.name, ui_kit::Text::Report("library_name", false));
         let search = ui_kit::row(ui, "Search this library", |ui| {
             let id = ui.make_persistent_id("library_search");
             ui_kit::search_field(ui, id, &mut k.local.search, "Search this library")
@@ -173,7 +173,7 @@ fn import_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &[SelI
             .filter(|entry| matches!(&entry.definition, Definition::Appearance(_)) && entry.definition.name().to_lowercase().contains(&query))
             .collect();
         if appearances.is_empty() {
-            ui_kit::note(ui, "library_empty", crate::i18n::tr_label("No matching appearance presets."));
+            ui_kit::text(ui, crate::i18n::tr_label("No matching appearance presets."), ui_kit::Text::Note("library_empty"));
         }
         let row_height = ui_kit::row_height();
         egui::ScrollArea::vertical().id_salt("local_library_entries").max_height(row_height * 5.0).show_rows(
@@ -218,7 +218,7 @@ fn import_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &[SelI
         .cloned();
     let picked = inputs.first().map(|input| input.items.as_slice()).unwrap_or(&[]);
     let selected = selected_params(k, picked);
-    let apply = ui_kit::enabled_button(ui, "Apply library appearance", entry.is_some() && selected.is_some());
+    let apply = ui_kit::button(ui, "Apply library appearance", ui_kit::Button::Enabled(entry.is_some() && selected.is_some()));
     crate::scenario::publish_handle("library:apply", apply.rect.center());
     if apply.clicked()
         && let (Some(entry), Some(selected)) = (entry, selected)

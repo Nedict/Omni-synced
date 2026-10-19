@@ -391,8 +391,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
         let tr = Rect::from_min_size(pos2(x, r.top() + 4.0), vec2(w - 2.0, r.height() - 8.0));
         let active = !app.home.open && (i == app.docs.active || app.docs.slots.is_empty());
         let resp = ui.interact(tr, ui.id().with(("doc_tab", i)), Sense::click_and_drag());
-        crate::scenario::publish_handle(&format!("tab:design:{i}"), tr.center());
-        crate::scenario::publish_rect(&format!("tab:design:{i}"), tr);
+        crate::scenario::publish_target(&format!("tab:design:{i}"), tr);
         // The tabs are part of the title bar: dragging one moves the window, a double click
         // maximizes it.
         if app.custom_titlebar || app.integrated_titlebar {
@@ -419,8 +418,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
         let xr = Rect::from_center_size(pos2(tr.right() - 13.0, tr.center().y), vec2(16.0, 16.0));
         let show_close = active || resp.hovered() || ui.rect_contains_pointer(tr);
         let xresp = ui.interact(xr, ui.id().with(("doc_close", i)), if show_close { Sense::click() } else { Sense::hover() });
-        crate::scenario::publish_handle(&format!("tab:close:{i}"), xr.center());
-        crate::scenario::publish_rect(&format!("tab:close:{i}"), xr);
+        crate::scenario::publish_target(&format!("tab:close:{i}"), xr);
         if show_close && (xresp.hovered() || xresp.has_focus()) {
             ui.painter().rect_filled(xr, 3.0, t.app_bar_hover_strong);
         }
@@ -581,7 +579,11 @@ pub fn prompt(app: &mut SolveApp, ctx: &egui::Context) {
                 Answer::Cancel => ui_kit::Action::Cancel,
             })
             .show(ctx, true, |ui| {
-                ui_kit::text_block(ui, "unsaved", &crate::i18n::format("document.unsaved_changes", &[("name", &name_display)]), false);
+                ui_kit::text(
+                    ui,
+                    &crate::i18n::format("document.unsaved_changes", &[("name", &name_display)]),
+                    ui_kit::Text::Report("unsaved", false),
+                );
             });
     answer = match action {
         ui_kit::Action::Ok => Some(Answer::Save),

@@ -47,11 +47,6 @@ fn heading_weight_field_surfaces_and_disclosures_follow_tokens_in_both_themes() 
             egui::Shape::Rect(rect) if rect.fill == t.control_fill && rect.stroke.width == 1.0 && rect.stroke.color == t.control_border => {
                 *fields += 1
             }
-            egui::Shape::Vec(shapes) => {
-                for shape in shapes {
-                    inspect(shape, t, title, section, fields);
-                }
-            }
             _ => {}
         }
     }
@@ -61,7 +56,7 @@ fn heading_weight_field_surfaces_and_disclosures_follow_tokens_in_both_themes() 
         let ctx = crate::fonts::test_context();
         ctx.set_visuals(if dark { egui::Visuals::dark() } else { egui::Visuals::light() });
         let mut value = "3 mm".to_string();
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let output = crate::test_support::frame(&ctx, egui::RawInput::default(), |ui| {
             ui.set_width(300.0);
             scope(ui, |ui| {
                 header(ui, "fillet", "Fillet", || {});
@@ -71,10 +66,9 @@ fn heading_weight_field_surfaces_and_disclosures_follow_tokens_in_both_themes() 
                 section(ui, "options", "Options", true, |_| {});
             });
         });
-        output.textures_delta.clear();
         let (mut title, mut section, mut fields) = (0, 0, 0);
         for shape in &output.shapes {
-            inspect(&shape.shape, Tokens::get(), &mut title, &mut section, &mut fields);
+            crate::test_support::each_shape(&shape.shape, &mut |shape| inspect(shape, Tokens::get(), &mut title, &mut section, &mut fields));
         }
         assert_eq!(scenario::rect_of("dialog:header").unwrap().height(), Tokens::get().form_header_height);
         assert_eq!(title, 1, "the semibold heading is painted once");
@@ -91,7 +85,7 @@ fn panel_keeps_actions_and_body_geometry_in_both_layouts() {
         let vp = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 480.0));
         for _ in 0..3 {
             scenario::clear_handles();
-            let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(vp), ..Default::default() }, |_| {
+            crate::test_support::frame(&ctx, egui::RawInput { screen_rect: Some(vp), ..Default::default() }, |_| {
                 let side = crate::frame::Side::Right;
                 let frame = Panel::feature_frame(&ctx, layout, side);
                 let anchor = egui::pos2(vp.right() - crate::shell::SHELL_GAP, vp.top());
@@ -119,7 +113,6 @@ fn panel_keeps_actions_and_body_geometry_in_both_layouts() {
                     );
                 });
             });
-            output.textures_delta.clear();
         }
         let header = scenario::rect_of("dialog:header").unwrap();
         let body = scenario::rect_of("dialog:row:Radius").unwrap();
@@ -143,7 +136,7 @@ fn palette_scrolls_short_views_and_retains_its_status_and_action_handles() {
             let vp = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, height));
             for _ in 0..3 {
                 scenario::clear_handles();
-                let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(vp), ..Default::default() }, |_| {
+                crate::test_support::frame(&ctx, egui::RawInput { screen_rect: Some(vp), ..Default::default() }, |_| {
                     let frame = Panel::palette_frame(&ctx, layout);
                     let bottom = vp.bottom() - crate::shell::SHELL_GAP;
                     let panel = Panel::new(
@@ -181,7 +174,6 @@ fn palette_scrolls_short_views_and_retains_its_status_and_action_handles() {
                         });
                     });
                 });
-                output.textures_delta.clear();
             }
             let scroll = scenario::rect_of("sketch_palette:options").unwrap();
             assert!(scroll.is_finite() && scroll.is_positive());
@@ -201,7 +193,7 @@ fn wide_tables_remain_bounded_with_pinned_actions_on_small_viewports() {
             let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 360.0));
             for _ in 0..3 {
                 scenario::clear_handles();
-                let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(viewport), ..Default::default() }, |_| {
+                crate::test_support::frame(&ctx, egui::RawInput { screen_rect: Some(viewport), ..Default::default() }, |_| {
                     let side = crate::frame::Side::Right;
                     let anchor = viewport.right_top();
                     let panel = Panel::new("Table", egui::Id::new("wide"), anchor, viewport, side, Panel::feature_frame(&ctx, layout, side)).wide();
@@ -220,14 +212,13 @@ fn wide_tables_remain_bounded_with_pinned_actions_on_small_viewports() {
                             true,
                             |ui| {
                                 for _ in 0..30 {
-                                    note(ui, "row", "Table body");
+                                    text(ui, "Table body", Text::Note("row"));
                                 }
                                 ComputeStatus { text: None, busy: false, applying: false }
                             },
                         );
                     });
                 });
-                output.textures_delta.clear();
             }
             let header = scenario::rect_of("dialog:header").unwrap();
             let footer = scenario::rect_of("dialog:footer").unwrap();
@@ -247,7 +238,8 @@ fn prompt_is_one_and_a_half_cards_wide_with_its_actions_in_both_themes() {
         let mut action = Action::None;
         for _ in 0..3 {
             scenario::clear_handles();
-            let mut output = ctx.run_ui(
+            crate::test_support::frame(
+                &ctx,
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
                     focused: true,
@@ -258,12 +250,11 @@ fn prompt_is_one_and_a_half_cards_wide_with_its_actions_in_both_themes() {
                         .actions("Delete", "Cancel", Some("Keep"))
                         .selected(Action::Apply)
                         .show(ui.ctx(), true, |ui| {
-                            text_block(ui, "body", "Three features go with it.", false);
+                            text(ui, "Three features go with it.", Text::Report("body", false));
                         })
                         .1;
                 },
             );
-            output.textures_delta.clear();
         }
         assert_eq!(action, Action::None);
         let header = scenario::rect_of("dialog:header").unwrap();
@@ -287,7 +278,8 @@ fn escape_closes_a_prompt_unless_it_keeps_the_card_open() {
         let mut action = Action::None;
         for frame in 0..3 {
             let events = if frame == 2 { crate::ui_kit::test_support::key(egui::Key::Escape) } else { Vec::new() };
-            let mut output = ctx.run_ui(
+            crate::test_support::frame(
+                &ctx,
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
                     focused: true,
@@ -299,12 +291,11 @@ fn escape_closes_a_prompt_unless_it_keeps_the_card_open() {
                     let prompt = if keep { prompt.keep_open_on_escape() } else { prompt };
                     action = prompt
                         .show(ui.ctx(), true, |ui| {
-                            text_block(ui, "body", "A long text the user is editing.", false);
+                            text(ui, "A long text the user is editing.", Text::Report("body", false));
                         })
                         .1;
                 },
             );
-            output.textures_delta.clear();
         }
         assert_eq!(action, if keep { Action::None } else { Action::Cancel }, "keep_open_on_escape={keep}");
     }

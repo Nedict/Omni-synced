@@ -4,7 +4,7 @@ use crate::{fonts::RichTextExt as _, scenario, theme::Tokens};
 use egui::{Response, RichText, Ui, vec2};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Action {
+pub(crate) enum Action {
     #[default]
     None,
     Ok,
@@ -14,14 +14,14 @@ pub enum Action {
 
 /// Every enabled button shows the pointing hand on hover, as the application's other clickable
 /// chrome does. A disabled button stays inert and keeps the arrow.
-pub(crate) fn pointer_on_hover(ui: &Ui, response: &Response) {
+fn pointer_on_hover(ui: &Ui, response: &Response) {
     if response.enabled() && response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
 }
 
 /// Icon action inside an existing rectangle. Tokens: `form_icon_inset, text, text_dim; icon palette`.
-pub fn icon_button_at(ui: &mut Ui, rect: egui::Rect, icon: &str, label: &str) -> Response {
+pub(crate) fn icon_button_at(ui: &mut Ui, rect: egui::Rect, icon: &str, label: &str) -> Response {
     let t = Tokens::get();
     let response = ui.interact(rect, ui.make_persistent_id(("icon_button", icon, label)), egui::Sense::click());
     crate::icons::paint_ink(
@@ -36,7 +36,7 @@ pub fn icon_button_at(ui: &mut Ui, rect: egui::Rect, icon: &str, label: &str) ->
 }
 
 /// Esc cancels; unowned Enter submits only when valid. Tokens: `none`.
-pub fn keyboard(ctx: &egui::Context, ok_enabled: bool) -> Action {
+pub(crate) fn keyboard(ctx: &egui::Context, ok_enabled: bool) -> Action {
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         Action::Cancel
     } else if ok_enabled && ctx.memory(|m| m.focused().is_none()) && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -46,46 +46,16 @@ pub fn keyboard(ctx: &egui::Context, ok_enabled: bool) -> Action {
     }
 }
 
-/// Pinned OK / optional Apply / Cancel; returns Action. Tokens: `form_footer_height, form_button_height, dialog_footer/rule, radius_lg, control_*, accent, on_accent, font_label, space_6/10/12/16`.
-pub fn footer(ui: &mut Ui, ok_label: &str, cancel_label: &str, ok_enabled: bool, apply_label: Option<&str>) -> Action {
-    footer_impl(ui, ok_label, cancel_label, ok_enabled, apply_label, None, None)
+/// Pinned actions with optional Apply, compute status and keyboard selection mark.
+#[derive(Default)]
+pub(crate) struct Footer<'a> {
+    pub apply: Option<&'a str>,
+    pub status: Option<&'a str>,
+    pub selected: Option<Action>,
 }
 
-/// Footer whose `selected` action is marked (arrow keys move the mark in a prompt); an empty
-/// `ok_label` leaves out the OK action (a close-only card). Tokens: `footer tokens, selected_bg, accent`.
-pub(crate) fn footer_selected(
-    ui: &mut Ui,
-    ok_label: &str,
-    cancel_label: &str,
-    ok_enabled: bool,
-    apply_label: Option<&str>,
-    selected: Option<Action>,
-) -> Action {
-    footer_impl(ui, ok_label, cancel_label, ok_enabled, apply_label, None, selected)
-}
-
-/// Footer with stable button IDs and compute text. Tokens: `footer tokens, text_dim, space_4/8`.
-pub(crate) fn footer_with_status(
-    ui: &mut Ui,
-    ok_label: &str,
-    cancel_label: &str,
-    ok_enabled: bool,
-    apply_label: Option<&str>,
-    status: Option<&str>,
-) -> Action {
-    footer_impl(ui, ok_label, cancel_label, ok_enabled, apply_label, status, None)
-}
-
-/// Shared footer implementation. Tokens: `footer tokens`.
-fn footer_impl(
-    ui: &mut Ui,
-    ok_label: &str,
-    cancel_label: &str,
-    ok_enabled: bool,
-    apply_label: Option<&str>,
-    status: Option<&str>,
-    selected: Option<Action>,
-) -> Action {
+pub(crate) fn footer(ui: &mut Ui, ok_label: &str, cancel_label: &str, ok_enabled: bool, options: Footer<'_>) -> Action {
+    let Footer { apply: apply_label, status, selected } = options;
     let t = Tokens::get();
     let ok_enabled = ok_enabled && !ok_label.is_empty();
     // The footer is a full-width band (the card has no margin of its own): its own fill, a rule
@@ -144,8 +114,7 @@ fn footer_impl(
                     Action::Apply => "dialog:apply",
                     _ => "dialog:cancel",
                 };
-                scenario::publish_handle(key, response.rect.center());
-                scenario::publish_rect(key, response.rect);
+                scenario::publish_target(key, response.rect);
                 scenario::publish_handle(&format!("dialog:{label}"), response.rect.center());
                 if response.clicked() {
                     action = kind;
@@ -164,14 +133,14 @@ fn footer_impl(
 }
 
 /// One equal-width secondary action, with optional existing icon master.
-pub struct PairButton<'a> {
+pub(crate) struct PairButton<'a> {
     pub key: &'a str,
     pub label: &'a str,
     pub icon: Option<&'a str>,
 }
 
 /// Equal-width secondary actions with optional icons and selected state. Tokens: `form_button_height, control_*, selected_bg, hover, font_label, text, icon/fill, accent, sketch_footer_icon_size, space_4/6/10`.
-pub fn button_pair(ui: &mut egui::Ui, key: &str, states: [bool; 2], buttons: [PairButton<'_>; 2]) -> (bool, bool) {
+pub(crate) fn button_pair(ui: &mut egui::Ui, key: &str, states: [bool; 2], buttons: [PairButton<'_>; 2]) -> (bool, bool) {
     let t = Tokens::get();
     ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), egui::Stroke::new(1.0, t.dialog_rule));
     let mut clicked = [false; 2];
@@ -216,8 +185,7 @@ pub fn button_pair(ui: &mut egui::Ui, key: &str, states: [bool; 2], buttons: [Pa
                 painter.galley(egui::pos2(left + icon_width, rect.center().y - galley.size().y / 2.0), galley, t.text);
                 response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), on, label));
                 pointer_on_hover(ui, &response);
-                crate::scenario::publish_handle(&format!("{key}:{}", button.key), rect.center());
-                crate::scenario::publish_rect(&format!("{key}:{}", button.key), rect);
+                crate::scenario::publish_target(&format!("{key}:{}", button.key), rect);
                 if let Some(value) = clicked.get_mut(index) {
                     *value = response.on_hover_text(label).clicked();
                 }
@@ -227,40 +195,37 @@ pub fn button_pair(ui: &mut egui::Ui, key: &str, states: [bool; 2], buttons: [Pa
     (clicked.first().copied().unwrap_or(false), clicked.get(1).copied().unwrap_or(false))
 }
 
-/// Ordinary secondary action preserving native sizing. Tokens: `scope font/control/spacing tokens`.
-pub fn secondary_button(ui: &mut Ui, label: impl Into<egui::WidgetText>) -> Response {
+/// Secondary button variants preserve native sizing and enabled-button translation.
+pub(crate) enum Button {
+    Normal,
+    Small,
+    Enabled(bool),
+}
+
+pub(crate) fn button(ui: &mut Ui, label: impl Into<egui::WidgetText>, options: Button) -> Response {
     let label = label.into();
     let key = label.text().to_owned();
-    let response = ui.button(label);
+    let draw = |ui: &mut Ui, label| match options {
+        Button::Small => ui.small_button(label),
+        _ => ui.button(label),
+    };
+    let response = match options {
+        Button::Enabled(enabled) => ui.add_enabled_ui(enabled, |ui| draw(ui, crate::i18n::tr_label(&key).into())).inner,
+        _ => draw(ui, label),
+    };
     pointer_on_hover(ui, &response);
-    publish_button(ui, &response, &key);
+    let key = if matches!(options, Button::Enabled(_)) { crate::i18n::tr_label(&key) } else { &key };
+    publish_button(ui, &response, key);
     response
 }
 
 /// Accent action outside the footer. Tokens: `accent, on_accent; scope tokens`.
-pub fn primary_button(ui: &mut Ui, label: &str) -> Response {
+#[cfg(any(not(target_arch = "wasm32"), test))]
+pub(crate) fn primary_button(ui: &mut Ui, label: &str) -> Response {
     let t = Tokens::get();
     let response = ui.add(egui::Button::new(RichText::new(crate::i18n::tr_label(label)).color(t.on_accent)).fill(t.accent));
     pointer_on_hover(ui, &response);
-    scenario::publish_rect(&format!("dialog:button:{label}"), response.rect);
-    scenario::publish_handle(&format!("dialog:button:{label}"), response.rect.center());
-    response
-}
-
-/// Compact inline action preserving native sizing. Tokens: `scope font/control tokens`.
-pub fn small_button(ui: &mut Ui, label: &str) -> Response {
-    let response = ui.small_button(label);
-    pointer_on_hover(ui, &response);
-    publish_button(ui, &response, label);
-    response
-}
-
-/// Allocated control-height icon action. Tokens: `control_height; icon_button_at tokens`.
-pub fn icon_button(ui: &mut Ui, label: &str, icon: &str) -> Response {
-    let (rect, _) = ui.allocate_exact_size(vec2(row_height(), row_height()), egui::Sense::hover());
-    let response = icon_button_at(ui, rect, icon, label);
-    scenario::publish_rect(&format!("dialog:button:{label}"), rect);
-    scenario::publish_handle(&format!("dialog:button:{label}"), rect.center());
+    scenario::publish_target(&format!("dialog:button:{label}"), response.rect);
     response
 }
 
@@ -271,19 +236,12 @@ mod tests;
 // Additional identities must never replace an existing field handle in compound rows.
 fn publish_button(ui: &Ui, response: &Response, label: &str) {
     let key = format!("dialog:button:{}:{label}", super::layout::label(ui));
-    scenario::publish_handle(&key, response.rect.center());
-    scenario::publish_rect(&key, response.rect);
-}
-
-/// Secondary action with caller-owned enabled state, retaining the native label.
-pub fn enabled_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
-    ui.add_enabled_ui(enabled, |ui| secondary_button(ui, crate::i18n::tr_label(label))).inner
+    scenario::publish_target(&key, response.rect);
 }
 
 /// Nested action menu in a dense table. Tokens: scope control/font tokens.
-pub fn action_menu<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<Option<R>> {
+pub(crate) fn action_menu<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<Option<R>> {
     let response = ui.menu_button(crate::i18n::tr_label(label), |ui| super::scope(ui, add));
-    scenario::publish_rect(&format!("dialog:menu:{label}"), response.response.rect);
-    scenario::publish_handle(&format!("dialog:menu:{label}"), response.response.rect.center());
+    scenario::publish_target(&format!("dialog:menu:{label}"), response.response.rect);
     response
 }

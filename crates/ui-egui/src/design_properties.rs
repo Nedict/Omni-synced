@@ -104,21 +104,21 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 ui_kit::caption(ui, label, crate::i18n::tr("ui.design_properties.not_text"));
             }
         }
-        ui_kit::note(ui, "exports", crate::i18n::tr("ui.design_properties.exports"));
+        ui_kit::text(ui, crate::i18n::tr("ui.design_properties.exports"), ui_kit::Text::Note("exports"));
         let others: Vec<(&String, &Value)> = metadata.others().collect();
         if !others.is_empty() {
             let heading = format!("{} ({})", crate::i18n::tr("ui.design_properties.others"), others.len());
             ui_kit::section(ui, "sc_design_properties_others", &heading, false, |ui| {
-                ui_kit::note(ui, "others", crate::i18n::tr("ui.design_properties.others_note"));
+                ui_kit::text(ui, crate::i18n::tr("ui.design_properties.others_note"), ui_kit::Text::Note("others"));
                 egui::ScrollArea::vertical().max_height(ui_kit::row_height() * OTHERS_ROWS).show(ui, |ui| {
                     for (key, value) in others {
-                        ui_kit::row(ui, key, |ui| ui_kit::cell_text(ui, &preview(value)));
+                        ui_kit::row(ui, key, |ui| ui_kit::text(ui, &preview(value), ui_kit::Text::Cell));
                     }
                 });
             });
         }
         if let Some(error) = &d.error {
-            ui_kit::text_block(ui, "error", error, true);
+            ui_kit::text(ui, error, ui_kit::Text::Report("error", true));
         }
     });
     if closed || action == ui_kit::Action::Cancel || (action == ui_kit::Action::Ok && apply(app, &mut d)) {
@@ -160,7 +160,7 @@ pub fn show_object(app: &mut SolveApp, ctx: &egui::Context) {
     let heading = crate::i18n::format("properties.title", &[("name", &title)]);
     let (closed, action) = ui_kit::Prompt::new(egui::Id::new("sc_props"), "settings", &heading).actions("", "Close", None).show(ctx, true, |ui| {
         for (label, value) in &rows {
-            ui_kit::row(ui, crate::i18n::tr_label(label), |ui| ui_kit::cell_text(ui, value));
+            ui_kit::row(ui, crate::i18n::tr_label(label), |ui| ui_kit::text(ui, value, ui_kit::Text::Cell));
         }
     });
     if closed || action == ui_kit::Action::Cancel {

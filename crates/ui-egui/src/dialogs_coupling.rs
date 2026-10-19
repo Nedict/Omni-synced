@@ -4,6 +4,7 @@
 //! face also picks the joint it turns on. Play turns the driving joint so the coupling shows its
 //! motion before OK.
 
+use crate::ui_kit::{choice_row, expr_row};
 use egui::RichText;
 use serde_json::{Value, json};
 use solidcraft_engine::Sel;
@@ -11,7 +12,7 @@ use solidcraft_engine::Session;
 use solidcraft_engine::doc::expr::Kind as ValueKind;
 
 use crate::SolveApp;
-use crate::dialogs::{combo, field, form_row};
+use crate::dialogs::{field, form_row};
 use crate::dialogs_assembly::Asm;
 use crate::selection::{EDGES, FACES, SelInput};
 use crate::theme::Tokens;
@@ -119,9 +120,7 @@ fn size(s: &Session, f: &CouplingForm, inputs: &[SelInput], i: usize) -> Option<
 fn joint_row(ui: &mut egui::Ui, label: &str, salt: &str, list: &[(u64, String)], sel: &mut u64) {
     let labels: Vec<&str> = list.iter().map(|j| j.1.as_str()).collect();
     let mut pos = list.iter().position(|j| j.0 == *sel).unwrap_or(0);
-    form_row(ui, label, |ui| {
-        combo(ui, salt, &labels, &mut pos);
-    });
+    choice_row(ui, label, salt, &mut pos, &labels);
     *sel = list.get(pos).map(|j| j.0).unwrap_or(0);
 }
 
@@ -184,9 +183,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, f: &mut CouplingForm, inputs:
         }
         _ => {
             joint_row(ui, role_b, "cp_b", &lb, &mut f.b);
-            form_row(ui, "Pitch", |ui| {
-                enter |= field(ui, s0);
-            });
+            enter |= expr_row(ui, "Pitch", s0);
         }
     }
     if f.command == "joint.gear" {
@@ -208,7 +205,8 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, f: &mut CouplingForm, inputs:
     });
     form_row(ui, "Animate", |ui| {
         let label = if f.animate { "■ Stop" } else { "▶ Play" };
-        let r = crate::ui_kit::secondary_button(ui, label).on_hover_text(crate::i18n::tr_label("Play the joint's motion in the view"));
+        let r = crate::ui_kit::button(ui, label, crate::ui_kit::Button::Normal)
+            .on_hover_text(crate::i18n::tr_label("Play the joint's motion in the view"));
         crate::scenario::publish_handle("dialog:Animate", r.rect.center());
         if r.clicked() {
             f.animate = !f.animate;
@@ -224,7 +222,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, f: &mut CouplingForm, inputs:
 }
 
 /// A number without trailing zeros.
-fn trim(v: f64) -> String {
+pub(crate) fn trim(v: f64) -> String {
     let s = format!("{v:.4}");
     let s = s.trim_end_matches('0').trim_end_matches('.');
     if s == "-0" { "0".into() } else { s.into() }

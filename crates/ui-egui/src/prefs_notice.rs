@@ -13,9 +13,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let (closed, action) = ui_kit::Prompt::new(egui::Id::new("sc_settings_reset"), "settings", app.tr("settings.reset_title"))
         .actions(app.tr("ui.open_preferences"), app.tr("ui.heading_ok"), None)
         .show(ctx, true, |ui| {
-            ui_kit::text_block(ui, "intro", app.tr("settings.reset_intro"), false);
+            ui_kit::text(ui, app.tr("settings.reset_intro"), ui_kit::Text::Report("intro", false));
             for (index, reset) in app.settings_reset.iter().enumerate() {
-                ui_kit::text_block(ui, &format!("reset:{index}"), &format!("• {}", reset.message()), false);
+                ui_kit::text(ui, &format!("• {}", reset.message()), ui_kit::Text::Report(&format!("reset:{index}"), false));
             }
         });
     if closed || action != ui_kit::Action::None {

@@ -276,21 +276,12 @@ fn c32(c: [u8; 3], opacity: f64) -> Color32 {
     Color32::from_rgba_unmultiplied(c[0], c[1], c[2], (opacity.clamp(0.0, 1.0) * 255.0) as u8)
 }
 
-/// A swatch: a rounded square of the look; returns its response (click, drag).
-fn swatch(ui: &mut egui::Ui, id: egui::Id, color: [u8; 3], opacity: f64, picked: bool, tip: &str, payload: Look) -> egui::Response {
-    ui_kit::color_swatch(ui, id, c32(color, opacity), picked, tip, payload)
-}
-
-fn swatch_rows<T>(ui: &mut egui::Ui, items: &[T], each: impl FnMut(&mut egui::Ui, &T)) {
-    ui_kit::swatch_grid(ui, items, each);
-}
-
 /// The dialog's rows (after the Objects input); applies drops and Apply at once.
 pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [SelInput]) -> bool {
     // Apply To: bodies or faces (the input follows).
     if let Some(component) = &k.component {
-        ui_kit::row(ui, "Apply To", |ui| ui_kit::cell_text(ui, &format!("Component: {component}")));
-        if ui_kit::secondary_button(ui, crate::i18n::tr_label("Select bodies or faces instead")).clicked() {
+        ui_kit::row(ui, "Apply To", |ui| ui_kit::text(ui, &format!("Component: {component}"), ui_kit::Text::Cell));
+        if ui_kit::button(ui, crate::i18n::tr_label("Select bodies or faces instead"), ui_kit::Button::Normal).clicked() {
             k.component = None;
         }
     } else {
@@ -310,7 +301,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
             k.look = None;
             k.remove_override = false;
         }
-        ui_kit::cell_text(ui, &k.look.clone().unwrap_or_else(|| hex(k.color)));
+        ui_kit::text(ui, &k.look.clone().unwrap_or_else(|| hex(k.color)), ui_kit::Text::Cell);
     });
     ui_kit::row(ui, "Opacity", |ui| {
         if ui.add_enabled_ui(k.pbr.is_none(), |ui| ui_kit::slider(ui, &mut k.opacity, 0.0..=1.0)).inner.changed() {
@@ -350,7 +341,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
     let picked: Vec<Sel> = inputs.first().map(|i| i.items.clone()).unwrap_or_default();
     ui.horizontal(|ui| {
         let has_target = !picked.is_empty() || k.component.is_some();
-        if ui_kit::enabled_button(ui, "Apply to selection", has_target).clicked()
+        if ui_kit::button(ui, "Apply to selection", ui_kit::Button::Enabled(has_target)).clicked()
             && let Some(p) = selected_params(k, &picked)
         {
             k.remove_override = false;
@@ -362,7 +353,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
                 Err(e) => e,
             });
         }
-        if ui_kit::enabled_button(ui, "Remove override", has_target)
+        if ui_kit::button(ui, "Remove override", ui_kit::Button::Enabled(has_target))
             .on_hover_text(crate::i18n::tr_label("Restore the inherited component or physical material appearance"))
             .clicked()
             && let Some(p) = clear_params(k, &picked)
@@ -383,12 +374,11 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
     if !used.is_empty() {
         ui_kit::section(ui, "in_design", "In This Design", true, |ui| {
             let items: Vec<_> = used.iter().enumerate().collect();
-            swatch_rows(ui, &items, |ui, (i, (look, n))| {
-                if swatch(
+            ui_kit::swatch_grid(ui, &items, |ui, (i, (look, n))| {
+                if ui_kit::color_swatch(
                     ui,
                     egui::Id::new(("ap_used", *i)),
-                    look.color,
-                    look.opacity,
+                    c32(look.color, look.opacity),
                     k.color == look.color && k.opacity == look.opacity && k.pbr == look.pbr,
                     &format!("{} · {n} item(s)", look.name),
                     look.clone(),
@@ -424,12 +414,19 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
     let shown: Vec<(usize, &Look)> =
         lib.iter().enumerate().filter(|(_, l)| (k.category == 0 || l.category == want) && l.name.to_lowercase().contains(&query)).collect();
     if shown.is_empty() {
-        ui_kit::note(ui, "appearances_empty", crate::i18n::tr_label("No matching appearances"));
+        ui_kit::text(ui, crate::i18n::tr_label("No matching appearances"), ui_kit::Text::Note("appearances_empty"));
     }
-    swatch_rows(ui, &shown, |ui, (i, l)| {
+    ui_kit::swatch_grid(ui, &shown, |ui, (i, l)| {
         let picked_look = k.look.as_deref() == Some(l.name.as_str()) && k.pbr == l.pbr;
-        if swatch(ui, egui::Id::new(("ap_lib", *i)), l.color, l.opacity, picked_look, &format!("{} (drag onto a body or face)", l.name), (*l).clone())
-            .clicked()
+        if ui_kit::color_swatch(
+            ui,
+            egui::Id::new(("ap_lib", *i)),
+            c32(l.color, l.opacity),
+            picked_look,
+            &format!("{} (drag onto a body or face)", l.name),
+            (*l).clone(),
+        )
+        .clicked()
         {
             k.color = l.color;
             k.opacity = l.opacity;
@@ -461,7 +458,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
         }
     }
     if let Some(n) = &k.note {
-        ui_kit::text_block(ui, "appearance_status", n, false);
+        ui_kit::text(ui, n, ui_kit::Text::Report("appearance_status", false));
     }
     false
 }

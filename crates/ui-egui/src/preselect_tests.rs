@@ -1,6 +1,7 @@
 //! Pre-selection fills every input of a command, each item going to the input that takes its
 //! type, whether the command starts from a shortcut, the toolbar or a menu.
 
+use crate::test_support::app_with_script as app_with;
 use serde_json::json;
 use solidcraft_engine::doc::expr::Kind as ValueKind;
 use solidcraft_engine::geom::Vec3;
@@ -51,8 +52,8 @@ fn confirming_coplanar_body_faces_uses_one_atomic_extrusion() {
     assert!((volume - 11_968.0).abs() < 1e-5, "{volume}");
 }
 
+use crate::SolveApp;
 use crate::dialogs::{Dialog, Kind, apply_commands};
-use crate::{Services, SolveApp};
 
 #[test]
 fn feature_mirror_and_patterns_reopen_as_feature_replays_even_for_body_creators() {
@@ -460,12 +461,6 @@ fn cylinder_emboss_edit_retains_second_source_and_author_paths_and_all_profiles(
     assert_eq!(after.kind, before.kind);
     assert_eq!(after.face_names, before.face_names);
     assert_eq!(h.app.session.active_component, 0);
-}
-
-fn app_with(script: serde_json::Value) -> SolveApp {
-    let mut s = Session::default();
-    s.run_script(&script).unwrap();
-    SolveApp::new(s, Services::default())
 }
 
 #[test]

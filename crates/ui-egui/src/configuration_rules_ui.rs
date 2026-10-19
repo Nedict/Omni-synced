@@ -74,9 +74,13 @@ pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, 
     let suppression_features: Vec<(u64, String)> =
         features.iter().filter(|(id, _)| app.session.doc.configs.columns.contains(&Column::Suppress(*id))).cloned().collect();
     ui_kit::divider(ui, "configuration_rules");
-    ui_kit::text_block(ui, "rules_heading", crate::i18n::tr_label("Configuration rules"), false);
-    ui_kit::note(ui, "rules_drives", crate::i18n::tr_label("Rules run from top to bottom. Matched drives change effective values."));
-    ui_kit::note(ui, "rules_restrictions", crate::i18n::tr_label("Matched restrictions check the final values."));
+    ui_kit::text(ui, crate::i18n::tr_label("Configuration rules"), ui_kit::Text::Report("rules_heading", false));
+    ui_kit::text(
+        ui,
+        crate::i18n::tr_label("Rules run from top to bottom. Matched drives change effective values."),
+        ui_kit::Text::Note("rules_drives"),
+    );
+    ui_kit::text(ui, crate::i18n::tr_label("Matched restrictions check the final values."), ui_kit::Text::Note("rules_restrictions"));
     for (index, rule) in rules.iter().enumerate() {
         ui.push_id(&rule.id, |ui| {
             ui.horizontal_wrapped(|ui| {
@@ -86,19 +90,22 @@ pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, 
                     r.enabled = enabled;
                     *error = app.run("config.rule", json!({"rule":r})).err();
                 }
-                ui_kit::inline_text(ui, &rule.name);
-                if ui_kit::small_button(ui, crate::i18n::tr_label("Edit")).clicked() {
+                ui_kit::text(ui, &rule.name, ui_kit::Text::Inline);
+                if ui_kit::button(ui, crate::i18n::tr_label("Edit"), ui_kit::Button::Small).clicked() {
                     editor.rule = rule.clone();
                 }
-                let up = ui_kit::enabled_button(ui, "↑", index > 0).on_hover_text(crate::i18n::tr_label("Move earlier"));
+                let up = ui_kit::button(ui, "↑", ui_kit::Button::Enabled(index > 0)).on_hover_text(crate::i18n::tr_label("Move earlier"));
                 crate::scenario::publish_handle(&format!("config:rule:{}:up", rule.id), up.rect.center());
                 if up.clicked() {
                     *error = app.run("config.rule", json!({"id":rule.id,"index":index-1})).err();
                 }
-                if ui_kit::enabled_button(ui, "↓", index + 1 < rules.len()).on_hover_text(crate::i18n::tr_label("Move later")).clicked() {
+                if ui_kit::button(ui, "↓", ui_kit::Button::Enabled(index + 1 < rules.len()))
+                    .on_hover_text(crate::i18n::tr_label("Move later"))
+                    .clicked()
+                {
                     *error = app.run("config.rule", json!({"id":rule.id,"index":index+1})).err();
                 }
-                if ui_kit::small_button(ui, crate::i18n::tr_label("Delete")).clicked() {
+                if ui_kit::button(ui, crate::i18n::tr_label("Delete"), ui_kit::Button::Small).clicked() {
                     *error = app.run("config.rule", json!({"id":rule.id,"delete":true})).err();
                 }
             });
@@ -120,7 +127,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, 
         ui.vertical(|ui| {
             expression(ui, "Rule name", &mut editor.rule.name);
             ui_kit::checkbox(ui, crate::i18n::tr_label("Enabled"), &mut editor.rule.enabled);
-            if ui_kit::small_button(ui, crate::i18n::tr_label("New")).clicked() {
+            if ui_kit::button(ui, crate::i18n::tr_label("New"), ui_kit::Button::Small).clicked() {
                 editor.rule = Editor::default().rule;
             }
         });
@@ -188,7 +195,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, 
                 }
             }
         }
-        let save = ui_kit::enabled_button(ui, "Save Rule", !app.session.doc.configs.rows.is_empty());
+        let save = ui_kit::button(ui, "Save Rule", ui_kit::Button::Enabled(!app.session.doc.configs.rows.is_empty()));
         crate::scenario::publish_handle("config:save_rule", save.rect.center());
         if save.clicked() {
             let result = (|| -> Result<(), String> {
@@ -210,7 +217,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, 
     let previous_row = editor.row.clone();
     ui.vertical(|ui| {
         choose(ui, "preview_configuration", &mut editor.row, &rows);
-        let preview = ui_kit::enabled_button(ui, "Preview Row", !editor.row.is_empty());
+        let preview = ui_kit::button(ui, "Preview Row", ui_kit::Button::Enabled(!editor.row.is_empty()));
         crate::scenario::publish_handle("config:preview_row", preview.rect.center());
         if preview.clicked() {
             match app.session.execute("config.preview", &json!({"row":editor.row})) {
@@ -282,11 +289,10 @@ pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, 
                     if let Some(name) = parameter["name"].as_str()
                         && all_parameters.iter().any(|p| p == name)
                     {
-                        let response = ui_kit::text_block(
+                        let response = ui_kit::text(
                             ui,
-                            "preview_parameter",
                             &format!("{name} = {}", parameter["expression"].as_str().unwrap_or("")),
-                            false,
+                            ui_kit::Text::Report("preview_parameter", false),
                         );
                         crate::scenario::publish_handle(&format!("config:preview:param:{name}"), response.rect.center());
                     }
@@ -296,7 +302,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, 
     }
 }
 fn report(ui: &mut Ui, text: impl AsRef<str>) {
-    ui_kit::text_block(ui, "rule_report", crate::i18n::tr_label(text.as_ref()), false);
+    ui_kit::text(ui, crate::i18n::tr_label(text.as_ref()), ui_kit::Text::Report("rule_report", false));
 }
 
 fn feature_choice(ui: &mut Ui, id: &str, feature: &mut u64, features: &[(u64, String)]) {
@@ -373,7 +379,7 @@ fn condition_editor(ui: &mut Ui, condition: &mut RuleCondition, parameters: &[St
                 ui.push_id(index, |ui| {
                     ui.indent("condition_group", |ui| {
                         condition_editor(ui, child, parameters, features, depth + 1);
-                        if ui_kit::small_button(ui, crate::i18n::tr_label("Remove condition")).clicked() {
+                        if ui_kit::button(ui, crate::i18n::tr_label("Remove condition"), ui_kit::Button::Small).clicked() {
                             remove = Some(index);
                         }
                     });
@@ -382,7 +388,7 @@ fn condition_editor(ui: &mut Ui, condition: &mut RuleCondition, parameters: &[St
             if let Some(index) = remove {
                 conditions.remove(index);
             }
-            if ui_kit::enabled_button(ui, "Add condition", conditions.len() < 32).clicked() {
+            if ui_kit::button(ui, "Add condition", ui_kit::Button::Enabled(conditions.len() < 32)).clicked() {
                 conditions.push(RuleCondition::Always);
             }
         }

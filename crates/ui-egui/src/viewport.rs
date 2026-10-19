@@ -1627,7 +1627,7 @@ fn analysis_legend(app: &SolveApp, painter: &egui::Painter, rect: Rect) {
             tr("Curvature Map Analysis"),
             None,
             vec![
-                (col(a.curvature[0]), tr("Flat").to_string(), false),
+                (col(a.curvature[0]), tr("ui.flat").to_string(), false),
                 (col(a.curvature[1]), format!("{} {}", tr("Radius"), crate::prefs::show_mm(app, 2.0 * radius, 1)), false),
                 (col(a.curvature[2]), format!("{} ≤ {}", tr("Radius"), crate::prefs::show_mm(app, radius, 1)), false),
             ],
@@ -3509,8 +3509,7 @@ fn signed_axis_view(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
         }
     }
     let home = Rect::from_center_size(pos2(c.x - 37.0, c.y - 37.0), vec2(18.0, 18.0));
-    crate::scenario::publish_rect("axis_view:home", home);
-    crate::scenario::publish_handle("axis_view:home", home.center());
+    crate::scenario::publish_target("axis_view:home", home);
     let hr = ui.interact(home, ui.id().with("axis_view_home"), Sense::click());
     // The home button sits in its own small round chip.
     painter.circle(home.center(), 12.0, t.overlay.gamma_multiply(if hr.hovered() { 0.9 } else { 0.5 }), Stroke::new(1.0, t.border));

@@ -520,17 +520,25 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             // Only the review scrolls: the submission actions stay in the footer even when a
             // screenshot or a long report needs more room.
             egui::ScrollArea::vertical().id_salt("issue-report-review").max_height(scroll).auto_shrink([false, true]).show(ui, |ui| {
-                ui_kit::text_block(ui, "review", crate::i18n::tr_label("Review the report and screenshot before opening GitHub."), false);
+                ui_kit::text(
+                    ui,
+                    crate::i18n::tr_label("Review the report and screenshot before opening GitHub."),
+                    ui_kit::Text::Report("review", false),
+                );
                 ui.horizontal_wrapped(|ui| {
-                    retake = ui_kit::secondary_button(ui, crate::i18n::tr_label("Retake screenshot")).clicked();
-                    if ui_kit::enabled_button(ui, "Copy screenshot", draft.image.is_some()).clicked()
+                    retake = ui_kit::button(ui, crate::i18n::tr_label("Retake screenshot"), ui_kit::Button::Normal).clicked();
+                    if ui_kit::button(ui, "Copy screenshot", ui_kit::Button::Enabled(draft.image.is_some())).clicked()
                         && let Some(image) = draft.image.as_ref()
                     {
                         ctx.copy_image((**image).clone());
                         draft.note = crate::i18n::tr("issue.note_image_copied").into();
                     }
-                    if ui_kit::enabled_button(ui, crate::i18n::tr("issue.save_screenshot"), draft.image.is_some() && app.services.pick_save.is_some())
-                        .clicked()
+                    if ui_kit::button(
+                        ui,
+                        crate::i18n::tr("issue.save_screenshot"),
+                        ui_kit::Button::Enabled(draft.image.is_some() && app.services.pick_save.is_some()),
+                    )
+                    .clicked()
                         && let Some(image) = draft.image.clone()
                     {
                         app.pick_save(&format!("solidcraft-issue-{}.png", app.shot_token), &["png"], move |app, path| {
@@ -545,7 +553,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             }
                         });
                     }
-                    if ui_kit::enabled_button(ui, "Remove screenshot", draft.image.is_some()).clicked() {
+                    if ui_kit::button(ui, "Remove screenshot", ui_kit::Button::Enabled(draft.image.is_some())).clicked() {
                         draft.image = None;
                         draft.texture = None;
                         draft.note = crate::i18n::tr("issue.note_removed").into();
@@ -557,9 +565,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 });
                 truncate(&mut draft.title, 160);
                 truncate(&mut draft.body, MAX_BODY);
-                ui_kit::note(ui, "private", crate::i18n::tr_label("Remove private design details or paths before sharing."));
+                ui_kit::text(ui, crate::i18n::tr_label("Remove private design details or paths before sharing."), ui_kit::Text::Note("private"));
                 if !draft.note.is_empty() {
-                    ui_kit::note(ui, "note", &draft.note);
+                    ui_kit::text(ui, &draft.note, ui_kit::Text::Note("note"));
                 }
                 if let Some(image) = draft.image.as_ref() {
                     let texture =
@@ -571,26 +579,28 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     );
                 }
                 ui_kit::divider(ui, "send");
-                ui_kit::text_block(ui, "send", crate::i18n::tr_label("Send your report on GitHub"), false);
+                ui_kit::text(ui, crate::i18n::tr_label("Send your report on GitHub"), ui_kit::Text::Report("send", false));
                 let (url, copy_needed) = draft_url(&draft.title, &draft.body);
                 link = Some((url, copy_needed));
-                ui_kit::text_block(
+                ui_kit::text(
                     ui,
-                    "step1",
                     crate::i18n::tr_label(if copy_needed {
                         "1. Open GitHub draft below, then paste the report copied to your clipboard."
                     } else {
                         "1. Open GitHub draft below. Your title and report will be filled in."
                     }),
-                    false,
+                    ui_kit::Text::Report("step1", false),
                 );
-                ui_kit::text_block(
+                ui_kit::text(
                     ui,
-                    "step2",
                     crate::i18n::tr_label("2. Attach your screenshot: copy and paste it, or save and upload the PNG."),
-                    false,
+                    ui_kit::Text::Report("step2", false),
                 );
-                ui_kit::text_block(ui, "step3", crate::i18n::tr_label("3. Click Submit new issue on GitHub to send your report."), false);
+                ui_kit::text(
+                    ui,
+                    crate::i18n::tr_label("3. Click Submit new issue on GitHub to send your report."),
+                    ui_kit::Text::Report("step3", false),
+                );
             });
         });
     let open = !(closed || action == ui_kit::Action::Cancel);

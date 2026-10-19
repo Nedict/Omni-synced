@@ -1,426 +1,359 @@
-//! Layout/paint reference for every element in both themes. No window or GPU required.
+//! Table-driven layout/paint references in both themes. No window or GPU required.
 use super::*;
 use crate::{scenario, theme::Tokens};
 use egui::{Ui, vec2};
 
-const ELEMENTS: &[&str] = &[
-    "timeline_slider",
-    "placement_field",
-    "bounded_cell_editor",
-    "password_field",
-    "number_field",
-    "formatted_slider",
-    "dropdown_menu",
-    "message_field",
-    "text_lines",
-    "inline_text",
-    "label_actions",
-    "table",
-    "list_picker",
-    "text_block",
-    "search_field",
-    "cell_editor",
-    "color_field",
-    "slider",
-    "scalar_field",
-    "length_field",
-    "angle_field",
-    "text_area",
-    "color_swatch",
-    "action_menu",
-    "enabled_button",
-    "collapsible_header",
-    "header",
-    "row",
-    "caption",
-    "hint",
-    "note",
-    "section",
-    "divider",
-    "field",
-    "focused_field",
-    "hint_field",
-    "text_field",
-    "focused_text_field",
-    "multiline_text_field",
-    "searchable_dropdown",
-    "text_emphasis",
-    "value_pair_named",
-    "dropdown",
-    "selection_field",
-    "selection_field_state",
-    "segmented",
-    "segmented_compact",
-    "segmented_states",
-    "segmented_icons",
-    "checkbox",
-    "checkbox_row",
-    "checkbox_grid",
-    "options",
-    "footer",
-    "footer_apply",
-    "footer_status",
-    "button_pair",
-    "primary",
-    "secondary",
-    "small",
-    "icon",
-    "list_row",
-    "value_pair",
-    "fraction",
-    "status_header",
-    "progress",
-    "tool_choices",
-    "toggle_icon",
-];
+struct Sample {
+    value: String,
+    second: String,
+    selected: usize,
+    checked: bool,
+}
 
-/// Each example publishes a named rect and at least one handle (except non-interactive dividers).
-fn example(ui: &mut Ui, name: &str) -> (&'static str, Option<&'static str>) {
-    let mut value = "12 mm".to_owned();
-    let mut second = "25 mm".to_owned();
-    let mut selected = 0;
-    let mut checked = true;
-    match name {
-        "timeline_slider"
-        | "placement_field"
-        | "bounded_cell_editor"
-        | "password_field"
-        | "number_field"
-        | "formatted_slider"
-        | "dropdown_menu"
-        | "message_field"
-        | "text_lines" => {
-            let rect = ui
-                .scope(|ui| match name {
-                    "timeline_slider" => {
-                        timeline_slider(ui, &mut 12.0, 0.0..=100.0, true);
-                    }
-                    "placement_field" => {
-                        placement_field(ui, ui.id().with("placement"), &mut value, "Distance");
-                    }
-                    "bounded_cell_editor" => {
-                        bounded_cell_editor(ui, ui.id().with("name"), &mut value, "Name", false, 128);
-                    }
-                    "password_field" => {
-                        password_field(ui, ui.id().with("secret"), &mut value, "API key");
-                    }
-                    "number_field" => {
-                        number_field(ui, &mut 3_u32, 1..=200, 1.0, "");
-                    }
-                    "formatted_slider" => {
-                        formatted_slider(ui, &mut 1.0, 0.5..=2.5, 0.05, |v| format!("{:.0} %", v * 100.0));
-                    }
-                    "dropdown_menu" => {
-                        dropdown_menu(ui, "gallery_menu", "Preset", |ui| {
-                            list_picker(ui, "preset", "Preset", true);
-                        });
-                    }
-                    "message_field" => {
-                        message_field(ui, ui.id().with("message"), &mut value, "Message");
-                    }
-                    "text_lines" => {
-                        text_lines(ui, "gallery", "Licence\nSecond line");
-                    }
-                    _ => {}
-                })
-                .response
-                .rect;
-            scenario::publish_rect("gallery:forms", rect);
-            ("gallery:forms", None)
-        }
+struct Element {
+    name: &'static str,
+    rect: &'static str,
+    handle: Option<&'static str>,
+    draw: fn(&mut Ui, &mut Sample),
+}
 
-        "table" => {
-            table(ui, "gallery", &[Column { label: "Name", width: 1.0 }, Column { label: "Expression", width: 1.5 }], "No rows", |ui, table| {
-                table.row(ui, "row", true, |row| {
-                    row.cell(|ui| {
-                        cell_text(ui, "Width");
-                    });
-                    row.cell(|ui| {
-                        cell_editor(ui, ui.id().with("value"), &mut value, "", false);
-                    });
+macro_rules! element {
+    ($name:literal, $rect:literal, $handle:expr, $draw:expr) => {
+        Element { name: $name, rect: $rect, handle: $handle, draw: $draw }
+    };
+    ($name:literal, $draw:expr) => {
+        element!($name, "gallery:allocation", None, $draw)
+    };
+}
+
+// One entry per element/variant: names, rendering and geometry expectations stay together.
+const ELEMENTS: &[Element] = &[
+    element!("scope", |ui, _| {
+        scope(ui, |ui| {
+            ui.allocate_space(vec2(row_height(), row_height()));
+        });
+    }),
+    element!("row_height", |ui, _| {
+        ui.allocate_space(vec2(row_height(), row_height()));
+    }),
+    element!("header_height", |ui, _| {
+        ui.allocate_space(vec2(header_height(), header_height()));
+    }),
+    element!("timeline_slider", |ui, _| {
+        timeline_slider(ui, &mut 12.0, 0.0..=100.0, true);
+    }),
+    element!("placement_field", |ui, s| {
+        placement_field(ui, ui.id().with("placement"), &mut s.value, "Distance");
+    }),
+    element!("bounded_cell_editor", |ui, s| {
+        bounded_cell_editor(ui, ui.id().with("name"), &mut s.value, "Name", false, 128);
+    }),
+    element!("password_field", |ui, s| {
+        password_field(ui, ui.id().with("secret"), &mut s.value, "API key");
+    }),
+    element!("number_field", |ui, _| {
+        number_field(ui, &mut 3_u32, 1..=200, 1.0, "");
+    }),
+    element!("formatted_slider", |ui, _| {
+        formatted_slider(ui, &mut 1.0, 0.5..=2.5, 0.05, |v| format!("{:.0} %", v * 100.0));
+    }),
+    element!("dropdown_menu", |ui, _| {
+        dropdown_menu(ui, "gallery_menu", "Preset", |ui| {
+            list_picker(ui, "preset", "Preset", true);
+        });
+    }),
+    element!("message_field", |ui, s| {
+        message_field(ui, ui.id().with("message"), &mut s.value, "Message");
+    }),
+    element!("text_lines", |ui, _| {
+        text_lines(ui, "gallery", "Licence\nSecond line");
+    }),
+    element!("table", "dialog:table:gallery:row", None, |ui, s| {
+        table(ui, "gallery", &[Column::new("Name", 1.0), Column::new("Expression", 1.5)], "No rows", |ui, table| {
+            table.row(ui, "row", true, |row| {
+                row.cell(|ui| {
+                    text(ui, "Width", Text::Cell);
+                });
+                row.cell(|ui| {
+                    cell_editor(ui, ui.id().with("value"), &mut s.value, "", false);
                 });
             });
-            ("dialog:table:gallery:row", None)
-        }
-        "list_picker" => {
-            list_picker(ui, "gallery", "Preset", true);
-            ("dialog:list:gallery", Some("dialog:list:gallery"))
-        }
-        "inline_text" | "label_actions" => {
-            let response = ui
-                .scope(|ui| {
-                    if name == "inline_text" {
-                        inline_text(ui, "Active");
-                    } else {
-                        label_actions(ui, "Configuration", |ui| {
-                            secondary_button(ui, "Apply");
-                        });
-                    }
-                })
-                .response;
-            scenario::publish_rect("gallery:inline", response.rect);
-            ("gallery:inline", None)
-        }
-        "text_block" => {
-            text_block(ui, "gallery", "Validation report with retained units: 10 mm", false);
-            ("dialog:report:gallery", None)
-        }
-        "search_field" | "cell_editor" | "color_field" | "slider" | "scalar_field" | "length_field" | "angle_field" | "text_area"
-        | "color_swatch" | "action_menu" | "enabled_button" => {
-            let rect = ui
-                .scope(|ui| match name {
-                    "search_field" => {
-                        search_field(ui, ui.id().with("search"), &mut value, "Search");
-                    }
-                    "cell_editor" => {
-                        cell_editor(ui, ui.id().with("cell"), &mut value, "Expression", true);
-                    }
-                    "color_field" => {
-                        color_field(ui, &mut [120, 150, 180]);
-                    }
-                    "slider" => {
-                        slider(ui, &mut 0.5, 0.0..=1.0);
-                    }
-                    "scalar_field" => {
-                        scalar_field(ui, &mut 0.5, 0.0..=1.0);
-                    }
-                    "length_field" => {
-                        length_field(ui, &mut 12.7, "in", 2);
-                    }
-                    "angle_field" => {
-                        angle_field(ui, &mut 45.0);
-                    }
-                    "text_area" => {
-                        text_area(ui, "Gallery", ui.id().with("area"), &mut value, 5, 1024);
-                    }
-                    "color_swatch" => {
-                        swatch_grid(ui, &[1], |ui, _| {
-                            color_swatch(ui, ui.id().with("swatch"), Tokens::get().accent, true, "Sample", 1);
-                        });
-                    }
-                    "action_menu" => {
-                        action_menu(ui, "Actions", |ui| {
-                            secondary_button(ui, "Add");
-                        });
-                    }
-                    "enabled_button" => {
-                        enabled_button(ui, "Add", true);
-                    }
-                    _ => {}
-                })
-                .response
-                .rect;
-            scenario::publish_rect("gallery:manage", rect);
-            ("gallery:manage", None)
-        }
+        });
+    }),
+    element!("list_picker", "dialog:list:gallery", Some("dialog:list:gallery"), |ui, _| {
+        list_picker(ui, "gallery", "Preset", true);
+    }),
+    element!("inline_text", "dialog:inline:Active", Some("dialog:inline:Active"), |ui, _| {
+        text(ui, "Active", Text::Inline);
+    }),
+    element!("cell_text", "dialog:cell:Width", Some("dialog:cell:Width"), |ui, _| {
+        text(ui, "Width", Text::Cell);
+    }),
+    element!("label_actions", |ui, _| {
+        label_actions(ui, "Configuration", |ui| {
+            button(ui, "Apply", Button::Normal);
+        });
+    }),
+    element!("text", "dialog:report:gallery", Some("dialog:report:gallery"), |ui, _| {
+        text(ui, "Validation report with retained units: 10 mm", Text::Report("gallery", false));
+    }),
+    element!("search_field", |ui, s| {
+        search_field(ui, ui.id().with("search"), &mut s.value, "Search");
+    }),
+    element!("cell_editor", |ui, s| {
+        cell_editor(ui, ui.id().with("cell"), &mut s.value, "Expression", true);
+    }),
+    element!("color_field", |ui, _| {
+        color_field(ui, &mut [120, 150, 180]);
+    }),
+    element!("slider", |ui, _| {
+        slider(ui, &mut 0.5, 0.0..=1.0);
+    }),
+    element!("scalar_field", |ui, _| {
+        scalar_field(ui, &mut 0.5, 0.0..=1.0);
+    }),
+    element!("length_field", |ui, _| {
+        length_field(ui, &mut 12.7, "in", 2);
+    }),
+    element!("angle_field", |ui, _| {
+        angle_field(ui, &mut 45.0);
+    }),
+    element!("text_area", |ui, s| {
+        text_area(ui, "Gallery", ui.id().with("area"), &mut s.value, 5, 1024);
+    }),
+    element!("color_swatch", |ui, _| {
+        color_swatch(ui, ui.id().with("swatch"), Tokens::get().accent, true, "Sample", 1);
+    }),
+    element!("swatch_grid", |ui, _| {
+        swatch_grid(ui, &[1, 2, 3], |ui, n| {
+            color_swatch(ui, ui.id().with(n), Tokens::get().accent, true, "Sample", *n);
+        });
+    }),
+    element!("action_menu", |ui, _| {
+        action_menu(ui, "Actions", |ui| {
+            button(ui, "Add", Button::Normal);
+        });
+    }),
+    element!("enabled_button", |ui, _| {
+        button(ui, "Add", Button::Enabled(true));
+    }),
+    element!("header", "dialog:header", Some("dialog:close"), |ui, _| {
+        header(ui, "fillet", "Fillet", || {});
+    }),
+    element!("collapsible_header", "dialog:header", Some("dialog:collapse"), |ui, _| {
+        collapsible_header(ui, "fillet", "Fillet", &mut false, || {});
+    }),
+    element!("row", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
+        row(ui, "Gallery", |ui| {
+            field(ui, &mut s.value);
+        });
+    }),
+    element!("expr_row", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
+        expr_row(ui, "Gallery", &mut s.value);
+    }),
+    element!("hint_row", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
+        hint_row(ui, "Gallery", &mut s.value, "Value");
+    }),
+    element!("text_row", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
+        text_row(ui, "Gallery", &mut s.value, "Name");
+    }),
+    element!("choice_row", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
+        choice_row(ui, "Gallery", "gallery", &mut s.selected, &["One", "Two"]);
+    }),
+    element!("multiline_text_field", "dialog:widget:Gallery", Some("dialog:Gallery"), |ui, s| {
+        multiline_text_field(ui, "Gallery", ui.id().with("text"), &mut s.value);
+    }),
+    element!("searchable_dropdown", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, _| {
+        row(ui, "Gallery", |ui| {
+            searchable_dropdown(ui, "gallery", "One", &mut String::new(), &[SearchOption { value: "one", label: "One", handle: None }], None, None);
+        });
+    }),
+    element!("text_emphasis", "dialog:row:Gallery", Some("dialog:Bold"), |ui, s| {
+        row(ui, "Gallery", |ui| {
+            text_emphasis(ui, &mut s.checked, &mut false);
+        });
+    }),
+    element!("value_pair_named", "dialog:row:Position", Some("dialog:Distance X"), |ui, s| {
+        value_pair(ui, "Position", [&mut s.value, &mut s.second], ["X", "Y"], Some(["Distance X", "Distance Y"]));
+    }),
+    element!("field", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
+        row(ui, "Gallery", |ui| {
+            field(ui, &mut s.value);
+        });
+    }),
+    element!("focused_field", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
+        row(ui, "Gallery", |ui| {
+            focused_field(ui, &mut s.value);
+        });
+    }),
+    element!("hint_field", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
+        row(ui, "Gallery", |ui| {
+            hint_field(ui, &mut s.value, "Length");
+        });
+    }),
+    element!("text_field", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
+        row(ui, "Gallery", |ui| {
+            text_field(ui, &mut s.value, "Name");
+        });
+    }),
+    element!("focused_text_field", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
+        row(ui, "Gallery", |ui| {
+            focused_text_field(ui, &mut s.value, "Name");
+        });
+    }),
+    element!("fraction_field", "dialog:row:Gallery", Some("dialog:fraction:Gallery"), |ui, _| {
+        row(ui, "Gallery", |ui| {
+            fraction_field(ui, &mut 0.5);
+        });
+    }),
+    element!("dropdown", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
+        row(ui, "Gallery", |ui| {
+            dropdown(ui, "gallery", &mut s.selected, &["One", "Two"]);
+        });
+    }),
+    element!("selection_field", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, _| {
+        row(ui, "Gallery", |ui| {
+            selection_field(ui, "Point 1", Selection { active: true, filled: true });
+        });
+    }),
+    element!("selection_field_empty", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, _| {
+        row(ui, "Gallery", |ui| {
+            selection_field(ui, "Select", Selection { active: false, filled: false });
+        });
+    }),
+    element!("segmented", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
+        row(ui, "Gallery", |ui| {
+            segmented(ui, &mut s.selected, &["One", "Two"], Segments::default());
+        });
+    }),
+    element!("segmented_compact", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
+        row(ui, "Gallery", |ui| {
+            segmented(ui, &mut s.selected, &["Left", "Center", "Right"], Segments { compact: true, ..Default::default() });
+        });
+    }),
+    element!("segmented_states", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
+        row(ui, "Gallery", |ui| {
+            segmented(ui, &mut s.selected, &["One", "Two"], Segments { states: &[true, true], ..Default::default() });
+        });
+    }),
+    element!("segmented_icons", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
+        row(ui, "Gallery", |ui| {
+            segmented_icons(ui, &mut s.selected, &[IconSegment { key: "normal", icon: "normal", tip: "Normal".into() }], &[]);
+        });
+    }),
+    element!("checkbox", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
+        row(ui, "Gallery", |ui| {
+            checkbox(ui, "Option", &mut s.checked);
+        });
+    }),
+    element!("primary_button", "dialog:row:Gallery", Some("dialog:button:Create"), |ui, _| {
+        row(ui, "Gallery", |ui| {
+            primary_button(ui, "Create");
+        });
+    }),
+    element!("button", "dialog:row:Gallery", Some("dialog:button:Gallery:Add"), |ui, _| {
+        row(ui, "Gallery", |ui| {
+            button(ui, "Add", Button::Normal);
+        });
+    }),
+    element!("small_button", "dialog:row:Gallery", Some("dialog:button:Gallery:×"), |ui, _| {
+        row(ui, "Gallery", |ui| {
+            button(ui, "×", Button::Small);
+        });
+    }),
+    element!("checkbox_row", "sketch_palette:toggle:gallery", Some("sketch_palette:toggle:gallery"), |ui, _| {
+        checkbox_row(ui, "gallery", "Option", true);
+    }),
+    element!("checkbox_grid", "dialog:checkbox:First", Some("dialog:First"), |ui, s| {
+        checkbox_grid(ui, &mut [("First", &mut s.checked), ("Second", &mut false)], 2);
+    }),
+    element!("options", "dialog:checkbox:First", Some("dialog:First"), |ui, s| {
+        options(ui, "gallery", &mut [("First", &mut s.checked), ("Second", &mut false)]);
+    }),
+    element!("footer", "dialog:footer", Some("dialog:ok"), |ui, _| {
+        footer(ui, "OK", "Cancel", true, Footer::default());
+    }),
+    element!("footer_apply", "dialog:footer", Some("dialog:apply"), |ui, _| {
+        footer(ui, "OK", "Cancel", true, Footer { apply: Some("Apply"), ..Default::default() });
+    }),
+    element!("footer_status", "dialog:footer", Some("dialog:ok"), |ui, _| {
+        footer(ui, "OK", "Cancel", true, Footer { status: Some("Computing…"), ..Default::default() });
+    }),
+    element!("button_pair", "sketch_palette:look_at", Some("sketch_palette:look_at"), |ui, _| {
+        button_pair(
+            ui,
+            "sketch_palette",
+            [false, true],
+            [PairButton { key: "look_at", label: "ui.look_at", icon: Some("lookat") }, PairButton { key: "slice", label: "Slice", icon: None }],
+        );
+    }),
+    element!("icon_button_at", |ui, _| {
+        let (rect, _) = ui.allocate_exact_size(vec2(row_height(), row_height()), egui::Sense::hover());
+        icon_button_at(ui, rect, "close", "Close");
+    }),
+    element!("keyboard", |ui, _| {
+        assert_eq!(keyboard(ui.ctx(), true), Action::None);
+        ui.allocate_space(vec2(row_height(), row_height()));
+    }),
+    element!("list_row", "dialog:list:picked", Some("dialog:list:picked:remove"), |ui, _| {
+        list_row(ui, "picked", "Point 1");
+    }),
+    element!("value_pair", "dialog:row:Position", Some("dialog:Y"), |ui, s| {
+        value_pair(ui, "Position", [&mut s.value, &mut s.second], ["X", "Y"], None);
+    }),
+    element!("toggle_icon", "dialog:Alignment:Center", Some("dialog:Alignment:Center"), |ui, s| {
+        toggle_icon(ui, "Alignment", "Center", &mut s.checked, "pattern_center");
+    }),
+    element!("tool_choices", "sketch_palette:feature:line", Some("sketch_palette:feature:line"), |ui, _| {
+        tool_choices(ui, "Line", "line", &[ToolChoice { key: "line", icon: "normal", label: "Line", enabled: true }]);
+    }),
+    element!("status_header", "sketch_palette:meter", None, |ui, _| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        status_header(
+            ui,
+            "sketch_palette",
+            "Sketch 1",
+            StatusHeader { icon: "sketch", text: "2 degrees of freedom", complete: false, fraction: 0.5 },
+        );
+    }),
+    element!("progress", "dialog:progress:gallery", None, |ui, _| {
+        progress(ui, "gallery", 0.4);
+    }),
+    element!("hint", "dialog:hint:gallery", Some("dialog:hint:gallery"), |ui, _| {
+        text(ui, "Pick a point", Text::Hint("gallery"));
+    }),
+    element!("note", "dialog:note:gallery", None, |ui, _| {
+        text(ui, "Counts include the original. Center balances copies; Flip chooses the extra side for even totals.", Text::Note("gallery"));
+    }),
+    element!("caption", "dialog:caption:Gallery", None, |ui, _| {
+        caption(ui, "Gallery", "Construction");
+    }),
+    element!("section", "dialog:section:Advanced", Some("dialog:section:Advanced"), |ui, _| {
+        section(ui, "gallery", "Advanced", false, |_| {});
+    }),
+    element!("divider", "dialog:divider:gallery", None, |ui, _| {
+        divider(ui, "gallery");
+    }),
+    element!("popup_list", |ui, _| {
+        let anchor = ui.allocate_space(vec2(100.0, row_height())).1;
+        popup_list(
+            ui.ctx(),
+            ui.id().with("popup"),
+            anchor,
+            0,
+            &[PopupOption { text: "Width", detail: "10 mm", color: Tokens::get().text }],
+            "Choose",
+        );
+        // The popup is on a separate layer; reserve its painted allocation for the same checks.
+        ui.allocate_space(vec2(ui.available_width(), row_height() * 5.0));
+    }),
+];
 
-        "header" | "collapsible_header" => {
-            if name == "collapsible_header" {
-                collapsible_header(ui, "fillet", "Fillet", &mut false, || {});
-            } else {
-                header(ui, "fillet", "Fillet", || {});
-            }
-            ("dialog:header", Some(if name == "collapsible_header" { "dialog:collapse" } else { "dialog:close" }))
-        }
-        "row" => {
-            row(ui, "Gallery", |ui| {
-                field(ui, &mut value);
-            });
-            ("dialog:row:Gallery", Some("dialog:Gallery"))
-        }
-        "caption" => {
-            caption(ui, "Gallery", "Helper text");
-            ("dialog:caption:Gallery", None)
-        }
-        "hint" => {
-            hint(ui, "gallery", "Pick a point or curve");
-            ("dialog:hint:gallery", Some("dialog:hint:gallery"))
-        }
-        "note" => {
-            note(ui, "gallery", "Counts include the original. Center balances copies; Flip chooses the extra side for even totals.");
-            ("dialog:note:gallery", None)
-        }
-        "section" => {
-            section(ui, "gallery", "Options", true, |_| {});
-            ("dialog:section:Options", Some("dialog:section:Options"))
-        }
-        "divider" => {
-            divider(ui, "gallery");
-            ("dialog:divider:gallery", None)
-        }
-        "multiline_text_field" => {
-            multiline_text_field(ui, "Gallery", egui::Id::new("gallery_text"), &mut value);
-            ("dialog:widget:Gallery", Some("dialog:Gallery"))
-        }
-        "searchable_dropdown" => {
-            row(ui, "Gallery", |ui| {
-                searchable_dropdown(
-                    ui,
-                    "gallery_search",
-                    "One",
-                    &mut String::new(),
-                    &[SearchOption { value: "one", label: "One", handle: None }],
-                    None,
-                    None,
-                );
-            });
-            ("dialog:row:Gallery", Some("dialog:Gallery"))
-        }
-        "text_emphasis" => {
-            row(ui, "Gallery", |ui| text_emphasis(ui, &mut checked, &mut false));
-            ("dialog:row:Gallery", Some("dialog:Bold"))
-        }
-        "value_pair_named" => {
-            value_pair_named(ui, "Position", [&mut value, &mut second], ["X", "Y"], ["Distance X", "Distance Y"]);
-            ("dialog:row:Position", Some("dialog:Distance X"))
-        }
-        "field"
-        | "focused_field"
-        | "hint_field"
-        | "text_field"
-        | "focused_text_field"
-        | "fraction"
-        | "dropdown"
-        | "selection_field"
-        | "selection_field_state"
-        | "segmented"
-        | "segmented_compact"
-        | "segmented_states"
-        | "segmented_icons"
-        | "checkbox"
-        | "primary"
-        | "secondary"
-        | "small" => {
-            row(ui, "Gallery", |ui| match name {
-                "field" => {
-                    field(ui, &mut value);
-                }
-                "focused_field" => {
-                    focused_field(ui, &mut value);
-                }
-                "hint_field" => {
-                    hint_field(ui, &mut value, "Length");
-                }
-                "text_field" => {
-                    text_field(ui, &mut value, "Name");
-                }
-                "focused_text_field" => {
-                    focused_text_field(ui, &mut value, "Name");
-                }
-                "fraction" => {
-                    fraction_field(ui, &mut 0.5);
-                }
-                "dropdown" => {
-                    dropdown(ui, "gallery", &mut selected, &["One", "Two"]);
-                }
-                "selection_field" => {
-                    selection_field(ui, "Point 1", true);
-                }
-                "selection_field_state" => {
-                    selection_field_state(ui, "Select", false, false);
-                }
-                "segmented" => {
-                    segmented(ui, &mut selected, &["One", "Two"]);
-                }
-                "segmented_compact" => {
-                    segmented_compact(ui, &mut selected, &["Left", "Center", "Right"]);
-                }
-                "segmented_states" => {
-                    segmented_states(ui, &mut selected, &["One", "Two"], &[true, true]);
-                }
-                "segmented_icons" => {
-                    segmented_icons(ui, &mut selected, &[IconSegment { key: "normal", icon: "normal", tip: "Normal".into() }], &[]);
-                }
-                "checkbox" => {
-                    checkbox(ui, "Option", &mut checked);
-                }
-                "primary" => {
-                    primary_button(ui, "Create");
-                }
-                "secondary" => {
-                    secondary_button(ui, "Add");
-                }
-                "small" => {
-                    small_button(ui, "×");
-                }
-                _ => {}
-            });
-            let handle = match name {
-                "primary" => "dialog:button:Create",
-                "secondary" => "dialog:button:Gallery:Add",
-                "small" => "dialog:button:Gallery:×",
-                "fraction" => "dialog:fraction:Gallery",
-                _ => "dialog:Gallery",
-            };
-            ("dialog:row:Gallery", Some(handle))
-        }
-        "checkbox_row" => {
-            checkbox_row(ui, "gallery", "Option", true);
-            ("sketch_palette:toggle:gallery", Some("sketch_palette:toggle:gallery"))
-        }
-        "checkbox_grid" | "options" => {
-            let mut second = false;
-            let mut items = [("First", &mut checked), ("Second", &mut second)];
-            if name == "options" {
-                options(ui, "gallery", &mut items);
-            } else {
-                checkbox_grid(ui, &mut items, 2);
-            }
-            ("dialog:checkbox:First", Some("dialog:First"))
-        }
-        "footer" | "footer_apply" | "footer_status" => {
-            if name == "footer_status" {
-                footer_with_status(ui, "OK", "Cancel", true, None, Some("Computing…"));
-            } else {
-                footer(ui, "OK", "Cancel", true, (name == "footer_apply").then_some("Apply"));
-            }
-            ("dialog:footer", Some(if name == "footer_apply" { "dialog:apply" } else { "dialog:ok" }))
-        }
-        "button_pair" => {
-            button_pair(
-                ui,
-                "sketch_palette",
-                [false, true],
-                [PairButton { key: "look_at", label: "ui.look_at", icon: Some("lookat") }, PairButton { key: "slice", label: "Slice", icon: None }],
-            );
-            ("sketch_palette:look_at", Some("sketch_palette:look_at"))
-        }
-        "icon" => {
-            icon_button(ui, "Remove", "close");
-            ("dialog:button:Remove", Some("dialog:button:Remove"))
-        }
-        "list_row" => {
-            list_row(ui, "picked", "Point 1");
-            ("dialog:list:picked", Some("dialog:list:picked:remove"))
-        }
-        "value_pair" => {
-            value_pair(ui, "Position", [&mut value, &mut second], ["X", "Y"]);
-            ("dialog:row:Position", Some("dialog:Y"))
-        }
-        "toggle_icon" => {
-            toggle_icon(ui, "Alignment", "Center", &mut checked, "pattern_center");
-            ("dialog:Alignment:Center", Some("dialog:Alignment:Center"))
-        }
-        "tool_choices" => {
-            tool_choices(ui, "Line", "line", &[ToolChoice { key: "line", icon: "normal", label: "Line", enabled: true }]);
-            ("sketch_palette:feature:line", Some("sketch_palette:feature:line"))
-        }
-        "status_header" => {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            status_header(
-                ui,
-                "sketch_palette",
-                "Sketch 1",
-                StatusHeader { icon: "sketch", text: "2 degrees of freedom", complete: false, fraction: 0.5 },
-            );
-            ("sketch_palette:meter", None)
-        }
-        "progress" => {
-            progress(ui, "gallery", 0.4);
-            ("dialog:progress:gallery", None)
-        }
-        _ => panic!("missing gallery example {name}"),
-    }
+fn example(ui: &mut Ui, element: &Element) -> (&'static str, Option<&'static str>) {
+    let mut sample = Sample { value: "12 mm".into(), second: "25 mm".into(), selected: 0, checked: true };
+    let rect = ui.scope(|ui| (element.draw)(ui, &mut sample)).response.rect;
+    scenario::publish_rect("gallery:allocation", rect);
+    (element.rect, element.handle)
 }
 
 #[test]
@@ -428,7 +361,8 @@ fn every_element_has_geometry_and_stays_in_its_allocation_in_both_themes() {
     let previous = crate::theme::is_dark();
     for dark in [false, true] {
         crate::theme::set_dark(dark);
-        for &name in ELEMENTS {
+        for element in ELEMENTS {
+            let name = element.name;
             let ctx = crate::fonts::test_context();
             ctx.set_visuals(if dark { egui::Visuals::dark() } else { egui::Visuals::light() });
             for _ in 0..3 {
@@ -442,7 +376,7 @@ fn every_element_has_geometry_and_stays_in_its_allocation_in_both_themes() {
                         allocation = ui
                             .scope(|ui| {
                                 scope(ui, |ui| {
-                                    published = example(ui, name);
+                                    published = example(ui, element);
                                 })
                             })
                             .response
@@ -485,7 +419,7 @@ fn apply_does_not_submit_and_obeys_validation() {
         let ctx = crate::fonts::test_context();
         let mut action = Action::None;
         let mut draw = |ui: &mut Ui| {
-            action = footer(ui, "OK", "Cancel", enabled, Some("Apply"));
+            action = footer(ui, "OK", "Cancel", enabled, Footer { apply: Some("Apply"), ..Default::default() });
         };
         super::test_support::frame(&ctx, vec![], &mut draw);
         let at = scenario::handle_at("dialog:apply").unwrap();
@@ -511,7 +445,7 @@ fn picked_item_remove_and_paired_values_have_independent_targets() {
     let mut x = String::new();
     let mut y = String::new();
     let mut draw = |ui: &mut Ui| {
-        value_pair(ui, "Position", [&mut x, &mut y], ["X", "Y"]);
+        value_pair(ui, "Position", [&mut x, &mut y], ["X", "Y"], None);
     };
     super::test_support::frame(&ctx, vec![], &mut draw);
     let row = scenario::rect_of("dialog:row:Position").unwrap();
@@ -536,7 +470,7 @@ fn gallery_rows_share_a_label_column_after_measurement_in_both_themes() {
         for _ in 0..3 {
             super::test_support::frame(&ctx, vec![], |ui| {
                 row(ui, "Edges", |ui| {
-                    selection_field(ui, "Edge 1", true);
+                    selection_field(ui, "Edge 1", Selection { active: true, filled: true });
                 });
                 row(ui, "Counterbore depth", |ui| {
                     field(ui, &mut value);
@@ -570,7 +504,7 @@ fn compound_row_actions_preserve_the_original_field_handle() {
                     },
                 );
                 expected = scenario::handle_at("dialog:Mid Radius");
-                small_button(ui, "×");
+                button(ui, "×", Button::Small);
             });
         });
     });
@@ -590,7 +524,12 @@ fn emphasis_and_compact_modes_keep_independent_actions_in_both_themes() {
         let mut draw = |ui: &mut Ui| {
             row(ui, "Style", |ui| text_emphasis(ui, &mut bold, &mut italic));
             row(ui, "Alignment", |ui| {
-                segmented_compact(ui, &mut selected, &["Long translated left", "Long translated centre", "Long translated right"]);
+                segmented(
+                    ui,
+                    &mut selected,
+                    &["Long translated left", "Long translated centre", "Long translated right"],
+                    Segments { compact: true, ..Default::default() },
+                );
             });
         };
         super::test_support::frame(&ctx, vec![], &mut draw);
@@ -614,31 +553,25 @@ fn table_cells_keep_alignment_fixed_rows_editing_and_action_targets() {
         let mut removed = false;
         let mut draw = |ui: &mut Ui| {
             scope(ui, |ui| {
-                table(
-                    ui,
-                    "cells",
-                    &[Column { label: "Name", width: 1.0 }, Column { label: "Expression", width: 1.5 }, Column { label: "Actions", width: 0.7 }],
-                    "Empty",
-                    |ui, table| {
-                        for (name, value) in [("Width", &mut first), ("Height", &mut second)] {
-                            table.row(ui, name, name == "Height", |row| {
-                                row.cell(|ui| {
-                                    cell_text(ui, name);
-                                });
-                                row.cell(|ui| {
-                                    let response = cell_editor(ui, ui.id().with("expression"), value, "Expression", false);
-                                    scenario::publish_handle(&format!("gallery:cell:{name}"), response.rect.center());
-                                    scenario::publish_rect(&format!("gallery:cell:{name}"), response.rect);
-                                });
-                                row.cell(|ui| {
-                                    if small_button(ui, "Delete").clicked() {
-                                        removed = true;
-                                    }
-                                });
+                table(ui, "cells", &[Column::new("Name", 1.0), Column::new("Expression", 1.5), Column::new("Actions", 0.7)], "Empty", |ui, table| {
+                    for (name, value) in [("Width", &mut first), ("Height", &mut second)] {
+                        table.row(ui, name, name == "Height", |row| {
+                            row.cell(|ui| {
+                                text(ui, name, Text::Cell);
                             });
-                        }
-                    },
-                );
+                            row.cell(|ui| {
+                                let response = cell_editor(ui, ui.id().with("expression"), value, "Expression", false);
+                                scenario::publish_handle(&format!("gallery:cell:{name}"), response.rect.center());
+                                scenario::publish_rect(&format!("gallery:cell:{name}"), response.rect);
+                            });
+                            row.cell(|ui| {
+                                if button(ui, "Delete", Button::Small).clicked() {
+                                    removed = true;
+                                }
+                            });
+                        });
+                    }
+                });
             });
         };
         for _ in 0..3 {
@@ -724,4 +657,26 @@ fn many_draggable_samples_wrap_inside_the_available_width() {
     assert_eq!(rects.len(), 20);
     assert!(rects.iter().all(|rect| rect.right() <= bounds.right() && rect.width() == Tokens::get().control_height));
     assert!(rects.last().unwrap().top() > rects.first().unwrap().top(), "samples must wrap to additional rows");
+}
+
+#[test]
+fn gallery_covers_every_inline_element() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui_kit");
+    let names: std::collections::BTreeSet<_> = ELEMENTS.iter().map(|e| e.name).collect();
+    assert_eq!(names.len(), ELEMENTS.len(), "duplicate gallery entries");
+    for file in ["actions.rs", "choice.rs", "fields.rs", "layout.rs", "metrics.rs", "status.rs", "table.rs"] {
+        let source = std::fs::read_to_string(root.join(file)).unwrap();
+        let ast = syn::parse_file(&source).unwrap();
+        for item in ast.items {
+            if let syn::Item::Fn(item) = item
+                && matches!(&item.vis, syn::Visibility::Restricted(v) if v.path.is_ident("crate"))
+            {
+                let name = item.sig.ident.to_string();
+                // The inherited row label is metadata, not a renderable element.
+                if name != "label" {
+                    assert!(names.contains(name.as_str()), "{file}: {name} needs a gallery entry");
+                }
+            }
+        }
+    }
 }

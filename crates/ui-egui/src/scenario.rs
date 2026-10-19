@@ -67,6 +67,17 @@ pub fn publish_handle(name: &str, at: egui::Pos2) {
     HANDLES.with(|h| h.borrow_mut().push((name.to_string(), at)));
 }
 
+/// Publish a rectangle and its centered interaction handle with the same explicit identity.
+pub(crate) fn publish_target(name: &str, rect: egui::Rect) {
+    publish_target_as(name, name, rect);
+}
+
+/// Publish centered geometry with explicit, independently named handle and rectangle aliases.
+pub(crate) fn publish_target_as(handle: &str, rect_name: &str, rect: egui::Rect) {
+    publish_handle(handle, rect.center());
+    publish_rect(rect_name, rect);
+}
+
 /// Where a handle was drawn last frame.
 pub fn handle_at(name: &str) -> Option<egui::Pos2> {
     HANDLES.with(|h| h.borrow().iter().rfind(|(n, _)| n == name).map(|x| x.1))
@@ -84,6 +95,11 @@ pub fn publish_rect(name: &str, r: egui::Rect) {
 
 pub fn rect_of(name: &str) -> Option<egui::Rect> {
     RECTS.with(|h| h.borrow().iter().rfind(|(n, _)| n == name).map(|x| x.1))
+}
+
+#[cfg(test)]
+pub(crate) fn rects(prefix: &str) -> Vec<(String, egui::Rect)> {
+    RECTS.with(|r| r.borrow().iter().filter(|(name, _)| name.starts_with(prefix)).cloned().collect())
 }
 
 /// A number about this frame's drawing, by name ("axis_view_highlights": the axis view's highlighted tips).
@@ -1083,3 +1099,7 @@ pub fn check(h: &mut Harness, e: &Value) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "scenario_publication_tests.rs"]
+mod publication_tests;

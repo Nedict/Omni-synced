@@ -102,36 +102,38 @@ fn about(app: &mut SolveApp, ctx: &egui::Context) {
         .cards(2.0)
         .actions("", "Close", None)
         .show(ctx, true, |ui| {
-            ui_kit::text_block(
+            ui_kit::text(
                 ui,
-                "version",
                 &crate::i18n::format("help.build", &[("version", VERSION), ("commit", COMMIT), ("date", BUILD_DATE)]),
-                false,
+                ui_kit::Text::Report("version", false),
             );
-            ui_kit::note(ui, "description", crate::i18n::tr_label("Open-source parametric 3D CAD in Rust. Licensed MIT OR Apache-2.0."));
-            let copy = ui_kit::secondary_button(ui, crate::i18n::tr_label("Copy diagnostic information"));
-            crate::scenario::publish_rect("about:copy_diagnostics", copy.rect);
-            crate::scenario::publish_handle("about:copy_diagnostics", copy.rect.center());
+            ui_kit::text(
+                ui,
+                crate::i18n::tr_label("Open-source parametric 3D CAD in Rust. Licensed MIT OR Apache-2.0."),
+                ui_kit::Text::Note("description"),
+            );
+            let copy = ui_kit::button(ui, crate::i18n::tr_label("Copy diagnostic information"), ui_kit::Button::Normal);
+            crate::scenario::publish_target("about:copy_diagnostics", copy.rect);
             if copy.clicked() {
                 ctx.copy_text(diagnostics(app));
             }
             egui::ScrollArea::vertical().max_height(crate::theme::Tokens::get().control_height * 15.0).show(ui, |ui| {
                 ui_kit::section(ui, "attributions", crate::i18n::tr("help.attributions"), false, |ui| {
-                    ui_kit::text_block(ui, "attributions", ATTRIBUTION, false);
+                    ui_kit::text(ui, ATTRIBUTION, ui_kit::Text::Report("attributions", false));
                 });
                 ui_kit::section(ui, "fonts", crate::i18n::tr("help.fonts"), false, |ui| {
-                    ui_kit::text_block(ui, "fonts", crate::i18n::tr("help.font_details"), false);
+                    ui_kit::text(ui, crate::i18n::tr("help.font_details"), ui_kit::Text::Report("fonts", false));
                 });
                 ui_kit::section(ui, "licences", crate::i18n::tr("help.licences"), false, |ui| {
                     for (id, title, text) in
                         [("notice", "help.notice", NOTICE), ("mit", "help.mit", LICENSE_MIT), ("apache", "help.apache", LICENSE_APACHE)]
                     {
                         ui_kit::section(ui, id, crate::i18n::tr(title), false, |ui| {
-                            ui_kit::text_block(ui, id, text, false);
+                            ui_kit::text(ui, text, ui_kit::Text::Report(id, false));
                         });
                     }
                     ui_kit::section(ui, "third_party", crate::i18n::tr("help.third_party"), false, |ui| {
-                        if ui_kit::secondary_button(ui, crate::i18n::tr_label("Copy all licences")).clicked() {
+                        if ui_kit::button(ui, crate::i18n::tr_label("Copy all licences"), ui_kit::Button::Normal).clicked() {
                             ctx.copy_text(solidcraft_engine::licences::all());
                         }
                         ui_kit::text_lines(ui, "sc_third_party", THIRD_PARTY);

@@ -855,8 +855,7 @@ fn measure_line(app: &SolveApp, painter: &egui::Painter, proj: &Proj, r: &serde_
     let mid = sa + (sb - sa) * 0.5 + vec2(10.0, -14.0);
     let galley = painter.layout_no_wrap(crate::prefs::show_mm(app, d, 1), egui::FontId::proportional(crate::theme::Tokens::get().font_label), t.text);
     let rect = egui::Rect::from_min_size(mid, galley.size() + vec2(10.0, 6.0));
-    crate::scenario::publish_handle("measure:label", rect.center());
-    crate::scenario::publish_rect("measure:label", rect);
+    crate::scenario::publish_target("measure:label", rect);
     if app.preferences.measure_axis_distances {
         measure_components(app, painter, proj, a, b, rect);
     }
@@ -923,8 +922,7 @@ fn measure_components(app: &SolveApp, painter: &egui::Painter, proj: &Proj, a: V
         painter.rect(rect, 3.0, t.overlay, Stroke::new(1.0, color), egui::StrokeKind::Inside);
         painter.galley(rect.min + vec2(5.0, 3.0), galley, t.text);
         let handle = format!("measure:label:{axis}");
-        crate::scenario::publish_handle(&handle, rect.center());
-        crate::scenario::publish_rect(&handle, rect);
+        crate::scenario::publish_target(&handle, rect);
         occupied.push(rect);
     }
 }

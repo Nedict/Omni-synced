@@ -3,6 +3,8 @@
 //! the step shown; and the parts that collide as the study plays (`motion.interference`). Both
 //! are worked out on a scratch copy, again only when what they are for changes.
 
+use crate::dialogs_assembly::stop_text;
+use crate::ui_kit::choice_row;
 use std::hash::{Hash, Hasher};
 
 use egui::{Align2, FontId, Rect, RichText, Sense, Stroke, pos2, vec2};
@@ -175,17 +177,6 @@ fn chart(ui: &mut egui::Ui, xs: &[f64], ys: &[f64], unit: &str, total: u32, now:
     Some((f64::from((pos.x - plot.left()) / plot.width().max(1.0)).clamp(0.0, 1.0) * total).round())
 }
 
-/// What the motion stopping short ends the chart with (`None`: it went all the way).
-fn stop_text(v: &Value) -> Option<String> {
-    let at = v["stopped_at"].as_u64()?.to_string();
-    let name = |x: &Value| x.as_str().unwrap_or_default().to_string();
-    if let Some(l) = v["stopped_by_loop"].as_object() {
-        return Some(crate::i18n::format("trace.stopped_by_loop", &[("sample", &at), ("joint", &name(&l["joint"]))]));
-    }
-    let c = v["stopped_by_contact"].as_object()?;
-    Some(crate::i18n::format("trace.stopped_by_contact", &[("sample", &at), ("a", &name(&c["a"])), ("b", &name(&c["b"]))]))
-}
-
 fn key_of(x: impl std::fmt::Debug) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     format!("{x:?}").hash(&mut h);
@@ -274,7 +265,7 @@ fn collision_rows(
                     combo(ui, "ms_among", &["All components", "Contact sets"], &mut a.among)
                 });
             }
-            let button = crate::ui_kit::enabled_button(ui, "Check collisions", check.is_some());
+            let button = crate::ui_kit::button(ui, "Check collisions", crate::ui_kit::Button::Enabled(check.is_some()));
             crate::scenario::publish_handle("motion:check", button.rect.center());
             if button.clicked()
                 && let Some((st, mut p)) = check
@@ -365,9 +356,7 @@ fn plot_rows(
     let what = list.get(a.what).map_or(Plotted::Nothing, |(_, w)| *w);
     let bands = a.collisions.as_ref().and_then(|(_, r)| r.as_ref().ok()).map(collision_bands).unwrap_or_default();
     if what != Plotted::Nothing {
-        form_row(ui, "Quantity", |ui| {
-            combo(ui, "ms_quantity", &QUANTITIES, &mut a.quantity);
-        });
+        choice_row(ui, "Quantity", "ms_quantity", &mut a.quantity, &QUANTITIES);
         form_row(ui, "Duration", |ui| {
             let r = crate::ui_kit::cell_editor(ui, ui.id().with("duration"), &mut a.duration, "motion.duration_hint", false);
             crate::scenario::publish_handle("dialog:Duration", r.rect.center());

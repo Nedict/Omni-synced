@@ -200,6 +200,18 @@ pub(crate) fn clipboard_buttons(app: &mut SolveApp, ui: &mut egui::Ui, id: u64) 
     }
 }
 
+/// The common prefix of a feature tooltip and its copied status message.
+pub(crate) fn status_text(name: &str, ty: &str, error: Option<&str>, warning: Option<&str>) -> String {
+    let mut text = format!("{name}  ({ty})");
+    if let Some(error) = error {
+        text.push_str(&format!("\nError: {error}"));
+    }
+    if let Some(warning) = warning {
+        text.push_str(&format!("\nWarning: {warning}"));
+    }
+    text
+}
+
 /// What a feature's error or warning mark says, as its tooltip shows it (name and type, then
 /// the error and the warning), for the clipboard. `None` when it has neither.
 pub(crate) fn feature_message(app: &SolveApp, id: u64) -> Option<String> {
@@ -208,14 +220,7 @@ pub(crate) fn feature_message(app: &SolveApp, id: u64) -> Option<String> {
         return None;
     }
     let feature = app.session.doc.features.iter().find(|f| f.id == id)?;
-    let mut text = format!("{}  ({})", feature.name, feature.kind.type_name());
-    if let Some(error) = &result.error {
-        text.push_str(&format!("\nError: {error}"));
-    }
-    if let Some(warning) = &result.warning {
-        text.push_str(&format!("\nWarning: {warning}"));
-    }
-    Some(text)
+    Some(status_text(&feature.name, feature.kind.type_name(), result.error.as_deref(), result.warning.as_deref()))
 }
 
 /// Copy Error Message (or Copy Warning Message) in the menu of a feature that has one.
@@ -405,13 +410,7 @@ fn timeline_contents(app: &mut SolveApp, ui: &mut egui::Ui, floating: bool) {
                         t.warning,
                     );
                 }
-                let mut tip = format!("{name}  ({ty})");
-                if let Some(e) = &err {
-                    tip += &format!("\nError: {e}");
-                }
-                if let Some(w) = &warn {
-                    tip += &format!("\nWarning: {w}");
-                }
+                let mut tip = status_text(name, ty, err.as_deref(), warn.as_deref());
                 if let Some(r) = res {
                     tip += &format!("\n{:.1} ms", r.ms);
                 }

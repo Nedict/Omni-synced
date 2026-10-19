@@ -52,14 +52,17 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 140.0))
         .actions("Stand it up", "Leave it", Some("Don't ask again"))
         .show(ctx, true, |ui| {
-            ui_kit::text_block(
+            ui_kit::text(
                 ui,
-                "why",
                 crate::i18n::tr_label("Files from many CAD programs have Y up, so they open lying on their back here (Z up)."),
-                false,
+                ui_kit::Text::Report("why", false),
             );
-            ui_kit::text_block(ui, "how", crate::i18n::tr_label("Stand it up: a quarter turn about X, as one Move feature you can undo."), false);
-            ui_kit::note(ui, "never", crate::i18n::tr_label("Preferences › Design turns the offer back on"));
+            ui_kit::text(
+                ui,
+                crate::i18n::tr_label("Stand it up: a quarter turn about X, as one Move feature you can undo."),
+                ui_kit::Text::Report("how", false),
+            );
+            ui_kit::text(ui, crate::i18n::tr_label("Preferences › Design turns the offer back on"), ui_kit::Text::Note("never"));
         });
     for (handle, key) in [("stand_up:stand", "dialog:ok"), ("stand_up:never", "dialog:apply"), ("stand_up:leave", "dialog:cancel")] {
         if let Some(at) = crate::scenario::handle_at(key) {

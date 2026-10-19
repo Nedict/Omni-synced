@@ -12,7 +12,7 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
 }
 
 pub fn rows(app: &SolveApp, ui: &mut egui::Ui, dashed: &mut bool, tolerance: &mut f64) {
-    crate::ui_kit::note(ui, "hidden", app.tr_label("Hidden edges"));
+    crate::ui_kit::text(ui, app.tr_label("Hidden edges"), crate::ui_kit::Text::Note("hidden"));
     for (value, key, label) in [(false, "omit", "Do not export hidden edges"), (true, "dashed", "Export hidden edges as dashed lines")] {
         let r = crate::ui_kit::list_picker(ui, key, app.tr_label(label), *dashed == value);
         crate::scenario::publish_handle(&format!("dialog:dxf:{key}"), r.rect.center());
@@ -24,12 +24,12 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, dashed: &mut bool, tolerance: &mu
         let r = crate::ui_kit::number_field(ui, tolerance, 0.0001..=1.0, 0.001, " mm");
         crate::scenario::publish_handle("dialog:dxf:tolerance", r.rect.center());
     });
-    crate::ui_kit::note(
+    crate::ui_kit::text(
         ui,
-        "projection",
         app.tr_label(if app.cam.fov > 0.0 { "Current perspective view" } else { "Current orthographic view (1:1 mm)" }),
+        crate::ui_kit::Text::Note("projection"),
     );
-    crate::ui_kit::note(ui, "tolerance", app.tr_label("dxf.tolerance_help"));
+    crate::ui_kit::text(ui, app.tr_label("dxf.tolerance_help"), crate::ui_kit::Text::Note("tolerance"));
 }
 
 pub fn run(app: &mut SolveApp, dashed: bool, tolerance: f64) -> Result<(), String> {

@@ -89,13 +89,13 @@ fn start_test(app: &SolveApp, e: &agents::Entry, key: Option<String>) -> Test {
 fn test_line(ui: &mut egui::Ui, test: &Option<&Test>) {
     match test {
         Some(Test::Running(_)) => {
-            ui_kit::note(ui, "testing", tr("ui.ai_testing"));
+            ui_kit::text(ui, tr("ui.ai_testing"), ui_kit::Text::Note("testing"));
         }
         Some(Test::Done(Ok(message))) => {
-            ui_kit::text_block(ui, "test_ok", message, false);
+            ui_kit::text(ui, message, ui_kit::Text::Report("test_ok", false));
         }
         Some(Test::Done(Err(error))) => {
-            ui_kit::text_block(ui, "test_error", error, true);
+            ui_kit::text(ui, error, ui_kit::Text::Report("test_error", true));
         }
         None => {}
     }
@@ -105,9 +105,9 @@ fn test_line(ui: &mut egui::Ui, test: &Option<&Test>) {
 pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
     let r = ui_kit::checkbox(ui, tr("ui.ai_show_features"), &mut app.preferences.ai_features);
     crate::scenario::publish_handle("prefs:ai_features", r.rect.center());
-    ui_kit::note(ui, "features", tr("ui.ai_show_features_note"));
+    ui_kit::text(ui, tr("ui.ai_show_features_note"), ui_kit::Text::Note("features"));
     if cfg!(target_arch = "wasm32") {
-        ui_kit::note(ui, "desktop", tr("ui.agent_chat_desktop_only"));
+        ui_kit::text(ui, tr("ui.agent_chat_desktop_only"), ui_kit::Text::Note("desktop"));
         return;
     }
     if !app.preferences.ai_features {
@@ -115,7 +115,7 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     let r = ui_kit::checkbox(ui, tr("ui.ai_toolbar_button"), &mut app.preferences.ai_toolbar_button);
     crate::scenario::publish_handle("prefs:ai_toolbar_button", r.rect.center());
-    ui_kit::note(ui, "toolbar", tr("ui.ai_toolbar_button_note"));
+    ui_kit::text(ui, tr("ui.ai_toolbar_button_note"), ui_kit::Text::Note("toolbar"));
     #[cfg(not(target_arch = "wasm32"))]
     {
         if app.agent_chat.detection.is_none() && app.agent_chat.detecting.is_none() {
@@ -130,34 +130,34 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
             if r.clicked() {
                 app.preferences.ai_permissions = mode;
             }
-            ui_kit::note(
+            ui_kit::text(
                 ui,
-                mode.id(),
                 tr(match mode {
                     Mode::Ask => "ui.ai_mode_ask_note",
                     Mode::Edits => "ui.ai_mode_edits_note",
                     Mode::All => "ui.ai_mode_all_note",
                 }),
+                ui_kit::Text::Note(mode.id()),
             );
         }
         if app.preferences.ai_permissions == Mode::All {
-            ui_kit::text_block(ui, "permissions_warning", tr("ui.ai_mode_all_warning"), true);
+            ui_kit::text(ui, tr("ui.ai_mode_all_warning"), ui_kit::Text::Report("permissions_warning", true));
         }
-        ui_kit::note(ui, "scope", tr("ui.ai_modes_scope"));
+        ui_kit::text(ui, tr("ui.ai_modes_scope"), ui_kit::Text::Note("scope"));
         ui_kit::section(ui, "always_allowed", tr("ui.ai_always_allowed"), true, |ui| {
             let remembered: Vec<_> =
                 app.preferences.agent_always_allow.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone())).collect();
             if remembered.is_empty() {
-                ui_kit::note(ui, "none", tr("ui.ai_always_allowed_none"));
+                ui_kit::text(ui, tr("ui.ai_always_allowed_none"), ui_kit::Text::Note("none"));
             }
             let names: std::collections::HashMap<_, _> = agents::entries(app).into_iter().map(|e| (e.id, e.name)).collect();
             for (agent, tools) in remembered {
                 ui_kit::label_actions(ui, names.get(&agent).unwrap_or(&agent), |ui| {
-                    if ui_kit::small_button(ui, tr("ui.ai_reset")).clicked() {
+                    if ui_kit::button(ui, tr("ui.ai_reset"), ui_kit::Button::Small).clicked() {
                         app.preferences.agent_always_allow.remove(&agent);
                     }
                 });
-                ui_kit::text_block(ui, &agent, &tools.join(", "), false);
+                ui_kit::text(ui, &tools.join(", "), ui_kit::Text::Report(&agent, false));
             }
         });
     });
@@ -166,7 +166,7 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
             let p = &mut app.preferences;
             let mut selected = if p.agent_chat_popped { 2 } else { usize::from(p.agent_chat_side != "left") };
             let options = [tr("ui.agent_chat_left"), tr("ui.agent_chat_right"), tr("ui.agent_chat_own_window")];
-            if ui_kit::segmented(ui, &mut selected, &options) {
+            if ui_kit::segmented(ui, &mut selected, &options, Default::default()) {
                 p.agent_chat_popped = selected == 2;
                 if selected < 2 {
                     p.agent_chat_side = if selected == 0 { "left" } else { "right" }.into();
@@ -176,7 +176,7 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
         ui_kit::row(ui, tr("ui.agent_chat_turn_limit"), |ui| {
             ui_kit::number_field(ui, &mut app.preferences.agent_chat_turn_limit, 1..=200, 1.0, "");
         });
-        ui_kit::note(ui, "privacy", tr("ui.agent_chat_privacy_note"));
+        ui_kit::text(ui, tr("ui.agent_chat_privacy_note"), ui_kit::Text::Note("privacy"));
     });
 }
 
@@ -193,16 +193,16 @@ fn agents_section(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut test: Option<agents::Entry> = None;
     ui_kit::section(ui, "agents", tr("ui.ai_agents"), true, |ui| {
         if app.agent_chat.detecting.is_some() {
-            ui_kit::note(ui, "detecting", tr("ui.agent_chat_detecting"));
+            ui_kit::text(ui, tr("ui.agent_chat_detecting"), ui_kit::Text::Note("detecting"));
         } else if all.is_empty() {
-            ui_kit::note(ui, "none", tr("ui.agent_chat_none_found"));
+            ui_kit::text(ui, tr("ui.agent_chat_none_found"), ui_kit::Text::Note("none"));
         }
         for e in &all {
             ui_kit::section(ui, &e.id, &e.name, true, |ui| {
-                ui_kit::text_block(ui, "detail", &e.detail(), false);
+                ui_kit::text(ui, &e.detail(), ui_kit::Text::Report("detail", false));
                 super::panel::login_chip(ui, e.login);
                 if !e.found {
-                    ui_kit::note(ui, "added", tr("ui.ai_added"));
+                    ui_kit::text(ui, tr("ui.ai_added"), ui_kit::Text::Note("added"));
                 }
                 ui.horizontal_wrapped(|ui| {
                     if ui_kit::list_picker(ui, &e.id, tr("ui.ai_default"), default.as_deref() == Some(e.id.as_str())).clicked() {
@@ -234,12 +234,12 @@ fn agents_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                     }
                 });
                 ui.horizontal_wrapped(|ui| {
-                    let b = ui_kit::secondary_button(ui, tr("ui.ai_test"));
+                    let b = ui_kit::button(ui, tr("ui.ai_test"), ui_kit::Button::Normal);
                     crate::scenario::publish_handle(&format!("prefs:ai_test:{}", e.id), b.rect.center());
                     if b.on_hover_text(tr(if e.kind == Kind::Acp { "ui.ai_test_acp_tip" } else { "ui.ai_test_api_tip" })).clicked() {
                         test = Some(e.clone());
                     }
-                    if !e.found && ui_kit::secondary_button(ui, tr("ui.ai_remove")).clicked() {
+                    if !e.found && ui_kit::button(ui, tr("ui.ai_remove"), ui_kit::Button::Normal).clicked() {
                         remove = Some(e.id.clone());
                     }
                 });
@@ -247,12 +247,12 @@ fn agents_section(app: &mut SolveApp, ui: &mut egui::Ui) {
             });
         }
         ui.horizontal_wrapped(|ui| {
-            let b = ui_kit::secondary_button(ui, tr("ui.ai_add_agent"));
+            let b = ui_kit::button(ui, tr("ui.ai_add_agent"), ui_kit::Button::Normal);
             crate::scenario::publish_handle("prefs:ai_add", b.rect.center());
             if b.clicked() {
                 open_add(app);
             }
-            if ui_kit::enabled_button(ui, tr("ui.agent_chat_refresh"), app.agent_chat.detecting.is_none()).clicked() {
+            if ui_kit::button(ui, tr("ui.agent_chat_refresh"), ui_kit::Button::Enabled(app.agent_chat.detecting.is_none())).clicked() {
                 refresh(app, &ui.ctx().clone());
             }
         });
@@ -304,7 +304,7 @@ pub fn dialog(app: &mut SolveApp, ctx: &egui::Context) {
             ui_kit::row(ui, tr("ui.ai_preset"), |ui| {
                 let mut selected = kinds.iter().position(|(k, _)| *k == s.kind).unwrap_or(0);
                 let labels = kinds.map(|(_, key)| tr(key));
-                if ui_kit::segmented_compact(ui, &mut selected, &labels)
+                if ui_kit::segmented(ui, &mut selected, &labels, ui_kit::Segments { compact: true, ..Default::default() })
                     && let Some((kind, _)) = kinds.get(selected)
                 {
                     s.kind = *kind;
@@ -321,7 +321,7 @@ pub fn dialog(app: &mut SolveApp, ctx: &egui::Context) {
                 AddKind::Installed => {
                     ui_kit::row(ui, tr("ui.agent_chat_pick"), |ui| {
                         if found.is_empty() {
-                            ui_kit::inline_text(ui, tr("ui.agent_chat_none_found_short"));
+                            ui_kit::text(ui, tr("ui.agent_chat_none_found_short"), ui_kit::Text::Inline);
                         } else {
                             let sel = found.get(s.installed).map(|e| e.name.clone()).unwrap_or_default();
                             ui_kit::dropdown_menu(ui, "sc_ai_add_installed", &sel, |ui| {
@@ -347,7 +347,7 @@ pub fn dialog(app: &mut SolveApp, ctx: &egui::Context) {
                     ui_kit::row(ui, tr("ui.agent_chat_command"), |ui| {
                         ui_kit::text_field(ui, &mut s.command, "");
                     });
-                    ui_kit::note(ui, "installed", tr("ui.ai_add_installed_note"));
+                    ui_kit::text(ui, tr("ui.ai_add_installed_note"), ui_kit::Text::Note("installed"));
                 }
                 AddKind::Custom => {
                     ui_kit::row(ui, tr("ui.ai_name"), |ui| {
@@ -356,7 +356,7 @@ pub fn dialog(app: &mut SolveApp, ctx: &egui::Context) {
                     ui_kit::row(ui, tr("ui.agent_chat_command"), |ui| {
                         ui_kit::text_field(ui, &mut s.command, tr("ui.ai_command_hint"));
                     });
-                    ui_kit::note(ui, "custom", tr("ui.agent_chat_custom_hint"));
+                    ui_kit::text(ui, tr("ui.agent_chat_custom_hint"), ui_kit::Text::Note("custom"));
                 }
                 AddKind::Api => {
                     let presets: Vec<_> = agents::API_PRESETS.iter().map(|p| p.0).chain(std::iter::once(tr("ui.ai_custom_url"))).collect();
@@ -387,19 +387,18 @@ pub fn dialog(app: &mut SolveApp, ctx: &egui::Context) {
                     ui_kit::row(ui, tr("ui.ai_key"), |ui| {
                         ui.add_enabled_ui(has_keychain, |ui| {
                             let r = ui_kit::password_field(ui, egui::Id::new("sc_ai_add_key"), &mut s.key, tr("ui.ai_key_hint"));
-                            crate::scenario::publish_rect("ai_add:key", r.rect);
-                            crate::scenario::publish_handle("ai_add:key", r.rect.center());
+                            crate::scenario::publish_target("ai_add:key", r.rect);
                         });
                     });
-                    ui_kit::note(ui, "keychain", tr(if has_keychain { "ui.ai_key_note" } else { "ui.ai_no_keychain" }));
-                    if ui_kit::secondary_button(ui, tr("ui.ai_test")).clicked() {
+                    ui_kit::text(ui, tr(if has_keychain { "ui.ai_key_note" } else { "ui.ai_no_keychain" }), ui_kit::Text::Note("keychain"));
+                    if ui_kit::button(ui, tr("ui.ai_test"), ui_kit::Button::Normal).clicked() {
                         test = true;
                     }
                     test_line(ui, &s.test.as_ref());
                 }
             }
             if let Some(e) = &s.error {
-                ui_kit::text_block(ui, "add_error", e, true);
+                ui_kit::text(ui, e, ui_kit::Text::Report("add_error", true));
             }
         });
     if let Some(rect) = crate::scenario::rect_of("dialog:ok") {

@@ -764,13 +764,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             let origin_x = drag_press_x(&response, rect.center().x);
             drag = Some(Drag::Items(selected_drag_items(app, origin_x, group_id)));
         }
-        let mut tip = format!("{name}  ({ty})");
-        if let Some(error) = &error {
-            tip.push_str(&format!("\nError: {error}"));
-        }
-        if let Some(warning) = &warning {
-            tip.push_str(&format!("\nWarning: {warning}"));
-        }
+        let mut tip = crate::timeline::status_text(name, ty, error.as_deref(), warning.as_deref());
         tip.push_str("\nDouble-click to edit · drag to reorder · right-click for more");
         let response = response.on_hover_text(tip);
         if response.clicked() && on_fold {

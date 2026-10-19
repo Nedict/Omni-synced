@@ -919,7 +919,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         .placed(egui::Align2::CENTER_TOP, top)
         .actions("", crate::i18n::tr("ui.cancel"), None)
         .show(ctx, true, |ui| {
-            ui_kit::text_block(ui, "name", &format!("{name}…"), false);
+            ui_kit::text(ui, &format!("{name}…"), ui_kit::Text::Report("name", false));
             if let Some(preview) = r.preview.as_ref().filter(|_| !cancelled) {
                 let w = ui.available_width();
                 ui.image((preview.id(), egui::vec2(w, w * 200.0 / 320.0)));
@@ -927,7 +927,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     Some(built) => crate::i18n::format("file_load.built", &[("built", &built.to_string()), ("total", &total.to_string())]),
                     None => crate::i18n::tr("file_load.preview_note").to_string(),
                 };
-                ui_kit::note(ui, "preview", &note);
+                ui_kit::text(ui, &note, ui_kit::Text::Note("preview"));
             }
             let status = if cancelled && export {
                 crate::i18n::tr_label("dxf.cancel_wait").to_string()
@@ -950,7 +950,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             };
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui_kit::text_block(ui, "status", &status, false);
+                ui_kit::text(ui, &status, ui_kit::Text::Report("status", false));
             });
             // Always there, so the card keeps its height as the phases change.
             let fraction = if cancelled {

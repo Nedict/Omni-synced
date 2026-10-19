@@ -5,6 +5,7 @@ use solidcraft_engine::doc::{metric_thread_sizes, parse_metric_thread};
 
 use crate::dialogs::{combo, form_row};
 use crate::i18n::tr;
+use crate::ui_kit::text_row;
 
 /// Common pitch presets, not an exhaustive catalogue of standard diameter/pitch pairs.
 /// The coarse and current pitches are included separately; custom pairs remain editable.
@@ -84,7 +85,7 @@ pub(crate) fn rows(ui: &mut egui::Ui, designation: &mut String, suggested: &mut 
         });
     });
 
-    let (enter, changed) = form_row(ui, "Designation", |ui| crate::ui_kit::text_field(ui, designation, tr("fits the face, e.g. M8")));
+    let (enter, changed) = text_row(ui, "Designation", designation, tr("fits the face, e.g. M8"));
     if let Some(at) = crate::scenario::handle_at("dialog:Designation") {
         crate::scenario::publish_handle("dialog:thread_size", at);
     }

@@ -41,11 +41,8 @@ fn italian_dialog_keeps_english_scenario_handles() {
 
 #[test]
 fn sketch_palette_profile_and_points_rows_show_their_own_translation() {
-    // ui.palette_profile / ui.palette_points are reached by id, not by the usual English-text
-    // lookup (see the comment on sketch_palette::TOGGLES, and
-    // i18n::tests::id_labels_resolve_to_their_own_translation_not_an_english_fallback for the
-    // lookup itself). A broken id falls back to English silently rather than failing loudly, so
-    // check the word actually on screen in each locale, not just that something renders.
+    // The palette uses the shared profile/points IDs. Check the text actually on screen:
+    // a broken ID could silently fall back to English.
     for (lang, profile, points) in [("de", "Profil", "Punkte"), ("ja", "プロファイル", "点"), ("ko", "프로파일", "점"), ("uk", "Профіль", "Точки")]
     {
         let mut h = Harness::new();
@@ -126,8 +123,7 @@ fn home_page_buttons_fit_their_translated_labels() {
         h.app.home.show(rev);
         h.frames(2);
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0));
-        let mut out = h.ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| h.app.ui(ui));
-        out.textures_delta.clear();
+        let out = crate::test_support::frame(&h.ctx, egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| h.app.ui(ui));
         let (mut rects, mut texts) = (Vec::new(), Vec::new());
         out.shapes.iter().for_each(|shape| collect(&shape.shape, &mut rects, &mut texts));
         let locale = crate::i18n::Locale::for_language(catalog.id);
@@ -202,8 +198,7 @@ fn home_page_renders_in_the_active_language() {
         h.app.home.show(rev);
         h.frames(2);
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0));
-        let mut out = h.ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| h.app.ui(ui));
-        out.textures_delta.clear();
+        let out = crate::test_support::frame(&h.ctx, egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| h.app.ui(ui));
         let mut texts = Vec::new();
         out.shapes.iter().for_each(|shape| painted(&shape.shape, &mut texts));
         for word in words.into_iter().chain([missing_recent]) {

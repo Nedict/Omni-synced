@@ -257,156 +257,215 @@ pub enum OrbitAround {
 /// itself clamps what the user drags to its own range.
 pub const DEFAULT_BROWSER_WIDTH: f32 = 250.0;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Prefs {
+// The stored fields, their defaults, page resets and simple form controls share this table.
+// Omitted pages keep fields such as grid_follows_view and added agents when restoring defaults.
+// Accepted control-channel ranges may differ from slider ranges (look_at_speed).
+macro_rules! preference_settings {
+    ($( $(#[$doc:meta])* $field:ident: $ty:ty = $default:expr $(, $page:expr)? $(, accept($accepted:expr))? $(=> $control:ident($($args:tt)*))? ;)*) => {
+        #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+        #[serde(default)]
+        pub struct Prefs { $($(#[$doc])* pub $field: $ty,)* }
+
+        impl Default for Prefs {
+            fn default() -> Self { Self { $($field: $default,)* } }
+        }
+
+        fn reset_preferences(p: &mut Prefs, page: usize) {
+            let d = Prefs::default();
+            $($(if page == $page { p.$field = d.$field; })?)*
+        }
+
+        mod accepted {
+            use super::*;
+            $($(pub(super) fn $field(p: &Prefs) -> bool { ($accepted).contains(&p.$field) })?)*
+        }
+
+        mod setting {
+            use super::*;
+            $($(pub(super) fn $field(app: &mut SolveApp, ui: &mut egui::Ui) -> egui::Response {
+                preference_settings!(@control app, ui, $field, $control($($args)*))
+            })?)*
+        }
+    };
+    (@control $app:ident, $ui:ident, $field:ident, check($label:literal $(, $help:literal)?)) => {
+        ui_kit::checkbox($ui, crate::i18n::tr_label($label), &mut $app.preferences.$field)
+            $(.on_hover_text(crate::i18n::tr_label($help)))?
+    };
+    (@control $app:ident, $ui:ident, $field:ident, check_tr($label:literal)) => {
+        ui_kit::checkbox($ui, crate::i18n::tr($label), &mut $app.preferences.$field)
+    };
+    (@control $app:ident, $ui:ident, $field:ident, check_id($label:literal)) => {
+        ui_kit::checkbox($ui, $app.tr($label), &mut $app.preferences.$field)
+    };
+    (@control $app:ident, $ui:ident, $field:ident, number($label:literal, $range:expr)) => {
+        ui_kit::row($ui, $app.tr($label), |ui| {
+            ui_kit::number_field(ui, &mut $app.preferences.$field, $range, 1.0, "")
+        })
+    };
+    (@control $app:ident, $ui:ident, $field:ident, enabled_slider($enabled:ident, $label:literal, $range:expr, $step:expr, $format:expr)) => {
+        ui_kit::row($ui, $app.tr_label($label), |ui| {
+            ui.add_enabled_ui($app.preferences.$enabled, |ui| {
+                ui_kit::formatted_slider(ui, &mut $app.preferences.$field, $range, $step, $format)
+            }).inner
+        })
+    };
+    (@control $app:ident, $ui:ident, $field:ident, slider($label:literal, $range:expr, $step:expr, $format:expr, $rect:literal)) => {
+        ui_kit::row($ui, $app.tr($label), |ui| {
+            let response = ui_kit::formatted_slider(ui, &mut $app.preferences.$field, $range, $step, $format);
+            crate::scenario::publish_rect($rect, response.rect);
+            response
+        })
+    };
+}
+
+preference_settings! {
     /// Units of new designs.
-    pub default_units: String,
+    default_units: String = "mm".into(), 0;
     /// Mouse mapping: `fusion`, `solidworks` or `inventor`.
-    pub nav: String,
+    nav: String = "fusion".into(), 1;
     /// View orientation widget: original signed axes (default) or compact cube.
-    pub navigator_style: NavigatorStyle,
+    navigator_style: NavigatorStyle = NavigatorStyle::default(), 1;
     /// Show the radial ring and enable hold/flick gestures for viewport context menus.
-    pub radial_context_menu: bool,
+    radial_context_menu: bool = false, 1 => check("Radial context menu");
     /// The wheel zooms out when turned forward.
-    pub zoom_reverse: bool,
+    zoom_reverse: bool = false, 1 => check("Reverse zoom direction");
     /// What an orbit turns around.
-    pub orbit_around: OrbitAround,
+    orbit_around: OrbitAround = OrbitAround::default(), 1;
     /// The cursor preference as releases before the origin option saved it (`true` = the point
     /// under the cursor). [`migrate`] folds it into `orbit_around` when saved preferences are
     /// read, so an existing choice survives the upgrade; this version only writes `false`.
-    pub orbit_cursor: bool,
+    orbit_cursor: bool = false, 1;
     /// Whether a connected 3D mouse moves the view.
-    pub space_mouse_enabled: bool,
+    space_mouse_enabled: bool = true, 1 => check("Navigate with SpaceNavigator / SpaceMouse");
     /// Speed multiplier for 3D mouse navigation.
-    pub space_mouse_speed: f32,
+    space_mouse_speed: f32 = 1.0, 1 => enabled_slider(space_mouse_enabled, "3D mouse speed", 0.25..=3.0, 0.05, |v| format!("{v:.2}×"));
     /// Per physical axis of the cap (push X, Y, Z, then tilt X, Y, Z), whether it moves the view
     /// the other way.
-    pub space_mouse_reverse: [bool; 6],
+    space_mouse_reverse: [bool; 6] = [false; 6], 1;
     /// Per physical axis of the cap, a multiplier on top of `space_mouse_speed`; 0 switches it off.
-    pub space_mouse_axis_speed: [f32; 6],
+    space_mouse_axis_speed: [f32; 6] = [1.0; 6], 1;
     /// Per 3D mouse (`space_mouse::Input::device`), the calibration that puts its axes on
-    /// 3Dconnexion's. A device without one is read as it reports.
+    /// 3Dconnexion's. A device without one is read as it reports. Page resets keep calibrations.
     #[serde(deserialize_with = "calibrations_that_read")]
-    pub space_mouse_calibrations: std::collections::BTreeMap<String, solidcraft_space_mouse::Calibration>,
+    space_mouse_calibrations: std::collections::BTreeMap<String, solidcraft_space_mouse::Calibration> = Default::default();
     /// Anti-aliasing samples (applies on restart).
-    pub msaa: u32,
+    msaa: u32 = 4, PAGE_GRAPHICS;
     /// Soft contact shading in the GPU viewport; optional and applied immediately.
-    pub ambient_occlusion: bool,
+    ambient_occlusion: bool = false, PAGE_GRAPHICS;
     /// The grid turns to the upright origin plane facing a side view (#1470). Off by default: the
     /// grid stays on the ground plane (XY) whatever the view.
-    pub grid_follows_view: bool,
+    grid_follows_view: bool = false => check("Grid follows the view", "Side views show the grid on the upright plane facing them instead of the ground");
     /// How finely the viewport tessellates curved faces and edges: `coarse`, `normal`, `fine` or
     /// `ultra` (#1287). Only the display plan the viewport draws; never the design or exports.
-    pub display_quality: String,
+    display_quality: String = "normal".into(), PAGE_GRAPHICS;
     /// Supersampling (#1288): the view drawn at this many times its pixels each way and filtered
     /// down (1, 1.5 or 2; 1 is off).
-    pub supersampling: f32,
+    supersampling: f32 = 1.0, PAGE_GRAPHICS;
     /// Supersample only while the view holds still (full speed while orbiting).
-    pub supersampling_adaptive: bool,
+    supersampling_adaptive: bool = true, PAGE_GRAPHICS => check_tr("ui.supersampling_adaptive");
     /// Show the frame rate in the view's corner (the view then redraws every frame).
-    pub show_frame_rate: bool,
+    show_frame_rate: bool = false, PAGE_GRAPHICS => check_id("ui.frame_rate");
     /// Show world X/Y/Z component dimensions beside the total distance in Measure.
-    pub measure_axis_distances: bool,
+    measure_axis_distances: bool = true, PAGE_GRAPHICS => check_id("settings.measure_axis_distances");
     /// Decimals shown for lengths and angles.
-    pub length_decimals: u8,
-    pub angle_decimals: u8,
+    length_decimals: u8 = 2, 0 => number("ui.length_decimals", 0..=6);
+    angle_decimals: u8 = 1, 0 => number("ui.angle_decimals", 0..=6);
     /// `dark`, `light` or `system` (follow the operating system), or a theme file's id: a
     /// built-in one (`gruvbox-dark`, …) or one of `custom_themes` (#2255).
-    pub theme: String,
+    theme: String = "dark".into(), 0;
     /// Imported theme files (`theme_files`), kept here so they also work in the browser.
-    pub custom_themes: Vec<crate::theme_files::ThemeFile>,
+    custom_themes: Vec<crate::theme_files::ThemeFile> = Vec::new();
     /// Interface language (a registered locale ID).
-    pub language: String,
+    language: String = "en".into(), 0;
     /// Interface scale (1 = 100 %).
-    pub ui_scale: f32,
+    ui_scale: f32 = 1.0, 0, accept(0.5..=2.5) => slider("ui.ui_scale", 0.5..=2.5, 0.05, |v| format!("{:.0} %", v * 100.0), "prefs:scale");
     /// Interface font: an installed font family (or a font file), or empty for the built-in one
     /// (#1290). Menus, dialogs and labels use it; glyphs it lacks fall back as before.
-    pub ui_font: String,
+    ui_font: String = String::new(), 0;
     /// Put the feature history above the parts browser in the left sidebar instead of along the
     /// bottom of the viewport.
-    pub timeline_left: bool,
+    timeline_left: bool = false, 0;
     /// Height of the feature-history section when it shares the left sidebar with the browser.
-    pub timeline_left_height: f32,
+    timeline_left_height: f32 = 360.0, 0;
     /// Whether the browser below the left feature history is collapsed.
-    pub timeline_left_browser_collapsed: bool,
+    timeline_left_browser_collapsed: bool = false, 0;
     /// Width of the left sidebar holding the browser (and the feature history above it), which
     /// the user drags wider or narrower at its right edge.
-    pub browser_width: f32,
+    browser_width: f32 = DEFAULT_BROWSER_WIDTH, 0;
     /// Draw the parts browser on a translucent card over the 3D view instead of a column of its
     /// own, so the workspace keeps the whole window width.
-    pub browser_float: bool,
+    browser_float: bool = false, 0 => check("Float it over the workspace");
     /// The wheel zooms toward the point under the cursor (else toward the view's centre).
-    pub zoom_to_cursor: bool,
+    zoom_to_cursor: bool = true, 1 => check("Zoom to the cursor", "The wheel zooms toward the point under the cursor (off: toward the view's centre)");
     /// Spread discrete wheel input across frames (off: apply each event immediately).
-    pub smooth_wheel_zoom: bool,
+    smooth_wheel_zoom: bool = true, 1 => check("Smooth wheel zoom", "Turn off to apply each wheel event immediately, without a smoothing tail");
     /// Two-finger trackpad scroll pans (off: it zooms like the wheel); pinch always zooms.
-    pub trackpad_pan: bool,
+    trackpad_pan: bool = true, 1;
     /// Horizontal trackpad and thumb-wheel scrolling pans the view the other way (#2007).
-    pub pan_reverse_x: bool,
+    pan_reverse_x: bool = false, 1 => check("Reverse horizontal pan direction", "Horizontal two-finger scrolling and the thumb wheel pan the other way");
     /// View changes (axis view, Look At, Home) animate; `look_at_speed` scales how fast.
-    pub look_at_anim: bool,
-    pub look_at_speed: f32,
+    look_at_anim: bool = true, 1 => check("Animate view changes", "Axis view, Look At, Home and Fit");
+    look_at_speed: f32 = 1.0, 1, accept(0.25..=4.0) => enabled_slider(look_at_anim, "Animation speed", 0.5..=3.0, 0.25, |v| format!("{v:.2}×"));
     /// Default modelling orientation: `z` (Z up) or `y` (Y up) (#3).
-    pub up_axis: String,
+    up_axis: String = "z".into(), PAGE_DESIGN;
     /// After a STEP or IGES file opens, offer to stand a Y-up part up (`stand_up`).
-    pub offer_stand_up: bool,
+    offer_stand_up: bool = true, PAGE_DESIGN => check("Offer to stand up Y-up files", "After a STEP or IGES file opens with Z up, offer a quarter turn about X");
     /// What a middle-button double-click in the view does: `home`, `fit` or `off`.
-    pub middle_double_click: String,
+    middle_double_click: String = "home".into(), 1;
     /// Colour vision mode (#778): `off`, `protan`, `deutan` or `tritan`.
-    pub color_vision: crate::theme::ColorVision,
+    color_vision: crate::theme::ColorVision = crate::theme::ColorVision::Off, PAGE_GRAPHICS;
     /// Check for updates at start and once a day (docs/updates.md).
-    pub check_updates: bool,
+    check_updates: bool = true, 0;
     /// When the last update check ran, and the versions skipped or put off (`update::Memo`).
-    pub update: crate::update::Memo,
+    update: crate::update::Memo = crate::update::Memo::default();
     /// Save as mesh: the last format (`stl` or `3mf`), whether it was sent to a slicer, which one
     /// (an installed slicer's id or a program path), and the programs the user added (newest first).
-    pub save_mesh_format: String,
+    save_mesh_format: String = "stl".into();
     /// Hidden edges in the current-view DXF export (false: omit, true: dashed).
-    pub view_dxf_dashed: bool,
+    view_dxf_dashed: bool = false;
     /// Model-space chord tolerance for current-view DXF curves, in millimetres.
-    pub view_dxf_tolerance: f64,
-    pub save_mesh_send: bool,
-    pub save_mesh_slicer: String,
-    pub custom_slicers: Vec<String>,
+    view_dxf_tolerance: f64 = 0.01;
+    save_mesh_send: bool = false;
+    save_mesh_slicer: String = String::new();
+    custom_slicers: Vec<String> = Vec::new();
     /// AI features (docs/agent-chat.md): the master switch. Off: no AI button, shortcut, menu
     /// entry or panel, and nothing is looked for or started.
-    pub ai_features: bool,
+    ai_features: bool = true, PAGE_AI;
     /// The Assistant button in the application bar (the shortcut and View menu entry stay).
-    pub ai_toolbar_button: bool,
+    ai_toolbar_button: bool = true, PAGE_AI;
     /// Agents the user added (the installed ones are found by themselves). API keys are never
     /// here: they live in the system keychain.
-    pub agents: Vec<crate::agent_chat::agents::AgentConfig>,
+    agents: Vec<crate::agent_chat::agents::AgentConfig> = Vec::new();
     /// The agent a new conversation starts with (an agent's id; empty: the first one available).
-    pub agent_default: String,
+    agent_default: String = String::new();
     /// How much the agent may do without asking (`ask`, `edits`, `all`), and per agent.
-    pub ai_permissions: crate::agent_chat::agents::Mode,
-    pub agent_permissions: std::collections::BTreeMap<String, crate::agent_chat::agents::Mode>,
+    ai_permissions: crate::agent_chat::agents::Mode = crate::agent_chat::agents::Mode::Edits, PAGE_AI;
+    agent_permissions: std::collections::BTreeMap<String, crate::agent_chat::agents::Mode> = Default::default(), PAGE_AI;
     /// The model last chosen in the chat, per agent: put back when the agent offers it again.
-    pub agent_models: std::collections::BTreeMap<String, String>,
+    agent_models: std::collections::BTreeMap<String, String> = Default::default();
     /// "Always allow" answers: per agent, the tools it may use without asking.
-    pub agent_always_allow: std::collections::BTreeMap<String, Vec<String>>,
+    agent_always_allow: std::collections::BTreeMap<String, Vec<String>> = Default::default();
     /// The side the panel docks on (`left` or `right`), its width, and whether it is folded to a strip.
-    pub agent_chat_side: String,
-    pub agent_chat_width: f32,
-    pub agent_chat_minimized: bool,
+    agent_chat_side: String = "right".into(), PAGE_AI;
+    agent_chat_width: f32 = 380.0, PAGE_AI;
+    agent_chat_minimized: bool = false, PAGE_AI;
     /// Whether the chat is in its own window instead of the side panel, and that window's place
     /// and size as the system last reported them (`[x, y, width, height]`, points; `x` can be
     /// negative or past the main screen when the window sits on another one).
-    pub agent_chat_popped: bool,
-    pub agent_chat_window: Option<[f32; 4]>,
+    agent_chat_popped: bool = false, PAGE_AI;
+    agent_chat_window: Option<[f32; 4]> = None, PAGE_AI;
     /// Changes the agent may make for one message.
-    pub agent_chat_turn_limit: u32,
+    agent_chat_turn_limit: u32 = crate::agent_chat::gate::DEFAULT_TURN_LIMIT, PAGE_AI;
 
     // ---- Sketch / selection modifier bindings (classic defaults; alternate mapping is opt-in) ----
     /// Modifier that suppresses sketch auto-snap while drawing or dragging a sketch point.
     /// Default: Alt/Option. Set to Ctrl/Cmd for the alternate mapping.
-    pub suppress_sketch_snap: ModifierCombo,
+    suppress_sketch_snap: ModifierCombo = ModifierCombo::CTRL_ALT, 5;
     /// Whether Alt/Option also frees gizmo / canvas manipulator arrows (Primary always does).
-    pub manipulator_free_alt: bool,
+    manipulator_free_alt: bool = true, 5;
     /// When true: Shift+click adds without removing; Primary toggles.
     /// When false (default): Shift and Primary both toggle.
-    pub selection_shift_add_only: bool,
+    selection_shift_add_only: bool = false, 6;
 }
 
 /// What a middle-button double-click in the view does.
@@ -434,80 +493,6 @@ impl MiddleDoubleClick {
 
     pub fn label(self) -> &'static str {
         Self::ALL.iter().find(|(m, _, _)| *m == self).map_or("Home", |(_, _, l)| l)
-    }
-}
-
-impl Default for Prefs {
-    fn default() -> Self {
-        Prefs {
-            default_units: "mm".into(),
-            nav: "fusion".into(),
-            navigator_style: NavigatorStyle::default(),
-            radial_context_menu: false,
-            zoom_reverse: false,
-            orbit_around: OrbitAround::default(),
-            orbit_cursor: false,
-            space_mouse_enabled: true,
-            space_mouse_speed: 1.0,
-            space_mouse_reverse: [false; 6],
-            space_mouse_axis_speed: [1.0; 6],
-            space_mouse_calibrations: Default::default(),
-            msaa: 4,
-            ambient_occlusion: false,
-            grid_follows_view: false,
-            display_quality: "normal".into(),
-            supersampling: 1.0,
-            supersampling_adaptive: true,
-            show_frame_rate: false,
-            measure_axis_distances: true,
-            length_decimals: 2,
-            angle_decimals: 1,
-            theme: "dark".into(),
-            custom_themes: Vec::new(),
-            language: "en".into(),
-            ui_scale: 1.0,
-            ui_font: String::new(),
-            timeline_left: false,
-            timeline_left_height: 360.0,
-            timeline_left_browser_collapsed: false,
-            browser_width: DEFAULT_BROWSER_WIDTH,
-            browser_float: false,
-            zoom_to_cursor: true,
-            smooth_wheel_zoom: true,
-            trackpad_pan: true,
-            pan_reverse_x: false,
-            look_at_anim: true,
-            look_at_speed: 1.0,
-            up_axis: "z".into(),
-            offer_stand_up: true,
-            middle_double_click: "home".into(),
-            color_vision: crate::theme::ColorVision::Off,
-            check_updates: true,
-            update: crate::update::Memo::default(),
-            save_mesh_format: "stl".into(),
-            view_dxf_dashed: false,
-            view_dxf_tolerance: 0.01,
-            save_mesh_send: false,
-            save_mesh_slicer: String::new(),
-            custom_slicers: Vec::new(),
-            ai_features: true,
-            ai_toolbar_button: true,
-            agents: Vec::new(),
-            agent_default: String::new(),
-            ai_permissions: crate::agent_chat::agents::Mode::Edits,
-            agent_permissions: Default::default(),
-            agent_models: Default::default(),
-            agent_always_allow: Default::default(),
-            agent_chat_side: "right".into(),
-            agent_chat_width: 380.0,
-            agent_chat_minimized: false,
-            agent_chat_popped: false,
-            agent_chat_window: None,
-            agent_chat_turn_limit: crate::agent_chat::gate::DEFAULT_TURN_LIMIT,
-            suppress_sketch_snap: ModifierCombo::CTRL_ALT,
-            manipulator_free_alt: true,
-            selection_shift_add_only: false,
-        }
     }
 }
 
@@ -608,16 +593,21 @@ fn theme_row(app: &mut SolveApp, ui: &mut egui::Ui) {
         crate::scenario::publish_handle("prefs:theme", combo.rect.center());
     });
     ui.horizontal_wrapped(|ui| {
-        if ui_kit::secondary_button(ui, app.tr_label("Import…")).on_hover_text(app.tr_label("Add a theme file (.json) and use it")).clicked() {
+        if ui_kit::button(ui, app.tr_label("Import…"), ui_kit::Button::Normal)
+            .on_hover_text(app.tr_label("Add a theme file (.json) and use it"))
+            .clicked()
+        {
             action = Some("import");
         }
-        if ui_kit::secondary_button(ui, app.tr_label("Export…"))
+        if ui_kit::button(ui, app.tr_label("Export…"), ui_kit::Button::Normal)
             .on_hover_text(app.tr_label("Save the theme on now as a complete theme file, to start a new one from"))
             .clicked()
         {
             action = Some("export");
         }
-        if imported && ui_kit::secondary_button(ui, app.tr_label("Remove")).on_hover_text(app.tr_label("Remove this imported theme")).clicked() {
+        if imported
+            && ui_kit::button(ui, app.tr_label("Remove"), ui_kit::Button::Normal).on_hover_text(app.tr_label("Remove this imported theme")).clicked()
+        {
             action = Some("remove");
         }
     });
@@ -693,92 +683,31 @@ fn ui_font_row(app: &mut SolveApp, ui: &mut egui::Ui) {
 
 /// Restore Defaults for one page.
 fn defaults(app: &mut SolveApp, page: usize) {
-    let d = Prefs::default();
-    let p = &mut app.preferences;
+    let msaa = app.preferences.msaa;
+    reset_preferences(&mut app.preferences, page);
     match page {
         0 => {
-            p.theme = d.theme;
-            p.language = d.language;
-            p.ui_scale = d.ui_scale;
-            p.ui_font = d.ui_font;
-            p.timeline_left = d.timeline_left;
-            p.timeline_left_height = d.timeline_left_height;
-            p.timeline_left_browser_collapsed = d.timeline_left_browser_collapsed;
-            p.browser_width = d.browser_width;
-            p.browser_float = d.browser_float;
-            p.default_units = d.default_units;
-            p.length_decimals = d.length_decimals;
-            p.angle_decimals = d.angle_decimals;
-            p.check_updates = d.check_updates;
             app.ui.dark = true;
             app.ui.agent_cursor = Default::default();
             app.autosave_minutes = 5.0;
             set_autosave(app);
         }
-        PAGE_AI => {
-            // The agents the user added and their "always allow" answers stay.
-            p.ai_features = d.ai_features;
-            p.ai_toolbar_button = d.ai_toolbar_button;
-            p.ai_permissions = d.ai_permissions;
-            p.agent_permissions = d.agent_permissions;
-            p.agent_chat_side = d.agent_chat_side;
-            p.agent_chat_width = d.agent_chat_width;
-            p.agent_chat_minimized = d.agent_chat_minimized;
-            p.agent_chat_popped = d.agent_chat_popped;
-            p.agent_chat_window = d.agent_chat_window;
-            p.agent_chat_turn_limit = d.agent_chat_turn_limit;
-        }
-        1 => {
-            p.nav = d.nav;
-            p.navigator_style = d.navigator_style;
-            p.radial_context_menu = d.radial_context_menu;
-            p.zoom_reverse = d.zoom_reverse;
-            p.zoom_to_cursor = d.zoom_to_cursor;
-            p.smooth_wheel_zoom = d.smooth_wheel_zoom;
-            p.trackpad_pan = d.trackpad_pan;
-            p.pan_reverse_x = d.pan_reverse_x;
-            p.orbit_around = d.orbit_around;
-            p.orbit_cursor = d.orbit_cursor;
-            p.space_mouse_enabled = d.space_mouse_enabled;
-            p.space_mouse_speed = d.space_mouse_speed;
-            p.space_mouse_reverse = d.space_mouse_reverse;
-            p.space_mouse_axis_speed = d.space_mouse_axis_speed;
-            // The 3D mice the user calibrated stay: a calibration describes the device.
-            p.look_at_anim = d.look_at_anim;
-            p.look_at_speed = d.look_at_speed;
-            p.middle_double_click = d.middle_double_click;
-        }
+        1 | PAGE_DESIGN | PAGE_AI => {}
         PAGE_SHORTCUTS => crate::keymap::reset(app, None),
-        PAGE_DESIGN => {
-            p.up_axis = d.up_axis;
-            p.offer_stand_up = d.offer_stand_up;
-        }
         PAGE_GRAPHICS => {
-            let msaa = p.msaa != d.msaa;
-            p.msaa = d.msaa;
-            p.ambient_occlusion = d.ambient_occlusion;
-            p.display_quality = d.display_quality;
-            p.supersampling = d.supersampling;
-            p.supersampling_adaptive = d.supersampling_adaptive;
-            p.show_frame_rate = d.show_frame_rate;
-            p.measure_axis_distances = d.measure_axis_distances;
-            p.color_vision = d.color_vision;
             app.ui.visual_style = 0;
             app.ui.show_grid = true;
             app.ui.ground_shadow = true;
             app.ui.perspective = false;
-            if msaa {
+            if app.preferences.msaa != msaa {
                 save_graphics(app);
             }
         }
         5 => {
             app.session.auto_project = true;
-            p.suppress_sketch_snap = d.suppress_sketch_snap;
-            p.manipulator_free_alt = d.manipulator_free_alt;
         }
         _ => {
             app.ui.pick_bodies = false;
-            p.selection_shift_add_only = d.selection_shift_add_only;
         }
     }
 }
@@ -913,7 +842,6 @@ pub fn parse_number(text: &str) -> Option<f64> {
 }
 
 // Existing callers retain their numeric-editor API; kit owns the widget.
-pub use crate::ui_kit::length_drag;
 
 /// A length typed into a field, in millimetres: a bare number is in the design's units (`scale`
 /// units per millimetre); an explicit unit ("10 mm", "0.5 in", "2 cm + 3 mm") is honoured.
@@ -1050,8 +978,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             ui.set_width(t.form_label_width * 2.0);
             for (i, title) in PAGES.iter().enumerate() {
                 let tab = ui_kit::list_picker(ui, title, app.tr_label(title), app.prefs_window.section == i);
-                crate::scenario::publish_rect(&format!("prefs:page:{title}"), tab.rect);
-                crate::scenario::publish_handle(&format!("prefs:page:{title}"), tab.rect.center());
+                crate::scenario::publish_target(&format!("prefs:page:{title}"), tab.rect);
                 if tab.clicked() {
                     app.prefs_window.section = i;
                     app.keymap.read_only = false;
@@ -1071,14 +998,16 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 crate::scenario::publish_rect("prefs:page_body", scroll.inner_rect);
             }
         });
-        if ui_kit::secondary_button(ui, app.tr("ui.restore_defaults")).on_hover_text(app.tr("ui.reset_the_settings_on_this_page")).clicked() {
+        if ui_kit::button(ui, app.tr("ui.restore_defaults"), ui_kit::Button::Normal)
+            .on_hover_text(app.tr("ui.reset_the_settings_on_this_page"))
+            .clicked()
+        {
             button = Some("defaults");
         }
     });
     for name in ["window", "footer", "ok", "apply", "cancel"] {
         if let Some(rect) = crate::scenario::rect_of(&format!("dialog:{name}")) {
-            crate::scenario::publish_rect(&format!("prefs:{name}"), rect);
-            crate::scenario::publish_handle(&format!("prefs:{name}"), rect.center());
+            crate::scenario::publish_target(&format!("prefs:{name}"), rect);
         }
     }
     crate::space_mouse_calibration::show(app, ctx);
@@ -1155,24 +1084,30 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 });
             });
             theme_row(app, ui);
-            ui_kit::row(ui, app.tr("ui.ui_scale"), |ui| {
-                let scale = ui_kit::formatted_slider(ui, &mut app.preferences.ui_scale, 0.5..=2.5, 0.05, |v| format!("{:.0} %", v * 100.0));
-                crate::scenario::publish_rect("prefs:scale", scale.rect);
-            });
+            setting::ui_scale(app, ui);
             if !cfg!(target_arch = "wasm32") {
                 ui_kit::row(ui, app.tr_label("Interface font"), |ui| ui_font_row(app, ui));
             }
             ui_kit::row(ui, app.tr("ui.feature_history"), |ui| {
                 let mut selected = usize::from(app.preferences.timeline_left);
-                if ui_kit::segmented(ui, &mut selected, &[crate::i18n::tr("ui.timeline_bottom"), crate::i18n::tr("ui.timeline_left_sidebar")]) {
+                if ui_kit::segmented(
+                    ui,
+                    &mut selected,
+                    &[crate::i18n::tr("ui.timeline_bottom"), crate::i18n::tr("ui.timeline_left_sidebar")],
+                    Default::default(),
+                ) {
                     app.preferences.timeline_left = selected == 1;
                 }
             });
-            ui_kit::note(ui, "timeline", app.tr("ui.timeline_left_note"));
+            ui_kit::text(ui, app.tr("ui.timeline_left_note"), ui_kit::Text::Note("timeline"));
             ui_kit::row(ui, app.tr_label("Parts browser"), |ui| {
-                ui_kit::checkbox(ui, crate::i18n::tr_label("Float it over the workspace"), &mut app.preferences.browser_float);
+                setting::browser_float(app, ui);
             });
-            ui_kit::note(ui, "browser", app.tr_label("The tree draws on a translucent card over the 3D view instead of a column of its own."));
+            ui_kit::text(
+                ui,
+                app.tr_label("The tree draws on a translucent card over the 3D view instead of a column of its own."),
+                ui_kit::Text::Note("browser"),
+            );
             ui_kit::row(ui, app.tr("ui.units_of_new_designs"), |ui| {
                 let mut selected = UNITS.iter().position(|u| *u == app.preferences.default_units).unwrap_or(0);
                 ui_kit::dropdown(ui, "pref_units", &mut selected, &UNITS);
@@ -1185,13 +1120,9 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                     set_autosave(app);
                 }
             });
-            ui_kit::note(ui, "autosave", crate::i18n::tr_label("0 turns it off"));
-            ui_kit::row(ui, app.tr("ui.length_decimals"), |ui| {
-                ui_kit::number_field(ui, &mut app.preferences.length_decimals, 0..=6, 1.0, "");
-            });
-            ui_kit::row(ui, app.tr("ui.angle_decimals"), |ui| {
-                ui_kit::number_field(ui, &mut app.preferences.angle_decimals, 0..=6, 1.0, "");
-            });
+            ui_kit::text(ui, crate::i18n::tr_label("0 turns it off"), ui_kit::Text::Note("autosave"));
+            setting::length_decimals(app, ui);
+            setting::angle_decimals(app, ui);
             ui_kit::row(ui, app.tr("ui.agent_cursor"), |ui| {
                 ui_kit::checkbox(ui, crate::i18n::tr_label("Show the pointer an AI agent moves (#35)"), &mut app.ui.agent_cursor.show);
             });
@@ -1217,16 +1148,16 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 });
             });
             if app.preferences.nav == TOUCHPAD_NAV {
-                ui_kit::note(ui, "navigation", crate::i18n::tr("nav.touchpad.help"));
+                ui_kit::text(ui, crate::i18n::tr("nav.touchpad.help"), ui_kit::Text::Note("navigation"));
             } else {
                 let snap_help = if app.preferences.nav == OPENSCAD_NAV { "" } else { "; hold Shift during orbit to snap" };
                 let raw_help = format!(
                     "{}; Ctrl+left drag on empty space orbits{snap_help}; hold Space to pan; the wheel zooms",
                     nav_preset(&app.preferences.nav).help
                 );
-                ui_kit::note(ui, "navigation", crate::i18n::tr_label(&raw_help));
+                ui_kit::text(ui, crate::i18n::tr_label(&raw_help), ui_kit::Text::Note("navigation"));
             }
-            ui_kit::checkbox(ui, crate::i18n::tr_label("Radial context menu"), &mut app.preferences.radial_context_menu);
+            setting::radial_context_menu(app, ui);
             ui_kit::row(ui, app.tr_label("View navigator"), |ui| {
                 let picker =
                     ui_kit::dropdown_menu(ui, "pref_navigator_style", crate::i18n::tr_label(app.preferences.navigator_style.label()), |ui| {
@@ -1237,21 +1168,17 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                                 crate::i18n::tr_label(style.label()),
                                 app.preferences.navigator_style == style,
                             );
-                            crate::scenario::publish_rect(&format!("prefs:navigator:{}", style.label()), r.rect);
-                            crate::scenario::publish_handle(&format!("prefs:navigator:{}", style.label()), r.rect.center());
+                            crate::scenario::publish_target(&format!("prefs:navigator:{}", style.label()), r.rect);
                             if r.clicked() {
                                 app.preferences.navigator_style = style;
                             }
                         }
                     });
-                crate::scenario::publish_rect("prefs:navigator", picker.rect);
-                crate::scenario::publish_handle("prefs:navigator", picker.rect.center());
+                crate::scenario::publish_target("prefs:navigator", picker.rect);
             });
-            ui_kit::checkbox(ui, crate::i18n::tr_label("Reverse zoom direction"), &mut app.preferences.zoom_reverse);
-            ui_kit::checkbox(ui, crate::i18n::tr_label("Zoom to the cursor"), &mut app.preferences.zoom_to_cursor)
-                .on_hover_text(crate::i18n::tr_label("The wheel zooms toward the point under the cursor (off: toward the view's centre)"));
-            ui_kit::checkbox(ui, crate::i18n::tr_label("Smooth wheel zoom"), &mut app.preferences.smooth_wheel_zoom)
-                .on_hover_text(crate::i18n::tr_label("Turn off to apply each wheel event immediately, without a smoothing tail"));
+            setting::zoom_reverse(app, ui);
+            setting::zoom_to_cursor(app, ui);
+            setting::smooth_wheel_zoom(app, ui);
             let touchpad = app.preferences.nav == TOUCHPAD_NAV;
             ui.add_enabled_ui(!touchpad, |ui| {
                 ui_kit::checkbox(ui, crate::i18n::tr_label("Two-finger scroll pans"), &mut app.preferences.trackpad_pan).on_hover_text(if touchpad {
@@ -1262,8 +1189,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                     )
                 });
             });
-            ui_kit::checkbox(ui, crate::i18n::tr_label("Reverse horizontal pan direction"), &mut app.preferences.pan_reverse_x)
-                .on_hover_text(crate::i18n::tr_label("Horizontal two-finger scrolling and the thumb wheel pan the other way"));
+            setting::pan_reverse_x(app, ui);
             ui_kit::row(ui, app.tr_label("Orbit around"), |ui| {
                 let modes = [OrbitAround::Origin, OrbitAround::ViewCentre, OrbitAround::Cursor];
                 let mut selected = modes.iter().position(|m| *m == app.preferences.orbit_around).unwrap_or(1);
@@ -1271,6 +1197,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                     ui,
                     &mut selected,
                     &[crate::i18n::tr_label("Origin"), crate::i18n::tr_label("View centre"), crate::i18n::tr_label("Point under the cursor")],
+                    Default::default(),
                 ) && let Some(mode) = modes.get(selected)
                 {
                     app.preferences.orbit_around = *mode;
@@ -1282,19 +1209,10 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                     for (m, id, label) in MiddleDoubleClick::ALL { if ui_kit::list_picker(ui, id, crate::i18n::tr_label(label), current == m).clicked() { app.preferences.middle_double_click = id.into(); } }
                 }).on_hover_text(crate::i18n::tr_label("Double-clicking the middle button in the view: Home (the home view, framing what is shown), Fit (frame what is shown, keeping the orientation) or nothing"));
             });
-            ui_kit::checkbox(ui, crate::i18n::tr_label("Animate view changes"), &mut app.preferences.look_at_anim)
-                .on_hover_text(crate::i18n::tr_label("Axis view, Look At, Home and Fit"));
-            ui_kit::row(ui, app.tr_label("Animation speed"), |ui| {
-                ui.add_enabled_ui(app.preferences.look_at_anim, |ui| {
-                    ui_kit::formatted_slider(ui, &mut app.preferences.look_at_speed, 0.5..=3.0, 0.25, |v| format!("{v:.2}×"));
-                });
-            });
-            ui_kit::checkbox(ui, crate::i18n::tr_label("Navigate with SpaceNavigator / SpaceMouse"), &mut app.preferences.space_mouse_enabled);
-            ui_kit::row(ui, app.tr_label("3D mouse speed"), |ui| {
-                ui.add_enabled_ui(app.preferences.space_mouse_enabled, |ui| {
-                    ui_kit::formatted_slider(ui, &mut app.preferences.space_mouse_speed, 0.25..=3.0, 0.05, |v| format!("{v:.2}×"));
-                });
-            });
+            setting::look_at_anim(app, ui);
+            setting::look_at_speed(app, ui);
+            setting::space_mouse_enabled(app, ui);
+            setting::space_mouse_speed(app, ui);
             for (axis, name) in SPACE_MOUSE_AXES.iter().enumerate() {
                 ui_kit::row(ui, crate::i18n::tr_label(name), |ui| {
                     ui.add_enabled_ui(app.preferences.space_mouse_enabled, |ui| {
@@ -1313,14 +1231,14 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 let device = app.space_mouse.device.clone();
                 let saved = device.as_ref().is_some_and(|device| app.preferences.space_mouse_calibrations.contains_key(device));
                 ui.add_enabled_ui(app.preferences.space_mouse_enabled && device.is_some(), |ui| {
-                    if ui_kit::secondary_button(ui, app.tr("ui.space_mouse_calibrate"))
+                    if ui_kit::button(ui, app.tr("ui.space_mouse_calibrate"), ui_kit::Button::Normal)
                         .on_hover_text(app.tr("ui.space_mouse_calibrate_tip"))
                         .clicked()
                     {
                         crate::space_mouse_calibration::start(app);
                     }
                     if saved
-                        && ui_kit::secondary_button(ui, app.tr("ui.space_mouse_forget")).clicked()
+                        && ui_kit::button(ui, app.tr("ui.space_mouse_forget"), ui_kit::Button::Normal).clicked()
                         && let Some(device) = &device
                     {
                         app.preferences.space_mouse_calibrations.remove(device);
@@ -1331,7 +1249,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                     (Some(device), true) => format!("{} ({device})", app.tr("ui.space_mouse_calibrated")),
                     (Some(device), false) => format!("{} ({device})", app.tr("ui.space_mouse_not_calibrated")),
                 };
-                ui_kit::text_block(ui, "calibration_status", &status, false);
+                ui_kit::text(ui, &status, ui_kit::Text::Report("calibration_status", false));
             });
             let enabled = app.preferences.space_mouse_enabled;
             let (label, tip) = (app.tr("ui.space_mouse_dead_zone").to_owned(), app.tr("ui.space_mouse_dead_zone_tip").to_owned());
@@ -1351,22 +1269,25 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 });
                 crate::space_mouse_calibration::dead_zone_pads(ui, calibration, raw);
             }
-            ui_kit::note(ui, "space_mouse", crate::i18n::tr_label("Move and rotate the view together; sketches use pan and zoom only."));
+            ui_kit::text(
+                ui,
+                crate::i18n::tr_label("Move and rotate the view together; sketches use pan and zoom only."),
+                ui_kit::Text::Note("space_mouse"),
+            );
         }
         PAGE_DESIGN => {
             ui_kit::row(ui, app.tr_label("Default modelling orientation"), |ui| {
                 let mut selected = usize::from(app.preferences.up_axis == "y");
-                if ui_kit::segmented(ui, &mut selected, &[crate::i18n::tr_label("Z up"), crate::i18n::tr_label("Y up")]) {
+                if ui_kit::segmented(ui, &mut selected, &[crate::i18n::tr_label("Z up"), crate::i18n::tr_label("Y up")], Default::default()) {
                     app.preferences.up_axis = if selected == 1 { "y" } else { "z" }.into();
                 }
             });
-            ui_kit::note(
+            ui_kit::text(
                 ui,
-                "orientation",
                 crate::i18n::tr_label("Which axis points up in the views (axis view, Home, Look At). Designs are unchanged."),
+                ui_kit::Text::Note("orientation"),
             );
-            ui_kit::checkbox(ui, crate::i18n::tr_label("Offer to stand up Y-up files"), &mut app.preferences.offer_stand_up)
-                .on_hover_text(crate::i18n::tr_label("After a STEP or IGES file opens with Z up, offer a quarter turn about X"));
+            setting::offer_stand_up(app, ui);
         }
         PAGE_GRAPHICS => {
             ui_kit::row(ui, app.tr("ui.graphics_preset"), |ui| graphics_preset_selector(app, ui));
@@ -1377,8 +1298,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             });
             ui_kit::checkbox(ui, crate::i18n::tr_label("Grid"), &mut app.ui.show_grid);
             ui.add_enabled_ui(app.ui.show_grid, |ui| {
-                ui_kit::checkbox(ui, crate::i18n::tr_label("Grid follows the view"), &mut app.preferences.grid_follows_view)
-                    .on_hover_text(crate::i18n::tr_label("Side views show the grid on the upright plane facing them instead of the ground"));
+                setting::grid_follows_view(app, ui);
             });
             ui_kit::checkbox(ui, crate::i18n::tr_label("Ground shadow"), &mut app.ui.ground_shadow);
             ambient_occlusion_checkbox(app, ui, "Ambient occlusion");
@@ -1401,9 +1321,9 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 if app.preferences.color_vision != mode {
                     ui.ctx().request_repaint();
                 }
-                ui_kit::inline_text(ui, app.tr("ui.colour_vision_sample"));
+                ui_kit::text(ui, app.tr("ui.colour_vision_sample"), ui_kit::Text::Inline);
                 colour_vision_sample(ui, t);
-                ui_kit::note(ui, "colour_vision", app.tr("ui.colour_vision_note"));
+                ui_kit::text(ui, app.tr("ui.colour_vision_note"), ui_kit::Text::Note("colour_vision"));
             });
             ui_kit::row(ui, app.tr("ui.anti_aliasing"), |ui| {
                 ui_kit::dropdown_menu(ui, "pref_msaa", &format!("{}×", app.preferences.msaa), |ui| {
@@ -1419,7 +1339,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                     }
                 });
             });
-            ui_kit::note(ui, "msaa", app.tr("settings.msaa_applies_on_restart"));
+            ui_kit::text(ui, app.tr("settings.msaa_applies_on_restart"), ui_kit::Text::Note("msaa"));
             ui_kit::row(ui, app.tr("ui.display_quality"), |ui| {
                 use solidcraft_engine::doc::display_quality::DisplayQuality;
                 let label = |q: DisplayQuality| crate::i18n::tr(&format!("ui.display_quality_{}", q.id())).to_string();
@@ -1432,7 +1352,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                     }
                 });
             });
-            ui_kit::note(ui, "quality", app.tr("settings.display_quality_note"));
+            ui_kit::text(ui, app.tr("settings.display_quality_note"), ui_kit::Text::Note("quality"));
             ui_kit::row(ui, app.tr("ui.supersampling"), |ui| {
                 let ss_label = |f: f32| if f > 1.0 { format!("{f}×") } else { crate::i18n::tr("ui.supersampling_off").into() };
                 ui_kit::dropdown_menu(ui, "pref_ssaa", &ss_label(app.preferences.supersampling), |ui| {
@@ -1444,22 +1364,22 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 });
             });
             ui.add_enabled_ui(app.preferences.supersampling > 1.0, |ui| {
-                ui_kit::checkbox(ui, crate::i18n::tr("ui.supersampling_adaptive"), &mut app.preferences.supersampling_adaptive);
+                setting::supersampling_adaptive(app, ui);
             });
-            ui_kit::note(ui, "supersampling", app.tr("settings.supersampling_note"));
+            ui_kit::text(ui, app.tr("settings.supersampling_note"), ui_kit::Text::Note("supersampling"));
             ui_kit::row(ui, app.tr_label("Renderer"), |ui| {
                 let renderer = match (&app.viewport.gpu, &app.help.gpu) {
                     (Some(_), Some(g)) => format!("GPU: {g}"),
                     (Some(_), None) => "GPU".into(),
                     _ => crate::i18n::tr("prefs.cpu").into(),
                 };
-                ui_kit::inline_text(ui, &renderer);
+                ui_kit::text(ui, &renderer, ui_kit::Text::Inline);
             });
-            let response = ui_kit::checkbox(ui, app.tr("settings.measure_axis_distances"), &mut app.preferences.measure_axis_distances);
+            let response = setting::measure_axis_distances(app, ui);
             crate::scenario::publish_rect("prefs:measure_axis_distances", response.rect);
             response.on_hover_text(app.tr("settings.measure_axis_distances_help"));
-            ui_kit::checkbox(ui, app.tr("ui.frame_rate"), &mut app.preferences.show_frame_rate);
-            ui_kit::note(ui, "frame_rate", app.tr("settings.frame_rate_note"));
+            setting::show_frame_rate(app, ui);
+            ui_kit::text(ui, app.tr("settings.frame_rate_note"), ui_kit::Text::Note("frame_rate"));
         }
         5 => {
             let mut auto = app.session.auto_project;
@@ -1477,7 +1397,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                         }
                     });
                 });
-                ui_kit::note(ui, "suppress_snap", crate::i18n::tr_label("ui.suppress_auto_snap_note"));
+                ui_kit::text(ui, crate::i18n::tr_label("ui.suppress_auto_snap_note"), ui_kit::Text::Note("suppress_snap"));
                 ui_kit::checkbox(ui, crate::i18n::tr_label("Manipulator free drag also on Alt/Option"), &mut app.preferences.manipulator_free_alt)
                     .on_hover_text(crate::i18n::tr_label(
                         "On: Alt/Option or Ctrl/Cmd on extrude / gizmo arrows disables value snapping. Off: Ctrl/Cmd only.",
@@ -1776,7 +1696,7 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     if new.ui_font != app.preferences.ui_font && !new.ui_font.trim().is_empty() && crate::fonts::ui_font(&new.ui_font).is_none() {
         return Err(format!("`ui_font`: `{}` is not an installed font family or a readable font file", new.ui_font.trim()));
     }
-    if !(0.5..=2.5).contains(&new.ui_scale) || !(0.25..=4.0).contains(&new.look_at_speed) {
+    if !accepted::ui_scale(&new) || !accepted::look_at_speed(&new) {
         return Err("`ui_scale` must be 0.5…2.5 and `look_at_speed` 0.25…4".into());
     }
     if solidcraft_engine::doc::display_quality::DisplayQuality::parse(&new.display_quality).is_none() {

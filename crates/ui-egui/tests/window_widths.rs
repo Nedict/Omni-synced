@@ -2,7 +2,11 @@
 //! through the control channel (the toolbar's way) and measured as drawn.
 
 use serde_json::json;
-use solidcraft_ui_egui::frame::{DIALOG_MAX_W, DIALOG_MIN_W, DIALOG_WIDE_MAX_W, WINDOW_WIDE_MAX_W};
+use solidcraft_ui_egui::frame::{DIALOG_MAX_W, DIALOG_MIN_W};
+
+// Preserve the established acceptance bounds after retiring the old window helpers.
+const DIALOG_WIDE_MAX_W: f32 = 560.0;
+const WINDOW_WIDE_MAX_W: f32 = 760.0;
 use solidcraft_ui_egui::scenario::Harness;
 
 /// Widths of the windows on screen (their areas in the middle layer).
