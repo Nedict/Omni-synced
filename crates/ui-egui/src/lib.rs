@@ -72,6 +72,7 @@ mod material_card_review;
 mod measurement_ui_tests;
 #[cfg(test)]
 mod menu_tests;
+pub mod occurrence_drag;
 #[cfg(test)]
 mod pattern_arrow_tests;
 #[cfg(test)]
