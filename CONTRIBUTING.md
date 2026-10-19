@@ -287,8 +287,9 @@ and a fresh CI run:
    clippy (`-D warnings`), then the tests with the wasm build check alongside. A PR has to pass it.
    Heavy CI runs after review: a pull request gets the formatting and repository checks and a
    quick compile (`cargo check`) when you push. Once a maintainer has reviewed it they add the
-   `approved-for-ci` label, which runs the full CI (build, tests, goldens, Clippy); every push
-   after that runs the full set again.
+   `approved-for-ci` label when the PR is ready to merge, which runs the full CI (build, tests,
+   goldens, Clippy); every push after that runs the full set again. Maintainers merge approved
+   PRs in groups by area, so PRs that touch the same code meet a conflict at most once.
 4. Reference the issue (`Fixes #12`). In the PR, say what you tested and how. For geometry work, include the measured numbers (and
    the expected ones).
 
@@ -313,12 +314,14 @@ Changes with no useful observable behavior do not need screenshot or video evide
 small example without private designs or sensitive details; attach the media or link to an
 accessible recording rather than committing generated review artifacts.
 
-Keep checking upstream commits and the relevant PR's merge status throughout the work and
-before handoff. Integrate upstream merges, resolve conflicts without losing others' changes,
-and validate the integrated result. Before pushing, run `git pull --rebase origin main`, re-run
-CI if it brought changes, and push without force. Report the upstream/PR state you checked,
-any conflicts resolved and validation results. While a task remains active, follow an open
-PR through its status changes; at handoff, clearly identify anything still awaiting merge.
+Keep an eye on your PR's status, but don't bring `main` into it to keep it current: no merge of
+`main`, no Update branch button, no rebase. CI already tests your PR merged with the latest
+`main`, and every update restarts the whole run for everyone waiting behind it. Only when GitHub
+reports a conflict, merge `main` in once and resolve it without losing others' changes; never
+force-push. Don't re-run CI on an unchanged commit either: a real failure fails again. Re-run
+only a job that runner trouble cancelled, with "Re-run failed jobs". While a task remains active,
+follow an open PR through its status changes; at handoff, clearly identify anything still
+awaiting merge.
 
 Much of SolidCraft so far was written by AI coding agents (Claude) working in parallel, each
 owning one area, with a human setting direction and reporting bugs. Their working notes are in

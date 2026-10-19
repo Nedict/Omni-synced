@@ -103,7 +103,7 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
 - **Publishing**: `origin` is github.com/bherbruck/solidcraft. Changes land through **pull requests**:
   push a branch, open a PR, and let GitHub CI run. Maintainers (and agents working for them) may
   merge their own PR as soon as CI is green (`gh pr merge --squash`); a trivial fix (docs, typos)
-  may be merged right away. Keep each PR to one topic, rebase or merge `main` into it when it
+  may be merged right away. Keep each PR to one topic, merge `main` into it only when it
   conflicts, and never force-push `main`. Never commit `plan/`, build dirs (`target*/`) or
   generated reference data; check `git ls-files` before pushing.
 - **Never break wasm**: everything below the apps must build for `wasm32-unknown-unknown`
@@ -124,11 +124,13 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
 - Use a small public-safe example and check for private designs, paths, account details or
   other sensitive content before sharing. Attach media to the issue/PR or link to an accessible
   recording; do not commit generated screenshots or videos just to provide review evidence.
-- Throughout the work and before handoff, check current upstream commits and the relevant
-  PR's merge status. Keep your branch current with upstream merges, resolve conflicts without
-  discarding others' work, and re-run validation when integration changes the result. Use
-  `git pull --rebase origin main` before pushing as above; never force-push. Report the checked
-  upstream/PR state, any conflicts resolved and the validation performed. If a PR remains open,
+- Throughout the work and before handoff, check the relevant PR's merge status. Don't bring
+  `main` into an open PR to keep it current (no merge of `main`, no Update branch, no rebase):
+  CI already tests the PR merged with the latest `main`, and every update restarts the whole
+  run. Only when GitHub reports a conflict, merge `main` in once and resolve it without
+  discarding others' work; never force-push. Don't re-run CI on an unchanged commit: a real
+  failure fails again. Re-run only a job that runner trouble cancelled, with "Re-run failed
+  jobs". Report the PR state you checked and any conflicts resolved. If a PR remains open,
   keep monitoring it while the task is active and make its pending status clear at handoff;
   do not claim it merged without checking.
 
