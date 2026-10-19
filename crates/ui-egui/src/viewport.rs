@@ -96,6 +96,8 @@ pub struct ViewportState {
     pub hover_bodies: Vec<String>,
     /// The model point an orbit turns around (Preferences: orbit around the cursor).
     pub orbit_pivot: Option<Vec3>,
+    /// The orbit drag under way, summed from where it began (see [`crate::navigation::orbit`]).
+    pub orbit_from: Option<crate::navigation::OrbitFrom>,
     /// Continuous orbit: the view turns about the vertical until the next click or key.
     pub spin: bool,
     /// The 3D mouse's motion this frame, for the page showing the camera to apply with what its
@@ -2420,6 +2422,11 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             analysis_colors: crate::gpu::analysis_colors(&t.analysis),
             access: crate::access::map(app),
             outline: matches!(app.ui.visual_style, 0 | 3),
+            ao_radius: if app.preferences.ambient_occlusion && app.ui.visual_style != 2 {
+                (model_bounds(app).diagonal() * 0.04).clamp(1e-4, 1e6) as f32
+            } else {
+                0.0
+            },
             eye: {
                 let e = proj.cam.eye().to_f32();
                 [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }]
@@ -3446,7 +3453,7 @@ fn nav_bar(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
         ("home", "Home view"),
         ("perspective", "Perspective / orthographic"),
         ("style", "Visual style: shaded with edges, shaded, wireframe, shaded with hidden edges"),
-        ("settings", "View settings: grid, ground shadow, agent cursor"),
+        ("settings", "View settings: grid, ground shadow, ambient occlusion, agent cursor"),
     ];
     let menu_id = ui.id().with("nav_view_menu");
     let mut menu_open = ui.data(|d| d.get_temp::<bool>(menu_id)).unwrap_or(false);
@@ -3519,6 +3526,8 @@ fn nav_bar(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
 /// The View settings above the navigation bar's last button: grid, ground shadow and the agent
 /// cursor (#35). False once it should close (a click outside it).
 fn view_menu(app: &mut SolveApp, ui: &mut egui::Ui, button: Rect) -> bool {
+    // A preset dropdown extends beyond this menu; let it consume its own clicks.
+    let child_popup_open = egui::Popup::is_any_open(ui.ctx());
     let area = crate::frame::area(egui::Id::new("sc_view_menu"))
         .order(egui::Order::Foreground)
         .pivot(Align2::RIGHT_BOTTOM)
@@ -3527,8 +3536,12 @@ fn view_menu(app: &mut SolveApp, ui: &mut egui::Ui, button: Rect) -> bool {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_width(220.0);
             ui.label(egui::RichText::new(crate::i18n::tr_label("VIEW")).strong().size(11.5));
+            ui.label(app.tr("ui.graphics_preset"));
+            crate::prefs::graphics_preset_selector(app, ui);
+            ui.separator();
             ui.checkbox(&mut app.ui.show_grid, crate::i18n::tr_label("Grid"));
             ui.checkbox(&mut app.ui.ground_shadow, crate::i18n::tr_label("Ground shadow"));
+            crate::prefs::ambient_occlusion_checkbox(app, ui, "Ambient occlusion");
             ui.separator();
             let s = &mut app.ui.agent_cursor;
             let show = ui.checkbox(&mut s.show, crate::i18n::tr_label("Show Agent Cursor"));
@@ -3553,7 +3566,8 @@ fn view_menu(app: &mut SolveApp, ui: &mut egui::Ui, button: Rect) -> bool {
             }
         });
     });
-    let clicked_out = ui.input(|i| i.pointer.any_pressed())
+    let clicked_out = !child_popup_open
+        && ui.input(|i| i.pointer.any_pressed())
         && ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| !r.response.rect.contains(p) && !button.contains(p));
     !clicked_out
 }
@@ -5941,6 +5955,57 @@ mod tests {
                 let after = projection(&h.app, rect).to_screen(pivot).unwrap();
                 assert!(after.distance(at) < 0.5, "perspective={perspective}: {at:?} -> {after:?}");
             }
+        }
+    }
+
+    /// An erratic orbit drag (big jumps, reversals, the pointer over the panels and back) keeps
+    /// the point picked when it began on its pixel the whole way, and coming back to where it
+    /// began brings back the view it began with (up to the rounding of the pointer's f32 steps).
+    #[test]
+    fn an_erratic_cursor_orbit_keeps_its_pivot_and_comes_back() {
+        for perspective in [false, true] {
+            let mut h = crate::scenario::Harness::new();
+            h.app.preferences.orbit_around = crate::prefs::OrbitAround::Cursor;
+            h.app.ui.perspective = perspective;
+            h.app.run("solid.box", json!({"length":80,"width":50,"height":20})).unwrap();
+            h.app.fit_view();
+            h.frames(2);
+            let rect = h.app.viewport.rect.unwrap();
+            let at = rect.center() + vec2(30.0, 20.0);
+            let pivot = crate::prefs::pivot_under(&h.app, &projection(&h.app, rect), at);
+            let start = h.app.cam;
+            let shift = egui::Modifiers { shift: true, ..Default::default() };
+            let send = |h: &mut crate::scenario::Harness, e: egui::Event| {
+                h.app.synthetic.push(e);
+                h.frame();
+            };
+            send(&mut h, egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+            send(&mut h, egui::Event::PointerMoved(at));
+            send(&mut h, egui::Event::PointerButton { pos: at, button: egui::PointerButton::Middle, pressed: true, modifiers: shift });
+            let mut seed: u32 = 12345;
+            let mut next = move || {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                f32::from((seed >> 16) as u16) / 65535.0
+            };
+            for i in 0..300 {
+                // Mostly small moves, now and then a big jump, some of them over the panels.
+                let p = if i % 17 == 0 { pos2(next() * 1600.0, next() * 1000.0) } else { at + vec2((next() - 0.5) * 900.0, (next() - 0.5) * 200.0) };
+                send(&mut h, egui::Event::PointerMoved(p));
+                assert_eq!(h.app.viewport.orbit_pivot, Some(pivot), "move {i}: the pivot is picked once, when the drag begins");
+                let s = projection(&h.app, rect).to_screen(pivot).unwrap();
+                assert!(s.distance(at) < 1.0, "perspective={perspective}, move {i} to {p:?}: the pivot moved to {s:?}");
+            }
+            send(&mut h, egui::Event::PointerMoved(at));
+            let s = projection(&h.app, rect).to_screen(pivot).unwrap();
+            assert!(s.distance(at) < 1.0, "{s:?}");
+            let back = h.app.cam;
+            assert!(
+                (back.yaw - start.yaw).rem_euclid(std::f64::consts::TAU).min((start.yaw - back.yaw).rem_euclid(std::f64::consts::TAU)) < 1e-6,
+                "{start:?} -> {back:?}"
+            );
+            assert!((back.pitch - start.pitch).abs() < 1e-6, "{start:?} -> {back:?}");
+            assert!((back.target - start.target).len() < 1e-4, "back where it began: {start:?} -> {back:?}");
+            send(&mut h, egui::Event::PointerButton { pos: at, button: egui::PointerButton::Middle, pressed: false, modifiers: shift });
         }
     }
 
