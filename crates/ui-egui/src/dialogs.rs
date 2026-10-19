@@ -389,6 +389,7 @@ pub struct Dialog {
     /// Selection inputs, in order; clicks in the viewport go to the active one.
     pub inputs: Vec<SelInput>,
     pub active: usize,
+    tab_through: crate::dialog_focus::TabThrough,
     pub error: Option<String>,
     /// Editing an existing feature (its id, and the timeline marker to restore afterwards).
     pub editing: Option<(u64, Option<usize>)>,
@@ -507,6 +508,7 @@ impl Dialog {
             kind,
             inputs,
             active: 0,
+            tab_through: Default::default(),
             error: None,
             editing: None,
             profile_selection_changed: false,
@@ -1648,6 +1650,25 @@ fn objects_label(accept: Accept) -> &'static str {
     if accept == selection::FEATURES { "Features" } else { "Objects" }
 }
 
+/// Selection chips join the value fields for Pattern and Mirror dialogs.
+fn selection_tab_order(k: &Kind) -> bool {
+    use crate::sketch_modify_ui::Mod;
+    is_pattern(k) || matches!(k, Kind::SketchModify(Mod::Mirror | Mod::PatternRect { .. } | Mod::PatternCirc { .. }))
+}
+
+/// Called before layout so egui traverses from the active canvas input, not the toolbar.
+pub(crate) fn prepare_tab(app: &SolveApp, ctx: &egui::Context) {
+    if app.issue_report.draft.is_some() || app.file_picker.is_some() || app.applying.is_some() || app.home.open {
+        return;
+    }
+    if let Some(d) = &app.dialog
+        && !d.collapsed
+        && selection_tab_order(&d.kind)
+    {
+        d.tab_through.begin(ctx, d.active, egui::Id::new("sc_canvas_value"));
+    }
+}
+
 fn is_pattern(k: &Kind) -> bool {
     matches!(k, Kind::PatternRect { .. } | Kind::PatternCirc { .. } | Kind::PathPattern { .. } | Kind::Mirror)
 }
@@ -1783,6 +1804,7 @@ fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::
     let t = Tokens::get();
     let mut clear: Option<usize> = None;
     let mut activate: Option<usize> = None;
+    let tab_order = selection_tab_order(&d.kind);
     for (i, inp) in d.inputs.iter().enumerate().skip(range.start).take(range.end.saturating_sub(range.start)) {
         let stored_reference = feature_pattern_reference_key(d, i).and_then(|key| d.extra.get(key)).filter(|_| inp.items.is_empty());
         row_label(ui, inp.label);
@@ -1804,15 +1826,18 @@ fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::
                 RichText::new(crate::i18n::tr("dialog.select")).color(t.text)
             };
             let stroke = if active { Stroke::new(1.5, t.accent) } else { Stroke::new(1.0, t.dialog_border.gamma_multiply(1.6)) };
-            // Not in the Tab order: Tab moves between values.
+            // Pattern/Mirror selection inputs precede their values in the native Tab order.
             let b = egui::Button::new(text)
                 .wrap_mode(egui::TextWrapMode::Wrap)
                 .fill(if filled { t.chip } else { Color32::TRANSPARENT })
                 .stroke(stroke)
                 .min_size(vec2(0.0, 22.0))
-                .sense(egui::Sense::CLICK);
+                .sense(if tab_order { egui::Sense::click() } else { egui::Sense::CLICK });
             let chip = crate::frame::add_outlined(ui, b, stroke.width);
             publish_row(&chip);
+            if tab_order && d.tab_through.selection(i, &chip) {
+                activate = Some(i);
+            }
             let tooltip = if let Some(reference) = stored_reference {
                 reference.to_string()
             } else if custom_axis {
@@ -1832,7 +1857,9 @@ fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::
                 activate = Some(i);
             }
             if !inp.items.is_empty() || stored_reference.is_some() {
-                let button = ui.small_button("×").on_hover_text(tr("Clear the selection"));
+                // Clearing is an auxiliary action, not the next input after Entities.
+                let clear_button = egui::Button::new("×").small().sense(if tab_order { egui::Sense::CLICK } else { egui::Sense::click() });
+                let button = ui.add(clear_button).on_hover_text(tr("Clear the selection"));
                 crate::scenario::publish_handle(&format!("dialog:clear:{}", inp.label), button.rect.center());
                 if button.clicked() {
                     clear = Some(i);
