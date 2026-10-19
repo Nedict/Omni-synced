@@ -152,3 +152,84 @@ fn contribution_quarter_section_respects_both_browser_eyes() {
     menu(&mut h, "Delete");
     assert!(h.app.session.section.is_none() && h.app.session.section_second.is_none());
 }
+
+#[test]
+fn contribution_quarter_second_picker_uses_the_same_browser_selection_as_first() {
+    use solidcraft_engine::Sel;
+    let mut h = harness();
+    h.app.run("solid.box", json!({"length":10,"width":10,"height":10})).unwrap();
+    h.app.tree.expanded.insert("origin".into());
+    h.app.start("inspect.section");
+    h.frames(3);
+    click(&mut h, "row:XY");
+    assert_eq!(h.app.dialog.as_ref().unwrap().inputs[0].items, [Sel::Plane { name: "XY".into() }]);
+    click(&mut h, "dialog:Quarter section");
+    assert_eq!(h.app.dialog.as_ref().unwrap().active, 1);
+    click(&mut h, "row:YZ");
+    assert_eq!(h.app.dialog.as_ref().unwrap().inputs[1].items, [Sel::Plane { name: "YZ".into() }]);
+    click(&mut h, "dialog:Plane");
+    click(&mut h, "row:XZ");
+    assert_eq!(h.app.dialog.as_ref().unwrap().inputs[0].items, [Sel::Plane { name: "XZ".into() }]);
+    assert_eq!(h.app.dialog.as_ref().unwrap().inputs[1].items, [Sel::Plane { name: "YZ".into() }]);
+    click(&mut h, "dialog:Second offset");
+    h.step(&json!({"key":"A","cmd":true})).unwrap();
+    h.step(&json!({"text":"5 mm"})).unwrap();
+    click(&mut h, "dialog:Second flip");
+    let commands = crate::dialogs::apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap();
+    assert_eq!(commands[0].1["plane"], "XZ");
+    assert_eq!(commands[0].1["second"]["plane"], "YZ");
+    assert_eq!(commands[0].1["second"]["offset"], "5 mm");
+    assert_eq!(commands[0].1["second"]["flip"], true);
+    let mut scratch = h.app.session.scratch();
+    scratch.execute(&commands[0].0, &commands[0].1).unwrap();
+    crate::dialogs::cancel(&mut h.app);
+    assert!(h.app.session.section.is_none() && h.app.session.section_second.is_none());
+}
+
+#[test]
+fn contribution_quarter_saved_pickers_survive_half_quarter_and_remove() {
+    let mut h = harness();
+    h.app.run("inspect.section", json!({"plane":"YZ","at":4,"second":{"plane":"XZ","at":6,"flip":true}})).unwrap();
+    let cut = (h.app.session.section, h.app.session.section_second);
+    h.app.start("inspect.section");
+    h.frames(3);
+    assert_eq!(h.app.dialog.as_ref().unwrap().inputs.len(), 2);
+    click(&mut h, "dialog:Quarter section");
+    assert_eq!(h.app.dialog.as_ref().unwrap().inputs.len(), 1);
+    let commands = crate::dialogs::apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap();
+    assert!(commands[0].1.get("second").is_none());
+    click(&mut h, "dialog:Quarter section");
+    let commands = crate::dialogs::apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap();
+    let mut scratch = h.app.session.scratch();
+    scratch.execute(&commands[0].0, &commands[0].1).unwrap();
+    assert_eq!((scratch.section, scratch.section_second), cut);
+    crate::dialogs::cancel(&mut h.app);
+    assert_eq!((h.app.session.section, h.app.session.section_second), cut);
+    h.app.start("inspect.section");
+    h.frames(3);
+    click(&mut h, "dialog:Remove Section");
+    assert!(h.app.dialog.is_none());
+    assert!(h.app.session.section.is_none() && h.app.session.section_second.is_none());
+}
+
+#[test]
+fn contribution_quarter_both_pickers_refuse_nonplanar_faces_and_unknown_planes() {
+    use solidcraft_engine::{Sel, geom::Vec3};
+    let mut h = harness();
+    h.app.run("solid.cylinder", json!({"diameter":10,"height":20,"body_name":"Shaft"})).unwrap();
+    h.app.run("inspect.section", json!({"plane":"XY","second":{"plane":"YZ"}})).unwrap();
+    let world = h.app.session.world_state();
+    let body = world.body("Shaft").unwrap();
+    let count = body.mesh().tri_face.iter().max().copied().unwrap() as usize + 1;
+    let curved = (0..count).find(|index| crate::dialogs::planar_face(&h.app.session, "Shaft", *index).is_none()).unwrap();
+    for input in [0, 1] {
+        let mut dialog = crate::dialogs::Dialog::for_command(&h.app, "inspect.section").unwrap();
+        dialog.active = input;
+        let hit = crate::viewport::Hit::Face { body: "Shaft".into(), index: curved, point: Vec3::ZERO };
+        assert!(dialog.candidate_on(&h.app.session, &hit, None).is_none());
+        dialog.inputs[input].items = vec![Sel::Face { body: "Shaft".into(), index: curved, point: Vec3::ZERO }];
+        assert!(crate::dialogs::apply_commands(&h.app, &dialog).unwrap_err().contains("planar"));
+        dialog.inputs[input].items = vec![Sel::Plane { name: "Missing plane".into() }];
+        assert!(crate::dialogs::apply_commands(&h.app, &dialog).unwrap_err().contains("unknown plane"));
+    }
+}
