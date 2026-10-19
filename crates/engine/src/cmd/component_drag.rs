@@ -182,3 +182,8 @@ pub(super) fn rotate(s: &mut Session, p: &Value) -> Result<Value> {
     }
     drag(s, p)
 }
+
+pub(super) fn can_rotate(s: &Session) -> std::result::Result<(), String> {
+    super::super::not_in_sketch(s)?;
+    if s.doc.occurrences.iter().any(|o| !o.grounded) { Ok(()) } else { Err("no ungrounded occurrence to rotate".into()) }
+}

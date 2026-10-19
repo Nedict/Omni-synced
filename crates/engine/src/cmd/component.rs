@@ -62,7 +62,7 @@ pub static COMMANDS: &[CommandSpec] = &[
          point - at (with any chain of joints it is in that is joined to nothing grounded) and captures its position; other pending \
          moves stay pending. angle?: radians within one turn, axis?: world direction (default Z), origin?: world pivot (default at): rotate before translating. Shared definitions move in all placements. Grounded parts and parts joints hold to something fixed are refused (joint.reach moves those)",
     ),
-    CommandSpec::new("occurrence.drag.rotate", "Rotate by Dragging", drag::rotate).icon("move").key("R").enabled(super::not_in_sketch).params(
+    CommandSpec::new("occurrence.drag.rotate", "Rotate by Dragging", drag::rotate).icon("move").key("R").enabled(drag::can_rotate).params(
         "occurrence or path; at, point: world points; angle: radians within one turn; axis?: world direction (default Z); origin?: world pivot (default at). Rotates a free part and its floating joint chain. In the viewport, hold the shortcut while starting a drag to rotate about the part origin and view axis; rebind in Keyboard Shortcuts",
     ),
     CommandSpec::new("occurrence.ground", "Ground", ground).icon("ground").params("occurrence; grounded?: bool (default toggles)"),

@@ -41,6 +41,8 @@ Release the pointer to keep the rotation; Escape restores the starting pose. Reb
 **Rotate by Dragging** in **Preferences > Keyboard Shortcuts**. The binding is saved with
 your other shortcuts. Scripts use `occurrence.drag.rotate` with `at`, `point`, `angle`
 (radians), and optional world `axis` and `origin`; rotation happens before translation.
+R keeps its Rectangle behavior in sketches and when there is no ungrounded occurrence;
+rebinding rotation leaves the Rectangle binding intact.
 
 Paste New copies nested component definitions, sketches, feature histories and generated
 dimension parameters. Repeated child instances remain shared within the new copy. Materials,

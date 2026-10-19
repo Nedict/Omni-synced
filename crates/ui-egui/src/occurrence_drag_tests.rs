@@ -201,7 +201,9 @@ fn rotation_drag_uses_the_rebindable_shortcut_and_cancels_in_one_step() {
     h.frames(2);
     assert_eq!(crate::keymap::effective(&h.app, "occurrence.drag.rotate").as_deref(), Some("R"));
     for binding in [egui::Key::R, egui::Key::K] {
-        crate::keymap::bind(&mut h.app, "occurrence.drag.rotate", binding.name(), true).unwrap();
+        if binding != egui::Key::R {
+            crate::keymap::bind(&mut h.app, "occurrence.drag.rotate", binding.name(), true).unwrap();
+        }
         let before = h.app.session.doc.to_json();
         let undo = h.app.session.undo.len();
         let grab = Vec3::new(25.0, 5.0, 10.0);
@@ -235,10 +237,8 @@ fn rotation_drag_uses_the_rebindable_shortcut_and_cancels_in_one_step() {
     crate::keymap::reset(&mut h.app, None);
     h.app.keymap.load(&saved);
     assert_eq!(crate::keymap::effective(&h.app, "occurrence.drag.rotate").as_deref(), Some("K"));
-    let (a, b) = (screen(&mut h, Vec3::new(25.0, 5.0, 10.0)), screen(&mut h, Vec3::new(25.0, 35.0, 10.0)));
     key(&mut h, egui::Key::R, true);
-    press_and_move(&mut h, a, b, Default::default());
-    release(&mut h, b);
     key(&mut h, egui::Key::R, false);
-    assert!(origin(&h, &[free]).dist(Vec3::new(0.0, 30.0, 0.0)) < 0.5);
+    assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(crate::dialogs::Kind::Sketch)), "R returns to Rectangle after rebinding rotation");
+    assert!(origin(&h, &[free]).dist(Vec3::ZERO) < 1e-9);
 }

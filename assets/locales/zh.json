@@ -1425,6 +1425,7 @@
   "ui.reverse_zoom_direction": "反转缩放方向",
   "ui.revolve": "旋转",
   "ui.right": "右视",
+  "ui.rotate_by_dragging": "拖动旋转",
   "ui.save": "保存",
   "ui.save_as": "另存为",
   "ui.save_as_ellipsis": "另存为...",
