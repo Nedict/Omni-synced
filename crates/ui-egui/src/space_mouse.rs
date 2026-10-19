@@ -182,7 +182,8 @@ mod tests {
     /// reads as unfocused, so the tests run one first, as the app always has.
     fn window(focused: bool) -> egui::Context {
         let ctx = egui::Context::default();
-        let _ = ctx.run_ui(egui::RawInput { focused, ..Default::default() }, |_| {});
+        let mut output = ctx.run_ui(egui::RawInput { focused, ..Default::default() }, |_| {});
+        output.textures_delta.clear();
         ctx
     }
 
