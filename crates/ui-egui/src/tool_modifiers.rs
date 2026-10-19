@@ -53,7 +53,10 @@ pub struct Held {
 
 impl Held {
     pub fn new(m: Modifiers, platform: Platform) -> Self {
-        Self { shift: m.shift, primary: m.command, alt: m.alt, other: platform == Platform::Mac && m.ctrl }
+        // On Windows and Linux, Ctrl is primary even when an event sets only `ctrl`
+        // (`Modifiers::CTRL`). On macOS, primary is Command; physical Ctrl is a different key.
+        let primary = m.command || (platform != Platform::Mac && m.ctrl);
+        Self { shift: m.shift, primary, alt: m.alt, other: platform == Platform::Mac && m.ctrl && !m.command }
     }
 
     /// Host-platform normalisation without an egui context (tests, prefs helpers).
@@ -330,13 +333,7 @@ impl Scope {
 }
 
 const SELECTION_BINDINGS: &[Binding] = &[
-    Binding {
-        action: ModAction::SelectAdd,
-        defaults: &[ModifierCombo::SHIFT],
-        matching: Match::AtLeast,
-        trigger: Trigger::Press,
-        rebindable: true,
-    },
+    Binding { action: ModAction::SelectAdd, defaults: &[ModifierCombo::SHIFT], matching: Match::AtLeast, trigger: Trigger::Press, rebindable: true },
     Binding {
         action: ModAction::SelectToggle,
         defaults: &[ModifierCombo::CTRL],
@@ -514,6 +511,14 @@ mod tests {
         assert!(ctrl.held(mods(false, true, false)));
         assert!(ctrl.held(mods(true, true, false)), "shift+ctrl is fine for a ctrl binding");
         assert!(!ctrl.held(mods(false, false, false)));
+    }
+
+    #[test]
+    fn physical_ctrl_is_primary_off_mac() {
+        let ctrl_only = Modifiers::CTRL;
+        assert!(ModifierCombo::CTRL.matches(Held::new(ctrl_only, Platform::Other), Match::AtLeast));
+        assert!(!ModifierCombo::CTRL.matches(Held::new(ctrl_only, Platform::Mac), Match::AtLeast));
+        assert_eq!(selection_click(Held::new(ctrl_only, Platform::Other), false), (true, true));
     }
 
     #[test]

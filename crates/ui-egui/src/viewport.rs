@@ -2296,14 +2296,8 @@ pub fn delete_selection(app: &mut SolveApp) {
 ///
 /// Shared by [`show`] so tests can lock the same path: a manipulator drag never rolls the
 /// preview back, even when Primary (preview-reselect) is held.
-pub(crate) fn preview_should_roll_back(
-    app: &SolveApp,
-    held: crate::tool_modifiers::Held,
-    manipulator_dragging: bool,
-) -> bool {
-    app.dialog.as_ref().is_some_and(|d| d.previews())
-        && app.preview.active
-        && crate::tool_modifiers::preview_reselect(held, manipulator_dragging)
+pub(crate) fn preview_should_roll_back(app: &SolveApp, held: crate::tool_modifiers::Held, manipulator_dragging: bool) -> bool {
+    app.dialog.as_ref().is_some_and(|d| d.previews()) && app.preview.active && crate::tool_modifiers::preview_reselect(held, manipulator_dragging)
 }
 
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
@@ -6496,13 +6490,7 @@ mod grid_plane_tests {
         assert!(app.dialog.as_ref().is_some_and(|d| d.previews()), "extrude opens a preview dialog");
         app.preview.active = true;
         let primary = crate::tool_modifiers::Held { primary: true, ..Default::default() };
-        assert!(
-            preview_should_roll_back(&app, primary, false),
-            "Primary alone rolls the preview back when a preview dialog is open"
-        );
-        assert!(
-            !preview_should_roll_back(&app, primary, true),
-            "Primary must not roll the preview back while a manipulator arrow is dragged"
-        );
+        assert!(preview_should_roll_back(&app, primary, false), "Primary alone rolls the preview back when a preview dialog is open");
+        assert!(!preview_should_roll_back(&app, primary, true), "Primary must not roll the preview back while a manipulator arrow is dragged");
     }
 }
