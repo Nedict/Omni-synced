@@ -5864,6 +5864,71 @@ mod tests {
         }
     }
 
+    /// With Free orbit, one drag carries the view over the top: down past
+    /// straight up, then sideways with the model following the cursor though the view is now
+    /// upside down, with no frame jumping. Without it the same drag stops at the top.
+    #[test]
+    fn orbit_drag_over_the_top_then_sideways() {
+        for over_poles in [true, false] {
+            let mut h = crate::scenario::Harness::new();
+            h.app.preferences.free_orbit = over_poles;
+            h.call("ui.view", json!({"view":"front"}));
+            let rect = h.app.viewport.rect.unwrap();
+            let at = rect.center();
+            let mut prev = h.app.cam;
+            for _ in 0..30 {
+                crate::navigation::orbit(&mut h.app, rect, 0.0, 10.0, Some(at));
+                assert!(h.app.cam.back().dist(prev.back()) < 0.09, "{prev:?} -> {:?}", h.app.cam);
+                prev = h.app.cam;
+            }
+            assert_eq!(h.app.cam.upside_down(), over_poles, "{:?}", h.app.cam);
+            assert!(h.app.cam.pitch.abs() <= std::f64::consts::FRAC_PI_2);
+            let near = h.app.cam.target + h.app.cam.back() * 5.0;
+            let x0 = h.app.cam.to_screen(near, 800.0, 600.0, 10.0).unwrap().0;
+            for _ in 0..3 {
+                crate::navigation::orbit(&mut h.app, rect, 5.0, 0.0, Some(at));
+                assert!(h.app.cam.back().dist(prev.back()) < 0.05, "{prev:?} -> {:?}", h.app.cam);
+                prev = h.app.cam;
+            }
+            assert!(h.app.cam.to_screen(near, 800.0, 600.0, 10.0).unwrap().0 > x0, "over_poles {over_poles}: the near side follows the cursor");
+        }
+    }
+
+    /// With Free orbit, a diagonal mouse drag and a 3D mouse tilted, twisted and rolled at once
+    /// carry on over straight up and down the way they were turning: every frame is the same
+    /// turn in the view's own frame, so nothing bounces back at the pole.
+    #[test]
+    fn free_orbit_over_the_pole_keeps_turning_the_same_way() {
+        let in_view = |a: &Camera, b: &Camera| {
+            let (r, u, _) = a.basis();
+            let (r2, _, b2) = b.basis();
+            [b2.dot(r), b2.dot(u), r2.dot(u)]
+        };
+        for device in [false, true] {
+            let mut h = crate::scenario::Harness::new();
+            h.app.preferences.free_orbit = true;
+            h.call("ui.view", json!({"view":"front"}));
+            let rect = h.app.viewport.rect.unwrap();
+            let mut crossed = false;
+            let mut first = None;
+            for i in 0..600 {
+                let prev = h.app.cam;
+                if device {
+                    let motion = crate::space_mouse::Motion { translation: [0.0; 3], rotation: [0.6, 0.35, 0.2] };
+                    crate::navigation::device_camera(&mut h.app.cam, motion, 1.0 / 60.0, 600.0, true, false, true);
+                } else {
+                    crate::navigation::orbit(&mut h.app, rect, 3.0, 4.0, Some(rect.center()));
+                }
+                crossed |= h.app.cam.upside_down();
+                let step = in_view(&prev, &h.app.cam);
+                let first = *first.get_or_insert(step);
+                let same = step.iter().zip(first).all(|(a, b)| (a - b).abs() < 1e-6);
+                assert!(same, "device {device} frame {i}: {step:?} vs {first:?} at {:?}", h.app.cam);
+            }
+            assert!(crossed, "device {device}: the turn went over a pole");
+        }
+    }
+
     #[test]
     fn camera_resets_cancel_pending_axis_motion() {
         for reset in 0..3 {
