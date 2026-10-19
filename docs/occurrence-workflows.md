@@ -62,8 +62,13 @@ Paste New remaps internal certified targets and authoring paths to the copied de
 
 ## Change the size of a standard component
 
-Right-click an inserted standard screw, bolt, nut, washer, pin or bearing in the
-browser or viewport and choose **Change Part Size**. The dialog starts with the
+An inserted standard part is one component with an active catalogue configuration.
+Its Browser entry shows that configuration alongside its placement name, for example
+`Screw:1 [M6×20]`. Double-click the entry or choose **Edit** to open its configuration
+dialog. The activation radio still activates the component; double-clicking ordinary
+components keeps its existing activation behavior. The viewport also offers
+**Change Part Size** for a picked standard screw, bolt, nut, washer, pin or bearing.
+The dialog starts with the
 component's current family, size and actual length, including a non-catalogue
 length. Choose a size and, for parts with a length, a length, then confirm with OK.
 Cancel leaves the design unchanged.
@@ -79,3 +84,9 @@ component with a different size is needed.
 The dialog uses the same `parts.library` catalogue and `parts.resize` command as
 scripts. It is offered only for inserted standard parts. Other component types
 retain their usual feature-editing tools.
+
+The configuration is read from the existing standard-part family, size and length
+metadata, so it survives save/reopen and follows undo/redo without renaming any
+occurrence. Lengths in the compact configuration name are catalogue millimetres;
+the dialog displays lengths in the design's units. General parameter-driven
+configurations are outside this change.

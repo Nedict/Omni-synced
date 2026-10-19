@@ -678,7 +678,7 @@ fn component_items(app: &SolveApp, id: u64) -> Vec<Item> {
     let names = json!(bodies);
     let mut v = Vec::new();
     if doc.parts.contains_key(&id) {
-        v.push(cmd(app, "parts.resize", "Change Part Size").with(json!({"component":id})));
+        v.push(cmd(app, "parts.resize", "Edit").with(json!({"component":id})));
     }
     if id != 0 {
         let grounded = occ.is_some_and(|o| o.grounded);

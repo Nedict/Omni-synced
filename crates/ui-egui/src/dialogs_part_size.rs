@@ -11,6 +11,30 @@ use crate::dialogs::{Kind, combo, row_label};
 use crate::dialogs_parts::Family;
 use crate::selection::SelInput;
 
+/// The active catalogue configuration belongs to the shared part, not its placements.
+pub(crate) fn configuration(app: &SolveApp, component: u64) -> Option<String> {
+    let part = app.session.doc.parts.get(&component)?;
+    let size = part.size.trim();
+    if size.is_empty() {
+        return None;
+    }
+    Some(configuration_name(size, part.length))
+}
+
+fn configuration_name(size: &str, length: Option<f64>) -> String {
+    match length.filter(|length| length.is_finite() && *length > 0.0) {
+        Some(length) => format!("{size}×{length}"),
+        None => size.to_owned(),
+    }
+}
+
+pub(crate) fn browser_label(app: &SolveApp, component: u64, name: &str) -> String {
+    match configuration(app, component) {
+        Some(configuration) => format!("{name} [{configuration}]"),
+        None => name.to_owned(),
+    }
+}
+
 #[derive(Clone)]
 pub struct Resize {
     pub component: u64,
@@ -161,6 +185,11 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Resize) -> bool {
         ui.end_row();
         k.length = lengths.get(index).copied();
     }
+    if let Some((size, _)) = k.family.sizes.get(k.size) {
+        row_label(ui, "Configuration");
+        ui.label(configuration_name(size, k.length));
+        ui.end_row();
+    }
     row_label(ui, "");
     ui.add(egui::Label::new(RichText::new(crate::i18n::tr("ui.part_size_shared")).color(crate::theme::Tokens::get().text_dim)).wrap());
     ui.end_row();
@@ -223,6 +252,79 @@ mod tests {
             app.run(&id, params).unwrap();
         }
         crate::dialogs::cancel(app);
+    }
+
+    #[test]
+    fn part_size_browser_configuration_edits_the_same_part_and_follows_history_and_reopen() {
+        let (mut app, component) = part("socket_head_cap_screw", "M6", Some(20.0));
+        let first = app.session.doc.occurrence_of(component).unwrap().id;
+        let second = app.run("occurrence.copy", json!({"occurrence":first,"translate":[40,0,0]})).unwrap()["occurrence"].as_u64().unwrap();
+        app.run("joint.create", json!({"name":"Seat","type":"rigid","a":{"occurrence":0,"point":[0,0,0]},"b":{"occurrence":first,"point":[0,0,0]}}))
+            .unwrap();
+        let occurrences = app.session.doc.occurrences.clone();
+        let joints = app.session.doc.assembly.joints.clone();
+        let before = app.session.doc.clone();
+        let undo = app.session.undo.len();
+        let mut h = crate::scenario::Harness::new();
+        h.app = app;
+        h.app.home.open = false;
+        for id in [first, second] {
+            h.app.tree.collapsed.insert(format!("o:{id}"));
+        }
+        h.frames(3);
+        assert_eq!(crate::browser::drawn_rows().iter().filter(|(label, _, _, _)| label.ends_with("[M6×20]")).count(), 2);
+        let at = h.call("ui.at", json!({"handle":format!("row:occurrence:{second}")}));
+        let at = at["result"].as_array().unwrap();
+        h.call("ui.click", json!({"x":at[0],"y":at[1],"double":true}));
+        assert_eq!(editor(&h.app).component, component);
+        assert_eq!(h.app.session.doc, before, "opening configuration is not a model edit");
+        assert_eq!(h.app.session.undo.len(), undo);
+        crate::dialogs::cancel(&mut h.app);
+        h.frames(2);
+        let at = h.call("ui.at", json!({"handle":format!("activate:occurrence:{second}")}));
+        let at = at["result"].as_array().unwrap();
+        h.call("ui.click", json!({"x":at[0],"y":at[1]}));
+        assert!(h.app.dialog.is_none());
+        assert_eq!(h.app.session.active_occurrence_path, Some(vec![second]));
+        let items = context_menu::items(&h.app, &Target::Occurrence { path: vec![second] });
+        let edit = items.iter().find(|item| item.id == "parts.resize").unwrap();
+        assert_eq!(edit.label, "Edit");
+        context_menu::run_item(&mut h.app, edit, egui::Pos2::ZERO);
+        change(&mut h.app, "M8", Some(25.0));
+        apply(&mut h.app);
+        h.frames(3);
+        assert_eq!(crate::browser::drawn_rows().iter().filter(|(label, _, _, _)| label.ends_with("[M8×25]")).count(), 2);
+        assert_eq!(h.app.session.doc.occurrences, occurrences);
+        assert_eq!(h.app.session.doc.assembly.joints, joints);
+        assert_eq!(h.app.session.undo.len(), undo + 1);
+        assert_eq!(h.app.session.active_occurrence_path, Some(vec![second]));
+        h.app.run("edit.undo", json!({})).unwrap();
+        h.frames(3);
+        assert_eq!(crate::browser::drawn_rows().iter().filter(|(label, _, _, _)| label.ends_with("[M6×20]")).count(), 2);
+        h.app.run("edit.redo", json!({})).unwrap();
+        assert_eq!(configuration(&h.app, component).as_deref(), Some("M8×25"));
+        let file = std::env::temp_dir().join(format!("solidcraft-part-configuration-{}.solidcraft", std::process::id()));
+        h.app.run("file.save", json!({"path":file})).unwrap();
+        let mut reopened = Session::default();
+        reopened.execute("doc.open", &json!({"path":file})).unwrap();
+        let reopened = SolveApp::new(reopened, Default::default());
+        assert_eq!(configuration(&reopened, component).as_deref(), Some("M8×25"));
+        assert_eq!(reopened.session.doc.occurrences, occurrences);
+        let _ = std::fs::remove_file(&file);
+        let _ = std::fs::remove_file(file.with_extension("solidcraft.bak"));
+    }
+
+    #[test]
+    fn part_size_configuration_names_use_catalogue_dimensions_and_keep_ordinary_labels() {
+        for (family, size, length, expected) in
+            [("socket_head_cap_screw", "M6", Some(20.5), "M6×20.5"), ("hex_nut", "M8", None, "M8"), ("bearing", "608", None, "608")]
+        {
+            let (mut app, component) = part(family, size, length);
+            app.run("document.units", json!({"units":"in"})).unwrap();
+            assert_eq!(configuration(&app, component).as_deref(), Some(expected));
+            assert_eq!(browser_label(&app, component, "Named placement"), format!("Named placement [{expected}]"));
+            assert_eq!(browser_label(&app, 0, "Assembly"), "Assembly");
+        }
     }
 
     #[test]
