@@ -1,6 +1,6 @@
 //! Construction geometry from the model: references to vertices, edges, faces, planes, axes,
 //! points and sketch entities, resolved on each evaluation, and the axes, points and planes
-//! built from them (Fusion's CONSTRUCT panel).
+//! built from them (the CONSTRUCT panel).
 //!
 //! Face and edge references carry the persistent name of what was picked (see `naming`), so
 //! they follow the model when earlier features change; the picked point is the fallback.
