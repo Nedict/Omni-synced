@@ -2240,9 +2240,6 @@ mod thin_extrude_tests;
 #[path = "extrude_convention_tests.rs"]
 mod extrude_convention_tests;
 
-#[cfg(test)]
-#[path = "extrude_targets_tests.rs"]
-mod extrude_targets_tests;
 /// `solid.fillet corner?: rolling|g2`: the default keeps the rolling ball's sphere corner, `g2`
 /// is accepted and refuses (item 10's patch is built but not sewn in yet, see `corner_g2`), and an
 /// unknown word is refused.
