@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # SolidCraft — instructions for agents
 
 SolidCraft is a clean-room, open-source, pure-Rust parametric 3D CAD application:
@@ -23,6 +27,31 @@ new uses of it anywhere else. Public docs/web/Flatpak deployments use project Pa
    unless it lists the decision as the owner's.
 
 `plan/` is gitignored (local only).
+
+## Everyday commands
+- `cargo xtask ci` — everything a PR must pass (fmt, clippy `-D warnings`, tests, assets, layers, wasm).
+- `cargo xtask test` — builds tests with the `ci` profile and runs every test binary at once;
+  args after `--` filter each binary: `cargo xtask test -- shell`.
+- One test in one crate: `cargo test --profile ci -p solidcraft-engine --lib <path::to::test>`.
+  Always use `--profile ci` (truck's debug-only assertions reject valid geometry in plain debug).
+- UI scenarios: drop a JSON file in `crates/ui-egui/tests/scenarios/` (picked up automatically;
+  `{"pending": "why"}` records a known bug).
+- Re-record robustness goldens after an intended geometry change:
+  `ROBUSTNESS_GOLDENS_BLESS="why" cargo test --profile ci -p solidcraft-engine --lib robustness_goldens::`.
+- Other gates: `cargo xtask layers | assets | lists --fix | i18n --check | wasm | oracle | action-matrix [--bless]`
+  (`cargo xtask help` lists all). Tests run in separate processes under nextest in CI: no shared state.
+
+## Architecture in one pass
+- `doc::Document` holds parameters and the parametric timeline; evaluation is incremental (a feature
+  recomputes only when it, a parameter it uses, or an earlier feature changed) and yields the model
+  (bodies + solved sketches) via `crates/kernel`.
+- `crates/kernel` is the only B-rep boundary: no `truck` type leaks from its API, so the kernel is
+  replaceable; fillets/chamfers (`blend*.rs`) are our own.
+- `engine::Session` owns the document; every action is a `CommandSpec` in `crates/engine/src/cmd/`
+  run by `Session::execute(id, json)`. Toolbar, palette, scripts, CLI, control channel and the MCP
+  server (`crates/mcp`, headless in-process or remote to a running app) all funnel through it.
+- `crates/ui-egui` owns no design data; `crates/gpu` and `crates/mcp` sit at L5 beside it;
+  `space-mouse` is L0 and `derive` is a standalone proc-macro crate.
 
 ## Never crash
 People trust SolidCraft with their designs; a crash loses their work. **This outranks feature work.**
@@ -67,8 +96,11 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
   nothing from FreeCAD is linked, vendored or shipped.) The sketch solver and the blend
   operations are our own.
 - **Assets — absolutely essential.** SolidCraft contains **no iconography, images, fonts or
-  artwork from commercial CAD products — ever.** Every UI icon is drawn in collected code
-  (`assets/icons/ui/source/`, compiled through `crates/ui-egui/src/icons.rs`). Any file asset must be original or openly licensed and **must have a row in ATTRIBUTION.md**
+  artwork from commercial CAD products — ever.** Command icons are the original SVG masters in
+  `assets/icons/ui/design/svg/` (colours from `palette.toml`), compiled through
+  `crates/ui-egui/src/icon_svg.rs`. **Before any icon, icon assignment or media edit, read
+  `assets/AGENTS.md`, `assets/icons/ui/AGENTS.md` and `assets/icons/ui/STYLE_GUIDE.md`**; use the
+  canonical bases and finished references there, never a parallel icon style. Any file asset must be original or openly licensed and **must have a row in ATTRIBUTION.md**
   (`cargo xtask assets` enforces it). Screenshots of commercial CAD software are never committed.
   Breaking this rule is the most serious mistake you can make in this repo.
 - **Everything is a command.** User-visible behaviour = a command in `crates/engine/src/cmd/*`
@@ -87,7 +119,9 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
   preview, future flat pattern or drawing pages) calls `navigation::handle` with its `NavCaps`
   (orbit off for flat 2D pages). New canvases must use `navigation::handle`; never hand-roll
   camera input (a test rejects it).
-- **Rust only.** Units are millimetres and radians internally; Z is up. The one exception is
+- **Application code is Rust only.** Units are millimetres and radians internally; Z is up.
+  Asset authoring/lint tools (`cargo xtask icons`, `tools/`) use Python 3.11+, never at runtime. The
+  application exception is
   JavaScript the browser requires: the service worker `apps/solidcraft-web/sw.js` (browsers only
   run service workers as JavaScript) and the small inline scripts in `apps/solidcraft-web/index.html`.
   Keep them minimal; `cargo xtask web-offline-test` covers the service worker.
