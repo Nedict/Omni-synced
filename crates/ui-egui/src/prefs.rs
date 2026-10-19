@@ -1,4 +1,4 @@
-//! Preferences, one dialog in the spirit of Fusion's, opened from the gear at the top right of the
+//! Preferences, one dialog, opened from the gear at the top right of the
 //! window, File › Preferences or Ctrl+, (Cmd+, on macOS): General (theme, UI scale, units of new
 //! designs, autosave, display precision, timeline layout, the agent cursor), Navigation (mouse presets, zoom
 //! direction, zoom to the cursor, orbit centre, Look At animation), Keyboard Shortcuts (search,
@@ -27,6 +27,7 @@ pub fn stored(get: impl Fn(&str) -> Option<String>) -> Option<String> {
 
 use crate::SolveApp;
 use crate::theme::Tokens;
+use crate::tool_modifiers::ModifierCombo;
 use crate::viewport::NavMode;
 
 pub const UNITS: [&str; 5] = ["mm", "cm", "m", "in", "ft"];
@@ -251,6 +252,10 @@ pub enum OrbitAround {
     Cursor,
 }
 
+/// The browser sidebar's first width, and the width [`Prefs::default`] restores; the panel
+/// itself clamps what the user drags to its own range.
+pub const DEFAULT_BROWSER_WIDTH: f32 = 250.0;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
@@ -279,8 +284,14 @@ pub struct Prefs {
     pub space_mouse_reverse: [bool; 6],
     /// Per physical axis of the cap, a multiplier on top of `space_mouse_speed`; 0 switches it off.
     pub space_mouse_axis_speed: [f32; 6],
+    /// Per 3D mouse (`space_mouse::Input::device`), the calibration that puts its axes on
+    /// 3Dconnexion's. A device without one is read as it reports.
+    #[serde(deserialize_with = "calibrations_that_read")]
+    pub space_mouse_calibrations: std::collections::BTreeMap<String, solidcraft_space_mouse::Calibration>,
     /// Anti-aliasing samples (applies on restart).
     pub msaa: u32,
+    /// Soft contact shading in the GPU viewport; optional and applied immediately.
+    pub ambient_occlusion: bool,
     /// The grid turns to the upright origin plane facing a side view (#1470). Off by default: the
     /// grid stays on the ground plane (XY) whatever the view.
     pub grid_follows_view: bool,
@@ -318,6 +329,12 @@ pub struct Prefs {
     pub timeline_left_height: f32,
     /// Whether the browser below the left feature history is collapsed.
     pub timeline_left_browser_collapsed: bool,
+    /// Width of the left sidebar holding the browser (and the feature history above it), which
+    /// the user drags wider or narrower at its right edge.
+    pub browser_width: f32,
+    /// Draw the parts browser on a translucent card over the 3D view instead of a column of its
+    /// own, so the workspace keeps the whole window width.
+    pub browser_float: bool,
     /// The wheel zooms toward the point under the cursor (else toward the view's centre).
     pub zoom_to_cursor: bool,
     /// Spread discrete wheel input across frames (off: apply each event immediately).
@@ -379,6 +396,16 @@ pub struct Prefs {
     pub agent_chat_window: Option<[f32; 4]>,
     /// Changes the agent may make for one message.
     pub agent_chat_turn_limit: u32,
+
+    // ---- Sketch / selection modifier bindings (classic defaults; alternate mapping is opt-in) ----
+    /// Modifier that suppresses sketch auto-snap while drawing or dragging a sketch point.
+    /// Default: Alt/Option. Set to Ctrl/Cmd for the alternate mapping.
+    pub suppress_sketch_snap: ModifierCombo,
+    /// Whether Alt/Option also frees gizmo / canvas manipulator arrows (Primary always does).
+    pub manipulator_free_alt: bool,
+    /// When true: Shift+click adds without removing; Primary toggles.
+    /// When false (default): Shift and Primary both toggle.
+    pub selection_shift_add_only: bool,
 }
 
 /// What a middle-button double-click in the view does.
@@ -423,7 +450,9 @@ impl Default for Prefs {
             space_mouse_speed: 1.0,
             space_mouse_reverse: [false; 6],
             space_mouse_axis_speed: [1.0; 6],
+            space_mouse_calibrations: Default::default(),
             msaa: 4,
+            ambient_occlusion: false,
             grid_follows_view: false,
             display_quality: "normal".into(),
             supersampling: 1.0,
@@ -440,6 +469,8 @@ impl Default for Prefs {
             timeline_left: false,
             timeline_left_height: 360.0,
             timeline_left_browser_collapsed: false,
+            browser_width: DEFAULT_BROWSER_WIDTH,
+            browser_float: false,
             zoom_to_cursor: true,
             smooth_wheel_zoom: true,
             trackpad_pan: true,
@@ -472,6 +503,9 @@ impl Default for Prefs {
             agent_chat_popped: false,
             agent_chat_window: None,
             agent_chat_turn_limit: crate::agent_chat::gate::DEFAULT_TURN_LIMIT,
+            suppress_sketch_snap: ModifierCombo::CTRL_ALT,
+            manipulator_free_alt: true,
+            selection_shift_add_only: false,
         }
     }
 }
@@ -695,6 +729,8 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.timeline_left = d.timeline_left;
             p.timeline_left_height = d.timeline_left_height;
             p.timeline_left_browser_collapsed = d.timeline_left_browser_collapsed;
+            p.browser_width = d.browser_width;
+            p.browser_float = d.browser_float;
             p.default_units = d.default_units;
             p.length_decimals = d.length_decimals;
             p.angle_decimals = d.angle_decimals;
@@ -732,6 +768,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.space_mouse_speed = d.space_mouse_speed;
             p.space_mouse_reverse = d.space_mouse_reverse;
             p.space_mouse_axis_speed = d.space_mouse_axis_speed;
+            // The 3D mice the user calibrated stay: a calibration describes the device.
             p.look_at_anim = d.look_at_anim;
             p.look_at_speed = d.look_at_speed;
             p.middle_double_click = d.middle_double_click;
@@ -744,6 +781,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
         PAGE_GRAPHICS => {
             let msaa = p.msaa != d.msaa;
             p.msaa = d.msaa;
+            p.ambient_occlusion = d.ambient_occlusion;
             p.display_quality = d.display_quality;
             p.supersampling = d.supersampling;
             p.supersampling_adaptive = d.supersampling_adaptive;
@@ -758,8 +796,15 @@ fn defaults(app: &mut SolveApp, page: usize) {
                 save_graphics(app);
             }
         }
-        5 => app.session.auto_project = true,
-        _ => app.ui.pick_bodies = false,
+        5 => {
+            app.session.auto_project = true;
+            p.suppress_sketch_snap = d.suppress_sketch_snap;
+            p.manipulator_free_alt = d.manipulator_free_alt;
+        }
+        _ => {
+            app.ui.pick_bodies = false;
+            p.selection_shift_add_only = d.selection_shift_add_only;
+        }
     }
 }
 
@@ -843,53 +888,43 @@ pub fn pan_sign_x(app: &SolveApp) -> f32 {
     if app.preferences.pan_reverse_x { -1.0 } else { 1.0 }
 }
 
+/// Whether the configured suppress-snap chord is held.
+pub fn suppress_sketch_snap_held(app: &SolveApp, m: Modifiers) -> bool {
+    let c = app.preferences.suppress_sketch_snap;
+    let held = crate::tool_modifiers::Held::from_modifiers(m);
+    // Classic default (`CTRL_ALT`): Ctrl/Cmd **or** Alt/Option each suppress snap.
+    // A single-key preference keeps the usual AtLeast match for that key only.
+    if c == ModifierCombo::CTRL_ALT {
+        return held.primary || held.alt;
+    }
+    c.held(m)
+}
+
+/// Primary always frees manipulator arrows; Alt/Option also frees when `manipulator_free_alt` is on.
+pub fn manipulator_free_held(app: &SolveApp, m: Modifiers) -> bool {
+    use crate::tool_modifiers::Held;
+    let held = Held::from_modifiers(m);
+    held.primary || (app.preferences.manipulator_free_alt && held.alt)
+}
+
 /// +1, or −1 when the wheel zooms the other way.
 pub fn zoom_sign(app: &SolveApp) -> f64 {
     if app.preferences.zoom_reverse { -1.0 } else { 1.0 }
 }
 
 /// The model point under a screen position. Over empty space: the centre of the visible bodies
-/// and sketches (what Fit frames) while it is on screen; zoomed in so far that it isn't, the
-/// model point at the view's centre, so what you look at stays in view (#2138); and the view's
-/// centre when neither is there.
+/// and sketches (what Fit frames), or the view's centre when nothing is visible.
 pub(crate) fn pivot_under(app: &SolveApp, proj: &crate::viewport::Proj, at: Pos2) -> Vec3 {
-    let under = |at: Pos2| {
-        use crate::viewport::Hit;
-        crate::viewport::pick(app, proj, at).into_iter().find_map(|h| match h {
-            Hit::Face { point, .. } | Hit::Vertex { point, .. } => Some(point),
-            // The point of the edge under the cursor: a long edge's midpoint can be far off screen.
-            Hit::Edge { body, index, mid } => Some(edge_point_near(app, proj, &body, index, at).unwrap_or(mid)),
-            _ => None,
-        })
-    };
-    if let Some(p) = under(at) {
-        return p;
-    }
-    let b = crate::viewport::view_bounds(app);
-    if !b.is_empty() && proj.to_screen(b.center()).is_some_and(|s| proj.rect.contains(s)) {
-        return b.center();
-    }
-    under(proj.rect.center()).unwrap_or(app.cam.target)
-}
-
-/// The point of a body's edge nearest `at` on screen (each segment of its polyline measured on
-/// screen, the nearest point taken along the segment in the model).
-fn edge_point_near(app: &SolveApp, proj: &crate::viewport::Proj, body: &str, index: usize, at: Pos2) -> Option<Vec3> {
-    let st = app.session.world_state();
-    let mesh = st.body(body)?.mesh();
-    let edge = mesh.edges.get(index)?;
-    let mut best: Option<(f32, Vec3)> = None;
-    for w in edge.windows(2) {
-        let (Some(a), Some(b)) = (w.first().copied(), w.get(1).copied()) else { continue };
-        let (Some(sa), Some(sb)) = (proj.to_screen(a), proj.to_screen(b)) else { continue };
-        let d = sb - sa;
-        let t = if d.length_sq() > 1e-6 { ((at - sa).dot(d) / d.length_sq()).clamp(0.0, 1.0) } else { 0.0 };
-        let dist = (sa + d * t).distance(at);
-        if best.is_none_or(|(bd, _)| dist < bd) {
-            best = Some((dist, a + (b - a) * f64::from(t)));
+    use crate::viewport::Hit;
+    for h in crate::viewport::pick(app, proj, at) {
+        match h {
+            Hit::Face { point, .. } | Hit::Vertex { point, .. } => return point,
+            Hit::Edge { mid, .. } => return mid,
+            _ => {}
         }
     }
-    best.map(|(_, p)| p)
+    let b = crate::viewport::view_bounds(app);
+    if b.is_empty() { app.cam.target } else { b.center() }
 }
 
 /// A plain number typed into a field, with a decimal point or a decimal comma (#1347): "2.5"
@@ -1050,6 +1085,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     }
     if !app.prefs_window.open {
         app.prefs_window.snapshot = None;
+        // Calibration opens from here and ends with it, so the cap moves the view again.
+        app.space_mouse.calibrating = None;
         return;
     }
     if app.prefs_window.snapshot.is_none() {
@@ -1118,6 +1155,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     if let Some(w) = &shown {
         crate::scenario::publish_rect("prefs:window", w.response.rect);
     }
+    crate::space_mouse_calibration::show(app, ctx);
     if app.preferences.msaa != before.msaa {
         save_graphics(app);
     }
@@ -1219,6 +1257,11 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             });
             ui.end_row();
             note(ui, app.tr("ui.timeline_left_note"));
+            ui.label(app.tr_label("Parts browser"));
+            let float_label = app.tr_label("Float it over the workspace").to_string();
+            ui.checkbox(&mut app.preferences.browser_float, float_label);
+            ui.end_row();
+            note(ui, app.tr_label("The tree draws on a translucent card over the 3D view instead of a column of its own."));
             ui.label(app.tr("ui.units_of_new_designs"));
             egui::ComboBox::from_id_salt("pref_units").selected_text(app.preferences.default_units.clone()).show_ui(ui, |ui| {
                 for u in UNITS {
@@ -1361,6 +1404,42 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 });
                 ui.end_row();
             }
+            ui.label(app.tr("ui.space_mouse_calibration"));
+            ui.horizontal(|ui| {
+                let device = app.space_mouse.device.clone();
+                let saved = device.as_ref().is_some_and(|device| app.preferences.space_mouse_calibrations.contains_key(device));
+                ui.add_enabled_ui(app.preferences.space_mouse_enabled && device.is_some(), |ui| {
+                    if ui.button(app.tr("ui.space_mouse_calibrate")).on_hover_text(app.tr("ui.space_mouse_calibrate_tip")).clicked() {
+                        crate::space_mouse_calibration::start(app);
+                    }
+                    if saved && ui.button(app.tr("ui.space_mouse_forget")).clicked()
+                        && let Some(device) = &device
+                    {
+                        app.preferences.space_mouse_calibrations.remove(device);
+                    }
+                });
+                // With the device it's about, so it's clear which calibration is in use.
+                ui.label(match (&device, saved) {
+                    (None, _) => app.tr("ui.space_mouse_none").to_owned(),
+                    (Some(device), true) => format!("{} ({device})", app.tr("ui.space_mouse_calibrated")),
+                    (Some(device), false) => format!("{} ({device})", app.tr("ui.space_mouse_not_calibrated")),
+                });
+            });
+            ui.end_row();
+            // The calibrated device's dead zone, adjustable after calibrating.
+            let enabled = app.preferences.space_mouse_enabled;
+            let (label, tip) = (app.tr("ui.space_mouse_dead_zone").to_owned(), app.tr("ui.space_mouse_dead_zone_tip").to_owned());
+            let (device, raw) = (app.space_mouse.device.clone(), app.space_mouse.raw.into());
+            if let Some(calibration) = device.and_then(|device| app.preferences.space_mouse_calibrations.get_mut(&device)) {
+                ui.label(label);
+                ui.add_enabled_ui(enabled, |ui| {
+                    crate::space_mouse_calibration::dead_zone_slider(ui, &mut calibration.dead_zone_share).on_hover_text(tip);
+                });
+                ui.end_row();
+                ui.label("");
+                crate::space_mouse_calibration::dead_zone_pads(ui, calibration, raw);
+                ui.end_row();
+            }
             note(ui, crate::i18n::tr_label("Move and rotate the view together; sketches use pan and zoom only."));
         }
         PAGE_DESIGN => {
@@ -1377,6 +1456,9 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.end_row();
         }
         4 => {
+            ui.label(app.tr("ui.graphics_preset"));
+            graphics_preset_selector(app, ui);
+            ui.end_row();
             ui.label(crate::i18n::tr_label("Visual style"));
             let styles = ["Shaded with edges", "Shaded", "Wireframe", "Shaded with hidden edges"];
             let selected_label = crate::i18n::tr_label(styles[usize::from(app.ui.visual_style.min(3))]);
@@ -1396,9 +1478,35 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.label(crate::i18n::tr_label("Ground shadow"));
             ui.checkbox(&mut app.ui.ground_shadow, "");
             ui.end_row();
+            ui.label(crate::i18n::tr_label("Ambient occlusion"));
+            ambient_occlusion_checkbox(app, ui, "");
+            ui.end_row();
             ui.label(crate::i18n::tr_label("Perspective view"));
             ui.checkbox(&mut app.ui.perspective, "");
             ui.end_row();
+            // Keep accessibility controls visible before the longer rendering-quality controls.
+            ui.label("");
+            ui.end_row();
+            ui.label(RichText::new(app.tr("ui.colour_vision")).strong());
+            ui.label("");
+            ui.end_row();
+            ui.label(app.tr("ui.colour_vision_mode"));
+            let mode = app.preferences.color_vision;
+            let response = egui::ComboBox::from_id_salt("pref_color_vision").selected_text(app.tr(mode.label_id())).show_ui(ui, |ui| {
+                for m in crate::theme::ColorVision::ALL {
+                    ui.selectable_value(&mut app.preferences.color_vision, m, crate::i18n::tr(m.label_id())).on_hover_text(crate::i18n::tr(m.help_id()));
+                }
+            });
+            crate::scenario::publish_handle("prefs:color_vision", response.response.rect.center());
+            if app.preferences.color_vision != mode {
+                // At once, like the theme: the next frame draws in the new colours.
+                ui.ctx().request_repaint();
+            }
+            ui.end_row();
+            ui.label(app.tr("ui.colour_vision_sample"));
+            colour_vision_sample(ui, t);
+            ui.end_row();
+            note(ui, app.tr("ui.colour_vision_note"));
             ui.label(app.tr("ui.anti_aliasing"));
             egui::ComboBox::from_id_salt("pref_msaa").selected_text(format!("{}×", app.preferences.msaa)).show_ui(ui, |ui| {
                 for m in MSAA {
@@ -1451,26 +1559,6 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             crate::scenario::publish_rect("prefs:measure_axis_distances", response.rect);
             response.on_hover_text(app.tr("settings.measure_axis_distances_help"));
             ui.end_row();
-            // Colour vision (#778): its own section at the end of the page.
-            ui.label(RichText::new(app.tr("ui.colour_vision")).strong());
-            ui.label("");
-            ui.end_row();
-            ui.label(app.tr("ui.colour_vision_mode"));
-            let mode = app.preferences.color_vision;
-            egui::ComboBox::from_id_salt("pref_color_vision").selected_text(app.tr(mode.label_id())).show_ui(ui, |ui| {
-                for m in crate::theme::ColorVision::ALL {
-                    ui.selectable_value(&mut app.preferences.color_vision, m, crate::i18n::tr(m.label_id())).on_hover_text(crate::i18n::tr(m.help_id()));
-                }
-            });
-            if app.preferences.color_vision != mode {
-                // At once, like the theme: the next frame draws in the new colours.
-                ui.ctx().request_repaint();
-            }
-            ui.end_row();
-            ui.label(app.tr("ui.colour_vision_sample"));
-            colour_vision_sample(ui, t);
-            ui.end_row();
-            note(ui, app.tr("ui.colour_vision_note"));
             // Last, so the colour vision section above keeps its place on the page.
             ui.label("");
             ui.end_row();
@@ -1486,11 +1574,50 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 let _ = app.run("sketch.auto_project", json!({ "value": auto }));
             }
             ui.end_row();
+
+            ui.label("");
+            ui.end_row();
+            ui.label(RichText::new(crate::i18n::tr_label("Sketch modifiers")).strong());
+            ui.label("");
+            ui.end_row();
+
+            ui.label(crate::i18n::tr_label("Suppress auto-snap while drawing / dragging"));
+            snap_suppress_picker(ui, "pref_suppress_sketch_snap", &mut app.preferences.suppress_sketch_snap);
+            ui.end_row();
+            note(ui, crate::i18n::tr_label("ui.suppress_auto_snap_note"));
+
+            ui.label(crate::i18n::tr_label("Manipulator free drag also on Alt/Option"));
+            ui.checkbox(&mut app.preferences.manipulator_free_alt, "").on_hover_text(crate::i18n::tr_label(
+                "On: Alt/Option or Ctrl/Cmd on extrude / gizmo arrows disables value snapping. Off: Ctrl/Cmd only.",
+            ));
+            ui.end_row();
         }
         _ => {
             ui.label(crate::i18n::tr_label("Click selects whole bodies"));
             ui.checkbox(&mut app.ui.pick_bodies, "");
             ui.end_row();
+
+            ui.label("");
+            ui.end_row();
+            ui.label(RichText::new(crate::i18n::tr_label("Selection modifiers")).strong());
+            ui.label("");
+            ui.end_row();
+
+            ui.label(crate::i18n::tr_label("Shift+click adds without removing"));
+            ui.checkbox(&mut app.preferences.selection_shift_add_only, "").on_hover_text(crate::i18n::tr_label(
+                "On: Shift adds items, Ctrl/Cmd toggles. Off (default): Shift and Ctrl/Cmd both toggle.",
+            ));
+            ui.end_row();
+        }
+    });
+}
+
+/// Sketch snap-suppress picker: classic Ctrl/Cmd-or-Alt first, then single keys.
+fn snap_suppress_picker(ui: &mut egui::Ui, salt: &str, combo: &mut ModifierCombo) {
+    let label = combo.label();
+    egui::ComboBox::from_id_salt(salt).selected_text(label).show_ui(ui, |ui| {
+        for c in ModifierCombo::SNAP_SUPPRESS_CHOICES {
+            ui.selectable_value(combo, c, c.label());
         }
     });
 }
@@ -1622,6 +1749,24 @@ pub fn control(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::
     Ok(out)
 }
 
+/// The saved 3D mouse calibrations that still read. One this version can't read (a hand edit, a
+/// format from another release) is dropped on its own, with a log line, not with all the others.
+fn calibrations_that_read<'de, D: serde::Deserializer<'de>>(
+    saved: D,
+) -> Result<std::collections::BTreeMap<String, solidcraft_space_mouse::Calibration>, D::Error> {
+    let saved = std::collections::BTreeMap::<String, serde_json::Value>::deserialize(saved)?;
+    Ok(saved
+        .into_iter()
+        .filter_map(|(device, calibration)| match serde_json::from_value(calibration) {
+            Ok(calibration) => Some((device, calibration)),
+            Err(error) => {
+                log::warn!("preferences: the 3D mouse calibration for `{device}` can't be read ({error}); reading the device as it reports");
+                None
+            }
+        })
+        .collect())
+}
+
 /// Every theme the Theme list offers, as (id, name): the modes, the built-in theme files, then
 /// the imported ones.
 fn theme_choices(app: &SolveApp) -> Vec<(String, String)> {
@@ -1674,16 +1819,26 @@ fn current_theme_file(app: &SolveApp) -> serde_json::Value {
     }
 }
 
-/// Fold a setting an older release kept in its own field into the one this version reads.
-/// `orbit_cursor` (`true` = the point under the cursor) became `orbit_around`.
 /// The cap's physical axes, in the order of `Prefs::space_mouse_reverse`.
-const SPACE_MOUSE_AXES: [&str; 6] = ["Push left / right", "Push forward / back", "Lift / press", "Tilt forward / back", "Tilt left / right", "Twist"];
+pub(crate) const SPACE_MOUSE_AXES: [&str; 6] =
+    ["Push left / right", "Push forward / back", "Lift / press", "Tilt forward / back", "Tilt left / right", "Twist"];
 
+/// Fold a setting an older release kept in its own field into the one this version reads.
+/// `orbit_cursor` (`true` = the point under the cursor) became `orbit_around`. A 3D mouse
+/// calibration that can't be used as it is (a hand edit) is dropped, so the device is read as it
+/// reports rather than spinning the view.
 pub fn migrate(mut p: Prefs) -> Prefs {
     if p.orbit_cursor {
         p.orbit_around = OrbitAround::Cursor;
         p.orbit_cursor = false;
     }
+    p.space_mouse_calibrations.retain(|device, calibration| {
+        let usable = calibration.is_usable();
+        if !usable {
+            log::warn!("preferences: the 3D mouse calibration for `{device}` can't be used as it is; reading the device as it reports");
+        }
+        usable
+    });
     p
 }
 
@@ -2100,6 +2255,47 @@ mod tests {
     }
 
     #[test]
+    fn tool_modifier_prefs_default_classic_and_persist() {
+        let d = Prefs::default();
+        assert_eq!(d.suppress_sketch_snap, ModifierCombo::CTRL_ALT);
+        assert!(d.manipulator_free_alt);
+        assert!(!d.selection_shift_add_only);
+        let old: Prefs = serde_json::from_value(json!({"nav": "solidworks"})).unwrap();
+        assert_eq!(old.suppress_sketch_snap, ModifierCombo::CTRL_ALT);
+        assert!(!old.selection_shift_add_only);
+        // Classic default: Ctrl/Cmd or Alt each suppress (`command` is primary on all hosts).
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        let ctrl = Modifiers { ctrl: true, command: true, ..Default::default() };
+        let alt = Modifiers { alt: true, ..Default::default() };
+        let shift = Modifiers { shift: true, ..Default::default() };
+        assert!(suppress_sketch_snap_held(&app, ctrl));
+        assert!(suppress_sketch_snap_held(&app, alt));
+        assert!(!suppress_sketch_snap_held(&app, shift));
+        control(
+            &mut app,
+            &json!({"open": "Sketch", "suppress_sketch_snap": {"shift": false, "ctrl": true, "alt": false}, "manipulator_free_alt": false}),
+        )
+        .unwrap();
+        control(&mut app, &json!({"button": "apply"})).unwrap();
+        control(&mut app, &json!({"open": "Selection", "selection_shift_add_only": true})).unwrap();
+        control(&mut app, &json!({"button": "apply"})).unwrap();
+        assert_eq!(app.preferences.suppress_sketch_snap, ModifierCombo::CTRL);
+        assert!(!app.preferences.manipulator_free_alt);
+        assert!(app.preferences.selection_shift_add_only);
+        let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        other.load_prefs(&app.prefs());
+        assert_eq!(other.preferences.suppress_sketch_snap, ModifierCombo::CTRL);
+        assert!(!other.preferences.manipulator_free_alt);
+        assert!(other.preferences.selection_shift_add_only);
+        control(&mut app, &json!({"open": "Sketch", "button": "defaults"})).unwrap();
+        assert_eq!(app.preferences.suppress_sketch_snap, ModifierCombo::CTRL_ALT);
+        assert!(app.preferences.manipulator_free_alt);
+        assert!(app.preferences.selection_shift_add_only, "Selection page setting stays until that page resets");
+        control(&mut app, &json!({"button": "cancel"})).unwrap();
+        assert_eq!(app.preferences.suppress_sketch_snap, ModifierCombo::CTRL);
+    }
+
+    #[test]
     fn wheel_smoothing_persists_and_follows_dialog_buttons() {
         assert!(serde_json::from_value::<Prefs>(json!({})).unwrap().smooth_wheel_zoom);
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
@@ -2424,35 +2620,6 @@ mod tests {
         assert_eq!(app.viewport.orbit_pivot, Some(solidcraft_engine::geom::Vec3::new(5.0, -3.0, 2.0)));
     }
 
-    /// #2138: zoomed in on one end of a long part, the visible geometry's centre is off screen. A
-    /// drag from empty space must not turn around it, or the end you are looking at swings out of
-    /// view; it turns around the model point at the view's centre instead.
-    #[test]
-    fn orbiting_from_empty_space_keeps_a_zoomed_in_view_on_screen() {
-        use solidcraft_engine::geom::Vec3;
-        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
-        app.run("solid.box", json!({"length": 400, "width": 10, "height": 10})).unwrap();
-        app.preferences.orbit_around = OrbitAround::Cursor;
-        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
-        app.fit_view();
-        // Look closely at the end near the origin.
-        let end = Vec3::new(5.0, 5.0, 5.0);
-        app.cam.target = end;
-        app.cam.distance = 60.0;
-        let proj = crate::viewport::projection(&app, rect);
-        let centre = crate::viewport::view_bounds(&app).center();
-        assert!(proj.to_screen(centre).is_none_or(|s| !rect.contains(s)), "the part's centre is off screen");
-        let corner = egui::pos2(10.0, 10.0);
-        use crate::viewport::Hit;
-        assert!(!crate::viewport::pick(&app, &proj, corner).iter().any(|h| matches!(h, Hit::Face { .. } | Hit::Edge { .. } | Hit::Vertex { .. })));
-        for _ in 0..4 {
-            orbit(&mut app, rect, 60.0, 20.0, Some(corner));
-        }
-        assert_ne!(app.viewport.orbit_pivot, Some(centre));
-        let s = crate::viewport::projection(&app, rect).to_screen(end);
-        assert!(s.is_some_and(|s| rect.contains(s)), "the end stays in view: {s:?}");
-    }
-
     /// The Y up preference turns the view: the camera's up axis follows it, startup included.
     #[test]
     fn up_axis_preference_turns_the_view() {
@@ -2523,5 +2690,157 @@ mod ui_scale_regression_tests {
         h.call("ui.prefs", json!({"button":"cancel"}));
         assert_eq!(h.app.preferences.ui_scale, 1.0, "Cancel restores the original scale");
         assert_eq!(h.ctx.zoom_factor(), 1.0);
+    }
+}
+
+/// Both display-setting surfaces dispatch the same programmatic command.
+pub(crate) fn ambient_occlusion_checkbox(app: &mut SolveApp, ui: &mut egui::Ui, label: &str) {
+    let mut enabled = app.preferences.ambient_occlusion;
+    let response = ui
+        .checkbox(&mut enabled, crate::i18n::tr_label(label))
+        .on_hover_text(crate::i18n::tr_label("Soft shading where opaque surfaces meet. Requires the GPU viewport."));
+    crate::scenario::publish_handle("view:ambient_occlusion", response.rect.center());
+    if response.changed() {
+        let _ = app.run("view.ambient_occlusion", json!({"enabled": enabled}));
+    }
+}
+
+#[cfg(test)]
+mod ambient_occlusion_tests {
+    use super::*;
+
+    #[test]
+    fn ambient_occlusion_is_optional_persistent_and_cancelable() {
+        let old: Prefs = serde_json::from_value(json!({"msaa": 4})).unwrap();
+        assert!(!old.ambient_occlusion);
+        let mut h = crate::scenario::Harness::new();
+        let camera = h.app.cam;
+        let design = h.app.session.doc.to_json();
+        h.call("ui.prefs", json!({"open":"Graphics"}));
+        let checkbox = crate::scenario::handle_at("view:ambient_occlusion").unwrap();
+        h.call("ui.click", json!({"x":checkbox.x,"y":checkbox.y}));
+        assert!(h.app.preferences.ambient_occlusion);
+        let mut restored = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        restored.load_prefs(&h.app.prefs());
+        assert!(restored.preferences.ambient_occlusion);
+        h.call("ui.prefs", json!({"button":"cancel"}));
+        assert!(!h.app.preferences.ambient_occlusion);
+        h.call("ui.prefs", json!({"open":"Graphics", "ambient_occlusion":true}));
+        h.call("ui.prefs", json!({"button":"apply"}));
+        h.call("ui.prefs", json!({"button":"defaults"}));
+        assert!(!h.app.preferences.ambient_occlusion);
+        h.call("ui.prefs", json!({"button":"cancel"}));
+        assert!(h.app.preferences.ambient_occlusion);
+        h.call("engine.execute", json!({"command":"view.ambient_occlusion","params":{"enabled":false}}));
+        assert!(!h.app.preferences.ambient_occlusion);
+        h.call("engine.execute", json!({"command":"view.ambient_occlusion","params":{"enabled":"yes"}}));
+        assert!(!h.app.preferences.ambient_occlusion);
+        h.app.start("view.ambient_occlusion");
+        assert!(h.app.preferences.ambient_occlusion);
+        assert_eq!(h.app.cam, camera);
+        assert_eq!(h.app.session.doc.to_json(), design);
+        assert!(h.app.session.undo.is_empty());
+    }
+}
+
+/// Manual edits are preserved and shown as Custom rather than claiming to match a preset.
+fn graphics_preset(prefs: &Prefs) -> &'static str {
+    match (prefs.ambient_occlusion, prefs.display_quality.as_str(), prefs.supersampling, prefs.supersampling_adaptive) {
+        (false, "normal", 1.0, _) => "performance",
+        (true, "fine", 2.0, true) => "quality",
+        _ => "custom",
+    }
+}
+
+pub(crate) fn graphics_preset_selector(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let current = graphics_preset(&app.preferences);
+    let label = format!("ui.graphics_{current}");
+    let response = egui::ComboBox::from_id_salt("graphics_preset")
+        .selected_text(app.tr(&label))
+        .show_ui(ui, |ui| {
+            for (preset, label) in [("performance", "ui.graphics_performance"), ("quality", "ui.graphics_quality")] {
+                let item = ui.selectable_label(current == preset, app.tr(label));
+                crate::scenario::publish_handle(&format!("view:graphics_preset:{preset}"), item.rect.center());
+                if item.clicked() {
+                    let _ = app.run("view.graphics_preset", json!({"preset":preset}));
+                }
+            }
+        })
+        .response
+        .on_hover_text(app.tr("ui.graphics_preset_help"));
+    crate::scenario::publish_handle("view:graphics_preset", response.rect.center());
+}
+
+#[cfg(test)]
+mod graphics_preset_tests {
+    use super::*;
+
+    #[test]
+    fn viewport_preset_popup_accepts_quality_and_performance() {
+        let mut h = crate::scenario::Harness::new();
+        h.call("ui.inspect", json!({}));
+        for handle in ["nav:view", "view:graphics_preset", "view:graphics_preset:quality"] {
+            let pos = crate::scenario::handle_at(handle).unwrap();
+            h.call("ui.click", json!({"x":pos.x,"y":pos.y}));
+        }
+        assert!(h.app.preferences.ambient_occlusion);
+        for handle in ["view:graphics_preset", "view:graphics_preset:performance"] {
+            let pos = crate::scenario::handle_at(handle).unwrap();
+            h.call("ui.click", json!({"x":pos.x,"y":pos.y}));
+        }
+        assert!(!h.app.preferences.ambient_occlusion);
+    }
+
+    #[test]
+    fn quality_selector_enables_ao_and_supports_persistence_and_cancel() {
+        let mut h = crate::scenario::Harness::new();
+        let camera = h.app.cam;
+        let design = h.app.session.doc.to_json();
+        let msaa = h.app.preferences.msaa;
+        h.call("ui.prefs", json!({"open":"Graphics"}));
+        for handle in ["view:graphics_preset", "view:graphics_preset:quality"] {
+            let pos = crate::scenario::handle_at(handle).unwrap();
+            h.call("ui.click", json!({"x":pos.x,"y":pos.y}));
+        }
+        assert!(h.app.preferences.ambient_occlusion);
+        let mut restored = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        restored.load_prefs(&h.app.prefs());
+        assert!(restored.preferences.ambient_occlusion);
+        h.call("ui.prefs", json!({"button":"cancel"}));
+        assert_eq!(graphics_preset(&h.app.preferences), "performance");
+        assert!(!h.app.preferences.ambient_occlusion);
+        h.call("engine.execute", json!({"command":"view.graphics_preset","params":{"preset":"quality"}}));
+        assert!(h.app.preferences.ambient_occlusion);
+        h.call("engine.execute", json!({"command":"view.graphics_preset","params":{"preset":"invalid"}}));
+        assert!(h.app.preferences.ambient_occlusion);
+        h.call("engine.execute", json!({"command":"view.graphics_preset","params":{"preset":"performance"}}));
+        assert!(!h.app.preferences.ambient_occlusion);
+        assert_eq!(graphics_preset(&h.app.preferences), "performance");
+        assert_eq!(h.app.preferences.display_quality, "normal");
+        assert_eq!(h.app.preferences.supersampling, 1.0);
+        h.call("engine.execute", json!({"command":"view.graphics_preset","params":{"preset":"quality"}}));
+        assert_eq!(graphics_preset(&h.app.preferences), "quality");
+        assert_eq!(h.app.preferences.display_quality, "fine");
+        assert_eq!(h.app.preferences.supersampling, 2.0);
+        assert!(h.app.preferences.supersampling_adaptive);
+        for edit in [
+            json!({"display_quality":"ultra"}),
+            json!({"supersampling":1.5}),
+            json!({"supersampling_adaptive":false}),
+            json!({"ambient_occlusion":false}),
+        ] {
+            h.call("engine.execute", json!({"command":"view.graphics_preset","params":{"preset":"quality"}}));
+            h.call("ui.prefs", edit);
+            assert_eq!(graphics_preset(&h.app.preferences), "custom");
+        }
+        assert_eq!(graphics_preset(&restored.preferences), "quality");
+        h.call("ui.prefs", json!({"open":"Graphics"}));
+        h.call("ui.prefs", json!({"button":"defaults"}));
+        assert_eq!(graphics_preset(&h.app.preferences), "performance");
+        h.call("ui.prefs", json!({"button":"ok"}));
+        assert_eq!(h.app.preferences.msaa, msaa);
+        assert_eq!(h.app.cam, camera);
+        assert_eq!(h.app.session.doc.to_json(), design);
+        assert!(h.app.session.undo.is_empty());
     }
 }

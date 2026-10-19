@@ -1,11 +1,13 @@
 //! Joints between occurrences: joint origins (snap frames on component geometry, re-found on
 //! every solve so they follow edits), joints (rigid, revolute, slider, cylindrical, pin-slot,
-//! planar, ball) with their motion values and limits, motion links (gears, racks and screws are
+//! planar, ball, and relations that tie only part of a placement, `joints_relations.rs`) with
+//! their motion values and limits, motion links (gears, racks and screws are
 //! links whose ratio comes from radii or a pitch; a cam's follower follows a table worked out from
 //! its profile, `joints_cam.rs`), and the solver that places occurrences from the joint graph.
 //!
 //! A joint makes B's joint frame coincide with A's frame moved by the joint's motion:
-//! `T_B · F_b = T_A · F_a · M(q) · Flip`, so `T_B = T_A · F_a · M(q) · Flip · F_b⁻¹`, where `T`
+//! `T_B · F_b = T_A · F_a · M(q) · Flip · Tail(q)`, so `T_B = T_A · F_a · M(q) · Flip · Tail(q) · F_b⁻¹`
+//! (`Tail` is a relation's tilt and turns after the mate; the identity for the others), where `T`
 //! are occurrence world transforms, `F` the joint frames in each component's own frame, and `q`
 //! the joint's values (angles in radians, distances in mm). The solver walks the graph from
 //! grounded occurrences (and the root, which never moves). Joints that close a loop (a four-bar
@@ -62,6 +64,18 @@ pub enum Snap {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         x: Option<XRef>,
     },
+    /// A point on an edge of a planar face: the edge's middle, or the corner where it meets the
+    /// edge `corner` names (`joints_edge.rs`). `edge` and `face` are the persistent names of the
+    /// edge and the face (found first); `pick` is a point on the edge as it was picked.
+    Edge {
+        pick: Vec3,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        edge: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        face: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        corner: Option<String>,
+    },
     /// A point, z along `z` (default +Z).
     Point {
         point: Vec3,
@@ -88,7 +102,8 @@ pub enum XRef {
 }
 
 impl Snap {
-    /// The persistent face names the snap refers to (its face, its end's, its x reference's).
+    /// The persistent face and edge names the snap refers to (its face, its end's, its x reference's;
+    /// an edge origin's edge, face and corner edge).
     pub fn face_names(&self) -> Vec<&String> {
         let mut out = Vec::new();
         if let Snap::FaceCenter { face, x, .. } | Snap::CircleCenter { face, x, .. } = self {
@@ -99,6 +114,9 @@ impl Snap {
         }
         if let Snap::CircleCenter { end: Some(end), .. } = self {
             out.push(end);
+        }
+        if let Snap::Edge { edge, face, corner, .. } = self {
+            out.extend(edge.iter().chain(face.iter()).chain(corner.iter()));
         }
         out
     }
@@ -120,9 +138,31 @@ impl Snap {
                     out.push(face);
                 }
             }
+            Snap::Edge { edge, face, corner, .. } => out.extend(edge.iter_mut().chain(face.iter_mut()).chain(corner.iter_mut())),
             _ => {}
         }
         out
+    }
+
+    /// The direction a face or circle snap keeps as its frame's x (`XRef::Dir`), in the
+    /// component's coordinates; `None` for a face reference or none.
+    pub fn frame_x(&self) -> Option<Vec3> {
+        match self {
+            Snap::FaceCenter { x: Some(XRef::Dir(d)), .. } | Snap::CircleCenter { x: Some(XRef::Dir(d)), .. } => Some(*d),
+            _ => None,
+        }
+    }
+
+    /// A face or circle snap given no x reference keeps `x` (the frame's x as it is now): each
+    /// solve lays it onto the face, or square to the hole's axis, as the geometry is then, so a
+    /// part on a face that tilts keeps its turn about z. Without it (designs made before) x
+    /// follows from z alone, and turns through a right angle where z crosses 0.9 along the
+    /// component's X. A snap with a reference keeps it.
+    pub fn with_frame_x(mut self, x: Vec3) -> Snap {
+        if let Snap::FaceCenter { x: slot @ None, .. } | Snap::CircleCenter { x: slot @ None, .. } = &mut self {
+            *slot = Some(XRef::Dir(x));
+        }
+        self
     }
 
     /// Whether every point and direction in the snap is finite.
@@ -136,6 +176,7 @@ impl Snap {
             Snap::Frame { origin, z, x } => origin.is_finite() && z.is_finite() && x.is_none_or(|x| x.is_finite()),
             Snap::FaceCenter { pick, x, .. } | Snap::CircleCenter { pick, x, .. } => pick.is_finite() && x_ok(x),
             Snap::Point { point, z } => point.is_finite() && z.is_none_or(|z| z.is_finite()),
+            Snap::Edge { pick, .. } => pick.is_finite(),
         }
     }
 }
@@ -164,6 +205,20 @@ pub enum JointKind {
     PinSlot,
     Planar,
     Ball,
+    /// B's z stays parallel to A's (against it unless flipped); B moves and turns about z freely.
+    Parallel,
+    /// B's z stays square to A's; B moves freely and turns about either z.
+    Perpendicular,
+    /// B's z stays at the joint's `angle` from mated (about their common x); B moves freely and
+    /// turns about either z.
+    Angle,
+    /// B's origin stays on A's xy plane (`offset` off it); B slides on it and turns any way.
+    PointOnPlane,
+    /// B's origin stays on A's z axis; B slides along it and turns any way.
+    PointOnLine,
+    /// B's z axis lies in A's xy plane (`offset` off it: a cylinder's radius makes it tangent);
+    /// B slides on the plane, turns about A's z and about its own axis.
+    LineOnPlane,
 }
 
 impl JointKind {
@@ -176,6 +231,12 @@ impl JointKind {
             "pinslot" => JointKind::PinSlot,
             "planar" => JointKind::Planar,
             "ball" => JointKind::Ball,
+            "parallel" => JointKind::Parallel,
+            "perpendicular" | "square" => JointKind::Perpendicular,
+            "angle" => JointKind::Angle,
+            "pointonplane" | "pointonface" => JointKind::PointOnPlane,
+            "pointonline" | "pointonaxis" => JointKind::PointOnLine,
+            "lineonplane" | "lineonface" => JointKind::LineOnPlane,
             _ => return None,
         })
     }
@@ -189,10 +250,29 @@ impl JointKind {
             JointKind::PinSlot => &["angle", "slide"],
             JointKind::Planar => &["x", "y", "angle"],
             JointKind::Ball => &["yaw", "pitch", "roll"],
+            JointKind::Parallel => &["x", "y", "z", "angle"],
+            JointKind::Perpendicular | JointKind::Angle => &["x", "y", "z", "turn", "spin"],
+            JointKind::PointOnPlane => &["x", "y", "yaw", "pitch", "roll"],
+            JointKind::PointOnLine => &["slide", "yaw", "pitch", "roll"],
+            JointKind::LineOnPlane => &["x", "y", "turn", "spin"],
         }
     }
     pub fn is_angle(self, i: usize) -> bool {
-        matches!(self.dofs().get(i), Some(&("angle" | "yaw" | "pitch" | "roll")))
+        matches!(self.dofs().get(i), Some(&("angle" | "yaw" | "pitch" | "roll" | "turn" | "spin")))
+    }
+    /// A relation that only ties some directions or points (parallel, on a plane…): made where
+    /// the parts are, its values start as the nearest that meet it, so B moves no more than it
+    /// must.
+    pub fn is_relation(self) -> bool {
+        matches!(
+            self,
+            JointKind::Parallel
+                | JointKind::Perpendicular
+                | JointKind::Angle
+                | JointKind::PointOnPlane
+                | JointKind::PointOnLine
+                | JointKind::LineOnPlane
+        )
     }
 }
 
@@ -221,6 +301,92 @@ pub struct Joint {
     pub angle: f64,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub suppressed: bool,
+    /// The expressions the offset, the angle and the values were typed as: they are worked out
+    /// again whenever the design changes, so a joint follows the parameters it is defined by.
+    #[serde(default, skip_serializing_if = "JointExprs::is_empty")]
+    pub exprs: JointExprs,
+}
+
+/// Expressions a joint's numbers follow (over the design's parameters): the offset (a length),
+/// the angle and each value (angles or lengths as the joint's values are). A number typed in
+/// place of one drops it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct JointExprs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub angle: Option<String>,
+    /// By value index, as in `Joint::values`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<Option<String>>,
+}
+
+impl JointExprs {
+    pub fn is_empty(&self) -> bool {
+        self.offset.is_none() && self.angle.is_none() && self.values.iter().all(Option::is_none)
+    }
+
+    /// The expression value `i` follows.
+    pub fn value(&self, i: usize) -> Option<&str> {
+        self.values.get(i).and_then(Option::as_deref)
+    }
+
+    /// Value `i` follows `e` (or nothing).
+    pub fn set_value(&mut self, i: usize, e: Option<String>) {
+        if e.is_some() && self.values.len() <= i {
+            self.values.resize(i + 1, None);
+        }
+        if let Some(slot) = self.values.get_mut(i) {
+            *slot = e;
+        }
+        while self.values.last().is_some_and(Option::is_none) {
+            self.values.pop();
+        }
+    }
+}
+
+/// Largest offset or value an expression may give a joint (mm, or radians for an angle).
+const MAX_EXPR_VALUE: f64 = 1e9;
+
+/// A joint's offset, angle and values worked out from its expressions (those without one keep
+/// their numbers), or why one can't be: an unknown name, a wrong unit, or a number too large.
+pub fn expressed(doc: &Document, j: &Joint) -> Result<(f64, f64, Vec<f64>)> {
+    let eval = |e: &str, kind: crate::expr::Kind, what: &str| -> Result<f64> {
+        let v = doc.eval(e, kind).map_err(|err| DocError::Invalid(format!("joint {}: {what} `{e}`: {err}", j.name)))?;
+        if v.is_finite() && v.abs() < MAX_EXPR_VALUE { Ok(v) } else { Err(DocError::Invalid(format!("joint {}: {what} `{e}` gives {v}", j.name))) }
+    };
+    let x = &j.exprs;
+    let offset = match &x.offset {
+        Some(e) => eval(e, crate::expr::Kind::Length, "offset")?,
+        None => j.offset,
+    };
+    let angle = match &x.angle {
+        Some(e) => eval(e, crate::expr::Kind::Angle, "angle")?,
+        None => j.angle,
+    };
+    let mut values = j.values.clone();
+    for (i, e) in x.values.iter().enumerate().take(j.kind.dofs().len()) {
+        let Some(e) = e else { continue };
+        let kind = if j.kind.is_angle(i) { crate::expr::Kind::Angle } else { crate::expr::Kind::Length };
+        let name = j.kind.dofs().get(i).copied().unwrap_or("value");
+        let v = eval(e, kind, name)?;
+        if values.len() <= i {
+            values.resize(i + 1, 0.0);
+        }
+        if let Some(slot) = values.get_mut(i) {
+            *slot = v;
+        }
+    }
+    Ok((offset, angle, values))
+}
+
+/// Values the loop solver leaves alone: those a motion link sets and those an expression does.
+fn set_values(asm: &Assembly) -> BTreeSet<(u64, usize)> {
+    let mut set: BTreeSet<(u64, usize)> = asm.links.iter().map(|l| (l.b, l.ib)).collect();
+    for j in &asm.joints {
+        set.extend(j.exprs.values.iter().enumerate().filter(|(_, e)| e.is_some()).map(|(i, _)| (j.id, i)));
+    }
+    set
 }
 
 /// Value of joint `b` (index `ib`) = ratio · value of joint `a` (index `ia`) + offset, or for a
@@ -407,6 +573,49 @@ pub struct Assembly {
 }
 
 impl Assembly {
+    /// Every expression the joints and motion links keep, with the joint (or the driven joint of
+    /// a link) and what it sets: `offset`, `angle`, a value's name, or a coupling's length.
+    pub fn exprs(&self) -> Vec<(u64, String, &str)> {
+        let mut out = Vec::new();
+        for j in &self.joints {
+            let x = &j.exprs;
+            out.extend(x.offset.as_deref().map(|e| (j.id, "offset".to_string(), e)));
+            out.extend(x.angle.as_deref().map(|e| (j.id, "angle".to_string(), e)));
+            for (i, e) in x.values.iter().enumerate() {
+                if let Some(e) = e {
+                    out.push((j.id, j.kind.dofs().get(i).copied().unwrap_or("value").to_string(), e.as_str()));
+                }
+            }
+        }
+        for l in &self.links {
+            for s in l.coupling.as_ref().map(Coupling::sizes).unwrap_or_default() {
+                if let Size::Expr(e) = s {
+                    out.push((l.b, "coupling".to_string(), e.as_str()));
+                }
+            }
+        }
+        out
+    }
+
+    /// The expressions of `exprs`, to rewrite (a renamed parameter).
+    pub fn exprs_mut(&mut self) -> Vec<&mut String> {
+        let mut out = Vec::new();
+        for j in &mut self.joints {
+            let x = &mut j.exprs;
+            out.extend(x.offset.as_mut());
+            out.extend(x.angle.as_mut());
+            out.extend(x.values.iter_mut().flatten());
+        }
+        for l in &mut self.links {
+            for s in l.coupling.as_mut().map(Coupling::sizes_mut).unwrap_or_default() {
+                if let Size::Expr(e) = s {
+                    out.push(e);
+                }
+            }
+        }
+        out
+    }
+
     pub fn is_empty(&self) -> bool {
         self.joints.is_empty()
             && self.origins.is_empty()
@@ -431,6 +640,10 @@ fn rot_z(a: f64) -> Mat {
     let (s, c) = a.sin_cos();
     [[c, s, 0.0, 0.0], [-s, c, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
 }
+fn rot_x(a: f64) -> Mat {
+    let (s, c) = a.sin_cos();
+    [[1.0, 0.0, 0.0, 0.0], [0.0, c, s, 0.0], [0.0, -s, c, 0.0], [0.0, 0.0, 0.0, 1.0]]
+}
 fn rot_y(a: f64) -> Mat {
     let (s, c) = a.sin_cos();
     [[c, 0.0, -s, 0.0], [0.0, 1.0, 0.0, 0.0], [s, 0.0, c, 0.0], [0.0, 0.0, 0.0, 1.0]]
@@ -452,7 +665,38 @@ pub fn motion(kind: JointKind, q: &[f64]) -> Mat {
         JointKind::PinSlot => mat_mul(&shift(v(1), 0.0, 0.0), &rot_z(v(0))),
         JointKind::Planar => mat_mul(&shift(v(0), v(1), 0.0), &rot_z(v(2))),
         JointKind::Ball => mat_mul(&mat_mul(&rot_z(v(0)), &rot_y(v(1))), &rot_z(v(2))),
+        JointKind::Parallel => mat_mul(&shift(v(0), v(1), v(2)), &rot_z(v(3))),
+        JointKind::Perpendicular | JointKind::Angle => mat_mul(&shift(v(0), v(1), v(2)), &rot_z(v(3))),
+        // Their turn is about B's origin, after the offset (`tail`).
+        JointKind::PointOnPlane => shift(v(0), v(1), 0.0),
+        JointKind::PointOnLine => shift(0.0, 0.0, v(0)),
+        JointKind::LineOnPlane => mat_mul(&shift(v(0), v(1), 0.0), &rot_z(v(2))),
     }
+}
+
+fn turn_zyx(yaw: f64, pitch: f64, roll: f64) -> Mat {
+    mat_mul(&mat_mul(&rot_z(yaw), &rot_y(pitch)), &rot_x(roll))
+}
+
+/// What follows the mate (`flip_of`) in a joint's link: for a relation that tilts B's z, the tilt
+/// and B's turn about its own z (`spin`); for a point relation, B's turn about its origin (yaw,
+/// pitch and roll about z, y and x: free of gimbal lock at the start, all 0); nothing for the
+/// other joints.
+fn tail(j: &Joint, q: &[f64]) -> Mat {
+    let v = |i: usize| q.get(i).copied().unwrap_or(0.0);
+    match j.kind {
+        JointKind::Perpendicular => mat_mul(&rot_x(std::f64::consts::FRAC_PI_2), &rot_z(v(4))),
+        JointKind::Angle => mat_mul(&rot_x(j.angle), &rot_z(v(4))),
+        JointKind::LineOnPlane => mat_mul(&rot_y(std::f64::consts::FRAC_PI_2), &rot_z(v(3))),
+        JointKind::PointOnPlane => turn_zyx(v(2), v(3), v(4)),
+        JointKind::PointOnLine => turn_zyx(v(1), v(2), v(3)),
+        _ => IDENTITY,
+    }
+}
+
+/// B's joint frame in A's for the joint's values: `M(q) · Flip · tail`.
+fn link_of(j: &Joint, q: &[f64]) -> Mat {
+    mat_mul(&mat_mul(&motion(j.kind, q), &flip_of(j)), &tail(j, q))
 }
 
 /// Bodies of a component in the model (its own frame).
@@ -519,6 +763,7 @@ pub fn resolve_origin(doc: &Document, st: &ModelState, o: &JointOrigin) -> Resul
             };
             frame(c, n, face::x_axis(doc, st, x.as_ref(), c)?).ok_or_else(bad)
         }
+        Snap::Edge { .. } => edge::edge_frame(doc, st, component_of(doc, o.occurrence)?, &o.snap),
         Snap::CircleCenter { x, .. } => {
             let r = round_of(doc, st, o)?;
             frame(r.centre, r.z, face::x_axis(doc, st, x.as_ref(), r.centre)?).ok_or_else(bad)
@@ -685,14 +930,16 @@ pub fn joint_values(asm: &Assembly) -> BTreeMap<u64, Vec<f64>> {
 /// The turn and offset from A's joint frame to B's: mated (B's z against A's, as faces meet)
 /// unless flipped.
 fn flip_of(j: &Joint) -> Mat {
-    let mut m = rot_z(j.angle);
+    // An angle relation's `angle` is its tilt (`tail`); a perpendicular one has none.
+    let turn = if matches!(j.kind, JointKind::Angle | JointKind::Perpendicular) { 0.0 } else { j.angle };
+    let mut m = rot_z(turn);
     m[3][2] = j.offset;
     if !j.flip { mat_mul(&m, &[[1.0, 0.0, 0.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, -1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]) } else { m }
 }
 
 /// B's world transform from A's (or A's from B's, going the other way) for the joint's values.
 fn through(j: &Joint, (fa, fb): &(Mat, Mat), q: &[f64], from_a: bool, t: &Mat) -> Option<Mat> {
-    let link = mat_mul(&mat_mul(&motion(j.kind, q), &flip_of(j)), &mat_inverse(fb)?);
+    let link = mat_mul(&link_of(j, q), &mat_inverse(fb)?);
     if from_a {
         Some(mat_mul(&mat_mul(t, fa), &link))
     } else {
@@ -759,6 +1006,10 @@ impl Tree<'_> {
 /// on at most: larger ones are only checked.
 const MAX_LOOP_VALUES: usize = 64;
 const MAX_LOOPS: usize = 100;
+/// Loop-closing joints one solve takes on at most, over all its groups: a part placed by several
+/// relations closes a loop with each one after the first, so a panel of parts has many small
+/// groups.
+const MAX_CLOSING: usize = 5_000;
 /// Residual evaluations one solve may spend on all its loops.
 const MAX_LOOP_WORK: usize = 200_000;
 
@@ -815,13 +1066,13 @@ fn held_moves(asm: &Assembly, held: &Held, touches: &BTreeSet<(u64, usize)>, val
 /// moves; a group that can't close without moving is left to the conflict check).
 fn close_loops(tree: &Tree, closing: &[u64], asm: &Assembly, held: &Held, vals: &mut Values) -> (Values, BTreeSet<u64>) {
     let (mut changed, mut stuck) = (BTreeMap::new(), BTreeSet::new());
-    if closing.len() > MAX_LOOPS {
+    if closing.len() > MAX_CLOSING {
         return (Values::new(), stuck);
     }
-    let linked: BTreeSet<(u64, usize)> = asm.links.iter().map(|l| (l.b, l.ib)).collect();
+    let linked = set_values(asm);
     let groups = loop_groups(tree, closing, asm, &linked);
     let spent = std::cell::Cell::new(0usize);
-    for (group, around, touches) in &groups {
+    for (group, around, touches) in groups.iter().filter(|(c, _, _)| c.len() <= MAX_LOOPS) {
         let moves = held_moves(asm, held, touches, vals);
         match close_group(tree, group, around, &moves, asm, held, &linked, &spent, vals) {
             Some(m) => changed.extend(m),
@@ -1010,11 +1261,12 @@ fn nearby_pose(tree: &Tree, groups: &[Group], asm: &Assembly, linked: &BTreeSet<
 /// pose alone counts 0. The tree's count stands where a loop group is over the solver's caps or
 /// the work runs out.
 fn loop_dof(tree: &Tree, closing: &[u64], asm: &Assembly, vals: &Values, dof: &mut BTreeMap<u64, usize>) {
-    if closing.len() > MAX_LOOPS {
+    if closing.len() > MAX_CLOSING {
         return;
     }
-    let linked: BTreeSet<(u64, usize)> = asm.links.iter().map(|l| (l.b, l.ib)).collect();
-    let groups = loop_groups(tree, closing, asm, &linked);
+    let linked = set_values(asm);
+    let mut groups = loop_groups(tree, closing, asm, &linked);
+    groups.retain(|(c, _, _)| c.len() <= MAX_LOOPS);
     // The joints loops depend on: those around them, those whose values they read, and those a
     // motion link carries any of these values into.
     let mut relevant: BTreeSet<u64> = groups.iter().flat_map(|(_, a, t)| a.iter().copied().chain(t.iter().map(|(j, _)| *j))).collect();
@@ -1423,10 +1675,28 @@ struct Built<'a> {
 fn build<'a>(doc: &'a Document, st: &ModelState, vals: &Values, sol: &mut Solution) -> Built<'a> {
     let asm = &doc.assembly;
     let joints: Vec<&Joint> = asm.joints.iter().filter(|j| !j.suppressed).take(MAX_JOINTS).collect();
-    // Joint frames in component coordinates (errors leave the joint out).
+    // Joint frames in component coordinates (errors leave the joint out). An origin several joints
+    // share (a panel face every part sits on) is found once.
     let mut frames: BTreeMap<u64, (Mat, Mat)> = BTreeMap::new();
+    let mut found: BTreeMap<(u64, String), std::result::Result<Mat, String>> = BTreeMap::new();
+    let mut resolve = |o: &JointOrigin| -> Result<Mat> {
+        let Ok(comp) = component_of(doc, o.occurrence) else { return resolve_origin(doc, st, o) };
+        found
+            .entry((comp, format!("{:?}", o.snap)))
+            .or_insert_with(|| resolve_origin(doc, st, o).map_err(|e| e.to_string()))
+            .clone()
+            .map_err(DocError::Invalid)
+    };
     for j in &joints {
-        match (resolve_origin(doc, st, &j.a), resolve_origin(doc, st, &j.b)) {
+        // A joint whose expressions can't be worked out (a parameter gone) is left out rather
+        // than placed by numbers that no longer say what it was defined by.
+        if !j.exprs.is_empty()
+            && let Err(e) = expressed(doc, j)
+        {
+            sol.errors.push((j.id, j.name.clone(), e.to_string()));
+            continue;
+        }
+        match (resolve(&j.a), resolve(&j.b)) {
             (Ok(fa), Ok(fb)) => {
                 frames.insert(j.id, (fa, fb));
             }
@@ -1548,13 +1818,40 @@ impl Document {
 #[path = "joints_cam.rs"]
 pub mod cam;
 
+#[path = "joints_edge.rs"]
+mod edge;
+pub use edge::edge_snap;
+
 #[path = "joints_reach.rs"]
 mod reach;
 
 #[path = "joints_face.rs"]
 mod face;
 pub use face::{end_faces, face_name_at, named_face_spot, pin_end, round_end_at};
+#[path = "joints_relations.rs"]
+mod relations;
 pub use reach::{REACH_TOL, Reach, Reached, reach};
+pub use relations::relation_values;
+
+/// The rest angle that turns B least as joint `j` is made, as B sits now: none or a half turn
+/// about the joint's z. Origins whose x is chosen for them (a face, a circle, a point without
+/// x) get opposite x when their z are opposite, so two faces that already meet would, at angle
+/// 0, spin B a half turn about their shared normal.
+pub fn least_turn_angle(doc: &Document, st: &ModelState, j: &Joint) -> f64 {
+    let (Ok(fa), Ok(fb)) = (resolve_origin(doc, st, &j.a), resolve_origin(doc, st, &j.b)) else { return 0.0 };
+    let (ta, tb) = (occurrence_world(doc, j.a.occurrence), occurrence_world(doc, j.b.occurrence));
+    let mut q = j.values.clone();
+    q.resize(j.kind.dofs().len(), 0.0);
+    clamp(j, &mut q);
+    let turn = |angle: f64| {
+        let k = Joint { angle, ..j.clone() };
+        through(&k, &(fa, fb), &q, true, &ta).map(|m| mismatch(&m, &tb).1)
+    };
+    match (turn(0.0), turn(std::f64::consts::PI)) {
+        (Some(none), Some(half)) if half + 1e-9 < none => std::f64::consts::PI,
+        _ => 0.0,
+    }
+}
 
 /// The frame matrix for an explicit origin / z / x (public for commands).
 pub fn frame_of(o: Vec3, z: Vec3, x: Option<Vec3>) -> Option<Mat> {
@@ -1587,6 +1884,7 @@ mod tests {
                 offset: 0.0,
                 angle: 0.0,
                 suppressed: false,
+                exprs: Default::default(),
             })
             .collect();
         let links =
