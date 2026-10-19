@@ -648,11 +648,24 @@ fn build_scene(app: &SolveApp) -> GpuScene {
     let mut made: std::collections::HashMap<u64, CachedBlock> = std::collections::HashMap::new();
     let mut run: Vec<BodyDraw> = Vec::new();
     let mut run_key = std::collections::hash_map::DefaultHasher::new();
+    let mut thread_budget = solidcraft_engine::cosmetic_threads::Budget::default();
     for b in &st.bodies {
         if !app.session.body_visible(&b.name) || app.preview.replaced.contains(&b.name) {
             continue;
         }
         let faded = body_faded(app, b, &active_bodies);
+        if thread_budget.available()
+            && shaded
+            && !faded
+            && thread_budget.has_thread(&b.name, &st.threads)
+            && s.doc.model_body_opacity(b) >= 0.999
+            && s.doc.face_colors(b).iter().all(|(_, l)| l.opacity >= 0.999)
+        {
+            let mesh = shown_mesh(app, b, &active_bodies);
+            for (a, c) in solidcraft_engine::cosmetic_threads::segments_with_budget(b, &mesh, &st.threads, &mut thread_budget) {
+                sc.line(a.to_f32(), c.to_f32(), c4(tk.body_edge), 0.85, false);
+            }
+        }
         let base = body_color(&s.doc, b).unwrap_or(tk.body);
         let col = if faded { c4(base.gamma_multiply(0.35)) } else { c4(base) };
         // Appearances: the body's opacity, and faces with looks of their own.
@@ -5772,6 +5785,78 @@ mod tests {
             assert!(h.app.viewport.axis_drag.is_none(), "release clears the axis gesture");
             assert!(h.app.viewport.boxsel.is_none());
         }
+    }
+
+    #[test]
+    fn cosmetic_threads_use_depth_tested_lines_and_keep_selection_and_wireframe() {
+        let mut s = solidcraft_engine::Session::default();
+        s.execute("solid.cylinder", &json!({"radius":3,"height":10})).unwrap();
+        s.execute("solid.thread", &json!({"face":[3,0,5],"designation":"M6","length":5})).unwrap();
+        let mut app = SolveApp::new(s, crate::Services::default());
+        let count = |sc: GpuScene| {
+            sc.merged()
+                .lines
+                .as_chunks::<{ crate::gpu::LINE_SIZE }>()
+                .0
+                .iter()
+                .filter(|line| line.get(28..32) == Some(0.85f32.to_le_bytes().as_slice()))
+                .count()
+        };
+        assert!(count(build_scene(&app)) > 20);
+        app.session.selection = vec![Sel::Face { body: "Body1".into(), index: 0, point: Vec3::new(3., 0., 5.) }];
+        let selection = app.session.selection.clone();
+        assert!(count(build_scene(&app)) > 20);
+        assert!(!build_highlight(&app).merged().tris.is_empty());
+        assert_eq!(app.session.selection, selection);
+        app.ui.visual_style = 2;
+        assert_eq!(count(build_scene(&app)), 0);
+        app.ui.visual_style = 0;
+        app.session.visibility.hidden_bodies.push("Body1".into());
+        assert_eq!(count(build_scene(&app)), 0);
+        app.session.visibility.hidden_bodies.clear();
+        app.session.doc_mut().appearances.bodies.insert("Body1".into(), solidcraft_engine::doc::appearance::Look::custom([150, 150, 150], 0.5));
+        assert_eq!(count(build_scene(&app)), 0, "transparent bodies omit cosmetic strokes");
+        app.session.doc_mut().appearances.bodies.clear();
+        app.session.execute("component.create", &json!({"name":"Other active component"})).unwrap();
+        assert_eq!(count(build_scene(&app)), 0, "inactive bodies are faded and unmarked");
+    }
+
+    #[test]
+    fn cosmetic_thread_scene_is_bounded_for_many_occurrences_and_cached_across_camera_moves() {
+        let mut s = solidcraft_engine::Session::default();
+        let c = s.execute("component.create", &json!({"name":"Threaded pegs"})).unwrap();
+        s.execute("solid.cylinder", &json!({"radius":3,"height":20})).unwrap();
+        s.execute("solid.thread", &json!({"face":[3,0,10],"designation":"M6"})).unwrap();
+        for i in 1..96 {
+            s.execute("occurrence.copy", &json!({"component":c["component"],"translate":[i*8,0,0]})).unwrap();
+        }
+        s.execute("component.activate", &json!({"component":0})).unwrap();
+        let mut app = SolveApp::new(s, crate::Services::default());
+        let started = std::time::Instant::now();
+        let scene = build_scene(&app).merged();
+        let strokes = scene
+            .lines
+            .as_chunks::<{ crate::gpu::LINE_SIZE }>()
+            .0
+            .iter()
+            .filter(|line| line.get(28..32) == Some(0.85f32.to_le_bytes().as_slice()))
+            .count();
+        eprintln!("96 occurrence viewport scene: {strokes} cosmetic strokes, {:?}", started.elapsed());
+        assert!(strokes > 1000 && strokes <= solidcraft_engine::cosmetic_threads::MAX_SCENE_SEGMENTS);
+        let marked_occurrences: std::collections::HashSet<i32> = scene
+            .lines
+            .as_chunks::<{ crate::gpu::LINE_SIZE }>()
+            .0
+            .iter()
+            .filter(|line| line.get(28..32) == Some(0.85f32.to_le_bytes().as_slice()))
+            .filter_map(|line| line.get(0..4).and_then(|bytes| bytes.try_into().ok()).map(f32::from_le_bytes))
+            .map(|x| (x / 8.0).round() as i32)
+            .collect();
+        assert_eq!(marked_occurrences.len(), 96, "schematic density shares strokes across all 96 pegs");
+        let key = scene_key(&app);
+        app.cam.distance *= 1.5;
+        app.cam.yaw += 0.2;
+        assert_eq!(scene_key(&app), key, "ordinary camera changes reuse the scene; LOD changes have their own generation");
     }
 
     #[test]
