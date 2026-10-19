@@ -344,58 +344,155 @@ pub struct Dialog {
     pub then_start: Option<&'static str>,
 }
 
-/// OK computing off the window thread: the dialog's commands evaluated on a scratch copy of the
-/// session, which leaves the feature in the evaluation cache the session shares. Once that is
-/// in, OK runs them for real and finds the feature there; meanwhile the window stays live and
-/// the dialog says it is computing.
-pub struct Applying {
-    pub(crate) done: std::sync::mpsc::Receiver<()>,
-    /// When OK was pressed (ms).
-    pub(crate) started: f64,
-    /// The commands being computed.
-    pub(crate) cmds: Vec<(String, Value)>,
+/// Pin the pre-edit model so Cancel never depends on the shared cache retaining it.
+pub(crate) struct EditingState {
+    pub(crate) source: Session,
+    pub(crate) original: Session,
 }
 
-impl Applying {
-    /// The evaluation is in (or its worker ended).
-    fn finished(&self) -> bool {
-        !matches!(self.done.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty))
+struct DialogComputation {
+    session: Session,
+    cmds: Vec<(String, Value)>,
+    marker: Option<Option<usize>>,
+    editing: Option<EditingState>,
+}
+
+impl DialogComputation {
+    fn new(app: &SolveApp, d: &Dialog) -> Result<Self, String> {
+        if app.file_load.busy() || app.file_picker.is_some() {
+            return Err("a file operation is in progress".into());
+        }
+        Ok(Self {
+            session: app.session.scratch(),
+            cmds: apply_commands(app, d)?,
+            marker: d.editing.map(|(_, marker)| marker),
+            editing: d
+                .editing
+                .and(app.editing_state.as_ref())
+                .map(|state| EditingState { source: state.source.scratch(), original: state.original.scratch() }),
+        })
+    }
+
+    fn compute(self) -> Result<solidcraft_engine::ComputedCommands, String> {
+        match self.editing {
+            Some(state) => self.session.compute_editor_commands(&self.cmds, &state.source, state.original),
+            None => self.session.compute_commands(&self.cmds, self.marker),
+        }
+        .map_err(|e| e.to_string())
     }
 }
 
-/// How long the desktop app's OK waits for its evaluation before it lets the window go on and
-/// shows that it is computing ([`SolveApp::apply_off_thread`]): a feature quicker than this
-/// applies at once, as it always did.
+fn adopt_dialog(app: &mut SolveApp, prepared: solidcraft_engine::ComputedCommands) -> Result<(), String> {
+    if app.file_load.busy() || app.file_picker.is_some() {
+        return Err("a file operation is in progress".into());
+    }
+    let replies = app.session.accept_commands(prepared).map_err(|e| e.to_string())?;
+    app.big_operation = true;
+    for (id, reply) in replies {
+        let stop = (id == "joint.drive").then(|| crate::dialogs_assembly::drive_stop(&reply)).flatten();
+        app.command_completed(&id, Ok(reply))?;
+        if let Some(why) = stop {
+            app.set_status(why, false);
+        }
+    }
+    Ok(())
+}
+
+/// A complete feature transaction, evaluated without changing the displayed session.
+pub struct Applying {
+    pub(crate) done: std::sync::mpsc::Receiver<Result<solidcraft_engine::ComputedCommands, String>>,
+    pub(crate) ready: Option<Result<solidcraft_engine::ComputedCommands, String>>,
+    /// When OK was pressed (ms).
+    pub(crate) started: f64,
+    pub(crate) cmds: Vec<(String, Value)>,
+    pub(crate) progress: std::sync::Arc<solidcraft_engine::doc::progress::Progress>,
+    pub(crate) quality: solidcraft_engine::doc::display_quality::DisplayQuality,
+}
+
+impl Applying {
+    fn finished(&mut self) -> Option<Result<solidcraft_engine::ComputedCommands, String>> {
+        self.ready.take().or_else(|| match self.done.try_recv() {
+            Ok(result) => Some(result),
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err("feature computation ended without a result".into())),
+        })
+    }
+}
+
+impl Drop for Applying {
+    fn drop(&mut self) {
+        self.progress.cancel();
+    }
+}
+
+/// How long OK waits before displaying its computing state.
 pub const APPLY_AT_ONCE: std::time::Duration = std::time::Duration::from_millis(150);
 
-/// Start OK's evaluation off the window thread, for a feature dialog. `None` when OK should
-/// just run: not a feature, not asked for ([`SolveApp::apply_off_thread`]), no threads (the
-/// web), or done within the wait.
+fn display_quality(app: &SolveApp) -> solidcraft_engine::doc::display_quality::DisplayQuality {
+    solidcraft_engine::doc::display_quality::DisplayQuality::parse(&app.preferences.display_quality).unwrap_or_default()
+}
+
+/// Desktop feature dialogs evaluate the entire command and its dependent suffix once.
+/// A quick result is adopted in this frame; a longer one keeps the dialog responsive.
 #[cfg(not(target_arch = "wasm32"))]
-fn begin_applying(app: &SolveApp, d: &Dialog) -> Option<Applying> {
+pub(crate) fn begin_applying(app: &SolveApp, d: &Dialog) -> Option<Applying> {
     let wait = app.apply_off_thread?;
     if !d.previews() {
         return None;
     }
-    let cmds = apply_commands(app, d).ok()?;
-    let scratch = app.session.scratch();
+    let computation = DialogComputation::new(app, d).ok()?;
+    let cmds = computation.cmds.clone();
+    Some(start_applying(cmds, display_quality(app), crate::now_ms(), wait, move || computation.compute()))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn start_applying(
+    cmds: Vec<(String, Value)>,
+    quality: solidcraft_engine::doc::display_quality::DisplayQuality,
+    started: f64,
+    wait: std::time::Duration,
+    compute: impl FnOnce() -> Result<solidcraft_engine::ComputedCommands, String> + Send + 'static,
+) -> Applying {
+    let progress = std::sync::Arc::new(solidcraft_engine::doc::progress::Progress::default());
+    let watching = progress.clone();
     let (tx, rx) = std::sync::mpsc::channel();
-    let computed = cmds.clone();
-    std::thread::Builder::new()
-        .name("apply".into())
-        .spawn(move || {
-            let _ = scratch.preview(&computed);
-            let _ = tx.send(());
-        })
-        .ok()?;
-    match rx.recv_timeout(wait) {
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Some(Applying { done: rx, started: crate::now_ms(), cmds }),
-        _ => None,
-    }
+    let worker = std::thread::Builder::new().name("apply".into()).spawn(move || {
+        let result = solidcraft_engine::doc::progress::watch(watching.clone(), || {
+            let prepared = compute()?;
+            if watching.is_cancelled() {
+                return Err("feature computation cancelled".into());
+            }
+            prepared.warm_display(quality, || !watching.is_cancelled());
+            if watching.is_cancelled() {
+                return Err("feature computation cancelled".into());
+            }
+            Ok(prepared)
+        });
+        let _ = tx.send(result);
+    });
+    let ready = match worker {
+        Err(error) => Some(Err(format!("could not start feature computation: {error}"))),
+        Ok(_) => match rx.recv_timeout(wait) {
+            Ok(result) => Some(result),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Some(Err("feature computation ended without a result".into())),
+        },
+    };
+    Applying { done: rx, ready, started, cmds, progress, quality }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn warm_applying(app: &SolveApp, prepared: solidcraft_engine::ComputedCommands, cmds: Vec<(String, Value)>, started: f64) -> Option<Applying> {
+    Some(start_applying(cmds, display_quality(app), started, std::time::Duration::ZERO, move || Ok(prepared)))
 }
 
 #[cfg(target_arch = "wasm32")]
-fn begin_applying(_app: &SolveApp, _d: &Dialog) -> Option<Applying> {
+fn warm_applying(_app: &SolveApp, _prepared: solidcraft_engine::ComputedCommands, _cmds: Vec<(String, Value)>, _started: f64) -> Option<Applying> {
+    None
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn begin_applying(_app: &SolveApp, _d: &Dialog) -> Option<Applying> {
     None
 }
 
@@ -2231,6 +2328,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let mut keep = true;
     let mut ok = false;
     let mut applied = false;
+    let mut adopted = false;
     let mut cancel = false;
     let mut enter = false;
     let wide = d.is_wide();
@@ -3159,7 +3257,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             Err(error) => d.refuse(app, error),
         }
     }
-    if ok && app.applying.is_none() {
+    cancel |= !keep;
+    if ok && !cancel && app.applying.is_none() {
         // Edit Text applies its own way: its live changes and OK are one undo step.
         let run = match &mut d.kind {
             Kind::Text(k) => Some(crate::sketch_text::apply(app, k)),
@@ -3176,27 +3275,57 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             Some(Ok(())) => {
                 cancel = true;
                 applied = true;
+                adopted = d.previews();
             }
             Some(Err(e)) => d.refuse(app, e),
             None => {}
         }
     }
-    // OK's evaluation is in: run it, the feature taken from the cache. Inputs changed meanwhile
-    // (nothing should change them) are computed in turn, off the window thread too: run here,
-    // they would hold the window for the whole boolean.
-    if app.applying.as_ref().is_some_and(Applying::finished) && !cancel {
-        let computed = app.applying.take().map(|job| job.cmds);
+    // Adopt the complete transaction. Never rerun a Boolean on the window thread.
+    let finished = if cancel { None } else { app.applying.as_mut().and_then(Applying::finished) };
+    // Preferences received after this frame's renderer setup take effect next frame.
+    // Keep the result ready until the viewport will consume the prepared quality.
+    let finished = if finished.is_some() && solidcraft_engine::doc::display_quality::current() != display_quality(app) {
+        if let Some(job) = app.applying.as_mut() {
+            job.ready = finished;
+        }
+        ctx.request_repaint();
+        None
+    } else {
+        finished
+    };
+    if let Some(result) = finished {
+        let commands = app.applying.as_ref().map(|job| job.cmds.clone());
+        let quality = app.applying.as_ref().map(|job| job.quality);
+        let started = app.applying.as_ref().map_or_else(crate::now_ms, |job| job.started);
+        app.applying = None;
         let current = apply_commands(app, &d).ok();
-        let again = if current.is_some() && current != computed { begin_applying(app, &d) } else { None };
-        match again {
-            Some(job) => app.applying = Some(job),
-            None => match run_dialog(app, &d) {
+        let source_current = result.as_ref().is_ok_and(|prepared| prepared.is_current(&app.session));
+        if current.is_some() && current != commands && source_current {
+            app.applying = begin_applying(app, &d);
+        } else if current != commands && source_current {
+            d.refuse(app, "the feature inputs changed while computing".into());
+        } else if source_current && quality.is_some_and(|quality| quality != display_quality(app)) {
+            // A different display quality needs new plans, never another Boolean evaluation.
+            match result {
+                Ok(prepared) => {
+                    app.applying = warm_applying(app, prepared, current.unwrap_or_default(), started);
+                    if app.applying.is_none() {
+                        d.refuse(app, "the display quality changed while computing".into());
+                    }
+                }
+                Err(error) => d.refuse(app, error),
+            }
+        } else {
+            let run = result.and_then(|prepared| adopt_dialog(app, prepared));
+            match run {
                 Ok(()) => {
                     cancel = true;
                     applied = true;
+                    adopted = true;
                 }
-                Err(e) => d.refuse(app, e),
-            },
+                Err(error) => d.refuse(app, error),
+            }
         }
     }
     // Cancel while computing: the result goes (its worker runs on to its end).
@@ -3220,8 +3349,14 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         }
         app.dialog = Some(d);
     } else if let Some((_, marker)) = d.editing {
-        // Editing done: put the timeline marker back where it was.
-        let _ = roll_marker(app, marker);
+        if applied {
+            app.editing_state = None;
+            if !adopted && app.session.doc.marker != marker {
+                let _ = roll_marker(app, marker);
+            }
+        } else {
+            restore_editing(app, marker);
+        }
     }
     // The shortcut that asked for this sketch starts its tool in it.
     if let Some(id) = then_start {
@@ -3242,6 +3377,17 @@ pub fn cancel(app: &mut SolveApp) {
     if let Some(d) = app.dialog.take()
         && let Some((_, marker)) = d.editing
     {
+        restore_editing(app, marker);
+    }
+    app.editing_state = None;
+}
+
+pub(crate) fn restore_editing(app: &mut SolveApp, marker: Option<usize>) {
+    if let Some(state) = app.editing_state.take() {
+        if let Err(error) = app.session.restore_editor(&state.source, state.original) {
+            app.set_status(error.to_string(), true);
+        }
+    } else {
         let _ = roll_marker(app, marker);
     }
 }
@@ -3614,6 +3760,10 @@ pub(crate) fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
     // Saving asks for a file name first; `Err("")` is the user backing out of that.
     if let Kind::SaveMesh(k) = &d.kind {
         return crate::dialogs_save_mesh::run(app, k, &d.inputs);
+    }
+    if d.previews() {
+        let prepared = DialogComputation::new(app, d)?.compute()?;
+        return adopt_dialog(app, prepared);
     }
     let commands = apply_commands(app, d)?;
     if let Some((_, marker)) = d.editing {
