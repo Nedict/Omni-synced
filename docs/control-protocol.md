@@ -76,7 +76,7 @@ MCP server sends its folders this way on every request ([mcp.md](mcp.md)). Witho
 | `engine.script` | `commands`: `[{command, params}, …]` | results, stops at the first error |
 | `engine.batch` | `commands`: `[{command, params}, …]` (at most 10 000), `rollback?`: bool (default true), `timings?`, `profile?`: bool (default false) | `{completed, results, undone}`, plus `failed: {index, command, error}` when a step fails, and with `timings` `timings: [{index, command, ms}]` (the failing step included) and `total_ms`; `profile` adds each step's `profile: {boolean_ms, tessellate_ms, other_ms}`. Runs the steps in one request, so within one frame, each as `engine.execute` runs it. The first failure stops the batch, and with `rollback` the design goes back to how it was before it (`undone`: the steps taken back). Refused before anything runs, with an error starting `engine.batch unavailable`, while the agent cursor is shown or when a step loads a file (`doc.open`, `file.insert_step`, `file.insert_mesh`). Send such steps one by one. Answered when done, for up to 3600 s |
 | `engine.commands` | — | every command: id, label, tab, panel, icon, shortcut, params doc, enabled |
-| `document.inspect` | `measure?`: bool | parameters, timeline (errors, timings), bodies, sketches, selection |
+| `document.inspect` | `measure?`: bool, `sketch_counts?`: bool (default false) | parameters, timeline (errors, timings), bodies, sketches, selection; with `sketch_counts` each sketch also gives its `plane` and its number of `points` and `constraints` |
 
 Commands never open dialogs when run this way. `solidcraft-cli commands` prints the same registry.
 
