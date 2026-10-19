@@ -3172,6 +3172,8 @@ fn hover_highlight(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let col = Tokens::get().hover_profile_edge;
     let st = app.session.world_state();
     match &app.viewport.hover {
+        // Trim shows the piece it would take away instead (`sketch_tools::preview`, #3052).
+        Some(Hit::SketchCurve { sketch, id, .. }) if crate::sketch_tools::trim_hover_piece(app, *sketch, id).is_some() => {}
         Some(Hit::SketchCurve { sketch, id, .. }) => {
             if let Some(ss) = st.sketch(*sketch)
                 && let Some(ci) = ss.sketch.curve_index(id)
