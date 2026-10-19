@@ -720,7 +720,7 @@ mod tests {
 
     #[test]
     fn a_reassigned_motion_drives_its_new_axis_and_invert_stays_with_the_axis() {
-        let ctx = egui::Context::default();
+        let ctx = window(true);
         let press = Axes { translation: [0, 0, 350], rotation: [0; 3] };
         // With Y and Z swapped, pressing the cap does what pushing it back would.
         let mut reference = app();
@@ -753,7 +753,7 @@ mod tests {
 
     #[test]
     fn a_motion_swapped_into_a_row_the_driver_turns_off_moves_nothing_until_swapped_back() {
-        let ctx = egui::Context::default();
+        let ctx = window(true);
         let mut pan_up_down_off = DriverMapping::default();
         pan_up_down_off.axes[2].enabled = false;
         let mut slowed = app();
@@ -780,7 +780,7 @@ mod tests {
         // `homemade()` reads Y from raw channel 4, reversed, and Ry from raw 1. With Y and Z
         // swapped, the choices are calibrated motions: pressing the cap (calibrated Z, raw 2)
         // drives Y, and pushing it back (calibrated Y, raw 4 the other way) drives Z.
-        let ctx = egui::Context::default();
+        let ctx = window(true);
         let device = "hid 1234:5678";
         let setup = |source: [usize; 6]| {
             let mut app = app();
@@ -825,7 +825,7 @@ mod tests {
 
     #[test]
     fn each_frame_records_the_mapping_it_navigated_with() {
-        let ctx = egui::Context::default();
+        let ctx = window(true);
         let mut app = app();
         assert!(app.space_mouse.mapping.is_none());
         frame(&mut app, &ctx, DriverMapping::object_mode(), Axes::default(), 0.02);
@@ -844,7 +844,7 @@ mod tests {
     fn calibrating_records_the_device_before_the_axis_choice() {
         // With Y and Z swapped, a new calibration still learns the device's own channels.
         // Recorded after the swap, it would bake the swap in, and the swap would then apply twice.
-        let ctx = egui::Context::default();
+        let ctx = window(true);
         let mut app = app();
         app.space_mouse.device = Some("hid 1234:5678".into());
         app.preferences.space_mouse_axis_source = [0, 2, 1, 3, 4, 5];
