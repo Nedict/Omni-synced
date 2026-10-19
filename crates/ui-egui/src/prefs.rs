@@ -1414,12 +1414,15 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             // The calibrated device's dead zone, adjustable after calibrating.
             let enabled = app.preferences.space_mouse_enabled;
             let (label, tip) = (app.tr("ui.space_mouse_dead_zone").to_owned(), app.tr("ui.space_mouse_dead_zone_tip").to_owned());
-            let device = app.space_mouse.device.clone();
+            let (device, raw) = (app.space_mouse.device.clone(), app.space_mouse.raw.into());
             if let Some(calibration) = device.and_then(|device| app.preferences.space_mouse_calibrations.get_mut(&device)) {
                 ui.label(label);
                 ui.add_enabled_ui(enabled, |ui| {
                     crate::space_mouse_calibration::dead_zone_slider(ui, &mut calibration.dead_zone_share).on_hover_text(tip);
                 });
+                ui.end_row();
+                ui.label("");
+                crate::space_mouse_calibration::dead_zone_pads(ui, calibration, raw);
                 ui.end_row();
             }
             note(ui, crate::i18n::tr_label("Move and rotate the view together; sketches use pan and zoom only."));

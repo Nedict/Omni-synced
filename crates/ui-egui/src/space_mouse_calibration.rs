@@ -3,7 +3,7 @@
 //! (`solidcraft_space_mouse::Wizard`), and saves what it found for the device it started with.
 //! The window closes with Preferences, and when another device (or none) is read instead.
 
-use solidcraft_space_mouse::{Problem, Stage, Wizard};
+use solidcraft_space_mouse::{Calibration, Problem, Stage, Wizard};
 
 use crate::SolveApp;
 
@@ -30,6 +30,49 @@ pub(crate) fn dead_zone_slider(ui: &mut egui::Ui, share: &mut f32) -> egui::Resp
             .step_by(0.01)
             .custom_formatter(|v, _| format!("{:.0} %", v * 100.0)),
     )
+}
+
+/// The calibration's dead zones the way a game controller tester shows a stick: per pair of axes,
+/// a circle for the full travel, the dead zone shaded inside it (each direction its own size), and
+/// a dot where the cap is now, before the dead zone, so it's plain when the view starts to move.
+pub(crate) fn dead_zone_pads(ui: &mut egui::Ui, calibration: &Calibration, raw: [i16; 6]) {
+    const NAMES: [&str; 6] = ["X", "Y", "Z", "Rx", "Ry", "Rz"];
+    // (horizontal axis, its positive way on screen, vertical axis, its positive way down), so the
+    // dot moves as the cap does: slid right and pulled toward you, twisted and pressed, tilted.
+    const PADS: [(usize, f32, usize, f32); 3] = [(0, 1.0, 1, 1.0), (5, 1.0, 2, 1.0), (4, -1.0, 3, -1.0)];
+    const SIZE: f32 = 76.0;
+    let (shares, travel, moving) = (calibration.dead_zone_shares(), calibration.travel(raw), calibration.apply(raw));
+    let visuals = ui.visuals().clone();
+    ui.horizontal(|ui| {
+        for (h, h_way, v, v_way) in PADS {
+            ui.vertical(|ui| {
+                let (rect, response) = ui.allocate_exact_size(egui::vec2(SIZE, SIZE), egui::Sense::hover());
+                let painter = ui.painter_at(rect);
+                let (centre, radius) = (rect.center(), SIZE / 2.0 - 2.0);
+                let faint = visuals.weak_text_color();
+                // Which side of an axis's dead zone lies along a way on screen.
+                let side = |axis: usize, way: f32, screen: f32| shares[axis][usize::from(way * screen > 0.0)];
+                let zone: Vec<egui::Pos2> = (0..64)
+                    .map(|i| {
+                        let (sin, cos) = (i as f32 / 64.0 * std::f32::consts::TAU).sin_cos();
+                        let (x, y) = (side(h, h_way, cos) * cos, side(v, v_way, sin) * sin);
+                        centre + egui::vec2(x, y) * radius
+                    })
+                    .collect();
+                painter.add(egui::Shape::convex_polygon(zone, visuals.selection.bg_fill.gamma_multiply(0.35), egui::Stroke::NONE));
+                painter.line_segment([centre - egui::vec2(radius, 0.0), centre + egui::vec2(radius, 0.0)], egui::Stroke::new(1.0, faint.gamma_multiply(0.4)));
+                painter.line_segment([centre - egui::vec2(0.0, radius), centre + egui::vec2(0.0, radius)], egui::Stroke::new(1.0, faint.gamma_multiply(0.4)));
+                painter.circle_stroke(centre, radius, egui::Stroke::new(1.0, faint));
+                let dot = egui::vec2(h_way * travel[h], v_way * travel[v]);
+                let dot = if dot.length() > 1.0 { dot.normalized() } else { dot };
+                let live = moving[h] != 0 || moving[v] != 0;
+                painter.circle_filled(centre + dot * radius, 3.5, if live { visuals.selection.stroke.color } else { faint });
+                let percent = |axis: usize| format!("{} −{:.0} % +{:.0} %", NAMES[axis], shares[axis][0] * 100.0, shares[axis][1] * 100.0);
+                response.on_hover_text(format!("{}\n{}", percent(h), percent(v)));
+                ui.label(egui::RichText::new(format!("{} · {}", NAMES[h], NAMES[v])).small().color(faint));
+            });
+        }
+    });
 }
 
 /// Starts calibrating the device being read, if there is one.
@@ -70,6 +113,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             }
             ui.add_space(6.0);
             ui.add(egui::ProgressBar::new(progress as f32).text(counter));
+            if let Some(Ok(calibration)) = result {
+                ui.add_space(6.0);
+                dead_zone_pads(ui, &Calibration { dead_zone_share: dead_zone, ..calibration }, raw);
+            }
             // The device's six raw axes as they come, so the jitter at rest is there to see.
             let reading = raw.map(|value| format!("{value:>6}")).join(" ");
             ui.label(egui::RichText::new(format!("{}: {reading}", app.tr("ui.space_mouse_reading"))).monospace());

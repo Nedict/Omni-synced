@@ -90,6 +90,28 @@ impl Calibration {
         })
     }
 
+    /// How far each canonical axis is through its travel before any dead zone: ±1 at full
+    /// deflection either way, further past it. Where a reading sits on a picture of the axis.
+    pub fn travel(&self, raw: [i16; 6]) -> [f32; 6] {
+        self.axes.map(|axis| {
+            let Some(&value) = raw.get(axis.source) else { return 0.0 };
+            let offset = f32::from(value) - f32::from(axis.rest);
+            let share = offset / f32::from(axis.full[usize::from(offset > 0.0)]).max(1.0);
+            if axis.reversed { -share } else { share }
+        })
+    }
+
+    /// How much of each canonical axis's travel reads as no motion, `[negative, positive]` as
+    /// shares of it: the measured dead zone with the user's on top, as [`Calibration::apply`] has it.
+    pub fn dead_zone_shares(&self) -> [[f32; 2]; 6] {
+        let user = if self.dead_zone_share.is_finite() { self.dead_zone_share.clamp(0.0, MAX_DEAD_ZONE_SHARE) } else { 0.0 };
+        self.axes.map(|axis| {
+            let [below, above] = axis.full.map(|full| (f32::from(axis.dead_zone) / f32::from(full).max(1.0)).min(1.0));
+            let sides = if axis.reversed { [above, below] } else { [below, above] };
+            sides.map(|measured| measured + (1.0 - measured) * user)
+        })
+    }
+
     /// Each raw axis's value at rest, which calibrates to no motion: what an app reads a raw axis
     /// as while it has nothing fresh from it. A raw axis no canonical one reads rests at 0.
     pub fn raw_rest(&self) -> [i16; 6] {
@@ -1085,6 +1107,26 @@ mod tests {
         for still in [wander[0], wander[1], [12, 0, 0, 0, 0, 0]] {
             assert_eq!(calibration.apply(still), [0; 6], "{still:?} {calibration:?}");
         }
+    }
+
+    #[test]
+    fn the_dead_zone_shares_are_where_apply_starts_moving() {
+        // A lopsided, reversed axis with the user's dead zone on top.
+        let mut calibration = walk(STILL, PRO).result().unwrap().unwrap();
+        calibration.axes[0] = AxisCalibration { source: 0, reversed: true, rest: 10, dead_zone: 20, full: [100, 400] };
+        calibration.dead_zone_share = 0.1;
+        let [negative, positive] = calibration.dead_zone_shares()[0];
+        // Canonical negative is raw above rest here: 400 of travel, 20 measured.
+        assert!((negative - (0.05 + 0.95 * 0.1)).abs() < 1e-6 && (positive - (0.2 + 0.8 * 0.1)).abs() < 1e-6);
+        let at = |raw: i16| [raw, 0, 0, 0, 0, 0];
+        let inside = |share: f32, full: f32| (share * full).floor() as i16 - 1;
+        assert_eq!(calibration.apply(at(10 + inside(negative, 400.0)))[0], 0);
+        assert!(calibration.apply(at(10 + inside(negative, 400.0) + 3))[0] < 0);
+        assert_eq!(calibration.apply(at(10 - inside(positive, 100.0)))[0], 0);
+        assert!(calibration.apply(at(10 - inside(positive, 100.0) - 3))[0] > 0);
+        // Full deflection is ±1 of travel, the reversed way round.
+        assert_eq!(calibration.travel(at(410))[0], -1.0);
+        assert_eq!(calibration.travel(at(-90))[0], 1.0);
     }
 
     #[test]
