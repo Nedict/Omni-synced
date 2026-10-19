@@ -374,16 +374,33 @@ fn move_point(p: Vec3, old: &[Surf], shifts: &[f64], new: &[Surf], tol: f64) -> 
     let mut q = p + span_step(&ns, shifts)?;
     // The step is exact for planes; a curved face meeting another at an angle needs a few
     // Newton steps onto the moved surfaces.
-    for _ in 0..30 {
-        let d: Vec<f64> = new.iter().map(|sf| sf.dist(q)).collect();
-        if d.iter().all(|x| x.abs() < tol) {
-            return Some(q);
-        }
+    let worst = |q: Vec3| new.iter().map(|sf| sf.dist(q).abs()).fold(0.0f64, f64::max);
+    let step = |q: Vec3| -> Option<Vec3> {
         let gs: Vec<Vec3> = new.iter().map(|sf| sf.grad(q)).collect::<Option<_>>()?;
-        let rhs: Vec<f64> = d.iter().map(|x| -x).collect();
-        q += span_step(&gs, &rhs)?;
+        let rhs: Vec<f64> = new.iter().map(|sf| -sf.dist(q)).collect();
+        span_step(&gs, &rhs)
+    };
+    for _ in 0..30 {
+        let w = worst(q);
+        if w < tol {
+            // Within `tol`, and closer still for a few more steps while they help: the moved vertex
+            // must lie on the faces' own surfaces to well within the kernel's fixed tolerance (1e-6
+            // whatever the body's size), or a later boolean can't place it on them (a revolve's end
+            // face pushed out a few millimetres along the walls it ends, #3156).
+            let mut best = (w, q);
+            for _ in 0..4 {
+                let Some(q2) = step(best.1).map(|v| best.1 + v) else { break };
+                let w2 = worst(q2);
+                if !(w2 < best.0) {
+                    break;
+                }
+                best = (w2, q2);
+            }
+            return Some(best.1);
+        }
+        q += step(q)?;
     }
-    new.iter().all(|sf| sf.dist(q).abs() < tol).then_some(q)
+    (worst(q) < tol).then_some(q)
 }
 
 /// The smallest move `v` (in the span of `ns`) with `n_i · v = s_i` (least squares).
