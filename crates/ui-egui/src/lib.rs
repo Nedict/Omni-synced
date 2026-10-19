@@ -59,6 +59,8 @@ pub mod i18n;
 #[cfg(test)]
 mod i18n_menu_tests;
 #[cfg(test)]
+mod i18n_painted_tests;
+#[cfg(test)]
 mod i18n_ui_tests;
 pub mod icon_svg;
 pub mod icons;
@@ -878,7 +880,7 @@ impl SolveApp {
         let _ = self.run(id, json!({}));
     }
 
-    /// Edit a feature the way Fusion does: sketches open in sketch mode; other features roll the
+    /// Edit a feature: sketches open in sketch mode; other features roll the
     /// timeline back to just before themselves and reopen their dialog, filled in.
     pub fn edit_feature(&mut self, id: u64) {
         use solidcraft_engine::doc::FeatureKind;
@@ -906,7 +908,7 @@ impl SolveApp {
         }
     }
 
-    /// Edit a sketch the way Fusion does: roll the timeline back to just after it (so later
+    /// Edit a sketch: roll the timeline back to just after it (so later
     /// features don't hide it), turn the camera to face it, and remember both so Finish Sketch
     /// puts them back. Editing the sketch that is already open does nothing; editing another one
     /// finishes the current sketch first, so edit sessions never nest.
@@ -1388,7 +1390,9 @@ impl SolveApp {
             timeline::timeline(self, ui);
         }
         palette::palette_bar(self, ui);
-        if self.ui.show_browser {
+        // A floating browser keeps the workspace the whole width: it is drawn over the view below.
+        let browser_float = self.ui.show_browser && self.preferences.browser_float;
+        if self.ui.show_browser && !browser_float {
             if left_timeline {
                 browser::browser_below_timeline(self, ui);
             } else {
@@ -1402,6 +1406,11 @@ impl SolveApp {
         }
         agent_chat::show(self, ui);
         preview::update(self, ui.ctx());
+        if browser_float {
+            // The room the central view is about to take, before it takes it.
+            let viewport = ui.available_rect_before_wrap();
+            browser::floating(self, ui, viewport);
+        }
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
             if render_workspace::active(self) {
                 render_workspace::show(self, ui);
