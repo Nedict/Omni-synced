@@ -100,7 +100,9 @@ pub struct ExtrudeParams {
     /// Which way to extrude. Default: positive.
     #[serde(default)]
     pub direction: Option<DirectionParam>,
-    /// The second side's distance.
+    /// Two Sides: a second distance the other way from the first side, which may be
+    /// `through_all` or `to`; with `direction: negative` the first side goes against the normal
+    /// and `distance2` along it.
     #[serde(default)]
     pub distance2: Option<LengthExpr>,
     /// Start this far from the sketch plane, along its normal.
