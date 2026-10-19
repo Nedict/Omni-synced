@@ -53,8 +53,11 @@ limit applies to the MCP server.
 
 A timed-out request has not failed: it is still running in the app, and a change still applies
 when it finishes (a long fillet, say), so don't simply send it again. The timeout's text says
-which: a request that only reads (`ui.inspect`, `document.inspect`, an inspection command)
-"only reads: nothing changes". The connection keeps its reply (#1618). Ask for it
+what it still does: a request that only reads (`ui.inspect`, `document.inspect`, an inspection
+command) "only reads: nothing changes"; one that only writes a file (`file.export`,
+`file.save`, `file.save_as`, `file.save_mesh`, another export given a `path`, `ui.render`, or
+`ui.screenshot` with a `path`) "will still write the file when it finishes" and leaves the design
+as it is; any other request "will still apply when it finishes". The connection keeps its reply (#1618). Ask for it
 with `control.pending`: `{"pending": <id>, "method": …, "done": false}` while it runs, then
 `{"pending": <id>, "method": …, "done": true, "reply": {…}}` (its own reply, once), and
 `{"pending": null}` when nothing is outstanding. Until it lands, any other request on that

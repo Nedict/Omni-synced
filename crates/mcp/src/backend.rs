@@ -64,7 +64,8 @@ pub(crate) const STILL_RUNNING: &str = "still running:";
 /// through `control.pending`, so the connection is kept for it.
 struct Outstanding {
     what: String,
-    reads_only: bool,
+    /// What it does when it finishes; `None`: not known (a request this bridge did not send).
+    effect: Option<control_pending::Effect>,
     since: Instant,
 }
 
@@ -317,7 +318,7 @@ impl Remote {
     /// The tool error for the outstanding request still running after its wait.
     fn still_running(&self, earlier: bool) -> String {
         let Some(o) = &self.outstanding else { return format!("{STILL_RUNNING} a request is still running in the app") };
-        let effect = if o.reads_only { "it only reads: nothing changes" } else { "it was not cancelled and will still apply when it finishes" };
+        let effect = o.effect.map_or("it was not cancelled and may still change the design when it finishes", control_pending::Effect::when_done);
         let settle = self.waits.settle.as_secs();
         if earlier {
             format!(
@@ -376,7 +377,7 @@ impl Remote {
     fn call_once(&mut self, method: &str, params: Value, retry_busy: bool) -> Result<Value, String> {
         self.settle_earlier()?;
         let what = control_pending::describe(method, &params);
-        let reads_only = control_pending::reads_only(method, &params);
+        let effect = control_pending::effect(method, &params);
         let again = retry_busy.then(|| params.clone());
         let sent = Instant::now();
         let line = self.request_line(method, params);
@@ -394,7 +395,7 @@ impl Remote {
         let v: Value = serde_json::from_str(&reply).map_err(|e| format!("bad reply from the app: {e}"))?;
         // Timed out in the app, still running (#1618): wait for its result on this connection.
         if v.get("running").and_then(Value::as_bool) == Some(true) {
-            self.outstanding = Some(Outstanding { what: what.clone(), reads_only, since: sent });
+            self.outstanding = Some(Outstanding { what: what.clone(), effect: Some(effect), since: sent });
             eprintln!(
                 "solidcraft-mcp: {what} is still running in the app after {} s; waiting up to {} s more for it",
                 sent.elapsed().as_secs(),
@@ -413,7 +414,7 @@ impl Remote {
         if v.get("busy").and_then(Value::as_bool) == Some(true)
             && let Some(params) = again
         {
-            self.outstanding = Some(Outstanding { what: "an earlier request".into(), reads_only: false, since: Instant::now() });
+            self.outstanding = Some(Outstanding { what: "an earlier request".into(), effect: None, since: Instant::now() });
             self.settle_earlier()?;
             return self.call_once(method, params, false);
         }

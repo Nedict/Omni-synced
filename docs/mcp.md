@@ -197,12 +197,19 @@ not cancelled. The bridged server then keeps the connection, where the reply wil
 asks the app (`control.pending`) every half second for up to 240 seconds more, saying on stderr
 how long it waits; when the request finishes, the tool call returns its real result. If it still
 runs after that, the tool call fails with an error starting `still running:` that names the
-request and says whether it will still apply (a request that only reads changes nothing). Don't
+request and says what it still does: it will still apply when it finishes, or will still write
+the file (an export or a save: the design does not change), or only reads (nothing changes). Don't
 send it again: call the `pending` tool, which waits up to 60 seconds for its result each time.
 Any other tool call first waits up to 60 seconds for it too, and is not sent while it still runs
 (so nothing is queued to apply unseen behind it); a request that finishes in that wait keeps its
 result for `pending`. If the connection to the app is lost meanwhile, the result is lost with it,
 and `pending` says so: inspect the design before sending a change again.
+
+So a single tool call may block for up to 300 seconds (the app's 60 s wait plus 240 s of polling)
+before it returns `still running:`, and a call made while an earlier request still runs for up to
+60 seconds more. An MCP client needs a per-call timeout above that (say 330 s) to see that error;
+a client that gives up sooner only sees its own timeout, though the request goes on running in the
+app: then call `pending` (or `inspect_design`) before sending anything again.
 
 A `batch` step that is still running stops the batch like a failure. Its rollback first waits for
 the step (as above), so a restored checkpoint takes the step back too; if it still runs, the

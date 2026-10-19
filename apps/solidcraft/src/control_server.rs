@@ -182,15 +182,21 @@ struct Pending {
 }
 
 /// The reply text for a request that outlasts its wait. A request that only reads changes
-/// nothing when it finishes; any other still applies, as it was not cancelled.
-fn timeout_message(what: &str, reads_only: bool) -> String {
-    if reads_only {
-        format!("timeout: {what} is still running in the app (it only reads: nothing changes); ask `control.pending` for its answer")
-    } else {
-        format!(
+/// nothing when it finishes; an export or a save still writes its file, and any other request
+/// still applies, as it was not cancelled.
+fn timeout_message(what: &str, effect: control_pending::Effect) -> String {
+    match effect {
+        control_pending::Effect::ReadsOnly => {
+            format!("timeout: {what} is still running in the app ({}); ask `control.pending` for its answer", effect.when_done())
+        }
+        control_pending::Effect::WritesFile => format!(
+            "timeout: {what} is still running in the app and will still write the file when it finishes (it was not cancelled: \
+             don't send it again; the design does not change); ask `control.pending` for its result"
+        ),
+        control_pending::Effect::Changes => format!(
             "timeout: {what} is still running in the app and will still apply when it finishes (it was not cancelled: don't send it \
              again); ask `control.pending` for its result"
-        )
+        ),
     }
 }
 
@@ -269,7 +275,7 @@ fn serve_with(stream: TcpStream, token: &str, tx: Sender<ControlRequest>, ctx: e
                     // A batch replaces many short requests: the whole of it may take long (#743).
                     let wait = if patient || method == "engine.batch" { waits.long } else { waits.short };
                     let what = control_pending::describe(&method, &params);
-                    let reads = control_pending::reads_only(&method, &params);
+                    let effect = control_pending::effect(&method, &params);
                     let (req, rrx) = ControlRequest::new(method.clone(), params);
                     if tx.send(req).is_err() {
                         break;
@@ -278,7 +284,7 @@ fn serve_with(stream: TcpStream, token: &str, tx: Sender<ControlRequest>, ctx: e
                     match rrx.recv_timeout(wait) {
                         Ok(r) => r,
                         Err(_) => {
-                            let r = json!({"ok": false, "running": true, "error": timeout_message(&what, reads)});
+                            let r = json!({"ok": false, "running": true, "error": timeout_message(&what, effect)});
                             pending = Some(Pending { id: id.clone(), method, what, reply: rrx });
                             r
                         }
@@ -377,16 +383,23 @@ mod tests {
         assert_eq!(*ran.lock().unwrap(), ["slow", "ui.view"], "the busy request never reached the app");
     }
 
-    /// A timed-out request that only reads is not said to "still apply"; a change is, by name.
+    /// A timed-out request that only reads is not said to "still apply", nor is one that only
+    /// writes a file (an export, #1989); a change is, by name.
     #[test]
     fn timeout_text_tells_reads_from_changes() {
-        let says = |method: &str, p: Value| timeout_message(&control_pending::describe(method, &p), control_pending::reads_only(method, &p));
+        let says = |method: &str, p: Value| timeout_message(&control_pending::describe(method, &p), control_pending::effect(method, &p));
         let read = says("ui.inspect", json!({}));
         assert!(read.starts_with("timeout") && read.contains("only reads") && !read.contains("will still apply"), "{read}");
         let read = says("engine.execute", json!({"command": "sketch.inspect"}));
         assert!(read.contains("only reads") && read.contains("sketch.inspect"), "{read}");
         let change = says("engine.execute", json!({"command": "solid.fillet"}));
         assert!(change.starts_with("timeout") && change.contains("will still apply") && change.contains("solid.fillet"), "{change}");
+        let export = says("engine.execute", json!({"command": "file.export", "params": {"path": "/tmp/wall.step"}}));
+        assert!(export.contains("will still write the file") && !export.contains("apply") && export.contains("file.export"), "{export}");
+        let save = says("engine.execute", json!({"command": "file.save"}));
+        assert!(save.contains("will still write the file") && !save.contains("apply"), "{save}");
+        let render = says("ui.render", json!({"path": "/tmp/a.png"}));
+        assert!(render.contains("will still write the file"), "{render}");
     }
 
     /// #205: a connection runs nothing until a request carries the launch's token; a wrong or

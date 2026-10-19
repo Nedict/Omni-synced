@@ -1624,7 +1624,7 @@ fn a_timed_out_request_is_waited_for_and_returns_its_result() {
 }
 
 /// A request still running after the wait is left to the `pending` tool: the error says so
-/// (and that it will still apply), later calls are not sent behind it, and `pending` returns
+/// (and that it will still apply, or only write its file), later calls are not sent behind it, and `pending` returns
 /// its result once it lands, on the same connection.
 #[test]
 fn a_request_still_running_is_left_to_the_pending_tool() {
@@ -1674,6 +1674,14 @@ fn a_request_still_running_is_left_to_the_pending_tool() {
     done.store(false, Ordering::SeqCst);
     let e = remote.call("engine.execute", json!({"command": "sketch.inspect"})).unwrap_err();
     assert!(e.contains("only reads") && !e.contains("will still apply"), "{e}");
+
+    // An export only writes its file (#1989): it is not said to apply either.
+    let mut other = crate::Remote::connect(&addr).unwrap();
+    other.set_waits(quick_waits(60, 60));
+    let e = other.call("engine.execute", json!({"command": "file.export", "params": {"path": "/tmp/wall.step"}})).unwrap_err();
+    assert!(e.starts_with(STILL_RUNNING) && e.contains("will still write the file") && !e.contains("apply"), "{e}");
+    let e = other.call("document.inspect", json!({})).unwrap_err();
+    assert!(e.contains("earlier request") && e.contains("will still write the file"), "{e}");
 }
 
 /// The headless session never leaves a request running.
