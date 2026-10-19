@@ -18,11 +18,13 @@
 # Trusted runs use both pools: pushes to main, merge-queue groups and pull requests from a branch
 # of this repository (people with write access; fork pull requests never run on this machine).
 # There, Select checks and ci run on the self-hosted light runner (`self-hosted-light`, quick
-# jobs, so they never wait behind a build), and the repository checks, Clippy, the doc tests,
-# the reference tests and all four test shards on the self-hosted runners (`self-hosted-fast`, warm
-# build directories via scripts/ci/warm-target.sh). Fork PRs' Linux jobs run on the isolated, ephemeral
-# `self-hosted-untrusted` runners (no warm caches) when the PR number ends in 7, 8 or 9 (the rest of
-# the fork PRs, and everything else, run on GitHub's runners, which have far more free slots).
+# jobs, so they never wait behind a build). For pushes to main and the merge queue only, the
+# repository checks, Clippy, the doc tests, the reference tests and all four test shards run on the
+# self-hosted runners (`self-hosted-fast`, warm build directories via scripts/ci/warm-target.sh);
+# a pull request runs them on GitHub's runners, so it never holds up the queue. Fork PRs' Linux
+# jobs run on the isolated, ephemeral `self-hosted-untrusted` runners (no warm caches) when the
+# PR number ends in 7, 8 or 9 (the rest of the fork PRs, and everything else, run on GitHub's
+# runners, which have far more free slots).
 # Where the test shards run on GitHub's runners, the test archive is built there too: the
 # self-hosted machine has a newer glibc, so its binaries wouldn't start on ubuntu-24.04, while the
 # archive runs there unchanged (same /home/runner/work checkout path). The self-hosted shards
@@ -93,9 +95,6 @@ jobs:
       full: ${{ steps.paths.outputs.full }}
       packages: ${{ steps.paths.outputs.packages }}
       oracle: ${{ steps.paths.outputs.oracle }}
-      # Whether the other Linux jobs use the self-hosted runners too.
-      # Trusted self-hosted runs only: a fork PR's checks run on the untrusted pool and must never
-      # route the jobs after them to the trusted runners.
       # The fast self-hosted runners are kept for main and the merge queue (the pre-merge gate);
       # pull requests, same-repo ones included, take the GitHub-hosted or untrusted paths.
       local: ${{ runner.environment == 'self-hosted' && github.event_name != 'pull_request' }}
@@ -200,7 +199,7 @@ jobs:
   checks:
     name: Format and repository checks
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    runs-on: ${{ (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && 'self-hosted-fast' || 'ubuntu-24.04' }}
+    runs-on: ${{ (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && 'self-hosted-fast' || 'ubuntu-24.04' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
