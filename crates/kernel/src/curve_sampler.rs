@@ -41,14 +41,21 @@ impl Grid {
         };
         let u = coordinates(u0, u1);
         let v = coordinates(v0, v1);
-        let mut points = Vec::with_capacity((DIVISIONS + 1) * (DIVISIONS + 1));
-        for &a in &u {
-            for &b in &v {
-                #[cfg(test)]
-                GRID_POINTS_PREPARED.with(|n| n.set(n.get().saturating_add(1)));
-                points.push(surface.subs(a, b));
+        let points = if let Some(points) = crate::grid_basis::batched(surface, &u, &v) {
+            #[cfg(test)]
+            GRID_POINTS_PREPARED.with(|n| n.set(n.get().saturating_add(points.len())));
+            points
+        } else {
+            let mut points = Vec::with_capacity((DIVISIONS + 1) * (DIVISIONS + 1));
+            for &a in &u {
+                for &b in &v {
+                    #[cfg(test)]
+                    GRID_POINTS_PREPARED.with(|n| n.set(n.get().saturating_add(1)));
+                    points.push(surface.subs(a, b));
+                }
             }
-        }
+            points
+        };
         Some(Self { u, v, points })
     }
     pub(super) fn seed(&self, point: mt::Point3) -> (f64, f64) {

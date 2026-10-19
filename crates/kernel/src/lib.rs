@@ -47,6 +47,7 @@ mod fair;
 mod fill;
 mod freeform;
 pub mod fuzz;
+mod grid_basis;
 mod heal;
 mod helix;
 pub mod history;

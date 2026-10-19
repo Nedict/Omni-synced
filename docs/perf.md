@@ -405,6 +405,63 @@ at the same 288 existing icon hash errors as the preceding Windows checkout
 attempt, with no asset changes. Full workspace CI and combined desktop
 integration are not claimed passing.
 
+## Reuse bounded spline bases while preparing support grids (2026-10-20, #3035)
+
+Support-grid preparation previously evaluated both B-spline basis vectors again
+for each of its 2,601 points. Small B-spline supports now prepare their 51 U and
+51 V coefficient vectors once and reuse them across the grid. The point sum
+keeps the vendor's U-major order, exact row/column zip limits and floating-point
+operations. Grid coordinates, point order, seed scans, hints, Newton searches,
+tolerances, sample counts and rejection behavior remain unchanged.
+
+The helper accepts only supports whose pre-truncation basis request fits eight
+words per direction. Its two fixed coefficient arrays contain 6,528 bytes; one
+temporary vendor basis vector requests at most 64 bytes. Array/Vec metadata,
+allocator slack and other stack data are outside those payload figures. These
+are temporary preparation costs, additional to the previously documented grid
+payload bounds, and do not describe process RSS. Larger bases, NURBS, unsupported
+coordinate shapes and unavailable coefficient results use the original surface
+evaluation. Malformed empty control rows defer to the original guarded path.
+No vendor code, global cache or dependency changes are included.
+
+A private reference probe compared all floating-point point bits on 1,026
+captured unique supports and nine analytic public surfaces: 2,692,035 points
+matched. A separate sampling probe matched all 122,265 optional point results
+on 3,705 edges, including independent public valid/rejected controls. These are
+component checks. A new actual Boolean replay then used the same captured
+target/tool geometry and cold reconstructed body as the preceding planar-cache
+measurement, with 20 requested workers:
+
+| Captured-geometry scope | Two-grid planar cache | With bounded basis reuse |
+|---|---:|---:|
+| Boolean operation | 4,747.550 ms | 4,212.855 ms |
+| Nested planar-surface check | 618.181 ms | 408.988 ms |
+
+The result retained exactly the captured compressed bytes and every JSON
+floating-point bit, with 1,207 faces and unchanged inputs. Each column is a single
+execution under concurrent activity; unchanged phases also vary. These timings
+do not establish a causal total improvement, complete-history editing latency,
+warm-cache behavior or a general speedup. Private nested vendor timers are
+included only in the diagnostic builds and must not be added to the kernel
+total. Cold geometry-only replays omit original history/display metadata and
+do not certify checked topology validity. The complete original history was
+not rerun for this increment.
+
+The frozen product source passed seven public basis-reference/hostile tests,
+43 sampler tests and 808 kernel tests (28 ignored, the same two existing
+exclusions), the oblique-cut engine regression and all 16 Hole face regressions.
+Kernel all-target Clippy with warnings denied, wasm, formatting and diff checks
+passed. Four fresh compiler checks on this source reject scratch reuse while
+an owner or support clone survives and accept it after explicit destruction.
+Independent read-only final-source review found no actionable issue; runtime
+checks were author-run. Four public native-document Hole controls retained
+all result fields bit for bit except timings/source path, including measurement,
+document and face/edge references; analytic volume checks passed. Their clean
+optimized CLI contains no private diagnostic markers. A fresh full workspace
+`xtask ci` attempt stopped at the same 288 existing Windows icon hash errors;
+assets were unchanged. Full workspace CI and combined desktop integration
+are not claimed passing.
+
 ## Edges made by booleans: each point evaluated once (2026-10-16)
 
 A boolean meshes both operands with truck-meshalgo, which first divides every edge into a
