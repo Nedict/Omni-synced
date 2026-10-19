@@ -692,6 +692,8 @@ mod tests {
     fn the_window_does_not_re_evaluate_every_frame() {
         let mut h = big_design();
         h.step(&json!({"start": "parameters.change"})).unwrap();
+        // An expression in the add row, checked as it is typed (a blank one isn't checked, #2919).
+        h.app.params.as_mut().unwrap().new_expr = "10 mm".into();
         h.frames(30);
         let d = h.app.params.as_ref().unwrap();
         assert_eq!((d.lists, d.checks), (1, 1), "30 frames of an unchanged design");
