@@ -522,6 +522,10 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     save_as_with_extension(app, "json");
                     close = true;
                 }
+                if item(ui, app.tr_label("Local PDM"), "") {
+                    app.start("pdm.panel");
+                    close = true;
+                }
                 ui.separator();
                 if item_if(ui, "Save as mesh…", "", shown) {
                     app.start("file.save_mesh");

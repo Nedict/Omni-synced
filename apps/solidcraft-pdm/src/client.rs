@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+#[derive(Clone)]
 pub struct Client {
     port: u16,
     token: AuthToken,
@@ -19,6 +20,13 @@ impl Client {
     }
 
     pub fn request(&self, request: Request) -> Result<Response, Error> {
+        self.request_impl(request).map_err(|error| match error {
+            Error::Io(error) => Error::Network(error),
+            other => other,
+        })
+    }
+
+    fn request_impl(&self, request: Request) -> Result<Response, Error> {
         let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, self.port);
         let mut stream = TcpStream::connect_timeout(&address.into(), Duration::from_secs(5))?;
         let envelope = AuthenticatedRequest::new(&self.token, request);

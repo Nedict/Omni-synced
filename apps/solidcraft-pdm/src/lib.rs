@@ -80,6 +80,8 @@ pub fn bind_loopback(port: u16) -> Result<TcpListener, Error> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("local PDM connection failed: {0}")]
+    Network(#[source] std::io::Error),
     #[error("server rejected the request: {0}")]
     Server(String),
     #[error("invalid request: {0}")]

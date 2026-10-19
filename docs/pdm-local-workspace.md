@@ -5,6 +5,10 @@ This increment is a native **file client**, not a CAD GUI. It adds a mandatory l
 owner credential, document/version listing, file check-in and verified retrieval of
 an exact dependency closure. Use public-safe toy files only.
 
+The separate follow-up #3003 adds a bounded [CAD desktop panel](pdm-cad-ui.md)
+using this client. This document records the prerequisite #2996 file-client scope;
+the follow-up's GUI does not add remote transport or automatic CAD link resolution.
+
 The same domain model is intended for local and cloud hosting. This implementation
 still accepts only IPv4 loopback connections; it has no public bind option, TLS,
 outbound relay, pairing, multi-user identity provider or role enforcement. No

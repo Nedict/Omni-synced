@@ -123,6 +123,9 @@ mod fillet_spline_handle_tests;
 pub(crate) mod navigation;
 pub mod palette;
 pub mod params_dialog;
+pub mod pdm_panel;
+#[cfg(test)]
+mod pdm_panel_tests;
 pub(crate) mod pick_buffer;
 pub(crate) mod pick_index;
 pub mod prefs;
@@ -266,6 +269,8 @@ impl Default for UiState {
 /// Host services injected by the app so this crate stays portable.
 #[derive(Default)]
 pub struct Services {
+    /// Native authenticated PDM worker. Credentials never enter engine/UI state.
+    pub pdm: Option<pdm_panel::Start>,
     /// Ask for a file to open. The extensions are the file type the command reads, offered as
     /// the picker's first filter (`&[]`: designs, CAD files and meshes, #1801).
     pub pick_open: Option<Box<dyn Fn(&[&str]) -> FilePickerFuture>>,
@@ -292,6 +297,7 @@ pub struct Services {
 }
 
 pub struct SolveApp {
+    pub pdm: pdm_panel::Panel,
     pub session: Session,
     pub ui: UiState,
     pub cam: Camera,
@@ -429,7 +435,11 @@ impl SolveApp {
         }
         let mut render_workspace = render_workspace::State::default();
         render_workspace.image_host = image_host;
+        let pdm = pdm_panel::Panel::default();
+        let _ = pdm.runtime.set_available(services.pdm.is_some());
+        session.pdm = pdm.runtime.clone();
         SolveApp {
+            pdm,
             session,
             ui: UiState::default(),
             cam: Camera::default(),
@@ -635,6 +645,10 @@ impl SolveApp {
 
     /// Run a command programmatically (JSON parameters, no dialogs).
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        self.session.pdm = self.pdm.runtime.clone();
+        if id == "pdm.check_in" && (self.dialog.is_some() || self.tool.is_some() || self.applying.is_some() || self.deferred.is_some()) {
+            return Err("Finish or cancel interactive edits before checking in the saved design".into());
+        }
         if self.file_load.busy() || self.file_picker.is_some() {
             return Err("a file operation is in progress".into());
         }
@@ -741,6 +755,15 @@ impl SolveApp {
         if id == "material.properties.validate" {
             self.material_card_review = Some(material_card_review::ReviewWindow::default());
             self.home.open = false;
+            return;
+        }
+        if id.starts_with("pdm.") {
+            self.pdm.open = true;
+            if matches!(id, "pdm.refresh" | "pdm.disconnect")
+                && let Err(error) = self.run(id, json!({}))
+            {
+                self.set_status(error, true);
+            }
             return;
         }
         // A display toggle leaves the current modelling tool and camera in place.
@@ -1268,6 +1291,7 @@ impl SolveApp {
 
     /// Per-frame logic before layout.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        pdm_panel::tick(self, ctx);
         file_picker::tick(self, ctx);
         render_workspace::sync_backend(self);
         render_workspace::tick(self, ctx);
@@ -1441,6 +1465,7 @@ impl SolveApp {
         self.resolve_fit(ui.ctx());
         params_dialog::show(self, ui.ctx());
         design_properties::show(self, ui.ctx());
+        pdm_panel::show(self, ui.ctx());
         material_card_review::show(self, ui.ctx());
         recovery_ui::show(self, ui.ctx());
         stand_up::show(self, ui.ctx());

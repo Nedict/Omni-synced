@@ -25,6 +25,7 @@ mod native_crash;
 mod native_frame;
 #[cfg(target_os = "macos")]
 mod open_documents;
+mod pdm;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 mod space_mouse;
 mod startup;
@@ -118,6 +119,7 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
     let program_parent = parent.clone();
     let file_parent = parent.clone();
     Services {
+        pdm: Some(pdm::service(settings_dir().map(|p| p.join("pdm-workspaces")))),
         pick_open: Some(Box::new(move |first: &[&str]| {
             // The file type the command reads comes first, so the picker opens on it (#1801).
             let mut dialog = open_parent.clone();
