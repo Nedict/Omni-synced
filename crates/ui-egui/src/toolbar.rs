@@ -866,7 +866,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                     Some(why) => format!("{}\n{why}", tr_label),
                     None => format!("{}{}", tr_label, selected.shortcut.map(|k| format!("  ({k})")).unwrap_or_default()),
                 };
-                if resp.on_hover_text(tip).clicked() && info.enabled {
+                if crate::command_help::tooltip(resp, selected.id, tip).clicked() && info.enabled {
                     let id = selected.id;
                     app.start(id);
                 }

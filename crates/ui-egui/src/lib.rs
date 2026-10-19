@@ -17,6 +17,7 @@ pub mod canvas;
 mod colour_tokens_tests;
 #[cfg(test)]
 mod colour_vision_tests;
+pub mod command_help;
 pub mod context_menu;
 pub mod control;
 pub mod crash_ui;
