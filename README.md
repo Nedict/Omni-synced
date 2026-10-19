@@ -26,6 +26,7 @@
   <a href="https://solidcraft.io/download">Download</a> ·
   <a href="https://solidcraft.io/app">Try it in the browser</a> ·
   <a href="https://docs.solidcraft.io/">Documentation</a> ·
+  <a href="https://www.blacksmith.sh"><img src="https://img.shields.io/badge/CI-Blacksmith-000000?logo=githubactions&logoColor=white" alt="CI powered by Blacksmith" /></a>
   <a href="https://discord.gg/FtU4NQNVDH">Discord</a> ·
   <a href="https://github.com/bherbruck/solidcore">SolidCore</a>
 </p>
