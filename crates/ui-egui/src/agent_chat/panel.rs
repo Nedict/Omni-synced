@@ -289,6 +289,11 @@ pub fn window_builder(app: &SolveApp) -> egui::ViewportBuilder {
     }
 }
 
+/// The popped-out chat window's viewport.
+pub(crate) fn window_id() -> egui::ViewportId {
+    egui::ViewportId::from_hash_of("sc_agent_chat_window")
+}
+
 /// The chat in its own window, named after the design: a native window on the desktop, which can
 /// go to another screen, or a window floating inside the app where the system can't open one.
 /// The system's close button closes the chat (it opens there again); Dock puts it back.
@@ -298,7 +303,7 @@ fn window(app: &mut SolveApp, ctx: &egui::Context) {
     app.agent_chat.window_placed = true;
     // The side panel isn't drawn: its place no longer counts as "in the chat".
     app.agent_chat.panel_rect = None;
-    ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("sc_agent_chat_window"), builder, |ui, class| {
+    ctx.show_viewport_immediate(window_id(), builder, |ui, class| {
         let t = Tokens::get();
         let frame = egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(8, 6));
         let r = egui::CentralPanel::default().frame(frame).show(ui, |ui| body(app, ui, false));

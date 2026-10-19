@@ -135,11 +135,11 @@ pub struct DeviceMotion {
 }
 
 /// Hands one frame of 3D mouse input, `seconds` after the previous frame, to the page showing
-/// the camera. Nothing happens with navigation switched off, on the start page or while a file
-/// picker is open. Returns whether there was motion to hand over; it then asks for the next frame
-/// itself.
+/// the camera. Nothing happens with navigation switched off, on the start page, while a file
+/// picker is open or while another program has the focus. Returns whether there was motion to
+/// hand over; it then asks for the next frame itself.
 pub fn navigate_frame(app: &mut SolveApp, ctx: &egui::Context, mapping: DriverMapping, axes: Axes, seconds: f64) -> bool {
-    if !app.preferences.space_mouse_enabled || app.home.open || app.file_picker_busy() || axes == Axes::default() {
+    if !app.preferences.space_mouse_enabled || app.home.open || app.file_picker_busy() || !window_focused(app, ctx) || axes == Axes::default() {
         return false;
     }
     let speed = f64::from(app.preferences.space_mouse_speed);
@@ -155,6 +155,16 @@ pub fn navigate_frame(app: &mut SolveApp, ctx: &egui::Context, mapping: DriverMa
     });
     ctx.request_repaint_after(Duration::from_millis(16));
     true
+}
+
+/// Whether one of SolidCraft's windows has the focus: the main window, or the popped-out agent
+/// chat. The desktop reads the device itself, whichever program has the focus, so without this
+/// the cap would turn the model while the user works in another program. A system that doesn't
+/// say whether the main window has the focus counts as focused.
+fn window_focused(app: &SolveApp, ctx: &egui::Context) -> bool {
+    let focused = |id| ctx.input_for(id, |i| i.viewport().focused);
+    focused(egui::ViewportId::ROOT) != Some(false)
+        || (app.preferences.agent_chat_popped && focused(crate::agent_chat::window_viewport()) == Some(true))
 }
 
 /// A small dead zone avoids drift at rest. A full cap deflection takes roughly one viewport
@@ -335,6 +345,27 @@ mod tests {
         let motion = mapping.apply(Axes { translation: [350, 350, 350], rotation: [350; 3] });
         assert_eq!(motion.translation, [0.0, 0.0, 1.0]);
         assert_eq!(motion.rotation, [1.0; 3]);
+    }
+
+    /// The device is read whichever program has the focus. While another one has it, the cap
+    /// doesn't move SolidCraft's view; once the main window has the focus again, it does.
+    #[test]
+    fn the_cap_moves_the_view_only_while_a_solidcraft_window_has_the_focus() {
+        let ctx = egui::Context::default();
+        let focus = |focused: bool| {
+            let mut raw = egui::RawInput::default();
+            raw.viewports.entry(egui::ViewportId::ROOT).or_default().focused = Some(focused);
+            ctx.begin_pass(raw);
+            ctx.end_pass().textures_delta.clear();
+        };
+        let mut app = app();
+        let before = app.cam;
+        focus(false);
+        assert!(!frame(&mut app, &ctx, DriverMapping::default(), PUSH, 0.02));
+        assert_eq!(app.cam, before);
+        focus(true);
+        assert!(frame(&mut app, &ctx, DriverMapping::default(), PUSH, 0.02));
+        assert!(app.cam.distance < before.distance);
     }
 
     #[test]
