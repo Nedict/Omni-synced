@@ -2395,7 +2395,7 @@ fn chamfer_tool_curved(cur: &Body, pick: Vec3, distance: f64) -> Result<Cutter> 
         if tangent.dot(n1.cross(n2)) <= 1e-9 {
             return Err(unsupported("a convex chamfer edge is required"));
         }
-        let (a, b) = crate::curveblend::straight_chamfer_contacts(f1, f2, mid, d, distance, tolerance)
+        let (a, b) = crate::curveblend::straight_chamfer_contacts(f1, f2, mid, *d, distance, tolerance)
             .ok_or_else(|| unsupported("the chamfer section does not fit"))?;
         let fit_tolerance = (size * 1e-5).clamp(1e-5, 0.001);
         for (face, point) in [(*f1, a), (*f2, b)] {
