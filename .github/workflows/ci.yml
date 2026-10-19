@@ -19,7 +19,9 @@
 # vendored crates under vendor/ select the packages that read them (scripts/ci/affected.py).
 # Heavy checks wait for review: a pull request without the `approved-for-ci` label runs only
 # Select checks, the format and repository checks and a quick compile. Adding the label (after
-# review) runs everything above, and every later push to the PR does too. Pushes to main, merge
+# review) runs everything above, and every later push to the PR does too, except a push that only
+# merges main into a change that already passed (scripts/ci/main_merge.py): it carries that
+# result and runs the repository checks. Pushes to main, merge
 # groups, the nightly run and Run workflow are not pull requests and always run the full suite.
 # GitHub cannot filter `labeled` events by label name, so any other label starts a run whose jobs
 # are all skipped; it gets its own concurrency group (below) so it never cancels the real run.
@@ -112,6 +114,8 @@ jobs:
       packages: ${{ steps.paths.outputs.packages }}
       oracle: ${{ steps.paths.outputs.oracle }}
       doctests: ${{ steps.paths.outputs.doctests }}
+      # The passing run a merge of main carries forward (its URL), when this push is only that.
+      carried: ${{ steps.paths.outputs.carried }}
       # The fast self-hosted runners are kept for main and the merge queue (the pre-merge gate);
       # pull requests, same-repo ones included, take the GitHub-hosted or untrusted paths.
       local: ${{ runner.environment == 'self-hosted' && github.event_name != 'pull_request' }}
@@ -235,6 +239,19 @@ jobs:
             oracle=false
             goldens=false
           fi
+          # A push that only merges main into the change (Merge branch 'main', Update branch) when
+          # the change itself already passed: nothing new to test here, and main tests the merged
+          # result after it lands. Over three days, 872 of 1,241 such merges brought in nothing that
+          # touched the pull request's files, and each restarted the whole run.
+          carried=
+          if [ "$EVENT_NAME" = pull_request ] && [ "$native" = true ]; then
+            carried=$(python3 -I scripts/ci/main_merge.py --base "$BASE_SHA" --head "$HEAD_SHA" --repo "$REPO" | sed -n 's/^carried=//p')
+            if [ -n "$carried" ]; then
+              echo "Only a merge of main into a change that passed in $carried: repository checks only."
+              native=false
+              goldens=false
+            fi
+          fi
           {
             echo "native=$native"
             echo "kernel=$kernel"
@@ -242,6 +259,7 @@ jobs:
             echo "windows=$windows"
             echo "oracle=$oracle"
             echo "doctests=$doctests"
+            echo "carried=$carried"
             echo "full=$full"
             echo "quick=$quick"
             echo "packages=$packages"
@@ -285,6 +303,8 @@ jobs:
         run: cargo xtask web-offline-test
       - name: Affected-package selection self-test
         run: python3 -I scripts/ci/test_affected.py
+      - name: Merge-of-main detection self-test
+        run: python3 -I scripts/ci/test_main_merge.py
       - name: Claim and triage bot tests
         run: node --test scripts/claim/*.test.js scripts/triage/*.test.js
 
@@ -779,6 +799,12 @@ jobs:
             test "$WINDOWS_FXC" = success
             test "$WINDOWS_STARTUP" = success
           fi
+      - name: Note a carried result
+        if: needs.changes.outputs.carried != ''
+        env:
+          CARRIED: ${{ needs.changes.outputs.carried }}
+        run: |
+          echo "This push only merges main into a change that already passed; the heavy checks were not repeated. Passing run: $CARRIED" >> "$GITHUB_STEP_SUMMARY"
 
   wasm:
     name: Compile WebAssembly (manual)
