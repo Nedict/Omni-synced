@@ -1,0 +1,48 @@
+   Compiling solidcraft-engine v0.15.0 (/home/varun/solidcraft/crates/engine)
+    Finished `test` profile [optimized + debuginfo] target(s) in 2m 12s
+     Running unittests src/lib.rs (target/debug/deps/solidcraft_engine-b428932810b98343)
+
+running 98 tests
+test tests::robustness_goldens::platform_records_keep_shared_references_for_every_other_seed_and_platform ... ok
+test tests::robustness_goldens::every_seed_has_a_test ... ok
+test tests::robustness_goldens::seed_04 ... ok
+test tests::robustness_goldens::seed_07 ... ok
+test tests::robustness_goldens::seed_01 ... ok
+test tests::robustness_goldens::seed_06 ... ok
+test tests::robustness_goldens::seed_05 ... ok
+test tests::robustness_goldens::seed_03 ... ok
+test tests::robustness_goldens::seed_11 ... ok
+test tests::robustness_goldens::seed_08 ... ok
+test tests::robustness_goldens::seed_12 ... ok
+test tests::robustness_goldens::seed_13 ... ok
+test tests::robustness_goldens::seed_16 ... ok
+test tests::robustness_goldens::seed_10 ... ok
+test tests::robustness_goldens::seed_09 ... ok
+test tests::robustness_goldens::seed_00 has been running for over 60 seconds
+test tests::robustness_goldens::seed_02 has been running for over 60 seconds
+test tests::robustness_goldens::seed_19 ... ok
+test tests::robustness_goldens::seed_14 has been running for over 60 seconds
+test tests::robustness_goldens::seed_17 ... ok
+test tests::robustness_goldens::seed_15 has been running for over 60 seconds
+test tests::robustness_goldens::seed_22 ... ok
+test tests::robustness_goldens::seed_18 has been running for over 60 seconds
+test tests::robustness_goldens::seed_15 ... ok
+test tests::robustness_goldens::seed_00 ... ok
+test tests::robustness_goldens::seed_25 ... ok
+test tests::robustness_goldens::seed_14 ... ok
+test tests::robustness_goldens::seed_23 ... ok
+test tests::robustness_goldens::seed_28 ... ok
+test tests::robustness_goldens::seed_26 ... ok
+test tests::robustness_goldens::seed_29 ... ok
+test tests::robustness_goldens::seed_30 ... ok
+test tests::robustness_goldens::seed_20 has been running for over 60 seconds
+test tests::robustness_goldens::seed_31 ... ok
+test tests::robustness_goldens::seed_21 has been running for over 60 seconds
+test tests::robustness_goldens::seed_24 has been running for over 60 seconds
+test tests::robustness_goldens::seed_21 ... ok
+test tests::robustness_goldens::seed_27 has been running for over 60 seconds
+test tests::robustness_goldens::seed_32 has been running for over 60 seconds
+test tests::robustness_goldens::seed_27 ... ok
+test tests::robustness_goldens::seed_33 has been running for over 60 seconds
+test tests::robustness_goldens::seed_35 ... ok
+test tests::robustness_goldens::seed_34 has been running for over 60 seconds
