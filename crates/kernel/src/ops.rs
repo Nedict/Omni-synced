@@ -1011,14 +1011,16 @@ fn boolean_whole_with_refinement(a: &Body, b: &Body, op: BoolOp, refine: bool) -
             Err(_) => {}
         }
     }
-    // Bodies touching along one whole face (a part joined with its mirror image).
+    // Bodies touching along whole faces (a part joined with its mirror image, a pin through a
+    // hole on a base under it): held to the slit check too, as a pair left unglued (a planar
+    // contact whose edges don't match, a round one) stays inside the result.
     if op == BoolOp::Union && a.solid.boundaries().len() == 1 {
-        let glued = if b.solid.boundaries().len() == 1 { crate::coplanar::glue(a, b) } else { crate::coplanar::glue_all_caps(a, b) };
-        if let Some(Ok(body)) = glued {
-            let (ok, _) = check(&body);
-            if ok {
-                return Ok(Some(body));
-            }
+        let glued = if b.solid.boundaries().len() == 1 { crate::coplanar::glue_round(a, b) } else { crate::coplanar::glue_all_caps(a, b) };
+        if let Some(Ok(body)) = glued
+            && check(&body).0
+            && crate::coplanar::slit_free(&body, a, b, tol_m)
+        {
+            return Ok(Some(body));
         }
     }
     // Bores on a common cylinder (a pad's bore around the hole it is joined over, a disc filling

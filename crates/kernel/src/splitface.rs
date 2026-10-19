@@ -519,9 +519,73 @@ fn arc_middle(face: &mt::Face, (o, axis, r): Round, pts: &[mt::Point3], scale: f
         let n = if matches!(c, mt::Curve::Line(_)) { 1 } else { EDGE_SAMPLES };
         samples.extend((0..=n).map(|k| from_p3(c.subs(t0 + (t1 - t0) * k as f64 / n as f64))));
     }
-    let nearest = |d: Vec3| samples.iter().filter_map(|p| off_axis(*p).normalized()).map(|u| u.dot(d)).fold(f64::NEG_INFINITY, f64::max);
-    let dir = if nearest(middle) >= nearest(-middle) { middle } else { -middle };
-    Some(o + axis * (a - o).dot(axis) + dir * r)
+    let level = o + axis * (a - o).dot(axis);
+    // The arc that runs on the face: the split line lies on it all the way, the other way round
+    // leaves it (a small face's chain may keep only its ends, and its edges can reach both sides
+    // elsewhere: over half a turn, with a hole in it). Else the side the face's points come nearest.
+    let meshed = face_triangles(face, (r * 1e-2).max(scale * 1e-7));
+    let along = |m: Vec3| arc_on_face(&meshed, (level, r), [ua, m, ub]);
+    let (on, off) = (along(middle), along(-middle));
+    let dir = if on != off {
+        if on > off { middle } else { -middle }
+    } else {
+        let nearest = |d: Vec3| samples.iter().filter_map(|p| off_axis(*p).normalized()).map(|u| u.dot(d)).fold(f64::NEG_INFINITY, f64::max);
+        if nearest(middle) >= nearest(-middle) { middle } else { -middle }
+    };
+    Some(level + dir * r)
+}
+
+/// Points [`arc_on_face`] tries on each half of an arc.
+pub(crate) const ARC_STEPS: usize = 16;
+
+/// A face's triangles, meshed to `tol`, with that tolerance.
+pub(crate) fn face_triangles(face: &mt::Face, tol: f64) -> (Vec<[Vec3; 3]>, f64) {
+    let shell: mt::Shell = vec![face.clone()].into();
+    let meshed = shell.robust_triangulation(tol);
+    let Some(pm) = meshed.face_iter().next().and_then(|f| f.surface()) else { return (Vec::new(), tol) };
+    let pos = pm.positions();
+    let at = |i: usize| pos.get(i).map(|p| from_p3(*p));
+    let tris = pm.faces().triangle_iter().filter_map(|t| Some([at(t[0].pos)?, at(t[1].pos)?, at(t[2].pos)?])).collect();
+    (tris, tol)
+}
+
+/// How many points between the ends of the arc about `centre` (radius `r`) from `ua` through `um`
+/// to `ub` (unit directions off its axis) lie on a face, given as its triangles (meshed to a
+/// tolerance): within three tolerances of one.
+pub(crate) fn arc_on_face((tris, tol): &(Vec<[Vec3; 3]>, f64), (centre, r): (Vec3, f64), [ua, um, ub]: [Vec3; 3]) -> usize {
+    let turn = |u: Vec3, v: Vec3, t: f64| {
+        let w = u.dot(v).clamp(-1.0, 1.0).acos();
+        if w < 1e-12 { u } else { (u * ((1.0 - t) * w).sin() + v * (t * w).sin()) * (1.0 / w.sin()) }
+    };
+    let mut count = 0;
+    for (half, (u, v)) in [(ua, um), (um, ub)].into_iter().enumerate() {
+        for k in 1..=ARC_STEPS {
+            if half == 1 && k == ARC_STEPS {
+                break;
+            }
+            let p = centre + turn(u, v, k as f64 / ARC_STEPS as f64) * r;
+            if tris.iter().any(|t| triangle_distance(p, t) <= tol * 3.0) {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// The distance from `p` to the triangle `t`.
+fn triangle_distance(p: Vec3, [a, b, c]: &[Vec3; 3]) -> f64 {
+    let segment = |x: Vec3, y: Vec3| {
+        let d = y - x;
+        let l = d.dot(d);
+        let t = if l > 0.0 { ((p - x).dot(d) / l).clamp(0.0, 1.0) } else { 0.0 };
+        p.dist(x + d * t)
+    };
+    let edges = segment(*a, *b).min(segment(*b, *c)).min(segment(*c, *a));
+    let Some(n) = (*b - *a).cross(*c - *a).normalized() else { return edges };
+    let h = (p - *a).dot(n);
+    let foot = p - n * h;
+    let inside = [(*a, *b), (*b, *c), (*c, *a)].iter().all(|(x, y)| (*y - *x).cross(foot - *x).dot(n) >= 0.0);
+    if inside { h.abs() } else { edges }
 }
 
 /// Cut an edge at a parameter (none when the point is already a vertex): the vertex and the

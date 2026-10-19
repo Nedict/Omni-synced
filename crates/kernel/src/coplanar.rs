@@ -1207,7 +1207,7 @@ pub(crate) fn glue(a: &Body, b: &Body) -> Option<Result<Body>> {
 
 /// [`glue`] of round faces too: faces back to back on a common cylinder, as
 /// [`cylinders_imprinted`] leaves them. Only for unions whose result is held to [`slit_free`]: a
-/// round pair glued where a planar one could not be leaves a slit along the planar contact.
+/// round pair glued where a planar one could not be (or the other way round) leaves a slit.
 pub(crate) fn glue_round(a: &Body, b: &Body) -> Option<Result<Body>> {
     glue_impl(a, b, false, true)
 }
@@ -1673,45 +1673,105 @@ pub(crate) fn cylinders_imprinted((mut a, mut ha): Traced, (mut b, mut hb): Trac
     Ok(((a, ha), (b, hb)))
 }
 
-/// Most triangles of the contact faces [`slit_free`] compares pairwise.
-const MAX_SLIT_TRIANGLES: usize = 20_000;
+/// Most triangle-against-triangle tests [`slit_free`] makes before taking the result for one
+/// with a slit.
+const MAX_SLIT_TESTS: usize = 20_000_000;
+
+/// A surface the operands touched on: one of their back-to-back planes, or one of their common
+/// cylinders.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Contact {
+    Plane(usize),
+    Round(usize),
+}
 
 /// Is `r`, the union of `a` and `b` that touched back to back, free of slits: of faces of one
 /// operand left lying on the other's where they touched, a crack of no width that no volume or
 /// shell check sees? No two faces of `r` on a plane or cylinder the operands touched on may face
-/// each other over a common area: as `r` meshes to `chord`, the middle of a triangle of one lies
-/// on a triangle of the other facing the other way (within the two meshes' sag of each other).
-/// Material merely in front of a face (a gap, a fillet under a pad's edge) is no slit.
+/// each other over a common area: as `r` meshes to `chord`, the middle of a triangle on one side
+/// of that surface lies on a triangle on its other side (within the two meshes' sag). Material
+/// merely in front of a face (a gap, a fillet under a pad's edge) is no slit, and a surface with
+/// faces on one side only has none to look for.
 pub(crate) fn slit_free(r: &Body, a: &Body, b: &Body, chord: f64) -> bool {
     let size = a.size().max(b.size());
     let tol = (size * 1e-7).max(1e-9) * 10.0;
     let back: Vec<(Vec3, f64)> = coincident_planes(a, b).into_iter().filter(|(_, _, same)| !*same).map(|(n, d, _)| (n, d)).collect();
-    let (common, _) = common_cylinders(a, b, tol);
-    let contact: Vec<usize> = planes(r)
-        .into_iter()
-        .filter(|(_, p)| back.iter().any(|(n, d)| p.n.dot(*n).abs() > 1.0 - 1e-9 && (p.d - d * p.n.dot(*n)).abs() < tol))
-        .map(|(i, _)| i)
-        .chain(cylinders_on(r, &common, tol).into_iter().map(|x| x.index))
-        .collect();
-    if contact.len() < 2 {
+    let mut rounds: Vec<CylFace> = Vec::new();
+    for c in common_cylinders(a, b, tol).0 {
+        if !rounds.iter().any(|x| same_cylinder(x, &c, tol)) {
+            rounds.push(c);
+        }
+    }
+    let mut on: HashMap<usize, Contact> = HashMap::new();
+    for (i, p) in planes(r) {
+        if let Some(k) = back.iter().position(|(n, d)| p.n.dot(*n).abs() > 1.0 - 1e-9 && (p.d - d * p.n.dot(*n)).abs() < tol) {
+            on.insert(i, Contact::Plane(k));
+        }
+    }
+    for x in cylinders_on(r, &rounds, tol) {
+        if let Some(k) = rounds.iter().position(|c| same_cylinder(c, &x, tol)) {
+            on.insert(x.index, Contact::Round(k));
+        }
+    }
+    if on.len() < 2 {
         return true;
     }
     let Ok(m) = r.tessellate_with(chord, true) else { return false };
-    // (face, corners, unit normal) of each triangle of a contact face.
-    let tris: Vec<(u32, [Vec3; 3], Vec3)> = m
-        .triangles
-        .iter()
-        .zip(&m.tri_face)
-        .filter(|(_, f)| contact.contains(&(**f as usize)))
-        .filter_map(|(t, f)| {
-            let [p, q, s] = m.tri(t)?;
-            Some((*f, [p, q, s], (q - p).cross(s - p).normalized()?))
-        })
-        .collect();
-    if tris.len() > MAX_SLIT_TRIANGLES {
-        return false;
+    // The contact faces' triangles (corners, unit normal), by surface and by the side they face.
+    let mut sides: HashMap<(Contact, bool), Vec<([Vec3; 3], Vec3)>> = HashMap::new();
+    for (t, f) in m.triangles.iter().zip(&m.tri_face) {
+        let Some(contact) = on.get(&(*f as usize)) else { continue };
+        let Some([p, q, s]) = m.tri(t) else { continue };
+        let Some(n) = (q - p).cross(s - p).normalized() else { continue };
+        let out = match contact {
+            Contact::Plane(k) => back.get(*k).is_some_and(|(m, _)| n.dot(*m) > 0.0),
+            Contact::Round(k) => rounds.get(*k).is_some_and(|c| {
+                let v = (p + q + s) / 3.0 - c.origin;
+                n.dot(v - *c.axis * v.dot(*c.axis)) > 0.0
+            }),
+        };
+        sides.entry((*contact, out)).or_default().push(([p, q, s], n));
     }
     let near = chord * 2.0 + tol;
+    let mut tests = 0usize;
+    sides
+        .iter()
+        .filter(|((_, out), _)| *out)
+        .all(|((contact, _), xs)| sides.get(&(*contact, false)).is_none_or(|ys| !faces_meet(xs, ys, near, &mut tests)))
+}
+
+/// Does the middle of a triangle of `xs` lie on a triangle of `ys` facing the other way, within
+/// `near` of its plane? Looked up in a grid of `ys`; past [`MAX_SLIT_TESTS`] tests (`tests` counts
+/// them across calls), taken for yes.
+fn faces_meet(xs: &[([Vec3; 3], Vec3)], ys: &[([Vec3; 3], Vec3)], near: f64, tests: &mut usize) -> bool {
+    let extent = |t: &[Vec3; 3]| {
+        let mut bb = Aabb3::EMPTY;
+        t.iter().for_each(|p| bb.add(*p));
+        bb
+    };
+    // Cells about as large as the triangles, so that each lands in a few.
+    let mean = ys.iter().map(|(t, _)| extent(t).diagonal()).sum::<f64>() / ys.len().max(1) as f64;
+    let cell = mean.max(near * 4.0).max(1e-9);
+    let at = |v: f64| (v / cell).floor() as i64;
+    let mut grid: HashMap<(i64, i64, i64), Vec<usize>> = HashMap::new();
+    let mut wide: Vec<usize> = Vec::new();
+    for (k, (t, _)) in ys.iter().enumerate() {
+        let bb = extent(t);
+        let (lo, hi) = (bb.min - Vec3::new(near, near, near), bb.max + Vec3::new(near, near, near));
+        let (x0, x1, y0, y1, z0, z1) = (at(lo.x), at(hi.x), at(lo.y), at(hi.y), at(lo.z), at(hi.z));
+        let cells = (x1 - x0 + 1).saturating_mul(y1 - y0 + 1).saturating_mul(z1 - z0 + 1);
+        if !(1..=64).contains(&cells) {
+            wide.push(k);
+            continue;
+        }
+        for x in x0..=x1 {
+            for y in y0..=y1 {
+                for z in z0..=z1 {
+                    grid.entry((x, y, z)).or_default().push(k);
+                }
+            }
+        }
+    }
     let on = |c: Vec3, [p, q, s]: &[Vec3; 3], n: Vec3| {
         let h = (c - *p).dot(n);
         if h.abs() > near {
@@ -1728,9 +1788,13 @@ pub(crate) fn slit_free(r: &Body, a: &Body, b: &Body, chord: f64) -> bool {
         let (u, v) = ((d22 * w1 - d12 * w2) / det, (d11 * w2 - d12 * w1) / det);
         u >= -1e-6 && v >= -1e-6 && u + v <= 1.0 + 1e-6
     };
-    !tris.iter().any(|(f, t, n)| {
+    xs.iter().any(|(t, n)| {
         let c = (t[0] + t[1] + t[2]) / 3.0;
-        tris.iter().any(|(g, u, k)| g != f && n.dot(*k) < -0.9 && on(c, u, *k))
+        let cell = grid.get(&(at(c.x), at(c.y), at(c.z))).map(Vec::as_slice).unwrap_or_default();
+        cell.iter().chain(&wide).any(|k| {
+            *tests += 1;
+            *tests > MAX_SLIT_TESTS || ys.get(*k).is_some_and(|(u, m)| n.dot(*m) < -0.9 && on(c, u, *m))
+        })
     })
 }
 

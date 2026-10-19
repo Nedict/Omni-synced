@@ -114,10 +114,9 @@ fn lineage_holds(r: &Body, operands: [&Body; 2]) {
     }
 }
 
-/// A pin standing on a base, through a plate's hole, the base wider than the plate under it and
-/// the plate's top edges chamfered (no prism): the round faces match edge for edge, the planar
-/// ones don't. Gluing the round ones alone left a slit along the base's top, which the checks on
-/// a glued pair of operands don't see.
+/// A pin standing on a base, through a plate's hole, the plate's top edges chamfered (no
+/// prism); the base as wide as the plate or wider. Glued, the round faces must go with the planar
+/// ones: one of them left behind is a slit, which the checks on a glued pair of operands don't see.
 #[test]
 fn a_pin_through_a_hole_with_its_base_under_the_plate_has_no_slit() {
     let hole = cylinder(Vec3::new(20.0, 20.0, -1.0), Vec3::Z, 5.0, 12.0).unwrap();
@@ -125,16 +124,18 @@ fn a_pin_through_a_hole_with_its_base_under_the_plate_has_no_slit() {
     let tops = [Vec3::new(20.0, 0.0, 10.0), Vec3::new(40.0, 20.0, 10.0), Vec3::new(20.0, 40.0, 10.0), Vec3::new(0.0, 20.0, 10.0)];
     let plate = chamfer(&plate, &tops, 2.0).unwrap();
     let pin = cylinder(Vec3::new(20.0, 20.0, 0.0), Vec3::Z, 5.0, 10.0).unwrap();
-    let base = box_solid(Vec3::new(-10.0, -10.0, -5.0), Vec3::new(50.0, 50.0, 0.0)).unwrap();
-    let post = boolean(&base, &pin, BoolOp::Union).unwrap().unwrap();
-    let want = measure(&plate).unwrap().volume + measure(&post).unwrap().volume;
-    for (a, b) in [(&plate, &post), (&post, &plate)] {
-        let r = boolean(a, b, BoolOp::Union).unwrap().unwrap();
-        assert_eq!(r.shell_count(), 1);
-        assert!(r.validity().is_empty(), "{:?}", r.validity());
-        let v = measure(&r).unwrap().volume;
-        assert!((v - want).abs() < 2e-5 * want, "{v} vs {want}");
-        assert!(crate::coplanar::slit_free(&r, a, b, a.size().max(b.size()) * 1e-4), "a slit where the bodies touched");
+    for (lo, hi) in [(-10.0, 50.0), (0.0, 40.0)] {
+        let base = box_solid(Vec3::new(lo, lo, -5.0), Vec3::new(hi, hi, 0.0)).unwrap();
+        let post = boolean(&base, &pin, BoolOp::Union).unwrap().unwrap();
+        let want = measure(&plate).unwrap().volume + measure(&post).unwrap().volume;
+        for (a, b) in [(&plate, &post), (&post, &plate)] {
+            let r = boolean(a, b, BoolOp::Union).unwrap().unwrap();
+            assert_eq!(r.shell_count(), 1, "base {lo}..{hi}");
+            assert!(r.validity().is_empty(), "base {lo}..{hi}: {:?}", r.validity());
+            let v = measure(&r).unwrap().volume;
+            assert!((v - want).abs() < 2e-5 * want, "base {lo}..{hi}: {v} vs {want}");
+            assert!(crate::coplanar::slit_free(&r, a, b, a.size().max(b.size()) * 1e-4), "base {lo}..{hi}: a slit where the bodies touched");
+        }
     }
 }
 
@@ -176,6 +177,11 @@ fn a_face_left_where_bodies_touched_is_a_slit() {
     assert!(!crate::coplanar::slit_free(&side_by_side, &a, &b, 0.01));
     let joined = boolean(&a, &b, BoolOp::Union).unwrap().unwrap();
     assert!(crate::coplanar::slit_free(&joined, &a, &b, 0.01));
+    // Faces on one side of a contact surface only, however finely meshed, are no slit.
+    let wide = cylinder(Vec3::ZERO, Vec3::Z, 50.0, 10.0).unwrap();
+    let bore = Region2 { outer: Loop2::circle(Vec2::ZERO, 60.0), holes: vec![Loop2::circle(Vec2::ZERO, 50.0).reversed()] };
+    let tall = extrude(&Plane::XY, &[bore], 0.0, 20.0).unwrap().pop().unwrap();
+    assert!(crate::coplanar::slit_free(&tall, &wide, &tall, 1e-6));
     // A disc filling a ring's bore, the two side by side: a slit on their common cylinder.
     let disc = cylinder(Vec3::ZERO, Vec3::Z, 5.0, 10.0).unwrap();
     let bore = Region2 { outer: Loop2::circle(Vec2::ZERO, 12.0), holes: vec![Loop2::circle(Vec2::ZERO, 5.0).reversed()] };
@@ -241,12 +247,45 @@ fn a_round_side_is_split_across_its_axis_on_its_circle() {
             Seg2::Line { a: Vec2::new(150.0, 149.0), b: o },
         ],
     };
-    let key = extrude(&Plane::XY, &[Region2 { outer: pie, holes: vec![] }], 10.0, 15.0).unwrap().pop().unwrap();
+    let key = extrude(&Plane::XY, &[Region2 { outer: pie.clone(), holes: vec![] }], 10.0, 15.0).unwrap().pop().unwrap();
     let keyed = boolean(&plate, &key, BoolOp::Union).unwrap().unwrap();
     splits_on_its_circle(&keyed, Vec3::new(150.0, 150.0, 0.0), 1.0, 12.5);
+    // The same key taller, its first or last quarter turn cut away above 20: split at 22 it is
+    // half a turn, on the side away from the notch, though its edges below reach the other side.
+    let key = extrude(&Plane::XY, &[Region2 { outer: pie.clone(), holes: vec![] }], 10.0, 25.0).unwrap().pop().unwrap();
+    let tall = boolean(&plate, &key, BoolOp::Union).unwrap().unwrap();
+    for (lo, hi) in [(Vec3::new(150.0, 150.0, 20.0), Vec3::new(152.0, 152.0, 26.0)), (Vec3::new(148.0, 148.0, 20.0), Vec3::new(150.0, 150.0, 26.0))] {
+        let notched = boolean(&tall, &box_solid(lo, hi).unwrap(), BoolOp::Cut).unwrap().unwrap();
+        splits_on_its_circle(&notched, Vec3::new(150.0, 150.0, 0.0), 1.0, 22.0);
+    }
+    // A small hole drilled into the key's round side at 60 degrees: split through it, the face
+    // reaches the other side at that very level.
+    let dir = Vec3::new(0.5, 0.75f64.sqrt(), 0.0);
+    let drilled = boolean(&tall, &cylinder(Vec3::new(150.0, 150.0, 17.5), dir, 0.2, 3.0).unwrap(), BoolOp::Cut).unwrap().unwrap();
+    splits_on_its_circle(&drilled, Vec3::new(150.0, 150.0, 0.0), 1.0, 17.5);
     let section = Plane::new(Vec3::ZERO, Vec3::X, Vec3::Z).unwrap();
     let ring =
         Region2 { outer: Loop2::polygon(&[Vec2::new(3.0, 0.0), Vec2::new(7.0, 0.0), Vec2::new(7.0, 12.0), Vec2::new(3.0, 12.0)]), holes: vec![] };
     let tube = revolve(&section, &[ring], Vec2::new(0.0, 0.0), Vec2::new(0.0, 1.0), 2.0 * PI).unwrap().pop().unwrap();
     splits_on_its_circle(&tube, Vec3::ZERO, 7.0, 4.5);
+}
+
+/// An arc counts as on a round face where it runs over the face, and not where it runs the
+/// other way round the circle: of a half turn between the face's side edges, every point or none.
+#[test]
+fn an_arc_is_on_a_round_face_only_the_way_the_face_runs() {
+    let (c, r) = (Vec3::new(5.0, -3.0, 0.0), 7.0);
+    let body = cylinder(c, Vec3::Z, r, 12.0).unwrap();
+    let side = (0..body.face_count()).find(|i| matches!(face_surface(&body, *i), Some(FaceSurface::Cylinder { .. }))).unwrap();
+    let face = body.solid.face_iter().nth(side).unwrap();
+    let off_axis = |p: Vec3| Vec3::new(p.x - c.x, p.y - c.y, 0.0).normalized().unwrap();
+    let mut ends: Vec<Vec3> = face.vertex_iter().map(|v| off_axis(crate::body::from_p3(v.point()))).collect();
+    ends.dedup_by(|x, y| x.dist(*y) < 1e-9);
+    let (ua, ub) = (ends[0], *ends.iter().find(|u| u.dist(ends[0]) > 1e-6).unwrap());
+    let middle = Vec3::Z.cross(ua);
+    let meshed = crate::splitface::face_triangles(face, r * 1e-2);
+    let centre = Vec3::new(c.x, c.y, 6.0);
+    let mut counts = [middle, -middle].map(|m| crate::splitface::arc_on_face(&meshed, (centre, r), [ua, m, ub]));
+    counts.sort_unstable();
+    assert_eq!(counts, [0, 2 * crate::splitface::ARC_STEPS - 1], "{ua:?} {ub:?}");
 }
