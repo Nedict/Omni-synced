@@ -52,8 +52,14 @@ fn ok_computes_off_the_window_thread_saying_so_then_applies() {
         let _ = job.done.recv();
         job.done = done;
     }
+    // The label counts whole seconds since OK. On a loaded machine the wait above can take
+    // longer than a second, so accept any count the frame can have shown.
+    let started = h.app.applying.as_ref().map_or(0.0, |job| job.started);
+    let elapsed = || ((crate::now_ms() - started) / 1000.0).floor().max(0.0) as u64;
+    let first = elapsed();
     h.frames(1);
-    assert!(h.widget("Computing… 0 s").is_some(), "the dialog says it computes");
+    let last = elapsed();
+    assert!((first..=last).any(|s| h.widget(&format!("Computing… {s} s")).is_some()), "the dialog says it computes");
     // Enter again does not start it twice.
     h.step(&json!({"key": "Enter"})).unwrap();
     finish.send(()).unwrap();
