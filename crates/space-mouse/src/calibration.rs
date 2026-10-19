@@ -473,10 +473,12 @@ impl Wizard {
                     && (0..6).any(|r| peaks[r] >= 0.5 * furthest && offsets[r] <= SETTLED_SHARE * peaks[r]);
                 let stopped = settling && (self.steady >= SETTLE_SECONDS);
                 if away <= 0.5 || stopped {
-                    // Where it settled: on a noisy device, the middle of the steady readings.
-                    let point = match self.run.mean() {
-                        Some(mean) if stopped => mean.map(|value| value.round().clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16),
-                        _ => raw,
+                    // Where it settled: on a noisy device, the middle of the steady readings' range, so
+                    // that every reading of the run is within half the spread of it, lopsided or not.
+                    let point = if stopped && self.run.count > 0 {
+                        std::array::from_fn(|r| ((i32::from(self.run.min[r]) + i32::from(self.run.max[r])) as f64 / 2.0).round() as i16)
+                    } else {
+                        raw
                     };
                     if self.seconds >= HOLD_SECONDS {
                         // Every reading of the steady run, so the dead zone covers all of them.
@@ -557,8 +559,9 @@ impl Wizard {
     }
 
     /// Whether two readings are the same position, give or take the noise. `b` is where a steady
-    /// run settled, its middle, so readings of that run are within half of [`Self::tolerance`] (the
-    /// run's whole width) of it: the same band the steadiness check accepts.
+    /// run settled, the middle of its range (not its mean, which a lopsided dither pulls off
+    /// centre), so readings of that run are within half of [`Self::tolerance`] (the run's whole
+    /// width) of it, give or take the rounding to a whole unit: the same band the steadiness check accepts.
     fn near(&self, a: [i16; 6], b: [i16; 6]) -> bool {
         a.iter().zip(b).enumerate().all(|(r, (&a, b))| (f64::from(a) - f64::from(b)).abs() <= self.tolerance(r) / 2.0)
     }
@@ -1099,6 +1102,33 @@ mod tests {
         hold(&mut holding, [100, 200, 0, 0, 0, 0], 0.5);
         hold(&mut holding, [5, 200, 0, 0, 0, 0], 1.0);
         assert_eq!(holding.stage(), Stage::Step(0));
+    }
+
+    #[test]
+    fn a_lopsided_dither_that_settled_a_step_isnt_movement_in_the_next() {
+        // Mostly 10 with an occasional 14: spread 4, so steady, but the mean sits near 11 and the 14
+        // is the far edge. Sitting there stays untouched; 15 is wider than the steadiness check allows.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        hold(&mut wizard, [100, 0, 0, 0, 0, 0], 0.5);
+        let lopsided = [[10, 0, 0, 0, 0, 0], [10, 0, 0, 0, 0, 0], [10, 0, 0, 0, 0, 0], [14, 0, 0, 0, 0, 0]];
+        cycle(&mut wizard, &lopsided, SETTLE_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(1));
+        cycle(&mut wizard, &lopsided, 1.0);
+        assert_eq!((wizard.stage(), wizard.progress()), (Stage::Step(1), 0.0));
+        hold(&mut wizard, [16, 0, 0, 0, 0, 0], 0.2);
+        assert!(wizard.progress() > 0.0);
+    }
+
+    #[test]
+    fn cross_talk_that_leaves_the_bigger_axis_well_out_keeps_the_step_open() {
+        // The documented limit (Grok's case): raw 0 moved less than half as far as raw 1, so it
+        // never qualifies, and raw 1 at 90 is above a quarter of its 300 peak.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        hold(&mut wizard, [100, 300, 0, 0, 0, 0], 0.5);
+        hold(&mut wizard, [5, 90, 0, 0, 0, 0], SETTLE_SECONDS + 1.0);
+        assert_eq!(wizard.stage(), Stage::Step(0));
     }
 
     #[test]
