@@ -1,6 +1,6 @@
 //! Autosave and crash recovery.
 //!
-//! A running app keeps one recovery entry in the recovery folder: `<id>.solidcraft` (the design
+//! Each open design keeps its own recovery entry in the recovery folder: `<id>.solidcraft` (the design
 //! as of the last autosave), `<id>.json` (its file path, name and time) and `<id>.lock`, which
 //! the app holds locked while it runs. Autosaves are written atomically, only when the design
 //! has unsaved changes it hasn't written yet; a design with nothing unsaved has no entry. An
@@ -163,7 +163,7 @@ pub fn remove(dir: &Path, id: &str) -> Result<()> {
     Ok(())
 }
 
-/// One app's autosaver.
+/// One open design's autosaver. Keep it with that design when switching tabs.
 pub struct Autosaver {
     pub dir: PathBuf,
     pub id: String,
@@ -177,7 +177,7 @@ pub struct Autosaver {
 }
 
 impl Autosaver {
-    /// Start autosaving into `dir` (created if needed), holding this app's lock.
+    /// Start autosaving into `dir` (created if needed), holding this design's lock.
     pub fn new(dir: &Path, interval: Duration) -> Result<Autosaver> {
         let io = |e: std::io::Error| EngineError::Other(format!("{}: {e}", dir.display()));
         fs::create_dir_all(dir).map_err(io)?;
@@ -237,6 +237,15 @@ impl Autosaver {
     /// Autosave when the interval has passed, or right away after a big operation.
     pub fn tick(&mut self, s: &Session, big: bool) -> Result<bool> {
         if big || self.last_at.elapsed() >= self.interval { self.save(s) } else { Ok(false) }
+    }
+
+    /// The user closed this design (saving it or choosing Don't Save): discard only its entry.
+    pub fn discard(mut self) {
+        for ext in ["json", solidcraft_io::DESIGN_EXT] {
+            let _ = fs::remove_file(file(&self.dir, &self.id, ext));
+        }
+        self.lock = None;
+        let _ = fs::remove_file(file(&self.dir, &self.id, "lock"));
     }
 
     /// Closing the app: with nothing unsaved the entry goes; otherwise it stays for the next
