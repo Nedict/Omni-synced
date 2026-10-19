@@ -224,6 +224,7 @@ pub(crate) fn camera_motion(app: &mut SolveApp, rect: Rect, mut params: serde_js
     let stored_fov = app.cam.fov;
     params["camera"] = json!(projection(app, rect).cam);
     params["viewport"] = json!([rect.width().max(1.0), rect.height().max(1.0)]);
+    params["free_orbit"] = json!(app.preferences.free_orbit);
     let _ = app.run("view.navigate", params);
     app.cam.fov = stored_fov;
 }
@@ -578,7 +579,8 @@ pub(crate) struct OrbitSnap {
     pub(crate) target: Camera,
     pub(crate) yaw_velocity: f64,
     pub(crate) pitch_velocity: f64,
-    pub(crate) pivot: Option<(Vec3, Pos2)>,
+    /// The pivot and where it lies in the camera's frame ([`Camera::frame_coords`]).
+    pub(crate) pivot: Option<(Vec3, Vec3)>,
 }
 
 /// Pointer motion accumulates independently of the spring preview, so many small deltas
@@ -625,10 +627,7 @@ pub(crate) fn orbit_drag(app: &mut SolveApp, rect: Rect, dx: f64, dy: f64, press
         } else {
             None
         }
-        .and_then(|p| {
-            app.cam = displayed;
-            projection(app, rect).to_screen(p).map(|at| (p, at))
-        });
+        .map(|p| (p, displayed.frame_coords(p)));
         let spring = app.viewport.orbit_snap.get_or_insert(OrbitSnap { target, yaw_velocity: 0.0, pitch_velocity: 0.0, pivot });
         spring.target = target;
         spring.pivot = pivot;
@@ -638,7 +637,7 @@ pub(crate) fn orbit_drag(app: &mut SolveApp, rect: Rect, dx: f64, dy: f64, press
 
 /// A lightly damped spring: mostly settled in about a third of a second, with a small
 /// elastic finish. Bounded substeps keep the behavior consistent across frame rates.
-pub(crate) fn step_orbit_snap(app: &mut SolveApp, rect: Rect, dt: f64) {
+pub(crate) fn step_orbit_snap(app: &mut SolveApp, _rect: Rect, dt: f64) {
     let Some(mut spring) = app.viewport.orbit_snap.take() else { return };
     let dt = if dt.is_finite() { dt.clamp(0.0, 0.05) } else { 1.0 / 60.0 };
     let steps = (dt * 240.0).ceil().max(1.0) as usize;
@@ -660,10 +659,8 @@ pub(crate) fn step_orbit_snap(app: &mut SolveApp, rect: Rect, dt: f64) {
     if done {
         app.cam = spring.target;
     }
-    if let Some((pivot, at)) = spring.pivot
-        && let Some(after) = projection(app, rect).to_screen(pivot)
-    {
-        app.cam.pan(f64::from(at.x - after.x), f64::from(at.y - after.y), f64::from(rect.height().max(1.0)));
+    if let Some((pivot, coords)) = spring.pivot {
+        app.cam.place(pivot, coords);
     }
     if !done {
         app.viewport.orbit_snap = Some(spring);
@@ -725,25 +722,11 @@ pub fn orbit(app: &mut SolveApp, rect: egui::Rect, dx: f64, dy: f64, press: Opti
     orbit_about(app, rect, dx, dy, pivot);
 }
 
-/// Orbit by pixel deltas, keeping `pivot` still on screen: the camera turns about it and a pan
-/// correction puts it back where it was.
-pub(crate) fn orbit_about(app: &mut SolveApp, rect: egui::Rect, dx: f64, dy: f64, pivot: Vec3) {
-    let before = crate::viewport::projection(app, rect).to_screen(pivot);
+/// Rotate rigidly about the chosen pivot, keeping its camera-frame position unchanged.
+pub(crate) fn orbit_about(app: &mut SolveApp, _rect: egui::Rect, dx: f64, dy: f64, pivot: Vec3) {
+    let coords = app.cam.frame_coords(pivot);
     orbit_camera(app, dx, dy);
-    let projected = crate::viewport::projection(app, rect);
-    let after = projected.to_screen(pivot);
-    if let (Some(a), Some(b)) = (before, after) {
-        if app.preferences.free_orbit {
-            // The displayed camera carries the effective projection. In perspective the
-            // correction is at the pivot's depth, which can change as a free orbit passes a pole.
-            let mut correction = projected.cam;
-            let scale = if correction.fov > 0.0 { (correction.eye() - pivot).dot(correction.back()) / correction.distance } else { 1.0 };
-            correction.pan(f64::from(a.x - b.x) * scale, f64::from(a.y - b.y) * scale, f64::from(rect.height().max(1.0)));
-            app.cam.target = correction.target;
-        } else {
-            app.cam.pan(f64::from(a.x - b.x), f64::from(a.y - b.y), f64::from(rect.height().max(1.0)));
-        }
-    }
+    app.cam.place(pivot, coords);
 }
 
 fn orbit_camera(app: &mut SolveApp, dx: f64, dy: f64) {
@@ -756,6 +739,124 @@ fn orbit_camera(app: &mut SolveApp, dx: f64, dy: f64) {
 
 #[cfg(test)]
 mod tests {
+    fn touchpad_frame(app: &mut crate::SolveApp, ctx: &egui::Context, caps: super::NavCaps, at: egui::Pos2, mods: egui::Modifiers, time: &mut f64) {
+        *time += 1.0 / 60.0;
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 1400.0))),
+            time: Some(*time),
+            focused: true,
+            events: vec![egui::Event::ModifiersChanged(mods), egui::Event::PointerMoved(at)],
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(raw, |ui| {
+            let rect = ui.max_rect();
+            app.viewport.rect = Some(rect);
+            let response = ui.interact(rect, ui.id().with("touchpad-setting"), egui::Sense::click_and_drag());
+            super::handle(app, ui, rect, &response, caps);
+        });
+        out.textures_delta.clear();
+    }
+
+    #[test]
+    fn touchpad_free_orbit_setting_reaches_the_shared_command() {
+        use super::*;
+        for caps in [NavCaps::MODEL, NavCaps::RENDER, NavCaps { orbit: false, pick: false }] {
+            for up in [solidcraft_engine::render::UpAxis::Y, solidcraft_engine::render::UpAxis::Z] {
+                for free in [false, true] {
+                    let ctx = egui::Context::default();
+                    let mut app = crate::SolveApp::new(Default::default(), crate::Services::default());
+                    app.preferences.nav = crate::prefs::TOUCHPAD_NAV.into();
+                    app.preferences.free_orbit = free;
+                    app.ui.up_axis = up;
+                    app.cam = Camera { pitch: 1.4, roll: 0.7, up, ..Default::default() };
+                    let before = app.cam;
+                    let design = app.session.doc.to_json();
+                    let mut time = 0.0;
+                    touchpad_frame(&mut app, &ctx, caps, pos2(400.0, 300.0), egui::Modifiers::NONE, &mut time);
+                    touchpad_frame(&mut app, &ctx, caps, pos2(400.0, 300.0), egui::Modifiers::ALT, &mut time);
+                    touchpad_frame(&mut app, &ctx, caps, pos2(400.0, 380.0), egui::Modifiers::ALT, &mut time);
+                    if !caps.orbit {
+                        assert_eq!(app.cam, before);
+                    } else if free {
+                        let expected = before.back() * 0.64_f64.cos() + before.basis().1 * 0.64_f64.sin();
+                        assert!(app.cam.back().dist(expected) < 1e-8, "{caps:?} {up:?}: {:?}", app.cam);
+                    } else {
+                        assert!(app.cam.pitch > before.pitch && app.cam.pitch < std::f64::consts::FRAC_PI_2);
+                    }
+                    assert_eq!((app.cam.target, app.cam.distance, app.cam.fov), (before.target, before.distance, before.fov));
+                    assert!(app.viewport.orbit_snap.is_none());
+                    assert!(!ctx.input(|i| i.pointer.any_down()));
+                    assert_eq!(app.session.doc.to_json(), design);
+                    assert!(app.session.undo.is_empty() && app.session.selection.is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn touchpad_free_orbit_keeps_the_rigid_pivot_in_both_projections() {
+        use super::*;
+        for up in [solidcraft_engine::render::UpAxis::Y, solidcraft_engine::render::UpAxis::Z] {
+            for fov in [0.0, 0.6] {
+                for around in [OrbitAround::Origin, OrbitAround::Cursor] {
+                    let ctx = egui::Context::default();
+                    let mut app = crate::SolveApp::new(Default::default(), crate::Services::default());
+                    app.preferences.nav = crate::prefs::TOUCHPAD_NAV.into();
+                    app.preferences.free_orbit = true;
+                    app.preferences.orbit_around = around;
+                    app.ui.perspective = fov > 0.0;
+                    app.ui.up_axis = up;
+                    app.cam = Camera { target: Vec3::new(2.0, 3.0, 4.0), pitch: 1.4, roll: 0.7, fov, up, ..Default::default() };
+                    let caps = NavCaps::MODEL;
+                    let mut time = 0.0;
+                    touchpad_frame(&mut app, &ctx, caps, pos2(400.0, 300.0), egui::Modifiers::NONE, &mut time);
+                    touchpad_frame(&mut app, &ctx, caps, pos2(400.0, 300.0), egui::Modifiers::ALT, &mut time);
+                    let pivot = if around == OrbitAround::Origin { Vec3::ZERO } else { Vec3::new(10.0, 20.0, 30.0) };
+                    app.viewport.orbit_pivot = Some(pivot);
+                    let rect = app.viewport.rect.unwrap();
+                    let coords = app.cam.frame_coords(pivot);
+                    let pixel = projection(&app, rect).to_screen(pivot).unwrap();
+                    touchpad_frame(&mut app, &ctx, caps, pos2(400.0, 380.0), egui::Modifiers::ALT, &mut time);
+                    assert!(app.cam.frame_coords(pivot).dist(coords) < 1e-8, "{up:?} {fov} {around:?}");
+                    assert!(projection(&app, rect).to_screen(pivot).unwrap().distance(pixel) < 1e-3);
+                    assert_eq!((app.cam.distance, app.cam.fov), (Camera::default().distance, fov));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn touchpad_free_orbit_completes_a_turn_and_stops_on_release() {
+        use super::*;
+        let ctx = egui::Context::default();
+        let mut app = crate::SolveApp::new(Default::default(), crate::Services::default());
+        app.preferences.nav = crate::prefs::TOUCHPAD_NAV.into();
+        app.preferences.free_orbit = true;
+        app.cam = Camera { pitch: 1.4, roll: 0.7, ..Default::default() };
+        let initial = app.cam;
+        let design = app.session.doc.to_json();
+        let log = app.session.log.len();
+        let mut time = 0.0;
+        let caps = NavCaps::MODEL;
+        touchpad_frame(&mut app, &ctx, caps, pos2(400.0, 300.0), egui::Modifiers::NONE, &mut time);
+        touchpad_frame(&mut app, &ctx, caps, pos2(400.0, 300.0), egui::Modifiers::ALT, &mut time);
+        let mut at = pos2(400.0, 300.0);
+        for step in 1..=128 {
+            at.y = 300.0 + (std::f64::consts::TAU * step as f64 / (128.0 * 0.008)) as f32;
+            touchpad_frame(&mut app, &ctx, caps, at, egui::Modifiers::ALT, &mut time);
+        }
+        assert!(app.cam.back().dist(initial.back()) < 1e-6);
+        assert!(app.cam.basis().0.dist(initial.basis().0) < 1e-6);
+        let stopped = app.cam;
+        for _ in 0..60 {
+            touchpad_frame(&mut app, &ctx, caps, at, egui::Modifiers::NONE, &mut time);
+        }
+        assert_eq!(app.cam, stopped);
+        assert_eq!(app.session.doc.to_json(), design);
+        assert_eq!(app.session.log.len(), log);
+        assert!(app.session.undo.is_empty() && app.session.selection.is_empty());
+    }
+
     #[test]
     fn free_orbit_is_opt_in_for_every_preset_and_shared_by_mouse_and_device() {
         use super::*;

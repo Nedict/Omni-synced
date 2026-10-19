@@ -276,7 +276,7 @@ pub fn projection(app: &SolveApp, rect: Rect) -> Proj {
 }
 
 /// Sketches drawn in the viewport: the active one, and finished ones not yet used by a feature.
-fn visible_sketches(app: &SolveApp) -> Vec<u64> {
+pub(crate) fn visible_sketches(app: &SolveApp) -> Vec<u64> {
     let st = app.session.world_state();
     st.sketches.iter().filter(|s| solidcraft_engine::view::sketch_drawn(&app.session, s.feature, app.ui.show_sketches)).map(|s| s.feature).collect()
 }
@@ -305,6 +305,7 @@ fn scene_key(app: &SolveApp) -> u64 {
     app.session.visibility.hidden_occurrences.hash(&mut h);
     app.session.visibility.hidden_sketches.hash(&mut h);
     app.session.visibility.shown_sketches.hash(&mut h);
+    app.session.visibility.hidden_folders.hash(&mut h);
     app.ui.hidden_profiles.hash(&mut h);
     app.session.active_component.hash(&mut h);
     app.session.active_occurrence_path.hash(&mut h);
@@ -942,10 +943,8 @@ pub fn origin_axes(app: &SolveApp) -> Vec<(&'static str, Vec3)> {
 /// past it either side), at least the origin axes' length around the axis's origin: (name,
 /// from, to).
 pub fn construction_axis_segments(app: &SolveApp) -> Vec<(String, Vec3, Vec3)> {
-    let axes: Vec<_> = solidcraft_engine::view::construction_axes(&app.session)
-        .into_iter()
-        .filter(|(_, n, _, _)| !app.session.visibility.hidden_origin.contains(n))
-        .collect();
+    let axes: Vec<_> =
+        solidcraft_engine::view::construction_axes(&app.session).into_iter().filter(|(_, n, _, _)| app.session.construction_visible(n)).collect();
     if axes.is_empty() {
         return Vec::new();
     }
@@ -975,7 +974,7 @@ pub fn construction_axis_segments(app: &SolveApp) -> Vec<(String, Vec3, Vec3)> {
 pub fn construction_points(app: &SolveApp) -> Vec<(String, Vec3)> {
     solidcraft_engine::view::construction_points(&app.session)
         .into_iter()
-        .filter(|(_, n, _)| !app.session.visibility.hidden_origin.contains(n))
+        .filter(|(_, n, _)| app.session.construction_visible(n))
         .map(|(_, n, p)| (n, p))
         .collect()
 }
@@ -985,7 +984,7 @@ pub fn construction_quads(app: &SolveApp) -> Vec<(String, Vec3, [Vec3; 4])> {
     let h = origin_size(app.cam.half_height()) * 1.2;
     solidcraft_engine::view::construction_planes(&app.session)
         .into_iter()
-        .filter(|(_, n, _)| !app.session.visibility.hidden_origin.contains(n))
+        .filter(|(_, n, _)| app.session.construction_visible(n))
         .map(|(_, name, pl)| {
             let (o, x, y) = (pl.origin, pl.x * h, pl.y * h);
             (name, pl.normal(), [o - x - y, o + x - y, o + x + y, o - x + y])
@@ -1902,6 +1901,7 @@ fn highlight_geometry_key(app: &SolveApp) -> u64 {
     app.session.visibility.hidden_origin.hash(&mut h);
     app.session.visibility.hidden_bodies.hash(&mut h);
     app.session.visibility.hidden_occurrences.hash(&mut h);
+    app.session.visibility.hidden_folders.hash(&mut h);
     h.finish()
 }
 
@@ -5907,6 +5907,33 @@ mod tests {
             step_orbit_snap(&mut h.app, rect, 1.0 / 60.0);
             let after = projection(&h.app, rect).to_screen(Vec3::ZERO).unwrap();
             assert!(after.distance(before) < 2.0, "{before:?} -> {after:?}");
+        }
+    }
+
+    /// An orbit drag that starts on the model turns about the point under the cursor, which
+    /// stays on its pixel, in perspective as in parallel views. The perspective view used to
+    /// correct with a pan at the target's depth, so the point slid away and the view swung
+    /// about the camera instead.
+    #[test]
+    fn cursor_orbit_keeps_the_picked_point_on_its_pixel() {
+        for perspective in [false, true] {
+            for offset in [vec2(30.0, 20.0), vec2(-60.0, 10.0), vec2(120.0, -40.0)] {
+                let mut h = crate::scenario::Harness::new();
+                h.app.preferences.orbit_around = crate::prefs::OrbitAround::Cursor;
+                h.app.ui.perspective = perspective;
+                h.app.run("solid.box", json!({"length":80,"width":50,"height":20})).unwrap();
+                h.app.fit_view();
+                let rect = h.app.viewport.rect.unwrap();
+                let at = rect.center() + offset;
+                let proj = projection(&h.app, rect);
+                assert!(pick(&h.app, &proj, at).iter().any(|hit| matches!(hit, Hit::Face { .. })), "the drag starts on the box");
+                let pivot = crate::prefs::pivot_under(&h.app, &proj, at);
+                let before = h.app.cam;
+                h.call("ui.drag", json!({"x0":at.x,"y0":at.y,"x1":at.x+150.0,"y1":at.y+60.0,"button":"middle","shift":true,"steps":20}));
+                assert!((h.app.cam.yaw - before.yaw).abs() > 0.5, "the view turned");
+                let after = projection(&h.app, rect).to_screen(pivot).unwrap();
+                assert!(after.distance(at) < 0.5, "perspective={perspective}: {at:?} -> {after:?}");
+            }
         }
     }
 
