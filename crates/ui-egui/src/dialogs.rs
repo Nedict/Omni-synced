@@ -173,6 +173,10 @@ pub enum Kind {
     },
     /// Halfway between two planes or planar faces.
     Midplane,
+    /// An imported mesh body rebuilt as editable faces (#3001).
+    MeshConvert {
+        tolerance: String,
+    },
     /// A construction axis, point or plane made from picks alone (#2474): input `i` is the
     /// command's parameter `keys[i]`, and `t` (along a path) when it takes one.
     Construct {
@@ -590,6 +594,7 @@ impl Dialog {
             "construct.plane.offset" => {
                 Dialog::new(Kind::OffsetPlane { offset: "0 mm".into() }, vec![SelInput::new("Plane", PLANES | PLANAR_FACES, false)])
             }
+            "mesh.convert" => Dialog::new(Kind::MeshConvert { tolerance: "0.05 mm".into() }, vec![SelInput::new("Mesh body", BODIES, false)]),
             "construct.plane.midplane" => Dialog::new(
                 Kind::Midplane,
                 vec![SelInput::new("First plane", PLANES | PLANAR_FACES, false), SelInput::new("Second plane", PLANES | PLANAR_FACES, false)],
@@ -1484,6 +1489,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::Material { .. } => "PHYSICAL MATERIAL",
         Kind::OffsetPlane { .. } => "OFFSET PLANE",
         Kind::Midplane => "MIDPLANE",
+        Kind::MeshConvert { .. } => "CONVERT MESH",
         Kind::Construct { title, .. } => title,
         Kind::PathPlane { .. } => "PLANE ALONG PATH",
         Kind::Rib { web: false, .. } => "RIB",
@@ -2820,6 +2826,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         ui.end_row();
                     }
                     Kind::Split | Kind::ReplaceFace | Kind::Remove | Kind::Midplane | Kind::Construct { t: None, .. } => {}
+                    Kind::MeshConvert { tolerance } => {
+                        row_label(ui, "Tolerance");
+                        enter |= field(ui, tolerance);
+                        ui.end_row();
+                    }
                     Kind::Construct { t: Some(t), .. } => {
                         row_label(ui, "Position (0 to 1)");
                         enter |= field(ui, t);
@@ -4101,6 +4112,14 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             need(0, "a plane")?;
             let base = plane_arg(app, sels(d, 0).first())?;
             ("construct.plane.offset", json!({"base": base, "offset": offset}))
+        }
+        Kind::MeshConvert { tolerance } => {
+            need(0, "the mesh body")?;
+            let body = match sels(d, 0).first() {
+                Some(Sel::Body { name }) => name.clone(),
+                _ => return Err("pick the mesh body to convert".into()),
+            };
+            ("mesh.convert", json!({"body": body, "tolerance": tolerance}))
         }
         Kind::Midplane => {
             need(0, "the first plane")?;

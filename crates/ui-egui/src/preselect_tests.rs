@@ -1932,3 +1932,43 @@ fn point_along_path_has_its_position_and_missing_picks_are_named() {
     let e = h.app.dialog.as_ref().and_then(|d| d.error.clone()).unwrap_or_default();
     assert!(e.contains("path"), "{e}");
 }
+
+/// #3001: Convert Mesh opens a dialog instead of failing with "select a mesh body". With the
+/// mesh selected first it takes it, and OK rebuilds it as faces.
+#[test]
+fn convert_mesh_asks_for_the_body_and_converts_the_selected_one() {
+    use solidcraft_engine::doc::{Document, FeatureKind, MeshData};
+    let body = solidcraft_engine::kernel::box_solid(Vec3::ZERO, Vec3::new(10., 20., 30.)).unwrap();
+    let mesh = body.tessellate(0.01).unwrap();
+    let mut doc = Document::default();
+    doc.add_feature(
+        FeatureKind::MeshImport {
+            file: "box.stl".into(),
+            meshes: vec![MeshData {
+                name: "Mesh".into(),
+                positions: mesh.positions.iter().flat_map(|p| [p.x, p.y, p.z]).collect(),
+                triangles: mesh.triangles.iter().flatten().copied().collect(),
+                color: None,
+            }],
+        },
+        Some("Imported mesh"),
+    )
+    .unwrap();
+    let mut h = crate::scenario::Harness::new();
+    h.app.session = Session::new(doc);
+    h.app.start("mesh.convert");
+    h.frames(1);
+    let status = h.app.status.as_ref().map(|s| s.0.clone()).unwrap_or_default();
+    assert!(!status.contains("select a mesh body"), "{status}");
+    assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::MeshConvert { .. })));
+    crate::dialogs::cancel(&mut h.app);
+
+    h.app.session.selection = vec![Sel::Body { name: "Mesh".into() }];
+    h.app.start("mesh.convert");
+    h.frames(1);
+    assert_eq!(h.app.dialog.as_ref().unwrap().inputs[0].items, vec![Sel::Body { name: "Mesh".into() }]);
+    h.step(&json!({"key":"Enter"})).unwrap();
+    assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().and_then(|d| d.error.clone()));
+    let state = h.app.session.model.state();
+    assert!(!state.body("Mesh").unwrap().body.is_mesh(), "rebuilt as faces");
+}

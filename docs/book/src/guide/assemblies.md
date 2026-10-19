@@ -46,6 +46,28 @@ expression stops working out (say a parameter becomes an angle), the joint is le
 solve and `joint.solve` gives the reason, instead of placing the part from old numbers. Typing a
 plain number, or driving the value, drops that expression.
 
+**Relations** are joints that tie only part of a placement, so a part is placed the way a
+designer describes it, one relation at a time: `parallel` (z along z, free to move and turn
+about it), `perpendicular` and `angle` (z square to z, or at the joint's `angle` from mated),
+`point_on_plane` (a point on a face's plane, `offset` off it), `point_on_line` (a point on an
+axis) and `line_on_plane` (an axis on a face's plane: a cylinder's radius as `offset` lays it
+tangent). A relation is made where the parts are: B moves no further than the relation needs.
+Several relations between the same two parts add up; the solver meets them together, each one's
+degrees of freedom come off what is left, and one that can't be met is reported, not forced:
+
+```json
+{"command": "joint.create", "params": {"type": "parallel", "a": "Panel top", "b": "Bracket bottom"}}
+{"command": "joint.create", "params": {"type": "point_on_plane", "a": "Panel top", "b": "Bracket corner"}}
+{"command": "joint.create", "params": {"type": "parallel", "a": "Panel front", "b": "Bracket face", "flip": true}}
+{"command": "joint.create", "params": {"type": "point_on_plane", "a": "Panel front", "b": "Bracket corner", "offset": -40}}
+{"command": "joint.create", "params": {"type": "point_on_plane", "a": "Panel end", "b": "Bracket corner", "offset": -40}}
+```
+
+leaves the bracket flat on the panel, square to its front, its corner 40 mm in from the front and
+the end, wherever the panel's size takes them. Coincident faces are a `planar` joint, a distance
+between faces is `planar` with an `offset`, concentric is `cylindrical` and two points that meet
+are `ball`.
+
 The check behind it, `inspect.clearance`, does all of that in one call for any number of bodies,
 which suits scripts and agents checking a whole assembly:
 
@@ -169,7 +191,7 @@ it where it is), and it moves.
 with their units and limits, and `moved` says whether any part moved. A joint's origins are mated
 by default: B's z axis is turned against A's, as two faces meet. `flip: true` lines them up
 instead, so two origins given at one point with the same z stay as they are. Without an
-`angle`, a new joint takes no turn or a half turn about its axis, whichever turns B less: two
+`angle`, a new joint (other than a relation, which starts where its parts are) takes no turn or a half turn about its axis, whichever turns B less: two
 faces that already meet, a plate under a panel, stay as they are instead of B spinning about
 their shared normal. For scripts that drive many steps, `quiet: true` leaves the per-part
 degrees of freedom out of joint answers, and
@@ -240,6 +262,19 @@ sets tell them apart: an occurrence inside a sub-assembly placed twice is one pa
 copies are not checked against each other. A check takes at most 256 bodies; on a large design,
 list the `occurrences` to check (an arm, with `against` the parts it must miss). When the work
 runs out it says `truncated` and the step it `checked_to`.
+`joint.sweep {joint, from, to, index?, step?, refine?, occurrences?, against?, contact_sets?,
+report_gaps?, apply?}` drives one joint value from `from` toward `to` and answers how far it gets
+before parts touch: `stopped_at` (the last value clear of contact), `stopped_by` (the two parts
+and the point `at` which they touch, or `"loop"` where a closed loop can no longer close, or
+`"limit"`), and with `report_gaps` the nearest gap at every sample and the nearest each part came
+to another (`min_gap`). The samples are fine enough that no part passes through another between
+two (or `step` apart), and the first contact is bisected until no part moves more than `refine`
+(0.01 mm by default) across it. Gaps are distances between the parts' tessellations
+(`gap_method: "mesh"`): exact for flat faces, within `gap_tolerance_mm` for curved ones. Pairs
+already touching at `from`, such as parts joined face to face or a door resting on its frame, are
+listed in `touching_at_start` and stop the sweep only once they pass into each other, deeper than
+they start. The sweep runs on a copy (closed loops follow, contact sets don't stop it) and
+leaves the design as it was unless `apply` is true.
 
 **Insert Design** (`component.insert_design {path, translate?}`, on the **ASSEMBLE** panel and
 in the **File** menu) adds a component linked to another saved design, so each part can live in
