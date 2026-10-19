@@ -167,7 +167,7 @@ fn agent_builds_box_fillet_hole() {
     assert!((8..=9).contains(&m["bodies"][0]["faces"].as_u64().unwrap()), "{m}");
     assert!(rel(m["bodies"][0]["bbox"]["max"][0].as_f64().unwrap(), 40.0) < 1e-6, "{m}");
 
-    let d = tool(&mut s, "inspect_design", json!({"sketches": true}));
+    let d = tool(&mut s, "inspect_design", json!({}));
     assert_eq!(d["timeline"].as_array().unwrap().len(), 5, "{d}");
     assert!(d["timeline"].as_array().unwrap().iter().all(|f| f["error"].is_null()), "{d}");
     assert_eq!(d["sketches"][0]["curves"].as_array().unwrap().len(), 4, "{d}");
@@ -1812,65 +1812,13 @@ fn batch_steps_may_name_tools() {
     assert!(volume(&mut s) > 4000.0);
 }
 
-/// `inspect_design` is small by default (#15): sketch summaries, compact JSON. Full sketch
-/// contents only for the sketches asked for; `bodies` keeps only those bodies.
-#[test]
-fn inspect_design_summarises_sketches_unless_asked() {
-    let mut s = server();
-    let points: Vec<[f64; 2]> = (0..720)
-        .map(|i| {
-            let t = f64::from(i) / 720.0 * std::f64::consts::TAU;
-            [30.0 * t.cos(), 30.0 * t.sin()]
-        })
-        .collect();
-    tool(
-        &mut s,
-        "batch",
-        json!({"commands": [
-            {"command": "sketch.create", "params": {"plane": "XY"}},
-            {"command": "sketch.line", "params": {"points": points, "closed": true}},
-            {"command": "sketch.finish"},
-            {"command": "solid.extrude", "params": {"distance": 5}},
-        ]}),
-    );
-    let text = |s: &mut Server, args: Value| {
-        let r = raw_tool(s, "inspect_design", args);
-        (r["result"]["isError"] == json!(true), r["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string())
-    };
-    let (_, summary) = text(&mut s, json!({"measure": false}));
-    assert!(summary.len() < 4000, "{} bytes: {summary}", summary.len());
-    assert!(!summary.contains("\n "), "compact JSON");
-    let d: Value = serde_json::from_str(&summary).unwrap();
-    let sk = &d["sketches"][0];
-    assert!(sk["points"].as_u64().is_some_and(|n| n >= 720), "{sk}");
-    assert_eq!((&sk["curves"], &sk["profiles"]), (&json!(720), &json!(1)), "{sk}");
-    assert!(sk["constraints"].is_u64() && sk["dof"].is_number() && sk["plane"].is_object(), "{sk}");
-    assert_eq!(text(&mut s, json!({"measure": false, "sketches": false})).1, summary);
-    assert_eq!(text(&mut s, json!({"measure": false, "sketches": "summary"})).1, summary);
-    let name = sk["name"].as_str().unwrap().to_string();
-    let (_, full) = text(&mut s, json!({"measure": false, "sketches": [name]}));
-    assert!(full.len() > 50_000 && full.len() > 20 * summary.len(), "{} vs {}", full.len(), summary.len());
-    let f: Value = serde_json::from_str(&full).unwrap();
-    assert_eq!(f["sketches"][0]["curves"].as_array().map(Vec::len), Some(720));
-    assert_eq!(text(&mut s, json!({"measure": false, "sketches": true})).1.len(), full.len());
-    let (err, e) = text(&mut s, json!({"sketches": ["Nope"]}));
-    assert!(err && e.contains("no sketch") && e.contains(&name), "{e}");
-
-    let (_, one) = text(&mut s, json!({"bodies": ["Body1"]}));
-    let one: Value = serde_json::from_str(&one).unwrap();
-    assert_eq!(one["bodies"].as_array().map(Vec::len), Some(1), "{one}");
-    assert!(one["bodies"][0]["volume_mm3"].as_f64().is_some_and(|v| v > 0.0) && one["bodies"][0]["visible"] == true, "{one}");
-    let (err, e) = text(&mut s, json!({"bodies": ["Nope"]}));
-    assert!(err && e.contains("no body `Nope`") && e.contains("Body1"), "{e}");
-}
-
 /// An unknown argument is refused with the tool's real arguments listed.
 #[test]
 fn unknown_arguments_list_the_real_ones() {
     let mut s = server();
     for (tool_name, want) in [
         ("screenshot", &["view", "camera", "path", "width", "height", "source", "grid", "axes"][..]),
-        ("inspect_design", &["measure", "sketches", "bodies"][..]),
+        ("inspect_design", &["measure", "sketches"][..]),
         ("body_topology", &["body"][..]),
     ] {
         let args = if tool_name == "body_topology" { json!({"body": "Body1", "nonsense": 3}) } else { json!({"nonsense": 3}) };

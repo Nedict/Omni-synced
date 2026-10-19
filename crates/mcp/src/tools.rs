@@ -129,19 +129,12 @@ pub fn tool_definitions() -> Vec<Value> {
             "Inspect the design",
             "The whole design: user parameters (expression, value, errors), the timeline (features with type, suppressed, \
              rolled back, error, warning, timing), bodies (volume, area, centre of mass, bounding box, face/edge/vertex \
-             counts), sketches, the active sketch, selection and undo depth. Sketches are summarised by default (id, name, \
-             plane, counts of points, curves, constraints and profiles, degrees of freedom, solve status); their full contents \
-             (curves with ids and coordinates, points, constraints, profiles) only for the sketches named in `sketches`, or \
-             all with `sketches: true` (large: a 720-point sketch is some 200 KB). Arguments: measure, sketches, bodies.",
+             counts), sketches (curves with ids and coordinates, points, constraints, profiles, degrees of freedom, solve \
+             status), the active sketch, selection and undo depth.",
             obj(
                 json!({
                     "measure": {"type": "boolean", "description": "Measure bodies (default true)"},
-                    "sketches": {
-                        "type": ["boolean", "string", "array"],
-                        "items": {"type": ["string", "integer"]},
-                        "description": "Which sketches in full: a list of sketch names or ids, true (all of them), or false / \"summary\" (none: summaries only, the default)",
-                    },
-                    "bodies": {"type": "array", "items": {"type": "string"}, "description": "Only these bodies, by name (default: all)"},
+                    "sketches": {"type": "boolean", "description": "Full sketch contents (default true; false = summary only)"},
                 }),
                 &[],
             ),
@@ -169,8 +162,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "List edges and faces",
             "The edges (index, midpoint, length, endpoints) and faces (index, name, area, centroid, plane normal, a `point` that lies \
              on the face, and for a cylindrical face its `cylinder`: origin, axis, radius) of a body. Use an edge midpoint as the \
-             [x,y,z] point that picks the edge for fillet and chamfer; a face's point or its name picks the face for the face commands. \
-             Arguments: body (required).",
+             [x,y,z] point that picks the edge for fillet and chamfer; a face's point or its name picks the face for the face commands.",
             obj(json!({"body": string("Body name, e.g. \"Body1\"")}), &["body"]),
             Effect::ReadOnly,
         ),
@@ -201,8 +193,7 @@ pub fn tool_definitions() -> Vec<Value> {
              Connected to the app: a screenshot of the window (source \"window\", the default) or a render of the model \
              with the app's camera (source \"model\"). Both show an active section (inspect.section) with its cut face \
              capped. `view` first turns the camera to a standard view or a saved named view (view.save), `camera` to              any camera (as view.apply). \
-             `grid: false` and `axes: false` leave the ground grid (on Z 0) and the origin's axes out of a model render. \
-             Arguments: view, camera, path, width, height, source, grid, axes (all optional).",
+             `grid: false` and `axes: false` leave the ground grid (on Z 0) and the origin's axes out of a model render.",
             obj(
                 json!({
                     "view": string(
@@ -362,12 +353,11 @@ pub(crate) fn check_arguments(name: &str, args: &Value) -> Result<(), String> {
     Ok(())
 }
 
-/// A tool result: content blocks plus the error flag. JSON is compact (not pretty-printed): the
-/// agent reads every byte.
+/// A tool result: content blocks plus the error flag.
 fn text_result(v: &Value, is_error: bool) -> Value {
     let text = match v {
         Value::String(s) => s.clone(),
-        v => v.to_string(),
+        v => serde_json::to_string_pretty(v).unwrap_or_default(),
     };
     let mut r = json!({"content": [{"type": "text", "text": text}]});
     if is_error {
@@ -415,7 +405,19 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Map<String, Value>) -> Result<V
             let v = exec(b, id, a.get("params").cloned().filter(Value::is_object).unwrap_or(json!({})))?;
             Ok(if a.get("verbose").and_then(Value::as_bool).unwrap_or(true) { v } else { compact(v) })
         }
-        "inspect_design" => inspect_design(b, a),
+        "inspect_design" => {
+            let measure = a.get("measure").and_then(Value::as_bool).unwrap_or(true);
+            let mut d = b.call("document.inspect", json!({"measure": measure}))?;
+            if a.get("sketches").and_then(Value::as_bool).unwrap_or(true) {
+                let ids: Vec<Value> = d["sketches"].as_array().map(|v| v.iter().map(|s| s["id"].clone()).collect()).unwrap_or_default();
+                let full: Vec<Value> = ids
+                    .into_iter()
+                    .map(|id| exec(b, "sketch.inspect", json!({"sketch": id.clone()})).unwrap_or_else(|e| json!({"id": id, "error": e})))
+                    .collect();
+                d["sketches"] = Value::Array(full);
+            }
+            Ok(d)
+        }
         "pending" => pending(b),
         "measure" => {
             if let Some(items) = a.get("items") {
@@ -459,93 +461,6 @@ fn filter_commands(all: Value, filter: Option<&str>) -> Value {
     let hit =
         |c: &Value| ["id", "label", "panel", "tab"].iter().any(|k| c.get(*k).and_then(Value::as_str).is_some_and(|s| s.to_lowercase().contains(&f)));
     Value::Array(all.as_array().map(|v| v.iter().filter(|c| hit(c)).cloned().collect()).unwrap_or_default())
-}
-
-/// Names for an error message: at most 40 of them.
-fn name_list(names: &[String]) -> String {
-    let mut out = names.iter().take(40).cloned().collect::<Vec<_>>().join(", ");
-    if names.len() > 40 {
-        out.push_str(&format!(", … ({} in all)", names.len()));
-    }
-    if out.is_empty() { "none".into() } else { out }
-}
-
-/// `inspect_design`: `document.inspect`, with sketch summaries unless sketches are asked for in
-/// full (by name or id, or all), and only the bodies asked for.
-fn inspect_design(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<Value, String> {
-    let measure = a.get("measure").and_then(Value::as_bool).unwrap_or(true);
-    let bodies: Option<Vec<String>> = match a.get("bodies").filter(|v| !v.is_null()) {
-        None => None,
-        Some(v) => Some(
-            v.as_array()
-                .and_then(|l| l.iter().map(|n| n.as_str().map(str::to_string)).collect::<Option<Vec<_>>>())
-                .ok_or("inspect_design: `bodies` must be a list of body names")?,
-        ),
-    };
-    // With `bodies`, only those are measured.
-    let mut d = b.call("document.inspect", json!({"measure": measure && bodies.is_none()}))?;
-    if let Some(want) = bodies {
-        let all: Vec<Value> = d["bodies"].as_array().cloned().unwrap_or_default();
-        let names: Vec<String> = all.iter().filter_map(|x| x["name"].as_str().map(str::to_string)).collect();
-        if let Some(missing) = want.iter().find(|n| !names.contains(n)) {
-            return Err(format!("inspect_design: no body `{missing}` (bodies: {})", name_list(&names)));
-        }
-        let mut kept: Vec<Value> = all.into_iter().filter(|x| x["name"].as_str().is_some_and(|n| want.iter().any(|w| w == n))).collect();
-        if measure && !want.is_empty() {
-            let m = exec(b, "inspect.measure", json!({"bodies": want}))?;
-            for body in &mut kept {
-                let measured = m["bodies"].as_array().and_then(|l| l.iter().find(|x| x["name"] == body["name"])).cloned();
-                if let (Some(Value::Object(fields)), Some(o)) = (measured, body.as_object_mut()) {
-                    for (k, v) in fields {
-                        o.entry(k).or_insert(v);
-                    }
-                }
-            }
-        }
-        d["bodies"] = Value::Array(kept);
-    }
-    let sketches: Vec<Value> = d["sketches"].as_array().cloned().unwrap_or_default();
-    let full: Vec<Value> = match a.get("sketches") {
-        None | Some(Value::Null) | Some(Value::Bool(false)) => Vec::new(),
-        Some(Value::String(t)) if t == "summary" => Vec::new(),
-        Some(Value::Bool(true)) => sketches.iter().map(|x| x["id"].clone()).collect(),
-        Some(Value::String(t)) if t == "full" || t == "all" => sketches.iter().map(|x| x["id"].clone()).collect(),
-        Some(Value::Array(list)) => {
-            let mut ids = Vec::new();
-            for want in list {
-                let found = sketches.iter().find(|x| match want {
-                    Value::String(n) => x["name"].as_str() == Some(n.as_str()) || x["id"].as_u64().is_some_and(|id| n.parse::<u64>() == Ok(id)),
-                    Value::Number(_) => x["id"] == *want,
-                    _ => false,
-                });
-                match found {
-                    Some(x) => ids.push(x["id"].clone()),
-                    None => {
-                        let names: Vec<String> = sketches.iter().filter_map(|x| x["name"].as_str().map(str::to_string)).collect();
-                        return Err(format!("inspect_design: no sketch {want} (sketches: {})", name_list(&names)));
-                    }
-                }
-            }
-            ids
-        }
-        Some(other) => {
-            return Err(format!("inspect_design: `sketches` must be true, false, \"summary\" or a list of sketch names (got {other})"));
-        }
-    };
-    if !full.is_empty() {
-        let out: Vec<Value> = sketches
-            .into_iter()
-            .map(|x| {
-                if full.contains(&x["id"]) {
-                    exec(b, "sketch.inspect", json!({"sketch": x["id"].clone()})).unwrap_or_else(|e| json!({"id": x["id"], "error": e}))
-                } else {
-                    x
-                }
-            })
-            .collect();
-        d["sketches"] = Value::Array(out);
-    }
-    Ok(d)
 }
 
 /// `pending`: the end of a request still running when its call returned (bridged only; a
