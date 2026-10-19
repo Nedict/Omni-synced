@@ -942,12 +942,31 @@ pub fn finish(app: &mut SolveApp, tool: &mut Tool) -> bool {
 }
 
 /// Rubber band for point tools and pick markers.
+/// With Trim active and the cursor over curve `id` of `sketch` (the active sketch): the piece a
+/// click takes away (#3052), which the hover shows in place of the whole curve. `None` with
+/// another tool, or for a curve trim cuts otherwise (`solidcraft_engine::cmd::trim_piece`).
+pub(crate) fn trim_hover_piece(app: &SolveApp, sketch: u64, id: &str) -> Option<Vec<Vec2>> {
+    let tool = app.tool.as_ref().filter(|t| t.cmd == "sketch.trim")?;
+    let (at, _) = tool.hover.as_ref()?;
+    if active_sketch(app) != Some(sketch) {
+        return None;
+    }
+    let st = app.session.world_state();
+    solidcraft_engine::cmd::trim_piece(&st.sketch(sketch)?.sketch, id, *at)
+}
+
 pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) {
     let Some(sid) = active_sketch(app) else { return };
     let st = app.session.world_state();
     let Some(ss) = st.sketch(sid) else { return };
     let to = |p: Vec2| proj.to_screen(ss.plane.to_world(p));
     let tk = crate::theme::Tokens::get();
+    if let Some(crate::viewport::Hit::SketchCurve { sketch, id, .. }) = &app.viewport.hover
+        && let Some(piece) = trim_hover_piece(app, *sketch, id)
+    {
+        let world: Vec<_> = piece.iter().map(|p| ss.plane.to_world(*p)).collect();
+        crate::tools::paint_sketch_path(&world, 0, painter, proj, Stroke::new(3.0, tk.hover_profile_edge));
+    }
     let stroke = Stroke::new(1.5, tk.rubber_band);
     if let Some((hp, snap)) = &t.hover
         && let Some(sp) = to(*hp)
