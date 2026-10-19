@@ -4571,3 +4571,83 @@ fn a_hole_that_parts_a_flange_from_the_base_names_it() {
     assert_eq!(out["warning"], json!(last_warning(&s)));
     assert_eq!(flat_pieces(&s).len(), 2);
 }
+
+/// The three exports of a sheet's flat pattern: its JSON, the DXF (of this body and of every
+/// body) and the bend table, each as its error if it is refused.
+fn flat_exports(s: &mut Session) -> Vec<std::result::Result<Value, String>> {
+    let calls = [
+        ("sheet.flat_pattern", json!({})),
+        ("sheet.export_dxf", json!({})),
+        ("sheet.export_dxf", json!({"per_body": true})),
+        ("sheet.export_bend_table", json!({})),
+    ];
+    calls.iter().map(|(id, p)| s.execute(id, p).map_err(|e| e.to_string())).collect()
+}
+
+/// A mirror combined into a sheet, or a tab extruded onto it and joined, makes a part its
+/// flat pattern does not have (the mirrored half, the tab): the flat pattern, the DXF and the
+/// bend table are refused with the feature's name instead of writing the sheet without it.
+#[test]
+fn a_mirror_or_a_join_into_a_sheet_refuses_its_flat_pattern_naming_the_feature() {
+    let mut s = Session::default();
+    base(&mut s, 100.0, 60.0);
+    run(&mut s, "sheet.flange", json!({"edges": [[50, 0, 2.5]], "height": 20}));
+    let body = s.model.state().sheets[0].body.clone();
+    let out = run(&mut s, "solid.mirror", json!({"bodies": [body], "plane": "YZ", "combine": true}));
+    assert!(out["warning"].as_str().unwrap_or_default().contains("is sheet metal: its flat pattern, DXF and bend table"), "{out}");
+    for result in flat_exports(&mut s) {
+        let error = result.expect_err("a mirrored half the flat pattern lacks");
+        assert!(error.contains("not supported yet: the flat pattern of") && error.contains("can't include Mirror1"), "{error}");
+    }
+
+    let mut s = Session::default();
+    base(&mut s, 100.0, 60.0);
+    rectangle_tool(&mut s, "Tab", [40.0, 60.0], [60.0, 75.0]);
+    run(&mut s, "solid.extrude", json!({"sketch": "Tab", "distance": 2.5, "operation": "join"}));
+    for result in flat_exports(&mut s) {
+        let error = result.expect_err("a joined tab the flat pattern lacks");
+        assert!(error.contains("can't include Extrude1"), "{error}");
+    }
+}
+
+/// A fillet on a sheet's corner is refused in the flat pattern until a sheet metal feature
+/// rebuilds the body from its sheet features; that feature says the round is not kept, and the
+/// flat pattern describes the body again.
+#[test]
+fn a_fillet_on_a_sheet_corner_is_refused_until_a_sheet_feature_rebuilds_the_body() {
+    let mut s = Session::default();
+    base(&mut s, 100.0, 60.0);
+    let out = run(&mut s, "solid.fillet", json!({"edges": [[100, 60, 1.25]], "radius": 10}));
+    assert!(out["warning"].as_str().is_some_and(|w| w.contains("is sheet metal")), "{out}");
+    let error = s.execute("sheet.export_dxf", &json!({})).unwrap_err().to_string();
+    assert!(error.contains("can't include Fillet1"), "{error}");
+    let out = run(&mut s, "sheet.flange", json!({"edges": [[50, 0, 2.5]], "height": 20}));
+    assert!(out["warning"].as_str().is_some_and(|w| w.contains("what Fillet1 changed is not kept")), "{out}");
+    assert!(flat_exports(&mut s).into_iter().all(|r| r.is_ok()));
+    assert_eq!(s.model.state().sheets[0].altered_by, None);
+}
+
+/// A sheet built and machined with sheet features (flanges, a hem, a hole and a cut across a
+/// bend while unfolded, refolded, then moved) keeps its flat pattern and exports.
+#[test]
+fn a_sheet_made_of_sheet_features_and_flat_cuts_still_exports_its_flat_pattern() {
+    let mut s = Session::default();
+    base(&mut s, 100.0, 60.0);
+    run(&mut s, "sheet.flange", json!({"edges": [[50, 0, 2.5], [100, 30, 2.5]], "height": 20}));
+    run(&mut s, "sheet.hem", json!({"edges": [[0, 30, 2.5]], "length": 8}));
+    run(&mut s, "solid.hole", json!({"position": [30, 30, 2.5], "diameter": 6}));
+    run(&mut s, "sheet.unfold", json!({}));
+    rectangle_tool(&mut s, "Slot", [45.0, -10.0], [55.0, 10.0]);
+    run(&mut s, "solid.extrude", json!({"sketch": "Slot", "through_all": true, "direction": "symmetric", "operation": "cut"}));
+    run(&mut s, "sheet.refold", json!({}));
+    let body = s.model.state().sheets[0].body.clone();
+    run(&mut s, "solid.move", json!({"bodies": [body], "translate": [10, 0, 0]}));
+    let flagged = |w: &str| w.contains("flat pattern, DXF and bend table") || w.contains("is not kept");
+    assert!(s.model.results.iter().all(|r| r.error.is_none() && !r.warning.as_deref().is_some_and(flagged)), "{:?}", s.model.results);
+    assert_eq!(s.model.state().sheets[0].altered_by, None);
+    for result in flat_exports(&mut s) {
+        let value = result.expect("a sheet the flat pattern describes");
+        assert!(value.is_object(), "{value}");
+    }
+    assert_eq!(flat(&mut s)["cutouts"].as_array().map(Vec::len), Some(2));
+}
