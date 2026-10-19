@@ -1,5 +1,8 @@
 //! Timeline evaluation.
 
+#[path = "placed_mesh.rs"]
+mod placed_mesh;
+
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, OnceLock};
@@ -28,6 +31,8 @@ pub struct ModelBody {
     // Timeline snapshots are cloned before meshes are requested. Share the cell itself so
     // meshing any snapshot also warms every unchanged copy of this body.
     mesh: Arc<OnceLock<Arc<Mesh>>>,
+    /// Lazy canonical reference triangles for a proper rigid occurrence placement.
+    mesh_placement: Option<Arc<placed_mesh::PlacedMesh>>,
     /// The display plan (none when the body has no plan: a mesh body, or one the planner
     /// refuses), shared like the mesh. A GPU viewport draws it.
     plan: Arc<[OnceLock<Option<Arc<TessPlan>>>; 4]>,
@@ -61,6 +66,7 @@ impl ModelBody {
             body,
             feature,
             mesh: Arc::new(OnceLock::new()),
+            mesh_placement: None,
             plan: Arc::new(Default::default()),
             plan_mesh: Arc::new(Default::default()),
             key: 0,
@@ -83,9 +89,10 @@ impl ModelBody {
         // finding their surface, picks naming their face, sketch planes), and a different
         // triangulation moved those and changed what designs build. A GPU viewport draws the
         // plan ([`ModelBody::display_plan`]).
-        self.mesh
-            .get_or_init(|| Arc::new(self.body.reference_display_mesh_angular(self.display_tol(), kernel::DISPLAY_ANGLE).unwrap_or_default()))
-            .clone()
+        match self.mesh_placement.as_deref() {
+            Some(placed) => self.mesh.get_or_init(|| placed.mesh()).clone(),
+            None => placed_mesh::reference_mesh(&self.body, &self.mesh, self.display_tol()),
+        }
     }
 
     /// The display plan of this body at the viewport's display quality
@@ -145,9 +152,10 @@ impl ModelBody {
         Some((Arc::new(plan), Arc::new(mesh)))
     }
 
-    /// The chord tolerance of [`ModelBody::mesh`] (mm): 1/1000 of the body's size, at least 1 µm.
+    /// The chord tolerance of [`ModelBody::mesh`] (mm): 1/1000 of the definition's size, at least
+    /// 1 µm. Proper rigid placements retain that tolerance along with the reference triangles.
     pub fn display_tol(&self) -> f64 {
-        (self.body.size() * 1e-3).max(1e-3)
+        self.mesh_placement.as_ref().map(|placed| placed.tolerance).unwrap_or_else(|| (self.body.size() * 1e-3).max(1e-3))
     }
 
     /// Already computed display geometry; saving must not trigger cold tessellation.
@@ -2884,6 +2892,38 @@ fn hole_tools(
     Ok(hole_tools_and_prisms(vals, st, position, dir, diameter, depth, hole)?.into_iter().map(|(tool, _)| tool).collect())
 }
 
+/// The scale a hole's tools are sized by: the largest body the hole's axis meets (#2904), so a
+/// large body elsewhere in the model changes neither the tool's reach above the face (and so
+/// the countersink's outline) nor its depth. A hole whose axis meets no body is sized by the
+/// largest body of the model, as before.
+fn hole_axis_size(st: &ModelState, position: &Vec3, dir: Vec3) -> f64 {
+    let along = |b: &ModelBody| {
+        // The axis (an unbounded line) against the body's box, grown by the display tolerance.
+        let bb = b.mesh().bounds();
+        if bb.is_empty() {
+            return false;
+        }
+        let pad = 2.0 * b.display_tol();
+        let (mut lo, mut hi) = (f64::NEG_INFINITY, f64::INFINITY);
+        for (o, d, min, max) in
+            [(position.x, dir.x, bb.min.x, bb.max.x), (position.y, dir.y, bb.min.y, bb.max.y), (position.z, dir.z, bb.min.z, bb.max.z)]
+        {
+            if d.abs() < 1e-12 {
+                if o < min - pad || o > max + pad {
+                    return false;
+                }
+            } else {
+                let (a, c) = ((min - pad - o) / d, (max + pad - o) / d);
+                lo = lo.max(a.min(c));
+                hi = hi.min(a.max(c));
+            }
+        }
+        lo <= hi
+    };
+    let met = st.bodies.iter().filter(|b| along(b)).map(|b| b.body.size()).fold(0.0, f64::max);
+    if met > 0.0 { met } else { st.bodies.iter().map(|b| b.body.size()).fold(1.0, f64::max) }
+}
+
 /// [`hole_tools`], each with its exact geometry when it is a straight cylinder along the axis
 /// (a plain hole, a counterbore, a drill point left in the air past a through hole), so sheet
 /// metal can keep it as a flat cut-out or pocket. Each tool's faces are named by the part of the
@@ -2902,7 +2942,7 @@ fn hole_tools_and_prisms(
     if !(r > 1e-6) {
         return Err(DocError::Invalid("hole diameter must be positive".into()));
     }
-    let size = st.bodies.iter().map(|b| b.body.size()).fold(1.0, f64::max);
+    let size = hole_axis_size(st, position, dir);
     let top = (size * 0.01).max(0.1);
     let bottom = match depth {
         Some(d) => -val(vals, d, Kind::Length)?,
@@ -4064,9 +4104,17 @@ fn path_segments(ps: &SolvedSketch, ids: &[String], start: Vec3) -> Result<Vec<k
 
 /// Where an extrude of distance `d` starts and ends along the sketch normal, before any start
 /// offset: one side, the other, both (symmetric), or a second distance on the other side.
+///
+/// A second distance (`distance2`) goes the other way from the first side, wherever that went:
+/// against the normal for `direction: negative` (#2700), and back along it when a negative
+/// distance or a To Object below the sketch sends the first side down.
 pub(crate) fn extent_sides(vals: &BTreeMap<String, Value>, extent: &crate::Extent, d: f64, direction: crate::Direction) -> Result<(f64, f64)> {
     Ok(match (&extent.distance2, direction) {
-        (Some(d2), _) => (-val(vals, d2, Kind::Length)?, d),
+        (Some(d2), _) => {
+            let first = if direction == crate::Direction::Negative { -d } else { d };
+            let d2 = val(vals, d2, Kind::Length)?;
+            (if first < 0.0 { d2 } else { -d2 }, first)
+        }
         (None, crate::Direction::Positive) => (0.0, d),
         (None, crate::Direction::Negative) => (-d, 0.0),
         (None, crate::Direction::Symmetric) => {
@@ -4356,6 +4404,9 @@ fn replay(
             continue;
         }
         let (op, targets) = feature_op(src);
+        // A primitive's or a hole's targets are its participants (#1108): the copies change
+        // those bodies only, like the feature itself (#2755).
+        let targets = if targets.is_empty() { src.participants.clone() } else { targets };
         let mut copies = Vec::new();
         if let FeatureKind::Hole { diameter, depth, hole, to, .. } = &src.kind {
             // A hole is drilled again at each copy of its spot (found on the surface there), so
@@ -5008,7 +5059,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                     if curves.is_empty() {
                         return Err(DocError::Invalid(format!("sketch `{}` has no curves to split with", ss.name)));
                     }
-                    kernel::split_faces(&mb.body, &picked, &kernel::SplitTool::Curves { plane: ss.plane, curves })?
+                    kernel::split_faces(&mb.body, &picked, &kernel::SplitTool::Curves { plane: ss.plane, curves, along: None })?
                 }
                 (None, None) => {
                     let pl = doc.resolve_plane_in(vals, plane, 0, Some(st))?;
@@ -5707,11 +5758,19 @@ impl PlacedBodies {
             Some((_, placed)) => {
                 let mut fresh = ModelBody::new(name, placed.body.clone(), b.feature);
                 fresh.mesh = placed.mesh.clone();
+                fresh.mesh_placement = placed.mesh_placement.clone();
                 fresh.plan = placed.plan.clone();
                 fresh.plan_mesh = placed.plan_mesh.clone();
                 fresh
             }
-            None => ModelBody::new(name, kernel::transform_matrix(&b.body, *m).unwrap_or_else(|_| b.body.clone()), b.feature),
+            None => match kernel::transform_matrix(&b.body, *m) {
+                Ok(body) => {
+                    let mut fresh = ModelBody::new(name, body, b.feature);
+                    fresh.mesh_placement = placed_mesh::PlacedMesh::new(b, m).map(Arc::new);
+                    fresh
+                }
+                Err(_) => ModelBody::new(name, b.body.clone(), b.feature),
+            },
         }
     }
 }
@@ -5746,21 +5805,39 @@ pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut 
         path
     };
     let mut out = ModelState { body_counter: st.body_counter, ..Default::default() };
-    for (comp, path, m) in doc.placements() {
+    let placements = doc.placements();
+    // A body moved in from another component keeps its place (its offset).
+    let body_matrix = |b: &ModelBody, m: &crate::Mat| doc.model_body_offset(b).map(|o| crate::mat_mul(m, o)).unwrap_or(*m);
+    // Every body placed elsewhere than its definition, placed on all cores: a large assembly
+    // places hundreds of parts, each a B-rep transform.
+    let mut jobs = Vec::new();
+    for (comp, path, m) in &placements {
+        for b in st.bodies.iter().filter(|b| doc.model_body_component(b) == *comp) {
+            let bm = body_matrix(b, m);
+            if !crate::is_identity(&bm) {
+                jobs.push((b, bm, doc.world_body_name(st, &b.name, *comp, path)));
+            }
+        }
+    }
+    let mut moved = kernel::map_on_threads(&jobs, 16, |(b, bm, name)| placed_before.placed(b, bm, name.clone())).into_iter().zip(&jobs);
+    for (comp, path, m) in placements {
         let primary = path == first_path(comp);
         let ident = crate::is_identity(&m);
         for b in st.bodies.iter().filter(|b| doc.model_body_component(b) == comp) {
-            let name = doc.world_body_name(st, &b.name, comp, &path);
-            // A body moved in from another component keeps its place (its offset).
-            let bm = doc.model_body_offset(b).map(|o| crate::mat_mul(&m, o)).unwrap_or(m);
+            let bm = body_matrix(b, &m);
             // Identical geometry also shares its display mesh cell with the definition.
             // A changed placement keeps a distinct mesh, at that placement's coordinates.
             let mut placed = if crate::is_identity(&bm) {
                 let mut placed = b.clone();
-                placed.name = name;
+                placed.name = doc.world_body_name(st, &b.name, comp, &path);
                 placed
             } else {
-                let placed = placed_before.placed(b, &bm, name);
+                // The same order as the jobs: this body's, made above (again here if it failed).
+                let placed = match moved.next() {
+                    Some((Some(placed), _)) => placed,
+                    Some((None, (_, _, name))) => placed_before.placed(b, &bm, name.clone()),
+                    None => placed_before.placed(b, &bm, doc.world_body_name(st, &b.name, comp, &path)),
+                };
                 placed_now.by_source.insert(placed_key(b, &bm), (b.clone(), placed.clone()));
                 placed
             };
