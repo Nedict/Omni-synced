@@ -1567,16 +1567,6 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
     });
 }
 
-/// Compact combo-box for picking a single [`ModifierCombo`] from the three single-key options.
-fn modifier_combo_picker(ui: &mut egui::Ui, salt: &str, combo: &mut ModifierCombo) {
-    let label = combo.label();
-    egui::ComboBox::from_id_salt(salt).selected_text(label).show_ui(ui, |ui| {
-        for c in ModifierCombo::SINGLE_KEYS {
-            ui.selectable_value(combo, c, c.label());
-        }
-    });
-}
-
 /// Sketch snap-suppress picker: classic Ctrl/Cmd-or-Alt first, then single keys.
 fn snap_suppress_picker(ui: &mut egui::Ui, salt: &str, combo: &mut ModifierCombo) {
     let label = combo.label();
@@ -2200,11 +2190,14 @@ mod tests {
         let old: Prefs = serde_json::from_value(json!({"nav": "solidworks"})).unwrap();
         assert_eq!(old.suppress_sketch_snap, ModifierCombo::CTRL_ALT);
         assert!(!old.selection_shift_add_only);
-        // Classic default: Ctrl/Cmd or Alt each suppress.
+        // Classic default: Ctrl/Cmd or Alt each suppress (`command` is primary on all hosts).
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
-        assert!(suppress_sketch_snap_held(&app, Modifiers::CTRL));
-        assert!(suppress_sketch_snap_held(&app, Modifiers::ALT));
-        assert!(!suppress_sketch_snap_held(&app, Modifiers::SHIFT));
+        let ctrl = Modifiers { ctrl: true, command: true, ..Default::default() };
+        let alt = Modifiers { alt: true, ..Default::default() };
+        let shift = Modifiers { shift: true, ..Default::default() };
+        assert!(suppress_sketch_snap_held(&app, ctrl));
+        assert!(suppress_sketch_snap_held(&app, alt));
+        assert!(!suppress_sketch_snap_held(&app, shift));
         control(
             &mut app,
             &json!({"open": "Sketch", "suppress_sketch_snap": {"shift": false, "ctrl": true, "alt": false}, "manipulator_free_alt": false}),

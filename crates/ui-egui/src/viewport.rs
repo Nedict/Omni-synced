@@ -6431,10 +6431,10 @@ mod grid_plane_tests {
     fn preview_rollback_stays_off_while_manipulator_dragging() {
         let mut s = solidcraft_engine::Session::default();
         s.execute("sketch.create", &json!({"plane": "xy"})).unwrap();
-        s.execute("sketch.rectangle", &json!({"corner1": [0, 0], "corner2": [20, 10]})).unwrap();
+        s.execute("sketch.line", &json!({"points": [[0, 0], [20, 0]]})).unwrap();
         s.execute("sketch.finish", &json!({})).unwrap();
         let mut app = SolveApp::new(s, crate::Services::default());
-        app.start("solid.extrude");
+        app.dialog = crate::dialogs::Dialog::for_command(&app, "solid.extrude");
         assert!(app.dialog.as_ref().is_some_and(|d| d.previews()), "extrude opens a preview dialog");
         app.preview.active = true;
         let primary = crate::tool_modifiers::Held { primary: true, ..Default::default() };
