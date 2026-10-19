@@ -52,10 +52,6 @@ fn projected_spherical_outline_does_not_block_a_lens_cut() {
     let history = result.history().expect("the retry composes the tool's face history");
     history.check(&result, &[&target, &cutter]).unwrap();
     assert!(history.faces.iter().all(|f| !f.origins.is_empty()));
-    // A real app render of the result can be made from this transient export.
-    if let Ok(path) = std::env::var("SOLIDCRAFT_LENS_EVIDENCE_STEP") {
-        std::fs::write(path, crate::step_export(&[&result], "SolidCraft issue 2750 regression").unwrap()).unwrap();
-    }
 }
 
 #[test]
