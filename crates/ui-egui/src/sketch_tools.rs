@@ -941,7 +941,14 @@ pub fn finish(app: &mut SolveApp, tool: &mut Tool) -> bool {
     }
 }
 
-/// Rubber band for point tools and pick markers.
+/// The cursor's Trim piece, keyed by design revision, sketch, curve and cursor: the viewport's
+/// hover and the preview both ask for it each frame, and it intersects the curve with every other.
+type TrimPieceKey = (u64, u64, String, [u64; 2]);
+
+thread_local! {
+    static TRIM_PIECE: std::cell::RefCell<Option<(TrimPieceKey, Option<Vec<Vec2>>)>> = const { std::cell::RefCell::new(None) };
+}
+
 /// With Trim active and the cursor over curve `id` of `sketch` (the active sketch): the piece a
 /// click takes away (#3052), which the hover shows in place of the whole curve. `None` with
 /// another tool, or for a curve trim cuts otherwise (`solidcraft_engine::cmd::trim_piece`).
@@ -951,10 +958,17 @@ pub(crate) fn trim_hover_piece(app: &SolveApp, sketch: u64, id: &str) -> Option<
     if active_sketch(app) != Some(sketch) {
         return None;
     }
+    let key = (app.session.revision, sketch, id.to_string(), [at.x.to_bits(), at.y.to_bits()]);
+    if let Some(piece) = TRIM_PIECE.with(|c| c.borrow().as_ref().filter(|(k, _)| *k == key).map(|(_, p)| p.clone())) {
+        return piece;
+    }
     let st = app.session.world_state();
-    solidcraft_engine::cmd::trim_piece(&st.sketch(sketch)?.sketch, id, *at)
+    let piece = solidcraft_engine::cmd::trim_piece(&st.sketch(sketch)?.sketch, id, *at);
+    TRIM_PIECE.with(|c| *c.borrow_mut() = Some((key, piece.clone())));
+    piece
 }
 
+/// Rubber band for point tools and pick markers.
 pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) {
     let Some(sid) = active_sketch(app) else { return };
     let st = app.session.world_state();
