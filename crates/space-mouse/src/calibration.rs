@@ -318,14 +318,17 @@ pub const MIN_SHARE: f64 = 1.0 / 12.0;
 pub const REST_SECONDS: f64 = 1.5;
 /// Seconds the cap has to be held out in a step's direction before letting go finishes it.
 pub const HOLD_SECONDS: f64 = 0.4;
-/// Seconds a reading has to stay steady (each raw axis within twice its rest wander, so exactly
-/// still on a source that sends nothing at rest), at most [`SETTLED_SHARE`] of the step's peak
-/// from rest, to count as let go even outside the rest wander: the cap stopped short of rest, as a
-/// drifting stick does, or spacenavd with a relative-axis device (#2778).
+/// Seconds the reading has to stay steady, with the step's own axis back within
+/// [`SETTLED_SHARE`] of how far it went, to count as let go even outside the rest wander: the cap
+/// stopped short of rest, as a drifting stick does, or spacenavd with a relative-axis device
+/// (#2778). Steady means each raw axis's readings span no more than twice its rest wander, at
+/// least 2 units and [`STEADY_SHARE`] of the furthest any step has gone: an axis that read flat
+/// at rest may still dither once it's off-centre.
 pub const SETTLE_SECONDS: f64 = 0.3;
-/// How far from rest, as a share of the furthest a step went, a reading may have stopped and
-/// still count as let go.
+/// How far back from its peak, as a share of it, the step's own axis has to be to count as let go.
 pub const SETTLED_SHARE: f64 = 0.25;
+/// The least spread steady readings may have, as a share of the furthest any step has gone.
+pub const STEADY_SHARE: f64 = 1.0 / 50.0;
 
 /// Where the guided calibration is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -355,11 +358,13 @@ pub struct Wizard {
     seconds: f64,
     /// The dead zone the user set while calibrating, which the result carries.
     dead_zone_share: f32,
-    /// Where the reading has stayed steady since, and for how long.
-    anchor: Option<[i16; 6]>,
+    /// The readings since the reading went steady, and for how long.
+    run: Samples,
     steady: f64,
-    /// The furthest any raw axis went from rest in this step, in raw units.
-    peak: f64,
+    /// How far each raw axis went from rest in this step, in raw units.
+    peaks: [f64; 6],
+    /// The furthest any raw axis went from rest in any step so far.
+    reach: f64,
     /// Where the previous step settled: while the reading stays there, nobody has touched the cap.
     settled: Option<[i16; 6]>,
 }
@@ -371,9 +376,10 @@ impl Default for Wizard {
             recording: Recording::default(),
             seconds: 0.0,
             dead_zone_share: 0.0,
-            anchor: None,
+            run: Samples::default(),
             steady: 0.0,
-            peak: 0.0,
+            peaks: [0.0; 6],
+            reach: 0.0,
             settled: None,
         }
     }
@@ -397,10 +403,16 @@ impl Wizard {
     pub fn feed(&mut self, raw: [i16; 6], seconds: f64) {
         // A stalled frame shouldn't finish a stage on its own.
         let seconds = if seconds.is_finite() { seconds.clamp(0.0, 0.1) } else { 0.0 };
-        match self.anchor {
-            Some(anchor) if self.near(anchor, raw) => self.steady += seconds,
-            _ => (self.anchor, self.steady) = (Some(raw), 0.0),
+        // Steady while every axis's readings since the run began stay within its noise.
+        let mut run = self.run;
+        run.add(raw);
+        if (0..6).all(|r| run.spread(r) <= self.tolerance(r)) {
+            self.steady += seconds;
+        } else {
+            (run, self.steady) = (Samples::default(), 0.0);
+            run.add(raw);
         }
+        self.run = run;
         match self.stage {
             Stage::Rest => {
                 self.recording.rest(raw);
@@ -418,20 +430,32 @@ impl Wizard {
                 }
                 self.settled = None;
                 let away = self.away(raw);
-                let distance = self.distance(raw);
-                self.peak = self.peak.max(distance);
+                let offsets = self.offsets(raw);
+                for (peak, offset) in self.peaks.iter_mut().zip(offsets) {
+                    *peak = peak.max(offset);
+                }
+                // The step's own axis is the one that went furthest; the others only have to be
+                // steady, since a device's axes may have different ranges.
+                let lead = (0..6).fold(0, |lead, r| if self.peaks[r] > self.peaks[lead] { r } else { lead });
+                self.reach = self.reach.max(self.peaks[lead]);
                 // A reading that stays steady close to rest is the cap settling, not held.
-                let settling = self.steady > 0.0 && distance <= SETTLED_SHARE * self.peak;
-                if away <= 0.5 || settling && self.steady >= SETTLE_SECONDS {
+                let settling = self.steady > 0.0 && offsets[lead] <= SETTLED_SHARE * self.peaks[lead];
+                let stopped = settling && self.steady >= SETTLE_SECONDS;
+                if away <= 0.5 || stopped {
+                    // Where it settled: on a noisy device, the middle of the steady readings.
+                    let point = match self.run.mean() {
+                        Some(mean) if stopped => mean.map(|value| value.round().clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16),
+                        _ => raw,
+                    };
                     if self.seconds >= HOLD_SECONDS {
-                        self.recording.settled(index, raw);
+                        self.recording.settled(index, point);
                         self.enter(if index + 1 < STEPS.len() { Stage::Step(index + 1) } else { Stage::Done });
-                        self.settled = Some(raw);
+                        self.settled = Some(point);
                     } else if self.seconds > 0.0 {
                         // Let go too soon: the hold starts over, and only a whole one is kept.
                         self.recording.clear_step(index);
                         self.enter(Stage::Step(index));
-                        self.settled = Some(raw);
+                        self.settled = Some(point);
                     }
                 } else if away >= 1.0 && !settling {
                     self.recording.step(index, raw);
@@ -478,25 +502,25 @@ impl Wizard {
     fn enter(&mut self, stage: Stage) {
         self.stage = stage;
         self.seconds = 0.0;
-        self.peak = 0.0;
+        self.peaks = [0.0; 6];
     }
 
-    /// How far the reading is from rest, in raw units, on the raw axis furthest out.
-    fn distance(&self, raw: [i16; 6]) -> f64 {
-        raw.iter()
-            .enumerate()
-            .map(|(r, &value)| (f64::from(value) - self.recording.rest.rest_and_wander(r).map_or(0.0, |(rest, _)| rest)).abs())
-            .fold(0.0, f64::max)
+    /// How far each raw axis is from rest, in raw units.
+    fn offsets(&self, raw: [i16; 6]) -> [f64; 6] {
+        std::array::from_fn(|r| (f64::from(raw[r]) - self.recording.rest.rest_and_wander(r).map_or(0.0, |(rest, _)| rest)).abs())
     }
 
-    /// Whether two readings are the same position, give or take the noise: each raw axis within
-    /// twice its rest wander (the noise's whole spread), so exactly equal on an axis that didn't
-    /// wander.
+    /// How far apart raw axis `r`'s readings may be and still be one position: its noise's whole
+    /// spread (twice its rest wander), at least 2 units and [`STEADY_SHARE`] of the furthest any
+    /// step has gone.
+    fn tolerance(&self, r: usize) -> f64 {
+        let wander = self.recording.rest.rest_and_wander(r).map_or(0.0, |(_, wander)| wander);
+        (2.0 * wander).max(2.0).max(STEADY_SHARE * self.reach)
+    }
+
+    /// Whether two readings are the same position, give or take the noise.
     fn near(&self, a: [i16; 6], b: [i16; 6]) -> bool {
-        a.iter().zip(b).enumerate().all(|(r, (&a, b))| {
-            let wander = self.recording.rest.rest_and_wander(r).map_or(0.0, |(_, wander)| wander);
-            (f64::from(a) - f64::from(b)).abs() <= 2.0 * wander
-        })
+        a.iter().zip(b).enumerate().all(|(r, (&a, b))| (f64::from(a) - f64::from(b)).abs() <= self.tolerance(r))
     }
 
     /// How far the reading is from rest, on the raw axis furthest out, as a share of what counts as
@@ -938,6 +962,50 @@ mod tests {
         hold(&mut wizard, PRO[0], 0.5);
         jitter(&mut wizard, PRO[0].map(|value| value / 5), [20, 0, 0, 0, 0, 0], 1.0);
         assert_eq!(wizard.stage(), Stage::Step(0));
+    }
+
+    /// `readings` in turn, from the first, for `seconds`, a frame every 20 ms.
+    fn cycle(wizard: &mut Wizard, readings: &[[i16; 6]], seconds: f64) {
+        for frame in 0..(seconds / 0.02).round() as usize {
+            wizard.feed(readings[frame % readings.len()], 0.02);
+        }
+    }
+
+    #[test]
+    fn an_axis_flat_at_rest_that_dithers_once_off_centre_still_settles() {
+        // Silent at rest, so no wander was measured, but ±2 around where each release stops.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        for (index, reading) in PRO.into_iter().enumerate() {
+            assert_eq!(wizard.stage(), Stage::Step(index));
+            hold(&mut wizard, reading, 0.5);
+            let at = STUCK[index + 1];
+            cycle(&mut wizard, &[at.map(|value| value - 2), at, at.map(|value| value + 2)], SETTLE_SECONDS + 0.1);
+        }
+        assert_eq!(wizard.stage(), Stage::Done);
+        assert!(wizard.result().unwrap().is_ok());
+    }
+
+    #[test]
+    fn noise_that_starts_at_one_edge_of_its_spread_is_steady_and_settles_at_its_middle() {
+        // X wanders -3..+3 at rest; after the release it cycles -3, 0, +3 around +40.
+        let mut wizard = Wizard::default();
+        rest_then(&mut wizard);
+        hold(&mut wizard, PRO[0], 0.5);
+        cycle(&mut wizard, &[[37, 0, 0, 0, 0, 0], [40, 0, 0, 0, 0, 0], [43, 0, 0, 0, 0, 0]], SETTLE_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(1));
+        assert_eq!(wizard.recording.settled[0], Some([40, 0, 0, 0, 0, 0]));
+    }
+
+    #[test]
+    fn a_step_settles_on_its_own_axis_when_another_with_a_wider_range_stays_out() {
+        // The step's own axis only goes to 100; another axis stays 30 out after the release,
+        // more than a quarter of 100, which mustn't hold the step up.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        hold(&mut wizard, [100, 0, 0, 0, 0, 0], 0.5);
+        hold(&mut wizard, [5, 30, 0, 0, 0, 0], SETTLE_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(1));
     }
 
     #[test]
