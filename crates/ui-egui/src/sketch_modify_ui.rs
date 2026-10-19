@@ -102,7 +102,7 @@ pub enum Mod {
 
 impl Mod {
     pub fn previews(&self) -> bool {
-        matches!(self, Self::Mirror | Self::PatternRect { .. } | Self::PatternCirc { .. } | Self::Offset { .. })
+        matches!(self, Self::Mirror | Self::PatternRect { .. } | Self::PatternCirc { .. } | Self::Offset { .. } | Self::Corner { .. })
     }
 
     pub fn title(&self) -> &'static str {
@@ -158,12 +158,12 @@ fn inputs(k: &Mod) -> Vec<SelInput> {
 }
 
 /// The dialog for a sketch modify command.
-pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
+pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     let corner = |chamfer: bool, ctype: usize| Mod::Corner {
         chamfer,
         ctype,
-        size: "2 mm".into(),
-        distance2: "2 mm".into(),
+        size: crate::dialogs::length_default(&app.session, "2"),
+        distance2: crate::dialogs::length_default(&app.session, "2"),
         angle: "45 deg".into(),
         flip: false,
     };
@@ -408,10 +408,7 @@ pub fn arrow(app: &SolveApp, d: &Dialog) -> Option<Vec3> {
     match k {
         Mod::PatternRect { alignment, reversed, .. } => {
             let plane = app.session.world_state().sketch(app.session.active_sketch?)?.plane;
-            let dir = match d.inputs.get(1).and_then(|i| i.items.first()) {
-                Some(sel) => sketch_dir(app, sel)?,
-                None => Vec2::X,
-            };
+            let dir = pattern_dir(app, d)?;
             Some(plane.dir_to_world(if (*alignment == PatternAlignment::Left) ^ *reversed { -dir } else { dir }))
         }
         // A total angle is a rotation. The viewport draws a straight drag arrow and a rotation
@@ -419,6 +416,30 @@ pub fn arrow(app: &SolveApp, d: &Dialog) -> Option<Vec3> {
         // pattern takes the value box alone until that manipulator is made general.
         _ => None,
     }
+}
+
+/// The rectangular pattern's first direction in the sketch: the picked one, or the sketch's x axis.
+fn pattern_dir(app: &SolveApp, d: &Dialog) -> Option<Vec2> {
+    match d.inputs.get(1).and_then(|i| i.items.first()) {
+        Some(sel) => sketch_dir(app, sel),
+        None => Some(Vec2::X),
+    }
+}
+
+/// The world direction the rectangular pattern's Spacing 2 grows along, for its own drag arrow
+/// (#2462): the picked second direction, the one an edited pattern was made with, or square to
+/// the first, as the command does.
+pub fn arrow2(app: &SolveApp, d: &Dialog) -> Option<Vec3> {
+    let Kind::SketchModify(Mod::PatternRect { alignment2, reversed2, .. }) = &d.kind else { return None };
+    let plane = app.session.world_state().sketch(app.session.active_sketch?)?.plane;
+    let dir = match d.inputs.get(2).and_then(|i| i.items.first()) {
+        Some(sel) => sketch_dir(app, sel)?,
+        None => match d.extra.get("dir2").and_then(|v| serde_json::from_value::<Vec2>(v.clone()).ok()).and_then(Vec2::normalized) {
+            Some(kept) => kept,
+            None => pattern_dir(app, d)?.perp(),
+        },
+    };
+    Some(plane.dir_to_world(if (*alignment2 == PatternAlignment::Left) ^ *reversed2 { -dir } else { dir }))
 }
 
 /// What the first value means for this corner type.
@@ -747,12 +768,14 @@ pub fn commands(app: &SolveApp, k: &Mod, inputs: &[SelInput], extra: &Map<String
         Mod::Corner { chamfer: false, size, .. } => {
             let corners = corner_ids(app, inputs, 0);
             let lines = line_ids(inputs, 0);
-            // The radius is checked where it is evaluated, against the document's parameters.
+            // The engine keeps its millimetre API; bare UI values use the design unit.
+            // Keep expressions intact so the radius remains a driving dimension.
+            let radius = app.session.doc.with_design_unit(size.trim(), ValueKind::Length);
             match (corners.is_empty(), lines.as_slice()) {
                 (true, []) => return Err("select the corners to round first".into()),
-                (false, []) => ("sketch.fillet", json!({"points": corners, "radius": size.trim()})),
+                (false, []) => ("sketch.fillet", json!({"points": corners, "radius": radius})),
                 // Two lines name their corner even where other lines end at its point (#1824).
-                (true, [a, b]) => ("sketch.fillet", json!({"a": a, "b": b, "radius": size.trim()})),
+                (true, [a, b]) => ("sketch.fillet", json!({"a": a, "b": b, "radius": radius})),
                 _ => return Err("select corner points, or the two lines of one corner".into()),
             }
         }

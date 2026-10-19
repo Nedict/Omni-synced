@@ -28,6 +28,8 @@ mod boundary;
 mod boundary_network;
 mod bridge;
 mod build;
+#[cfg(test)]
+mod chamfer_sides_curved_tests;
 mod clearance;
 mod coaxial_overlap;
 mod continuity;
@@ -113,6 +115,7 @@ mod record;
 mod seam_faces;
 mod sew;
 mod smooth_edges;
+mod sphere_lens;
 mod spline_conv;
 mod splitface;
 mod step;
@@ -131,6 +134,8 @@ mod sweep_path;
 mod sweep_rails_tests;
 mod tangent_cylinders;
 mod tess;
+#[cfg(test)]
+mod thin_face_tests;
 #[cfg(test)]
 mod thread_display_tests;
 #[cfg(test)]
@@ -174,7 +179,7 @@ pub use iges_out::iges_export_bodies;
 pub use lip::raise_band;
 pub use loft_blend::loft_blend;
 pub use matchsurf::{match_surface, seam_continuity};
-pub use measure::{BodyMeasure, measure};
+pub use measure::{BodyMeasure, MassMeasure, measure, measure_mass};
 pub use mesh_convert::convert_prismatic_mesh;
 pub use meshbody::{MAX_TRIANGLES, mesh_body};
 pub use native::{decode_native_body, encode_native_body, native_preview_mesh};
@@ -204,7 +209,7 @@ pub use surfaces::{
     sweep_sheet_points, sweep_sheet_points_with, sweep_sheet_with, thicken, trim, unstitch,
 };
 pub use sweep_path::{RailFit, SweepControl, SweepOrientation, sweep_path, sweep_path_with};
-pub use topo::{CylinderFace, cylinder_end_at, cylinder_face_at};
+pub use topo::{CylinderFace, cylinder_end_at, cylinder_face, cylinder_face_at};
 pub use topo::{TopoCounts, merged_topology, seam_flags};
 pub use tspline::tspline_sheet;
 
