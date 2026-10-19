@@ -47,7 +47,8 @@
 # reference tests, 4 for the light checks, 2 for Select checks and ci). Same image family as
 # ubuntu-24.04, so the test archive and recorded goldens behave the same. Windows jobs stay on
 # windows-latest. Blacksmith runners report runner.environment == 'self-hosted' as well, so steps
-# tell our own machines apart by runner name (minisforum-*, ci-box-*).
+# don't ask the runner where they run: they read the routing that chose it (Select checks' `local`
+# and `untrusted` outputs, or the trusted-run condition in jobs that don't need Select checks).
 name: CI
 
 on:
@@ -123,8 +124,11 @@ jobs:
       # The passing run a merge of main carries forward (its URL), when this push is only that.
       carried: ${{ steps.paths.outputs.carried }}
       # The fast self-hosted runners are kept for main and the merge queue (the pre-merge gate);
-      # pull requests, same-repo ones included, take the GitHub-hosted or untrusted paths.
-      local: ${{ (startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) && github.event_name != 'pull_request' }}
+      # pull requests, same-repo ones included, take the GitHub-hosted or untrusted paths. Steps
+      # read these two to know where their job runs (see the top of this file).
+      local: ${{ github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+      # Fork pull requests whose Linux jobs run on the self-hosted-untrusted runners.
+      untrusted: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && (endsWith(format('{0}', github.event.pull_request.number), '7') || endsWith(format('{0}', github.event.pull_request.number), '8') || endsWith(format('{0}', github.event.pull_request.number), '9')) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -274,14 +278,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm build directory (self-hosted runner)
-        if: (startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+        if: github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         run: scripts/ci/warm-target.sh checks
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       # The trusted self-hosted runners keep their build directory and Cargo home instead; the
       # untrusted ones (fork pull requests) start empty and restore main's cache, read-only.
-      - if: ${{ !(startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
+      - if: ${{ !(github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: repo-checks
@@ -321,7 +325,7 @@ jobs:
       - name: Size parallel compiles to the job's memory
         run: scripts/ci/build-jobs.sh
       - uses: dtolnay/rust-toolchain@stable
-      - if: ${{ !(startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) }}
+      - if: needs.changes.outputs.local != 'true'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: quick-compile
@@ -338,14 +342,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm build directory (self-hosted runner)
-        if: (startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+        if: needs.changes.outputs.local == 'true'
         run: scripts/ci/warm-target.sh clippy
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       # The trusted self-hosted runners keep their build directory and Cargo home instead; the
       # untrusted ones (fork pull requests) start empty and restore main's cache, read-only.
-      - if: ${{ !(startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
+      - if: needs.changes.outputs.local != 'true'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: native-clippy
@@ -434,7 +438,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install a software Vulkan driver (lavapipe)
         # Preinstalled on the self-hosted runner, which has no sudo.
-        if: ${{ !(startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) }}
+        if: needs.changes.outputs.local != 'true' && needs.changes.outputs.untrusted != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan1
@@ -616,12 +620,12 @@ jobs:
       - name: Size parallel compiles to the job's memory
         run: scripts/ci/build-jobs.sh
       - name: Warm build directory (self-hosted runner)
-        if: (startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+        if: needs.changes.outputs.local == 'true'
         run: scripts/ci/warm-target.sh doc-tests
       - uses: dtolnay/rust-toolchain@stable
       # The trusted self-hosted runners keep their build directory and Cargo home instead; the
       # untrusted ones (fork pull requests) start empty and restore main's cache, read-only.
-      - if: ${{ !(startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
+      - if: needs.changes.outputs.local != 'true'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: doc-tests
@@ -669,12 +673,12 @@ jobs:
       - name: Size parallel compiles to the job's memory
         run: scripts/ci/build-jobs.sh
       - name: Warm build directory (self-hosted runner)
-        if: (startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+        if: needs.changes.outputs.local == 'true'
         run: scripts/ci/warm-target.sh oracle
       - uses: dtolnay/rust-toolchain@stable
       # The trusted self-hosted runners keep their build directory and Cargo home instead; the
       # untrusted ones (fork pull requests) start empty and restore main's cache, read-only.
-      - if: ${{ !(startsWith(runner.name, 'minisforum-') || startsWith(runner.name, 'ci-box-')) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
+      - if: needs.changes.outputs.local != 'true'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: oracle
