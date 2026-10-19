@@ -230,6 +230,8 @@ pub enum Kind {
     },
     /// Move planar faces onto a target plane or face.
     ReplaceFace,
+    /// Take faces off a body; the neighbouring faces close the gap (#2167).
+    DeleteFaces,
     /// Boundary Fill: the cells the tool bodies make (a point inside, a description, filled
     /// or not), found again when the tools change.
     BoundaryFill {
@@ -574,6 +576,7 @@ impl Dialog {
                 Kind::ReplaceFace,
                 vec![SelInput::new("Faces", PLANAR_FACES, true), SelInput::new("Target", PLANES | PLANAR_FACES, false)],
             ),
+            "face.delete" => Dialog::new(Kind::DeleteFaces, vec![SelInput::new("Faces", FACES, true)]),
             "solid.boundary_fill" => {
                 Dialog::new(Kind::BoundaryFill { operation: 0, cells: Vec::new(), of: Vec::new() }, vec![SelInput::new("Tools", BODIES, true)])
             }
@@ -871,6 +874,7 @@ impl Dialog {
                 | Kind::Rib { .. }
                 | Kind::Emboss { .. }
                 | Kind::ReplaceFace
+                | Kind::DeleteFaces
                 | Kind::Align { .. }
                 | Kind::Remove
                 | Kind::PathPattern { .. }
@@ -1498,6 +1502,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::Rib { web: true, .. } => "WEB",
         Kind::Emboss { .. } => "EMBOSS",
         Kind::ReplaceFace => "REPLACE FACE",
+        Kind::DeleteFaces => "DELETE FACE",
         Kind::Align { .. } => "ALIGN",
         Kind::BoundaryFill { .. } => "BOUNDARY FILL",
         Kind::Remove => "REMOVE",
@@ -2828,7 +2833,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         enter |= field(ui, t);
                         ui.end_row();
                     }
-                    Kind::Split | Kind::ReplaceFace | Kind::Remove | Kind::Midplane | Kind::Construct { t: None, .. } => {}
+                    Kind::Split | Kind::ReplaceFace | Kind::DeleteFaces | Kind::Remove | Kind::Midplane | Kind::Construct { t: None, .. } => {}
                     Kind::MeshConvert { tolerance } => {
                         row_label(ui, "Tolerance");
                         enter |= field(ui, tolerance);
@@ -4217,6 +4222,10 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             }
             ("solid.replace_face", p)
         }
+        Kind::DeleteFaces => {
+            need(0, "faces")?;
+            ("face.delete", json!({"faces": face_points(0)}))
+        }
         Kind::Align { flip } => {
             need(0, "bodies")?;
             need(1, "what to move from")?;
@@ -5554,6 +5563,17 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             if let Some(b) = body {
                 d.extra.insert("body".into(), json!(b));
             }
+            d
+        }
+        FeatureKind::DeleteFace { faces, body, heal } => {
+            let mut d = start("face.delete")?;
+            if let Some(inp) = d.inputs.first_mut() {
+                inp.items = faces.iter().filter_map(|p| face_sel(s, p.0)).collect();
+            }
+            if let Some(b) = body {
+                d.extra.insert("body".into(), json!(b));
+            }
+            d.extra.insert("heal".into(), json!(heal));
             d
         }
         FeatureKind::Remove { bodies } => {
