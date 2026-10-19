@@ -33,6 +33,7 @@ mod coaxial_overlap;
 mod continuity;
 mod coplanar;
 mod corner_g2;
+mod curve_sampler;
 mod curveblend;
 mod delete_face;
 mod distance;

@@ -58,6 +58,70 @@ non-arc fits, successful substitutions with opposite orientations and provenance
 and coincident curves with distinct topology IDs. They use independently
 constructed geometry and impose no wall-clock threshold.
 
+## Prepare immutable spline support grids per curve (2026-10-19, #3035)
+
+Each unseeded intersection projection evaluates the same 51 by 51 support-surface
+grid before finding its nearest seed. A borrowed curve sampler now prepares that
+grid lazily for each B-spline or NURBS support. Every query still compares all
+2,601 distances in the original order, with the same strict ties, zero fallback,
+parameter arithmetic and original Newton solver. Explicit hints and other surface
+types pass through unchanged. Validation retains every sample and finite check;
+healing retains its existing guarded `subs` failure through the original fallback.
+
+The actual immutable supports are borrowed, preserving transforms, weights,
+normals and parameterization. Each spline support holds 2,601 points and 102
+parameters: 63,240 bytes of data, plus small structure/allocation overhead. A curve
+has at most two supports. Storage drops with the sampler; it is never reused
+between edges or operations. The ordered grid scan is adapted from Apache-2.0
+truck-geotrait; its attribution is recorded in `ATTRIBUTION.md`.
+
+One further matched native pair compared the identity-deduplicated candidate
+against prepared grids on the same base `1666ca7018b867b90c613e7b39830c89a7d2db82`,
+workload, settings and opt-in diagnostics described above. CPU quietness was
+explicitly waived, so these are observations under concurrent activity, not
+controlled-load estimates. An earlier CPU preflight aborted before starting any
+model and contributes no geometry or timing result.
+
+| Observed wall span | Identity deduplication | Prepared grids |
+|---|---:|---:|
+| Cold document evaluation, 57 features | 104.484 s | 33.653 s |
+| Appended cut command | 13.202 s | 4.454 s |
+| Intersection core | 0.638 s | 0.697 s |
+| Healing | 4.384 s | 0.596 s |
+| Exact line/arc fitting | 3.133 s | 0.257 s |
+| Edge validation | 5.882 s | 0.316 s |
+| Command profile tessellation | 1.059 s | 1.395 s |
+
+The observed command reduction is about 66% in this pair. Inclusive phase spans
+overlap and must not be added. Whole-process wall times, including loading and
+later measurement/reference inspection, were 122.886 s and 44.159 s. Process CPU
+was 437.969 s and 443.703 s (user plus kernel), so no total CPU saving is claimed.
+These counters came from each retained child process handle and rose from zero;
+they are cumulative across all its threads, not isolated cut CPU. Effective
+whole-process parallelism averaged 3.56 and 10.05 busy logical CPUs. Five-second
+load/stage samples cannot establish why total CPU stayed similar or assign an
+interval's CPU to its last observed stage. The same runtime configuration was
+inherited by both children; actual initialized pool size was not recorded.
+
+Measurement, normalized document state, all 545 face references and 1,677 edge
+references matched bit for bit, including all 144 public parameters and 36 fully
+constrained sketches. Four independent cut edits and restoration, plus four
+public simple/split-stock axial/oblique Hole controls, also matched the prior
+candidate exactly. Those functional probes provide no timing evidence.
+
+Deterministic tests compare grid points, seeds and all 33 projection results,
+including weighted/transformed NURBS, two spline supports, inverted curves,
+nonunit bounds, reversed/collapsed explicit ranges, nonfinite data, interior
+failure and lazy failure ordering. Actual preparation/distance counters distinguish
+2,601 prepared points from all 33 times 2,601 distance comparisons. Prepared
+searches bypass the vendor's diagnostic presearch wrapper; its reduced counters
+exclude the prepared work and are not used as performance evidence.
+
+This single pair neither isolates code causality from load/scheduling nor promises
+general latency. Tessellation and the Boolean core remain material costs. These
+numbers describe the matched experimental base; source integration and validation
+on newer upstream commits are separate and do not inherit this measurement.
+
 ## Edges made by booleans: each point evaluated once (2026-10-16)
 
 A boolean meshes both operands with truck-meshalgo, which first divides every edge into a

@@ -129,7 +129,6 @@ const EVALUATION_SAMPLES: usize = 32;
 /// from an approximation that strayed (#1252). Such a result is no solid to keep: the mesher,
 /// healing and measuring all sample the edge and stumble over the gap.
 pub(crate) fn edges_evaluate(solid: &Solid) -> bool {
-    use truck_meshalgo::prelude::TrySubs;
     use truck_modeling::BoundedCurve;
     // Face uses share an absolute edge curve; sample its first occurrence only.
     let mut seen = HashSet::new();
@@ -138,12 +137,13 @@ pub(crate) fn edges_evaluate(solid: &Solid) -> bool {
             return true;
         }
         let curve = edge.curve();
+        let sampler = crate::curve_sampler::CurveSampler::new(&curve);
         let (t0, t1) = curve.range_tuple();
         (0..=EVALUATION_SAMPLES).all(|k| {
             #[cfg(test)]
             EDGE_EVALUATION_COUNT.with(|count| count.set(count.get().saturating_add(1)));
             let t = t0 + (t1 - t0) * k as f64 / EVALUATION_SAMPLES as f64;
-            curve.try_subs(t).is_some_and(|p| p.x.is_finite() && p.y.is_finite() && p.z.is_finite())
+            sampler.at(t).is_some_and(|p| p.x.is_finite() && p.y.is_finite() && p.z.is_finite())
         })
     })
 }

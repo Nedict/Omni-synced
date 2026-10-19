@@ -351,12 +351,13 @@ std::thread_local! {
 
 /// A line or circular arc through the edge's samples, if they all lie on one.
 fn fit_exact(e: &mt::Edge, tol: f64) -> Option<mt::Edge> {
-    use mt::{BoundedCurve, ParametricCurve};
+    use mt::BoundedCurve;
     #[cfg(test)]
     FIT_EXACT_CALLS.with(|count| count.set(count.get().saturating_add(1)));
     let c = e.curve();
+    let sampler = crate::curve_sampler::CurveSampler::new(&c);
     let (t0, t1) = c.range_tuple();
-    let pts: Vec<Vec3> = (0..=16).map(|k| from_p3(c.subs(t0 + (t1 - t0) * k as f64 / 16.0))).collect();
+    let pts: Vec<Vec3> = (0..=16).map(|k| from_p3(sampler.subs(t0 + (t1 - t0) * k as f64 / 16.0))).collect();
     let (a, b) = (from_p3(e.absolute_front().point()), from_p3(e.absolute_back().point()));
     if e.absolute_front() == e.absolute_back() || a.dist(b) < tol {
         return None;
@@ -427,7 +428,7 @@ fn exact_edges(shell: &mt::Shell, tol: f64, trace: &mut Trace) -> Option<mt::She
 /// Faces whose surface is flat but not a plane (a revolved line square to the axis, a swept
 /// line) get a real plane, so they merge with their coplanar neighbours and blend like planes.
 pub(crate) fn planar_surfaces(shell: &mt::Shell, tol: f64) -> Option<mt::Shell> {
-    use mt::{BoundedCurve, ParametricCurve, ParametricSurface, ParametricSurface3D, SearchNearestParameter};
+    use mt::{BoundedCurve, ParametricSurface, ParametricSurface3D, SearchNearestParameter};
     let mut changed = false;
     let mut faces = Vec::new();
     for f in shell.face_iter() {
@@ -442,9 +443,10 @@ pub(crate) fn planar_surfaces(shell: &mt::Shell, tol: f64) -> Option<mt::Shell> 
         for w in f.absolute_boundaries() {
             for e in w.edge_iter() {
                 let c = e.oriented_curve();
+                let sampler = crate::curve_sampler::CurveSampler::new(&c);
                 let (t0, t1) = c.range_tuple();
                 for k in 0..6 {
-                    let p = c.subs(t0 + (t1 - t0) * k as f64 / 6.0);
+                    let p = sampler.subs(t0 + (t1 - t0) * k as f64 / 6.0);
                     pts.push(from_p3(p));
                     if let Some(x) = surf.search_nearest_parameter(p, uv.last().copied(), 50) {
                         uv.push(x);
