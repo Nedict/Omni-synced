@@ -7,16 +7,16 @@
 # pushes to main, the nightly run and Run workflow.
 # Tests are built once and run in shards. A few heavy tests (see .config/nextest.toml) are
 # skipped on pull requests and run on pushes to main and nightly. The Windows jobs (D3D12 shaders
-# and app startup) run on pull requests only when what they test changes (the GPU crate, the app,
-# the viewport's GPU glue, the graphics dependencies, their scripts or this file); main and
-# nightly always run them. Only main saves the build caches; pull requests restore them.
+# and app startup), the reference tests and the doc tests run on main and nightly only, not on
+# pull requests (the fast lane, in Select checks); a break there is fixed forward on main. Only
+# main saves the build caches; pull requests restore them. The test build, the shards and the doc
+# tests start only after the format and repository checks pass.
 # The merge queue runs the full suite on exactly the commit it then puts on main, so a push to
 # main that a passing merge-queue run already tested runs only the repository checks. A push that
 # skipped the queue runs everything when it changes code; one that changes only documentation,
 # packaging, other workflows or the GitHub bots' scripts (the same rule as pull requests,
 # `touches_code` in Select checks) runs only the repository checks. Test data under tests/ and
-# vendored crates under vendor/ select the packages that read them (scripts/ci/affected.py). Pull requests run the reference tests when the
-# command line (or anything it depends on) changes, and doc tests for the affected packages.
+# vendored crates under vendor/ select the packages that read them (scripts/ci/affected.py).
 # Heavy checks wait for review: a pull request without the `approved-for-ci` label runs only
 # Select checks, the format and repository checks and a quick compile. Adding the label (after
 # review) runs everything above, and every later push to the PR does too. Pushes to main, merge
@@ -111,6 +111,7 @@ jobs:
       quick: ${{ steps.paths.outputs.quick }}
       packages: ${{ steps.paths.outputs.packages }}
       oracle: ${{ steps.paths.outputs.oracle }}
+      doctests: ${{ steps.paths.outputs.doctests }}
       # The fast self-hosted runners are kept for main and the merge queue (the pre-merge gate);
       # pull requests, same-repo ones included, take the GitHub-hosted or untrusted paths.
       local: ${{ runner.environment == 'self-hosted' && github.event_name != 'pull_request' }}
@@ -219,9 +220,12 @@ jobs:
           if [ "$EVENT_NAME" = pull_request ] && [ "$full" != true ]; then
             case " $packages " in *" solidcraft-cli "*) ;; *) oracle=false ;; esac
           fi
-          # The pull request fast lane: Windows and the reference tests run on main (and the nightly),
-          # not on every pull request push; a break there is fixed forward on main.
-          if [ "$EVENT_NAME" = pull_request ]; then windows=false; oracle=false; fi
+          # The pull request fast lane: Windows, the reference tests and the doc tests run on main
+          # (and the nightly), not on every pull request push; a break there is fixed forward on
+          # main. Over three days of pull requests the doc tests were the only failing job 3 times
+          # in about 7,900 runner-minutes, and the reference tests never were.
+          doctests=$native
+          if [ "$EVENT_NAME" = pull_request ]; then windows=false; oracle=false; doctests=false; fi
           # Until a maintainer adds approved-for-ci, a pull request gets a quick compile instead of
           # Clippy, the tests, the doc tests and the goldens.
           quick=false
@@ -237,6 +241,7 @@ jobs:
             echo "goldens=$goldens"
             echo "windows=$windows"
             echo "oracle=$oracle"
+            echo "doctests=$doctests"
             echo "full=$full"
             echo "quick=$quick"
             echo "packages=$packages"
@@ -336,7 +341,9 @@ jobs:
 
   build-tests:
     name: Build tests
-    needs: changes
+    # Fail fast: the test archive (and so the shards) waits for the repository checks, the most
+    # common cheap failure; heavy jobs used to run on to the end beside a failed format check.
+    needs: [changes, checks]
     # The self-hosted shards (main and the merge queue) build from their warm build directories
     # instead: downloading the 3 GB archive took them longer than building.
     if: needs.changes.outputs.native == 'true' && needs.changes.outputs.local != 'true'
@@ -385,8 +392,8 @@ jobs:
 
   tests:
     name: Native Linux tests (${{ matrix.shard }}/4)
-    needs: [changes, build-tests]
-    if: ${{ !cancelled() && needs.changes.outputs.native == 'true' && (needs.changes.outputs.local == 'true' || needs.build-tests.result == 'success') }}
+    needs: [changes, checks, build-tests]
+    if: ${{ !cancelled() && needs.changes.outputs.native == 'true' && needs.checks.result == 'success' && (needs.changes.outputs.local == 'true' || needs.build-tests.result == 'success') }}
     runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-fast' || ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && (endsWith(format('{0}', github.event.pull_request.number), '7') || endsWith(format('{0}', github.event.pull_request.number), '8') || endsWith(format('{0}', github.event.pull_request.number), '9'))) && 'self-hosted-untrusted' || 'ubuntu-24.04') }}
     timeout-minutes: 60
     strategy:
@@ -572,8 +579,9 @@ jobs:
 
   doc-tests:
     name: Doc tests
-    needs: changes
-    if: needs.changes.outputs.native == 'true'
+    # After the repository checks pass (see Build tests).
+    needs: [changes, checks]
+    if: needs.changes.outputs.doctests == 'true'
     runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-fast' || 'ubuntu-24.04' }}
     timeout-minutes: 45
     env:
@@ -740,6 +748,7 @@ jobs:
           LOCAL: ${{ needs.changes.outputs.local }}
           WINDOWS: ${{ needs.changes.outputs.windows }}
           ORACLE_RUN: ${{ needs.changes.outputs.oracle }}
+          DOCTESTS: ${{ needs.changes.outputs.doctests }}
           CLIPPY: ${{ needs.clippy.result }}
           BUILD: ${{ needs.build-tests.result }}
           TESTS: ${{ needs.tests.result }}
@@ -759,6 +768,8 @@ jobs:
             # The self-hosted test shards build their own tests (no Build tests job there).
             [ "$BUILD" = success ] || { [ "$LOCAL" = true ] && [ "$BUILD" = skipped ]; }
             test "$TESTS" = success
+          fi
+          if [ "$DOCTESTS" = true ]; then
             test "$DOCS" = success
           fi
           if [ "$ORACLE_RUN" = true ]; then
