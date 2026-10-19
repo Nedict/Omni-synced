@@ -230,3 +230,29 @@ fn occurrence_distance_editor_reads_inches_and_keeps_four_digits_in_model_space(
     crate::browser::revert_occurrence_dialog(&mut h.app, &movement);
     assert!(h.app.session.pending_moves.is_empty());
 }
+
+/// #3203: the triad of Move on an occurrence (an inserted STEP file is one) is under the
+/// pointer like the Move window's: dragging its X arrow moves the occurrence, not the camera.
+#[test]
+fn dragging_the_occurrence_triad_moves_the_occurrence() {
+    let (mut h, _component, first, _second) = fixture();
+    h.app.home.open = false;
+    h.step(&json!({"call":"ui.view","params":{"view":"fit"}})).unwrap();
+    h.settle();
+    let target = Target::Occurrence { path: vec![first] };
+    let movement = context_menu::items(&h.app, &target).into_iter().find(|i| i.id == "ui.moveOccurrence").unwrap();
+    context_menu::run_item(&mut h.app, &movement, egui::Pos2::ZERO);
+    h.frames(4);
+    let min_x = |h: &Harness| {
+        let state = h.app.session.world_state();
+        state.bodies.iter().map(|b| b.mesh().bounds().min.x).fold(f64::INFINITY, f64::min)
+    };
+    let (x0, camera) = (min_x(&h), h.app.cam);
+    let [x, y] = h.at(&json!({"handle": "move_x"})).unwrap();
+    h.step(&json!({"drag": [[x, y], [x + 80.0, y]]})).unwrap();
+    h.frames(3);
+    let moved = h.app.tree.occurrence_move.as_ref().unwrap().translate;
+    assert!(moved[0] > 1.0 && moved[1] == 0.0 && moved[2] == 0.0, "the X arrow moved it along X: {moved:?}");
+    assert!((min_x(&h) - x0 - moved[0]).abs() < 1e-6, "the occurrence followed: {} -> {}", x0, min_x(&h));
+    assert_eq!(format!("{:?}", h.app.cam), format!("{camera:?}"), "the camera stayed put");
+}
