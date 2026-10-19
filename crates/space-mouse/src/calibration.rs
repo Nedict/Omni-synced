@@ -396,8 +396,8 @@ pub struct Wizard {
     peaks: [f64; 6],
     /// The furthest each raw axis went from rest in any step so far.
     reach: [f64; 6],
-    /// Where the previous step settled: while the reading stays there, nobody has touched the cap.
-    settled: Option<[i16; 6]>,
+    /// The readings the previous step settled on: while a reading stays within their spread, nobody has touched the cap.
+    settled: Option<Samples>,
 }
 
 impl Default for Wizard {
@@ -473,27 +473,26 @@ impl Wizard {
                     && (0..6).any(|r| peaks[r] >= 0.5 * furthest && offsets[r] <= SETTLED_SHARE * peaks[r]);
                 let stopped = settling && (self.steady >= SETTLE_SECONDS);
                 if away <= 0.5 || stopped {
-                    // Where it settled: on a noisy device, the middle of the steady readings' range, so
-                    // that every reading of the run is within half the spread of it, lopsided or not.
-                    let point = if stopped && self.run.count > 0 {
-                        std::array::from_fn(|r| ((i32::from(self.run.min[r]) + i32::from(self.run.max[r])) as f64 / 2.0).round() as i16)
-                    } else {
-                        raw
-                    };
+                    // Where it settled: every reading of the steady run, or just this one.
+                    let mut settled = Samples::default();
+                    settled.add(raw);
+                    if stopped {
+                        settled = self.run;
+                    }
                     if self.seconds >= HOLD_SECONDS {
                         // Every reading of the steady run, so the dead zone covers all of them.
                         if stopped {
                             self.recording.settled[index] = self.run;
                         } else {
-                            self.recording.settled(index, point);
+                            self.recording.settled(index, raw);
                         }
                         self.enter(if index + 1 < STEPS.len() { Stage::Step(index + 1) } else { Stage::Done });
-                        self.settled = Some(point);
+                        self.settled = Some(settled);
                     } else if self.seconds > 0.0 {
                         // Let go too soon: the hold starts over, and only a whole one is kept.
                         self.recording.clear_step(index);
                         self.enter(Stage::Step(index));
-                        self.settled = Some(point);
+                        self.settled = Some(settled);
                     }
                 } else if away >= 1.0 && !settling {
                     self.recording.step(index, raw);
@@ -558,12 +557,11 @@ impl Wizard {
         (2.0 * wander).max(4.0).max(STEADY_SHARE * self.reach.get(r).copied().unwrap_or(0.0))
     }
 
-    /// Whether two readings are the same position, give or take the noise. `b` is where a steady
-    /// run settled, the middle of its range (not its mean, which a lopsided dither pulls off
-    /// centre), so readings of that run are within half of [`Self::tolerance`] (the run's whole
-    /// width) of it, give or take the rounding to a whole unit: the same band the steadiness check accepts.
-    fn near(&self, a: [i16; 6], b: [i16; 6]) -> bool {
-        a.iter().zip(b).enumerate().all(|(r, (&a, b))| (f64::from(a) - f64::from(b)).abs() <= self.tolerance(r) / 2.0)
+    /// Whether `raw` is still where `settled` was: adding it keeps every axis within [`Self::tolerance`],
+    /// the same band the steadiness check accepts.
+    fn near(&self, mut settled: Samples, raw: [i16; 6]) -> bool {
+        settled.add(raw);
+        (0..6).all(|r| settled.spread(r) <= self.tolerance(r))
     }
 
     /// How far the reading is from rest, on the raw axis furthest out, as a share of what counts as
@@ -995,6 +993,27 @@ mod tests {
             assert_eq!((calibration.apply(*stuck), calibration.apply(shaken)), ([0; 6], [0; 6]), "{stuck:?} {calibration:?}");
         }
         assert!(calibration.apply(PRO[0])[0] >= FULL_SCALE - 1, "{calibration:?}");
+    }
+
+    #[test]
+    fn both_ends_of_an_odd_width_settled_run_are_untouched_and_one_unit_beyond_is_movement() {
+        // Silent at rest (no wander) and a 250 push on X: tolerance is max(4, 250 / 50) = 5, odd.
+        // The release dithers over 10..15, as wide as that, so its middle rounds to 13 and 10 is
+        // 3 from it, more than half of 5.
+        let wizard = || {
+            let mut wizard = Wizard::default();
+            hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+            hold(&mut wizard, [250, 0, 0, 0, 0, 0], 0.5);
+            cycle(&mut wizard, &[[10, 0, 0, 0, 0, 0], [15, 0, 0, 0, 0, 0]], SETTLE_SECONDS + 0.1);
+            assert_eq!(wizard.stage(), Stage::Step(1));
+            wizard
+        };
+        for (x, touched) in [(10, false), (15, false), (9, true), (16, true)] {
+            let mut wizard = wizard();
+            assert_eq!(wizard.tolerance(0), 5.0);
+            wizard.feed([x, 0, 0, 0, 0, 0], 0.02);
+            assert_eq!(wizard.progress() > 0.0, touched, "{x}");
+        }
     }
 
     #[test]
