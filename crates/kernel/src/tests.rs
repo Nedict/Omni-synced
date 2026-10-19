@@ -814,6 +814,32 @@ fn drain_pads_flush_under_a_floor_with_a_hole() {
     assert!(u.validity().is_empty(), "{:?}", u.validity());
 }
 
+/// A cut through a plate whose end lies flush with the plate's side, its top flush with the
+/// plate's top and the tool turned 4e-8 rad (as a box rotated into a part's frame comes out of a
+/// STEP file, #2963). Every exact route fails, and the last-resort nudge pushed the end into the
+/// side, leaving a skin of the side a ten-thousandth of a millimetre thick (a face of no
+/// thickness over the slot's mouth); the other way it pushed the top into the plate. Now the
+/// nudge leaves neither: the same faces as the same cut run 1 mm past the side.
+#[test]
+fn cut_ending_flush_with_a_side_leaves_no_skin() {
+    let plate = box_solid(Vec3::ZERO, Vec3::new(60.0, 30.0, 2.0)).unwrap();
+    let thick = box_solid(Vec3::ZERO, Vec3::new(60.0, 15.0, 10.0)).unwrap();
+    let part = boolean(&plate, &thick, BoolOp::Union).unwrap().unwrap();
+    let hole = cylinder(Vec3::new(50.0, 24.0, -1.0), Vec3::Z, 3.0, 4.0).unwrap();
+    let holed = boolean(&part, &hole, BoolOp::Cut).unwrap().unwrap();
+    for (what, target) in [("plate", &part), ("plate with a hole", &holed)] {
+        let cut = |y1: f64| {
+            let tool = box_solid(Vec3::new(25.0, 5.0, -1.0), Vec3::new(35.0, y1, 2.0)).unwrap();
+            let tool = crate::ops::transform(&tool, Vec3::ZERO, Vec3::new(30.0, 17.0, 0.5), Vec3::new(0.6, 0.8, 0.0), 4e-8).unwrap();
+            boolean(target, &tool, BoolOp::Cut).unwrap().unwrap()
+        };
+        let (flush, past) = (cut(30.0), cut(31.0));
+        assert_eq!(flush.face_count(), past.face_count(), "{what}: a skin was left where the cut's end lies flush with the side");
+        let (v, want) = (measure(&flush).unwrap().volume, measure(&past).unwrap().volume);
+        assert!(rel(v, want) < 1e-5, "{what}: {v} vs {want}");
+    }
+}
+
 /// A trough whose floor falls 1° (or 2° toward a drain, in four faces), and short round pads
 /// and bosses crossing the fall. The B-rep results were right, but the plausibility check meshed
 /// them without refinement: on a round side trimmed to a thin band by the shallow cut, the plain

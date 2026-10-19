@@ -1321,33 +1321,39 @@ fn boolean_whole_with_refinement(a: &Body, b: &Body, op: BoolOp, refine: bool) -
         // opposite nudge parts them instead. It is tried when this one failed or left more
         // slivers than the operands brought (a thin wall or a small round is no reason to run
         // another boolean), and taken when it works with fewer; an empty result stays as it is.
-        let slivers = match &r {
+        let mut slivers = match &r {
             Ok(Some(body)) if check(body).0 => Some(sliver_faces(body, size)),
             _ => None,
         };
-        let made = slivers.is_none_or(|n| n > 0 && n > sliver_faces(a, size).saturating_add(sliver_faces(b, size)));
+        let brought = std::cell::OnceCell::new();
+        let brought = || *brought.get_or_init(|| sliver_faces(a, size).saturating_add(sliver_faces(b, size)));
+        let made = slivers.is_none_or(|n| n > 0 && n > brought());
         if !matches!(r, Ok(None)) && made {
             let (r2, diagnostics2) = nudge(used, -1.0);
             if let Ok(Some(body)) = &r2
-                && slivers.is_none_or(|n| sliver_faces(body, size) < n)
+                && let n2 = sliver_faces(body, size)
+                && slivers.is_none_or(|n| n2 < n)
                 && check(body).0
             {
-                (r, diagnostics) = (r2, diagnostics2);
+                (r, diagnostics, slivers) = (r2, diagnostics2, Some(n2));
             }
         }
         // Neither way worked: the screw can turn the tool along a seam it lies in (a loft
         // standing in the rim of a shelled case with its ends in the wall's inner face, #1490).
-        // The other screws are tried in turn, and the first result that checks is taken.
+        // The other screws are tried in turn, and the first result that checks is taken. So
+        // they are when both ways left slivers (one pushed a cut's end into the wall it lay
+        // flush with, the other its top into the floor, #2963): the first that leaves none.
         let works = |r: &Result<Option<Body>>| match r {
             Ok(None) => true,
             Ok(Some(body)) => check(body).0,
             Err(_) => false,
         };
-        if !works(&r) {
+        let left = matches!(r, Ok(Some(_))) && slivers.is_some_and(|n| n > 0 && n > brought());
+        if !works(&r) || left {
             'screws: for screw in 1..SCREWS.len() {
                 for sign in [1.0, -1.0] {
                     let (r2, diagnostics2) = nudge(screw, sign);
-                    if matches!(&r2, Ok(Some(body)) if check(body).0) {
+                    if matches!(&r2, Ok(Some(body)) if check(body).0 && (!left || sliver_faces(body, size) <= brought())) {
                         (r, diagnostics, used) = (r2, diagnostics2, screw);
                         break 'screws;
                     }
@@ -1468,7 +1474,8 @@ const SCREWS: [([f64; 3], [f64; 3]); 3] =
     [([0.61, -0.37, 0.71], [0.27, 0.83, -0.49]), ([-0.42, 0.68, 0.6], [0.77, -0.18, 0.61]), ([0.31, 0.52, -0.79], [-0.58, 0.41, 0.70])];
 
 /// Faces of `b` narrower than 1/200 of `size` (twice their area over their boundary's
-/// length): the slivers a nudged tool leaves where it was pushed into a face it touched.
+/// length), and planar faces back to back with another less than 1e-5 of `size` behind them:
+/// the slivers and skins a nudged tool leaves where it was pushed into a face it touched.
 fn sliver_faces(b: &Body, size: f64) -> usize {
     use std::collections::HashMap;
     let Ok(m) = b.tessellate((size * 1e-3).max(1e-4)) else { return usize::MAX };
@@ -1492,7 +1499,45 @@ fn sliver_faces(b: &Body, size: f64) -> usize {
             *boundary.entry(*f).or_default() += len;
         }
     }
-    area.iter().filter(|(f, a)| boundary.get(f).is_some_and(|l| *l > 0.0 && 2.0 * **a / l < size * 5e-3)).count()
+    let narrow = area.iter().filter(|(f, a)| boundary.get(f).is_some_and(|l| *l > 0.0 && 2.0 * **a / l < size * 5e-3)).count();
+    // A face pushed in past a wall it lay flush with (a cut's end on the part's side, #2963)
+    // leaves a skin as thin as the nudge: a planar face back to back with another one, a hair
+    // behind it over part of its area. Each such face counts too.
+    let gap = size * 1e-5;
+    let mut planar: HashMap<u32, (Vec3, Vec<[Vec3; 3]>)> = HashMap::new();
+    for (t, f) in m.triangles.iter().zip(&m.tri_face) {
+        let Some([a, b, c]) = m.tri(t) else { continue };
+        let e = planar.entry(*f).or_insert((Vec3::ZERO, Vec::new()));
+        e.0 += (b - a).cross(c - a);
+        e.1.push([a, b, c]);
+    }
+    let planes: Vec<(u32, Vec3, f64, &Vec<[Vec3; 3]>)> = planar
+        .iter()
+        .filter_map(|(f, (n, tris))| {
+            let n = n.normalized()?;
+            let d = n.dot(tris.first()?[0]);
+            tris.iter().flatten().all(|p| (n.dot(*p) - d).abs() <= gap * 0.1).then_some((*f, n, d, tris))
+        })
+        .collect();
+    let within = |p: Vec3, [a, b, c]: &[Vec3; 3], n: Vec3| {
+        let s = |u: Vec3, v: Vec3| (v - u).cross(p - u).dot(n);
+        let (x, y, z) = (s(*a, *b), s(*b, *c), s(*c, *a));
+        (x >= 0.0 && y >= 0.0 && z >= 0.0) || (x <= 0.0 && y <= 0.0 && z <= 0.0)
+    };
+    let skins = planes
+        .iter()
+        .filter(|(f, n, _, tris)| {
+            planes.iter().any(|(g, o, d, others)| {
+                g != f
+                    && n.dot(*o) < -1.0 + 1e-9
+                    && tris.iter().any(|[a, b, c]| {
+                        let p = (*a + *b + *c) * (1.0 / 3.0);
+                        (o.dot(p) - d).abs() <= gap && others.iter().any(|t| within(p, t, *o))
+                    })
+            })
+        })
+        .count();
+    narrow + skins
 }
 
 /// `r`, a boolean of the target and `nb` (the tool nudged), with its history over the target and
