@@ -72,7 +72,7 @@ desktop integration and how to distinguish an old executable on `PATH`.
 
 ## How the code is laid out
 
-The [README](README.md#architecture) has the layer table. The short version:
+The [architecture page](docs/architecture.md) has the layer table. The short version:
 
 - `crates/geom`: vectors, planes, meshes, measures.
 - `crates/sketch`: our own constraint solver, plus profile finding.
