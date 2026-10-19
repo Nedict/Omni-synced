@@ -767,7 +767,7 @@ pub fn convert_body(mb: &ModelBody, rule: &str, rv: &RuleValues, face: Vec3, ben
             let child =
                 face_of(to).map_err(|e| DocError::Invalid(format!("the face across the bend at {} can't be a face of the sheet: {e}", at(p))))?;
             let Some(parent) = panels.get(&from) else { continue };
-            let theta = parent.face.n.dot(child.n).clamp(-1.0, 1.0).acos();
+            let theta = parent.face.n.angle_to(child.n);
             if !(theta > 1e-6 && theta < std::f64::consts::PI - 1e-6) {
                 return err(format!("the faces at the bend at {} must meet at an angle between 0 and 180°", at(p)));
             }
