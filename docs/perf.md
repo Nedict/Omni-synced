@@ -122,6 +122,27 @@ general latency. Tessellation and the Boolean core remain material costs. These
 numbers describe the matched experimental base; source integration and validation
 on newer upstream commits are separate and do not inherit this measurement.
 
+The production source at `396cbf8fb8793d641ccfabe467c975e4460f314c`, integrated
+with upstream `b76302e8`, subsequently passed a bounded functional run of the
+copied native workload using an optimized CLI without the experimental diagnostic
+patch. Measurements and normalized document state matched the experimental
+prepared candidate bit for bit, as did all 545 face and 1,677 edge references.
+The accepted result had one body and shell, 144 error-free public parameters,
+36 fully constrained sketches and no feature errors. This checks the existing
+parameter state; it does not repeat the earlier reversible parameter-edit probe.
+Its 74.753-second whole-process duration includes cold evaluation, the appended
+cut and subsequent measurement/reference inspection under concurrent activity.
+It is neither a separate cut timing nor a matched performance comparison.
+
+That integrated source passed 769 kernel tests (28 ignored and the same two
+existing upstream PR exclusions), the oblique-cut engine regression, all 16 Hole
+face/placement/edit regressions, kernel Clippy with warnings denied, the kernel
+wasm check, formatting and an optimized production CLI build. Full local CI
+stopped at the pre-existing icon-hash check in this Windows CRLF checkout; the
+GitHub CI run for this head was skipped, not passing. Newer upstream commits
+and a combined desktop user trial are outside this validation snapshot. The
+performance PR remains a draft pending that trial.
+
 ## Edges made by booleans: each point evaluated once (2026-10-16)
 
 A boolean meshes both operands with truck-meshalgo, which first divides every edge into a
