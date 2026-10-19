@@ -84,6 +84,7 @@ mod loopblend;
 mod matchsurf;
 mod measure;
 mod mesh_convert;
+mod mesh_curve_sampler;
 mod meshbody;
 #[cfg(test)]
 mod modify_history_tests;

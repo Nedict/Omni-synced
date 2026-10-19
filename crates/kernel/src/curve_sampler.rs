@@ -15,13 +15,13 @@ std::thread_local! { static GRID_DISTANCES: std::cell::Cell<usize> = const { std
 std::thread_local! { static GRID_POINTS_PREPARED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 
 #[derive(Clone)]
-struct Grid {
+pub(super) struct Grid {
     u: Vec<f64>,
     v: Vec<f64>,
     points: Vec<mt::Point3>,
 }
 impl Grid {
-    fn prepare(surface: &mt::Surface) -> Option<Self> {
+    pub(super) fn prepare(surface: &mt::Surface) -> Option<Self> {
         use mt::BoundedSurface;
         let ((u0, u1), (v0, v1)) = match surface {
             mt::Surface::BSplineSurface(s) => s.range_tuple(),
@@ -48,7 +48,7 @@ impl Grid {
         }
         Some(Self { u, v, points })
     }
-    fn seed(&self, point: mt::Point3) -> (f64, f64) {
+    pub(super) fn seed(&self, point: mt::Point3) -> (f64, f64) {
         use mt::MetricSpace;
         let mut seed = (0.0, 0.0);
         let mut minimum = f64::INFINITY;
