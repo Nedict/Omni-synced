@@ -18,8 +18,6 @@ use crate::SolveApp;
 use crate::theme::Tokens;
 
 const UNITS: [&str; 9] = ["mm", "cm", "m", "in", "ft", "deg", "rad", "", "um"];
-/// The expression a new parameter row starts with.
-const NEW_EXPR: &str = "10 mm";
 
 /// Dialog state (what is being typed; the parameters themselves live in the document).
 #[derive(Default)]
@@ -50,8 +48,10 @@ pub struct ParamsDialog {
 }
 
 impl ParamsDialog {
+    /// The add row starts blank, its expression too (#2919): a value put there for the user was
+    /// almost never the one wanted, and had to be erased first.
     pub fn new() -> Self {
-        ParamsDialog { new_expr: NEW_EXPR.into(), ..Default::default() }
+        ParamsDialog::default()
     }
     /// The command the live preview should run (a valid expression being edited).
     pub fn preview_commands(&self) -> Option<Vec<(String, Value)>> {
@@ -438,6 +438,7 @@ fn add_row(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog) {
         let focused_id = ui.memory(|m| [name_id, expr_id, comment_id].into_iter().find(|id| m.has_focus(*id)));
         let name =
             ui.add(egui::TextEdit::singleline(&mut d.new_name).id(name_id).hint_text(crate::i18n::tr_label("new parameter")).desired_width(120.0));
+        select_all_on_tab(ui, &name, &d.new_name);
         crate::scenario::publish_handle("param:new:name", name.rect.center());
         let unit_response = egui::ComboBox::from_id_salt("pnew_unit")
             .width(56.0)
@@ -449,24 +450,38 @@ fn add_row(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog) {
             });
         crate::scenario::publish_handle("param:new:unit", unit_response.response.rect.center());
         let unit = UNITS.get(d.new_unit).copied().unwrap_or("mm");
-        let bad = new_check(app, d, unit).is_err();
+        // A blank expression is not yet an error: nothing to show, and nothing to add.
+        let bad = !d.new_expr.trim().is_empty() && new_check(app, d, unit).is_err();
         let mut te = egui::TextEdit::singleline(&mut d.new_expr).id(expr_id).desired_width(170.0);
         if bad {
             te = te.text_color(t.error);
         }
         let resp = ui.add(te);
+        select_all_on_tab(ui, &resp, &d.new_expr);
         crate::scenario::publish_handle("param:new:expression", resp.rect.center());
         let completed = complete(ui, &resp, &mut d.new_expr);
-        let live = new_check(app, d, unit);
+        let blank = d.new_expr.trim().is_empty();
+        let live = if blank { Err(String::new()) } else { new_check(app, d, unit) };
         match &live {
-            Ok(v) => ui.label(RichText::new(v).color(t.text_dim)),
-            Err(m) => ui.label(RichText::new(m).color(t.error)),
-        };
+            Ok(v) => {
+                ui.label(RichText::new(v).color(t.text_dim));
+            }
+            Err(m) if !m.is_empty() => {
+                ui.label(RichText::new(m).color(t.error));
+            }
+            Err(_) => {}
+        }
         let comment = ui.add(egui::TextEdit::singleline(&mut d.new_comment).id(comment_id).hint_text("comment").desired_width(120.0));
+        select_all_on_tab(ui, &comment, &d.new_comment);
         crate::scenario::publish_handle("param:new:comment", comment.rect.center());
         let submit = !completed && enter_for(ui, focused_id.is_some());
         let ok = !d.new_name.trim().is_empty() && live.is_ok();
         if ui.add_enabled(ok, egui::Button::new(crate::i18n::tr_label("Add"))).clicked() || submit {
+            if blank {
+                // Enter before an expression is typed: on to the expression box.
+                ui.memory_mut(|m| m.request_focus(expr_id));
+                return;
+            }
             if let Err(error) = &live {
                 d.error = Some(error.clone());
                 if let Some(id) = focused_id {
@@ -478,7 +493,7 @@ fn add_row(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog) {
             match app.run("parameters.add", p) {
                 Ok(_) => {
                     d.new_name.clear();
-                    d.new_expr = NEW_EXPR.into();
+                    d.new_expr.clear();
                     d.new_comment.clear();
                     d.error = None;
                     name.request_focus();
@@ -492,6 +507,19 @@ fn add_row(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog) {
             }
         }
     });
+}
+
+/// A box of the add row entered with Tab selects its text, so typing replaces it (#2919); a click
+/// puts the caret where it clicks, as anywhere else. The parameters' own boxes keep the caret at
+/// the end, where an edit of the value usually starts.
+fn select_all_on_tab(ui: &egui::Ui, resp: &egui::Response, text: &str) {
+    if !resp.gained_focus() || ui.input(|i| i.pointer.any_down() || i.pointer.any_released()) {
+        return;
+    }
+    let n = text.chars().count();
+    let mut state = egui::text_edit::TextEditState::load(ui.ctx(), resp.id).unwrap_or_default();
+    state.cursor.set_char_range(Some(egui::text_selection::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(n))));
+    state.store(ui.ctx(), resp.id);
 }
 
 /// A completion offered under an expression box.
@@ -678,5 +706,37 @@ mod tests {
         h.frames(2);
         let d = h.app.params.as_ref().unwrap();
         assert!(d.listed.as_ref().unwrap().1.iter().any(|r| r.name == "p1" && r.comment == "hello"));
+    }
+
+    /// #2919: the add row starts blank; Tab into a box selects its text, so typing replaces it;
+    /// a blank expression shows no error and adds nothing; after an add the row is blank again.
+    #[test]
+    fn the_add_row_starts_blank_and_tab_selects_a_box() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.step(&json!({"start": "parameters.change"})).unwrap();
+        h.frames(3);
+        assert_eq!(h.app.params.as_ref().unwrap().new_expr, "", "a new parameter's expression starts blank");
+        h.step(&json!({"click": {"handle": "param:new:name"}})).unwrap();
+        h.step(&json!({"text": "width"})).unwrap();
+        // Enter with no expression adds nothing and says nothing wrong.
+        h.step(&json!({"key": "Enter"})).unwrap();
+        h.frames(2);
+        assert!(h.app.session.doc.params.iter().all(|p| p.name != "width"));
+        assert_eq!(h.app.params.as_ref().unwrap().error, None);
+        // A value already in the expression box: Tab into it and type, and the value is replaced.
+        h.app.params.as_mut().unwrap().new_expr = "5 mm".into();
+        h.step(&json!({"click": {"handle": "param:new:name"}})).unwrap();
+        // Name, then the unit, then the expression.
+        h.step(&json!({"key": "Tab"})).unwrap();
+        h.step(&json!({"key": "Tab"})).unwrap();
+        h.step(&json!({"text": "2"})).unwrap();
+        assert_eq!(h.app.params.as_ref().unwrap().new_expr, "2", "Tab selected the expression, typing replaced it");
+        h.step(&json!({"text": "5 mm"})).unwrap();
+        h.step(&json!({"key": "Enter"})).unwrap();
+        h.frames(2);
+        assert!(h.app.session.doc.params.iter().any(|p| p.name == "width" && p.expr == "25 mm"));
+        let d = h.app.params.as_ref().unwrap();
+        assert_eq!((d.new_name.as_str(), d.new_expr.as_str()), ("", ""), "blank again after an add");
     }
 }
