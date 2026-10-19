@@ -148,6 +148,30 @@ fn auto_project_can_be_turned_off() {
     assert!(r["projected"].is_null());
 }
 
+/// #680: auto-projection is a preference, not part of a design: turning it off holds for the
+/// next design started or opened in the session (`doc.recover` replaces the session the same way).
+#[test]
+fn auto_project_off_holds_for_designs_started_and_opened() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-auto-project-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("box.solidcraft");
+    let mut s = Session::default();
+    box_part(&mut s);
+    run(&mut s, "file.save_as", json!({"path": file.to_string_lossy()}));
+    run(&mut s, "sketch.auto_project", json!({"value": false}));
+    run(&mut s, "file.new", json!({}));
+    assert!(!s.auto_project, "file.new");
+    run(&mut s, "doc.open", json!({"path": file.to_string_lossy()}));
+    assert!(!s.auto_project, "doc.open");
+    let r = run(&mut s, "sketch.create", json!({"plane": {"face": [20, 15, 20]}}));
+    assert!(r["projected"].is_null(), "{r}");
+    run(&mut s, "sketch.auto_project", json!({"value": true}));
+    run(&mut s, "file.new", json!({}));
+    assert!(s.auto_project, "turned back on, it stays on");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn project_edges_bodies_sketches_and_origin() {
     let mut s = Session::default();
@@ -525,4 +549,131 @@ fn faces_split_by_hidden_seams_project_whole() {
     radii.sort_by(f64::total_cmp);
     assert_eq!(radii.len(), 4, "{round}");
     assert!(radii[..2].iter().all(|r| (r - 17.).abs() < 1e-6) && radii[2..].iter().all(|r| (r - 20.).abs() < 1e-6), "{round}");
+}
+
+/// #635: a rectangle whose corner is made coincident with a projected edge of the solid under
+/// the sketch, so that its bottom side lies on that edge, is still one closed profile (the
+/// projected line stays, and names the shared edge as it was there first), and it extrudes to
+/// its own volume, also when the design is opened again.
+#[test]
+fn a_rectangle_put_onto_a_projected_edge_stays_a_closed_profile() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [40, 30]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 20}));
+    let block = s.model.state().bodies[0].name.clone();
+    let id = run(&mut s, "sketch.create", json!({"plane": "XY"}))["sketch"].as_u64().unwrap();
+    // The solid's bottom edge along X, from (0, 0) to (40, 0).
+    let r = run(&mut s, "sketch.project", json!({"refs": [{"edge": [20, 0, 0]}]}));
+    let projected = r["links"][0]["curves"][0].as_str().unwrap().to_string();
+    // A 20 x 15 rectangle clear of it is a closed profile of its own.
+    let sides = ids(&run(&mut s, "sketch.rectangle.two_point", json!({"p0": [5, 10], "p1": [25, 25]}))["curves"]);
+    run(&mut s, "sketch.dimension", json!({"entities": [sides[0]], "value": 20}));
+    run(&mut s, "sketch.dimension", json!({"entities": [sides[1]], "value": 15}));
+    let mut own = sides.clone();
+    own.sort();
+    let profile_curves = |si: &Value| -> Vec<Vec<String>> {
+        si["profiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| {
+                let mut c = ids(&p["curves"]);
+                c.sort();
+                c
+            })
+            .collect()
+    };
+    assert_eq!(profile_curves(&inspect(&mut s)), vec![own.clone()]);
+    // Its bottom-left corner onto the projected line: the bottom side lies on it.
+    run(&mut s, "sketch.constraint.coincident", json!({"a": format!("{}.start", sides[0]), "b": projected}));
+    let si = inspect(&mut s);
+    assert_eq!(si["status"], "solved", "{si}");
+    let curve = |id: &str| si["curves"].as_array().unwrap().iter().find(|c| c["id"] == id).unwrap().clone();
+    let bottom = curve(&sides[0]);
+    for end in ["start_at", "end_at"] {
+        assert!(bottom[end][1].as_f64().unwrap().abs() < 1e-9, "{bottom}");
+    }
+    assert!(curve(&projected).get("link").is_some(), "the projected line stays");
+    let mut on_line = vec![projected.clone(), sides[1].clone(), sides[2].clone(), sides[3].clone()];
+    on_line.sort();
+    assert_eq!(profile_curves(&si), vec![on_line], "{si}");
+    assert!((si["profiles"][0]["area_mm2"].as_f64().unwrap() - 300.0).abs() < 1e-6, "{si}");
+    // Picked by a point inside, it extrudes to a 20 x 15 x 10 block of its own.
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": id, "profiles": [{"point": [15, 7.5]}], "distance": 10, "operation": "new", "body_name": "Pad"}));
+    let volume = |s: &Session, name: &str| s.model.state().body(name).unwrap().body.tessellate_with(1e-4, true).unwrap().measure().volume;
+    assert!((volume(&s, "Pad") - 3000.0).abs() < 1e-6, "{}", volume(&s, "Pad"));
+    assert!((volume(&s, &block) - 24000.0).abs() < 1e-6, "{}", volume(&s, &block));
+    let reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    assert!((volume(&reopened, "Pad") - 3000.0).abs() < 1e-6, "{}", volume(&reopened, "Pad"));
+}
+
+/// A face with letters cut into it, extruded as a cut: its edges come into the face's sketch
+/// as the letters' exact curves (a font's quadratics and cubics), not fitted to the mesh, so the
+/// tool's walls lie on the letters' walls and the cut takes what the same region picked in the
+/// sketch takes (#1360). Fitted to the mesh (684 lines, 31 arcs and 18 splines here), they lay
+/// a few hundredths off the letters' walls, and the boolean found no result.
+#[test]
+fn a_face_engraved_with_text_projects_its_letters_exactly_and_extrudes() {
+    let volume = |s: &mut Session| run(s, "inspect.measure", json!({}))["total"]["volume_mm3"].as_f64().unwrap();
+    let engraved = || {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane":"XY"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[105,26]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance":40}));
+        run(&mut s, "sketch.create", json!({"plane":{"face":[50,13,40]}}));
+        run(&mut s, "sketch.text", json!({"text":"textvraiment tres long","at":[3,9],"height":6.5}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance":-1,"operation":"cut"}));
+        s
+    };
+    // The face round the letters, drawn in a sketch in its plane.
+    let mut drawn = engraved();
+    let before = volume(&mut drawn);
+    run(&mut drawn, "sketch.create", json!({"plane":"XY","offset":40}));
+    run(&mut drawn, "sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[105,26]}));
+    run(&mut drawn, "sketch.text", json!({"text":"textvraiment tres long","at":[3,9],"height":6.5}));
+    run(&mut drawn, "sketch.finish", json!({}));
+    run(&mut drawn, "solid.extrude", json!({"distance":-3.5,"operation":"cut","profiles":[{"point":[1,1]}]}));
+    let taken = before - volume(&mut drawn);
+    assert!(taken > 0.0, "{taken}");
+    // The engraved face itself, extruded as a cut.
+    let mut s = engraved();
+    let id = run(&mut s, "solid.extrude", json!({"distance":-3.5,"operation":"cut","face":[1,1,40]}))["feature"].as_u64().unwrap();
+    let r = s.model.result(id).unwrap();
+    assert!(r.error.is_none(), "{r:?}");
+    let face = before - volume(&mut s);
+    assert!((face - taken).abs() < 1e-6 * before, "{face} {taken}");
+    // Its sketch got the letters as Bézier pieces.
+    let st = s.model.state();
+    let sketch = &st.sketches.last().unwrap().sketch;
+    let pieces =
+        sketch.curves.iter().filter(|c| c.link.is_some() && matches!(c.kind, solidcraft_sketch::CurveKind::Spline { control: true, .. })).count();
+    assert!(pieces > 100, "{pieces}");
+}
+
+/// A design saved before free-form edges came in exactly, by the build before it: an "S" cut
+/// 1 mm into a 30 × 20 × 10 block, then a sketch on that face (its edges projected, the letter's
+/// fitted to the mesh as 72 lines, 9 arcs and 2 splines) with a circle cut 3 mm. On reopening, the
+/// face's link is laid out again with the letter's exact pieces, and the part builds the same.
+#[test]
+fn a_face_sketch_saved_with_fitted_letters_reopens_and_builds_the_same() {
+    let text = include_str!("../../../../tests/projection/before-1508/engraved_face_sketched.json");
+    let mut s = Session::new(solidcraft_doc::Document::from_json(text).unwrap());
+    let volume = run(&mut s, "inspect.measure", json!({}))["total"]["volume_mm3"].as_f64().unwrap();
+    for name in ["Extrude2", "Sketch3", "Extrude3"] {
+        let id = s.doc.find_feature(name).unwrap().id;
+        let r = s.model.result(id).unwrap();
+        assert!(r.error.is_none(), "{name}: {:?}", r.error);
+    }
+    // The build that saved it measured 5916.018831 mm³.
+    assert!((volume - 5916.018830904924).abs() < 1e-3, "{volume}");
+    let st = s.model.state();
+    let sketch = &st.sketches.last().unwrap().sketch;
+    let pieces =
+        sketch.curves.iter().filter(|c| c.link.is_some() && matches!(c.kind, solidcraft_sketch::CurveKind::Spline { control: true, .. })).count();
+    assert!(pieces > 0, "{pieces}");
 }

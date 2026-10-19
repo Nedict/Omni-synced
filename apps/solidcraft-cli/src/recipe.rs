@@ -92,7 +92,7 @@ fn extent(f: &Value, p: &mut Value) {
         "symmetric" => {
             let full = e.get("is_full_length").and_then(Value::as_bool).unwrap_or(false);
             p["direction"] = json!("symmetric");
-            p["distance"] = if full { json!(format!("({}) / 2", expr_text(&dist))) } else { dist };
+            p["distance"] = if full { dist } else { json!(format!("({}) * 2", expr_text(&dist))) };
         }
         "two_sides" => {
             p["distance"] = e.get("side1").cloned().unwrap_or(Value::Null);
@@ -296,6 +296,17 @@ pub fn to_script(recipe: &Value) -> Result<Value, String> {
             Some("sketch") => sketch_cmds(f, &mut out)?,
             Some("extrude") => {
                 let mut p = json!({"sketch": profile_sketch(f), "profiles": profiles_of(f), "operation": op(f), "name": name, "body_names": bodies});
+                // Thin: {sketch, curves, thickness, side?, thickness2?} instead of profiles.
+                if let (Some(thin), Some(params)) = (f.get("thin"), p.as_object_mut()) {
+                    params.remove("profiles");
+                    params.insert("thin".into(), json!(true));
+                    params.insert("sketch".into(), thin.get("sketch").cloned().unwrap_or(Value::Null));
+                    for key in ["curves", "thickness", "side", "thickness2"] {
+                        if let Some(v) = thin.get(key) {
+                            params.insert(key.into(), v.clone());
+                        }
+                    }
+                }
                 extent(f, &mut p);
                 out.push(json!({"command": "solid.extrude", "params": p}));
             }
@@ -412,6 +423,24 @@ pub fn to_script(recipe: &Value) -> Result<Value, String> {
                     "sketch": profile_sketch(f), "profiles": profiles_of(f), "path_sketch": path.get("sketch"), "path": path.get("curves"),
                     "operation": op(f), "name": name, "body_names": bodies}}));
             }
+            // A boundary surface: a loop of one sketch's curves (`sketch`, `curves`), or a network
+            // (`u`, `v`), as `surface.boundary` takes them.
+            Some("boundary_surface") => {
+                let mut p = json!({"name": name});
+                for k in ["sketch", "curves", "continuity", "u", "v", "operation"] {
+                    if let Some(v) = f.get(k) {
+                        p[k] = v.clone();
+                    }
+                }
+                if let Some(b) = bodies.as_array().and_then(|a| a.first()) {
+                    p["body_name"] = b.clone();
+                }
+                out.push(json!({"command": "surface.boundary", "params": p}));
+            }
+            Some("thicken") => out.push(json!({"command": "surface.thicken", "params": {
+                "bodies": f.get("bodies"), "thickness": f.get("thickness"), "symmetric": f.get("symmetric").cloned().unwrap_or(json!(false)),
+                "operation": op(f), "name": name}})),
+            Some("remove") => out.push(json!({"command": "solid.remove", "params": {"bodies": f.get("bodies"), "name": name}})),
             Some("shell") => {
                 let faces: Vec<Value> = f.get("faces_removed").and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.get("point").cloned()).collect();
                 out.push(json!({"command": "solid.shell", "params": {"faces": faces, "thickness": f.get("inside_thickness"), "name": name}}));
@@ -514,7 +543,23 @@ pub fn to_script(recipe: &Value) -> Result<Value, String> {
                 out.push(json!({"command": "solid.mirror", "params": p}));
             }
             Some("fillet") => {
-                out.push(json!({"command": "solid.fillet", "params": {"edges": edge_points(f), "radius": f.get("radius"), "name": name}}))
+                let mut p = json!({"edges": edge_points(f), "radius": f.get("radius"), "name": name});
+                // Constant radius (the default), chord length, or a radius varying along each edge
+                // (`radius` at the end nearest `start`, `radius2` at the other, `mid` between,
+                // `smooth`), or a B-spline along each edge (`radius` its first control radius,
+                // `radii` the rest, `knots`); `fit` for a radius too large for the geometry.
+                match f.get("type").and_then(Value::as_str) {
+                    Some("chord_length") => p["type"] = json!("chord"),
+                    Some("variable_radius") => p["type"] = json!("variable"),
+                    Some("spline_radius") => p["type"] = json!("spline"),
+                    _ => {}
+                }
+                for key in ["radius2", "start", "mid", "smooth", "fit", "radii", "knots"] {
+                    if let Some(v) = f.get(key) {
+                        p[key] = v.clone();
+                    }
+                }
+                out.push(json!({"command": "solid.fillet", "params": p}))
             }
             Some("chamfer") => {
                 out.push(json!({"command": "solid.chamfer", "params": {"edges": edge_points(f), "distance": f.get("distance"), "name": name}}))

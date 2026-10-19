@@ -1,8 +1,9 @@
 # Sketching and constraints
 
 A sketch lies on a plane: an origin plane, a construction plane or a planar face. Start one with
-**Create Sketch** (`sketch.create`) and click a plane, or pick a face first. **Finish Sketch**
-returns to the model.
+**Create Sketch** (`sketch.create`) and click a plane, or pick a face first. Right-clicking a
+plane, in the view or on its browser row, offers **Create Sketch** on that plane too.
+**Finish Sketch** returns to the model.
 
 In scripts, `XY`, `XZ`, `YZ` and their `Top`, `Front`, `Right` aliases name origin planes.
 These names are reserved: a construction plane cannot be created with or renamed to one
@@ -31,6 +32,13 @@ fit-point and control-point splines, conics, points and text. **Construction** (
 into reference geometry that doesn't form profiles. Modify tools include trim (T), extend, break,
 fillet, chamfer, offset (O), mirror, patterns, move/copy and scale.
 
+The Sketch Palette's **Construction Geometries** option hides construction curves while you
+work. A hidden construction curve cannot be picked by a click or by a box. Nothing invisible
+is selectable. The option belongs to one sketch and is saved with the design. Centerlines are
+a line type of their own and keep showing. Projected geometry that carries the construction
+line type, such as the trace of a plane, answers to **Projected Geometries** instead. The
+option changes display only. Construction curves were already outside every profile.
+
 Polygon tools show their edge outline while positioning the second point, so the orientation
 can be checked before placement. Inscribed and circumscribed polygons retain their support
 circle and update the outline when the inline **Sides** value changes.
@@ -39,10 +47,48 @@ circle and update the outline when the inline **Sides** value changes.
 `sketch.edit_text` take a `font`, the family or full name of an installed font ("DejaVu Sans") or the path
 of a `.ttf` / `.otf` file, and the **Edit Text** dialog has a **Font** field for it. An unknown font is an
 error, and the font is kept with the text in the design, so the text stays editable in it. `SOLIDCRAFT_FONT_DIRS`
-adds folders to the ones searched for installed fonts.
+adds folders to the ones searched for installed fonts. A text's `height`, its `angle` and each coordinate of
+its `at` can be expressions of the design's parameters, given as strings (`"height": "plate_height / 10"`,
+`"at": ["plate_width / 2", 5]`): the text keeps the expression and follows the parameters when they change, and
+saves it with the design. A number takes the place of an expression, and so does moving the text or dragging its
+handles (what moves becomes a number; turning a text leaves its height as it was). A string that names no
+parameter is the number it comes to. The same two commands refuse a `text` that is not a string, an `at` that is
+not two numbers or expressions, a `height` or `angle` that is neither (or a `height` that is not positive) and an
+expression that cannot be worked out with a message, instead of drawing the text with a default; left out, they
+keep their defaults.
+
+Right-click a letter's filled interior or outline and choose **Edit Text**. You can also
+start **Edit Text** first and click the letter. All outlines belonging to that text are
+highlighted while the dialog is open. A profile bounded by multiple text sources or other
+geometry cannot identify one text: use **Select Other** to choose its outline instead.
+Change the text, font, baseline X/Y, height or angle, then confirm with **OK**; **Cancel**
+keeps the original text. Position and height use the document's units. The four fields take
+expressions: one that names a parameter (`plate_width / 2`) stays an expression, is shown as typed
+when the dialog is opened again, and keeps the text following the parameter.
+
+To work on the letters' shapes themselves, right-click the text and choose **Explode Text**
+(`sketch.break_link` with the text's `link`). Its outlines stay where they are as ordinary
+lines, arcs and curves that can be picked, trimmed, dimensioned and extruded one by one; the
+text itself is gone, so it can no longer be edited as text or follow parameters. Undo brings it back.
+
+A text can follow a curve of its sketch (its **Path**). That curve becomes construction: the
+letters stand on it and their descenders cross it, so as a normal curve it would cut them into
+pieces, and picking the text would pick those pieces. Taking the text off the curve leaves it
+construction; **Normal/Construction** turns it back.
+
+Drag a text outline to move all its letters together. Let go to finish in one undo step,
+or press **Esc** during the drag to restore the original text. The text stays editable.
+For an exact displacement, select an outline and choose **Move/Copy** from its context menu.
+Enter **Distance X**, **Distance Y** and an optional **Angle** about the text's baseline;
+lengths accept document units or explicit units such as `1 in`. Enable **Create Copy** to
+leave the original in place and create a separately editable text. **Cancel** leaves the
+design unchanged. Projected geometry remains protected from ordinary dragging.
+
 
 **Project** (P) and **Intersect** bring model edges into the sketch as linked geometry that
 follows later changes. Sketching on a face projects its edges automatically.
+A projected edge stays the edge that was picked, wherever a later change moves it; when that
+edge no longer exists, the projection keeps its last shape and the sketch says it was lost.
 For Project, select visible source curves or points from another sketch, model edges,
 faces, vertices or bodies, or axes and planes, then press P. The entire supported selection
 is projected in one undo step. A rejected projection keeps the selection for correction;
@@ -83,6 +129,9 @@ error bound of 0.002 mm. Singular tangents, curvature cusps, possible self-inter
 excessive subdivisions are refused. Offset these curves individually: mixed chain junctions
 currently require separate geometry. `sketch.offset.break` releases an offset for independent
 editing, and undo restores its association. Older independently sampled offsets remain independent.
+The fit points of such an offset stay hidden, except the two ends of an open one: lines and
+arcs snap to them and stay coincident with them as the offset follows its source, so the gap
+between a spline and its offset can be closed into a profile.
 Smooth open and newly created smooth closed offsets can be offset again, including bounded
 refinement after a source edit. New closed outputs use a periodic cubic fit with continuous
 tangent and curvature at the seam. Break Offset Association preserves that interpolation,
@@ -130,6 +179,19 @@ coincident, horizontal/vertical, parallel, perpendicular, tangent, equal, concen
 midpoint, symmetry, fix, curvature (G2) and polygon. **Sketch Dimension** (D) adds linear,
 aligned, horizontal, vertical, radius, diameter and angle dimensions. Each is a parameter
 (`d1`, `d2`, …), so it can hold an expression.
+
+Press D, click what you want to measure and type the value: as soon as the click settles the
+dimension (one line, circle or arc, or the second point or line of a distance or angle), its
+value box takes the keyboard with the measured value selected, so typing replaces it. Numbers,
+units (`1 in`), expressions (`2*width`) and parameter names all work; letters go into the box,
+not to tool shortcuts. While you type, the dimension text follows the cursor, and Enter places
+it there (or in its default place if you haven't moved the cursor) as one undo step. Esc
+cancels the dimension.
+
+You can still place the text first. Before you type, a click on empty sketch space puts the
+text there and keeps the value box focused; a click on another point or line makes the
+dimension a distance or angle instead; Tab leaves the picks waiting for a click to place the
+text.
 
 Between two points, or on a line, that don't line up with an axis, where you place the
 dimension picks what it measures: across from them, the distance between them; above or below
@@ -188,3 +250,38 @@ remain valid in an inch design. Angular dimensions keep their angular units. Del
 retain trailing zeros. Component/canvas distance controls and inspection, parts-library
 and flat-pattern measurements follow design units too; parameter expressions and metric
 standard names retain their explicit authored units.
+
+Measure shows the currently selected distance (centre, minimum or maximum) and separate X, Y and Z
+distances on the canvas. The component dimensions follow the world axes and remain visible
+until the Measure dialog closes. To hide these extra lines and labels, turn off
+**Preferences > Graphics > Show X/Y/Z distances**. The choice is saved between runs.
+
+### Reviewing mirror, pattern, and offset results
+
+Mirror, rectangular/circular Pattern, and Offset show the active selection step in their
+shared tool window. Click an input to change it; click a selected object again or Ctrl/Cmd-click
+it to remove it. Each input has its own Clear button. Source inputs show a count, and single
+references identify the chosen mirror line, direction, or centre. Box selection also works
+while the window is open. Sketch modify tools take geometry from the sketch being edited.
+
+Proposed sketch geometry appears **green** before confirmation. Change the inputs or values to
+update the preview, then press **OK**. **Cancel** discards the preview. A circular pattern centre
+can be an existing point or a position clicked in empty sketch space.
+
+Sketch patterns keep each instance related to the seed geometry: moving the seed updates the
+copies, and a copy cannot deform independently. Circle and ellipse radii follow the seed too.
+Choose a circle's centre point to keep a circular pattern centred on that circle. A centre
+placed in empty space becomes a sketch point that can be dimensioned or made coincident.
+Double-click the pattern badge (at the circular centre or beside the rectangular seed), or
+right-click a seed or copy and choose **Edit Sketch Pattern**, to change quantity, spacing,
+direction or total angle. Confirmed edits preserve surviving instance ids; Cancel discards
+the preview. Pattern settings survive save/reopen and undo/redo. Deleting a seed, copy or
+pattern relation breaks that association and leaves the remaining geometry independent.
+Patterns saved by older versions remain independent copies; recreate them to add associations.
+
+Offset distances are editable driving dimensions: double-click a dimension or change its model
+parameter to resize the offset without moving its source curves. The selected side, distance,
+and association survive save/reopen and undo/redo. Symmetric offsets share one driving distance;
+Two Sides has an independent distance for each side. Disconnected selected curves or chains are
+all offset. Breaking an association retains its current geometry and removes that association's
+driver. Older offsets retain their saved fixed distances.

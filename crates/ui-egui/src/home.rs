@@ -13,7 +13,7 @@ use crate::theme::Tokens;
 
 /// Recent designs kept.
 pub const MAX_RECENT: usize = 12;
-const THUMB: [usize; 2] = [240, 150];
+const THUMB: [usize; 2] = solidcraft_engine::io::THUMBNAIL_SIZE;
 
 /// What a background job makes: a key ("sample:N" or a path), the picture, and for samples the
 /// built design (opened at once when picked).
@@ -69,8 +69,9 @@ pub fn thumbnail(s: &Session) -> Option<egui::ColorImage> {
     // Fill the card: the fit leaves room for a whole window's margins.
     cam.distance *= 0.7;
     let scene = solidcraft_engine::view::scene(s, &cam);
-    let c = solidcraft_engine::render::render(&scene, &cam, THUMB[0], THUMB[1]);
-    (c.rgba.len() == c.w * c.h * 4).then(|| egui::ColorImage::from_rgba_unmultiplied([c.w, c.h], &c.rgba))
+    // Drawn on the GPU by the renderer the app installs; none (a browser): no picture.
+    let picture = solidcraft_engine::capture::rgba(&scene, &cam, THUMB[0] as u32, THUMB[1] as u32).ok()?;
+    Some(egui::ColorImage::from_rgba_unmultiplied(THUMB, &picture.rgba))
 }
 
 /// File identity, not just its path: saving or replacing a design invalidates its picture.
@@ -96,6 +97,13 @@ fn cached(key: &str) -> Option<egui::ColorImage> {
         return None;
     }
     let bytes = std::fs::read(path).ok()?;
+    decode_thumbnail(bytes)
+}
+
+fn decode_thumbnail(bytes: Vec<u8>) -> Option<egui::ColorImage> {
+    if bytes.len() > 512 * 1024 {
+        return None;
+    }
     let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Png);
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(THUMB[0] as u32);
@@ -169,6 +177,11 @@ pub(crate) fn install(h: &mut HomeState, ctx: &egui::Context, key: &str, img: Op
 fn make(key: &str) -> Made {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(img) = cached(key) {
+        return (key.to_string(), Some(img), None);
+    }
+    if !key.starts_with("sample:")
+        && let Some(img) = solidcraft_engine::io::read_design_thumbnail_file(key).and_then(decode_thumbnail)
+    {
         return (key.to_string(), Some(img), None);
     }
     let mut s = Session::default();
@@ -345,12 +358,17 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("SolidCraft").size(26.0).strong().color(t.text));
                 ui.add_space(12.0);
-                ui.label(RichText::new("Start").size(16.0).color(t.text_dim));
+                ui.label(RichText::new(crate::i18n::tr_label("Start")).size(16.0).color(t.text_dim));
             });
             ui.add_space(16.0);
             ui.horizontal(|ui| {
                 let big = |ui: &mut egui::Ui, icon: &str, label: &str, primary: bool| -> bool {
-                    let (r, resp) = ui.allocate_exact_size(vec2(170.0, 64.0), Sense::click());
+                    // The label sets the width: a translation longer than the English one widens
+                    // the button instead of running past its edge.
+                    let ink_text = if primary { Color32::WHITE } else { t.text };
+                    let galley = ui.painter().layout_no_wrap(label.to_owned(), egui::FontId::proportional(15.0), ink_text);
+                    let width = (56.0 + galley.size().x + 20.0).max(170.0);
+                    let (r, resp) = ui.allocate_exact_size(vec2(width, 64.0), Sense::click());
                     let fill = if primary {
                         t.accent
                     } else if resp.hovered() {
@@ -368,45 +386,41 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                         t.icon_fill,
                         ink,
                     );
-                    ui.painter().text(
-                        r.left_center() + vec2(56.0, 0.0),
-                        egui::Align2::LEFT_CENTER,
-                        label,
-                        egui::FontId::proportional(15.0),
-                        if primary { Color32::WHITE } else { t.text },
-                    );
+                    ui.painter().galley(r.left_center() + vec2(56.0, -galley.size().y / 2.0), galley, ink_text);
                     resp.clicked()
                 };
-                if big(ui, "new", "New Design", true) {
+                if big(ui, "new", app.tr("ui.new_design"), true) {
                     action = Some(Box::new(|app: &mut SolveApp| crate::documents::new_design(app)));
                 }
                 ui.add_space(10.0);
-                if big(ui, "open", "Open…", false) {
+                if big(ui, "open", app.tr("home.open"), false) {
                     action = Some(Box::new(|app: &mut SolveApp| {
-                        if let Some(p) = app.services.pick_open.as_ref().and_then(|f| f()) {
-                            app.home.open = false;
-                            app.open_path_async(&p);
-                        }
+                        app.pick_open(|app, path| {
+                            if let Some(path) = path {
+                                app.home.open = false;
+                                app.open_path_async(&path);
+                            }
+                        });
                     }));
                 }
             });
             ui.add_space(24.0);
             ui.horizontal_wrapped(|ui| {
-                ui.hyperlink_to("Documentation", crate::help::DOCS_URL);
-                ui.hyperlink_to("Report an Issue", "https://github.com/bherbruck/solidcraft/issues/new");
-                ui.hyperlink_to("What's new", "https://github.com/bherbruck/solidcraft/releases/latest");
-                if ui.link("Keyboard Shortcuts").clicked() {
+                ui.hyperlink_to(app.tr("home.documentation"), crate::help::DOCS_URL);
+                ui.hyperlink_to(app.tr("home.report_issue"), "https://github.com/tangency-labs/solidcraft/issues/new");
+                ui.hyperlink_to(app.tr("home.whats_new"), "https://github.com/bherbruck/solidcraft/releases/latest");
+                if ui.link(app.tr("ui.keyboard_shortcuts")).clicked() {
                     app.keymap.open = true;
                     app.keymap.read_only = true;
                 }
-                if ui.link("Preferences").clicked() {
+                if ui.link(app.tr("ui.preferences")).clicked() {
                     crate::prefs::open_at(app, 0);
                 }
             });
             ui.add_space(16.0);
-            section(ui, "Recent");
+            section(ui, app.tr("home.recent"));
             if recent.is_empty() {
-                ui.label(RichText::new("Designs you open or save appear here.").color(t.text_dim));
+                ui.label(RichText::new(crate::i18n::tr_label("Designs you open or save appear here.")).color(t.text_dim));
             } else {
                 grid(ui, recent.len(), |ui, i| {
                     let Some(p) = recent.get(i) else { return };
@@ -414,37 +428,38 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                     let name = path.file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| p.clone());
                     let missing = !solidcraft_engine::io::vfs::exists(p);
                     let mut sub = if missing {
-                        "missing".to_string()
+                        app.tr("home.missing").to_string()
                     } else if p.starts_with("/opfs/") {
                         // The web build keeps designs in the browser's own storage.
-                        "in this browser".to_string()
+                        app.tr("home.in_this_browser").to_string()
                     } else {
                         p.clone()
                     };
                     if let Some(time) = app.home.opened_at.get(p) {
                         let now = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(*time);
                         let seconds = now.saturating_sub(*time);
-                        let ago = if seconds < 60 {
-                            "just now".to_string()
+                        let opened = if seconds < 60 {
+                            app.tr("home.opened_just_now").to_string()
                         } else if seconds < 3600 {
-                            format!("{} min ago", seconds / 60)
+                            crate::i18n::format("home.opened_minutes_ago", &[("count", &(seconds / 60).to_string())])
                         } else if seconds < 86400 {
-                            format!("{} h ago", seconds / 3600)
+                            crate::i18n::format("home.opened_hours_ago", &[("count", &(seconds / 3600).to_string())])
                         } else {
-                            format!("{} days ago", seconds / 86400)
+                            crate::i18n::format("home.opened_days_ago", &[("count", &(seconds / 86400).to_string())])
                         };
-                        sub.push_str(&format!("\nOpened {ago}"));
+                        sub.push('\n');
+                        sub.push_str(&opened);
                     }
                     let response = card(ui, Pic::Ready(app.home.thumbs.get(p.as_str()).and_then(Option::as_ref)), &name, &sub, missing)
                         .on_hover_text(p.as_str());
                     crate::scenario::publish_handle(&format!("home:recent:{i}"), response.rect.center());
                     response.context_menu(|ui| {
-                        if ui.button("Remove from list").clicked() {
+                        if ui.button(crate::i18n::tr_label("Remove from list")).clicked() {
                             app.home.recent.retain(|x| x != p);
                             app.home.opened_at.remove(p);
                             ui.close();
                         }
-                        if !cfg!(target_arch = "wasm32") && ui.button("Show in folder").clicked() {
+                        if !cfg!(target_arch = "wasm32") && ui.button(crate::i18n::tr_label("Show in folder")).clicked() {
                             if let Some(show) = &app.services.show_in_folder {
                                 show(p);
                             }
@@ -458,17 +473,19 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 });
             }
             ui.add_space(24.0);
-            section(ui, "Samples");
+            section(ui, app.tr("home.samples"));
             grid(ui, samples.len(), |ui, i| {
                 let Some(s) = samples.get(i) else { return };
                 let key = format!("sample:{i}");
                 let busy = app.home.wanted == Some(i);
-                let sub = if busy { "opening…" } else { s.about };
+                // The engine's sample table holds English text; the opened design keeps it as its name.
+                let about = app.tr_label(s.about);
+                let sub = if busy { app.tr("home.opening") } else { about };
                 let tex = match app.home.thumbs.get(&key) {
                     Some(t) => Pic::Ready(t.as_ref()),
                     None => Pic::Icon("box"),
                 };
-                if card(ui, tex, s.name, sub, false).on_hover_text(s.about).clicked() {
+                if card(ui, tex, app.tr_label(s.name), sub, false).on_hover_text(about).clicked() {
                     action = Some(Box::new(move |app: &mut SolveApp| open_sample(app, i)));
                 }
             });
@@ -554,6 +571,9 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn cached_recent_uses_a_separate_png_without_reading_or_changing_design_json() {
+        if !crate::gpu::test_picture_renderer() {
+            return;
+        }
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         let path = std::env::temp_dir().join(format!("solidcraft-thumb-{}-{nonce}.solidcraft", std::process::id()));
         // Deliberately invalid design: a cached recent must not parse/evaluate it.
@@ -575,6 +595,35 @@ mod tests {
         std::fs::remove_file(png).unwrap();
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn portable_thumbnail_loads_without_a_local_picture_or_model_rebuild() {
+        if !crate::gpu::test_picture_renderer() {
+            return;
+        }
+        let mut session = Session::default();
+        session.execute("solid.box", &serde_json::json!({"length":10,"width":20,"height":30})).unwrap();
+        for body in &session.world_state().bodies {
+            body.mesh();
+        }
+        let bytes = session.design_container(solidcraft_engine::io::DesignCompression::Fast, false, true).unwrap();
+        let png = solidcraft_engine::io::read_design_thumbnail(&bytes).unwrap();
+        let image = decode_thumbnail(png).unwrap();
+        assert_eq!(image.size, THUMB);
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("solidcraft-portable-thumb-{}-{nonce}.solidcraft", std::process::id()));
+        std::fs::write(&path, bytes).unwrap();
+        let key = path.to_string_lossy().to_string();
+        assert!(cached(&key).is_none());
+        let (_, picture, rebuilt) = make(&key);
+        assert!(rebuilt.is_none());
+        assert_eq!(picture.unwrap().pixels, image.pixels);
+        assert!(!cache_path(&key).unwrap().exists(), "fallback rebuilding would create a local picture");
+        std::fs::remove_file(path).unwrap();
+        assert!(decode_thumbnail(vec![0; 600_000]).is_none());
+        assert!(decode_thumbnail(vec![0; 24]).is_none());
+    }
+
     #[test]
     fn recent_list_is_newest_first_and_bounded() {
         let mut h = HomeState::default();
@@ -588,8 +637,12 @@ mod tests {
     }
 
     /// Samples build in the background and make a picture; picking one opens its design.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn sample_card_makes_a_picture_and_opens() {
+        if !crate::gpu::test_picture_renderer() {
+            return;
+        }
         let (key, img, session) = make("sample:0");
         assert_eq!(key, "sample:0");
         let img = img.unwrap();

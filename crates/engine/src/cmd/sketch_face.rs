@@ -105,10 +105,10 @@ fn capture_impl(s: &Session, value: &Value, cmd: &str, internal: bool) -> Result
             let inverse = mat_inverse(&frame).ok_or_else(|| bad(cmd, "invalid selected face frame"))?;
             let local_point = apply_point(&inverse, point);
             let tolerance = (body.body.size() * 1e-4).max(1e-5);
-            // A flat face of a sheet metal body attaches to its panel: the exact plane comes from
-            // the panel's flat region and fold, and the sketch keeps the face's name to follow it.
+            // A flat face of a sheet metal body attaches to its panel (or a panel's rim): the
+            // exact plane comes from the panel's flat region and fold, and the sketch keeps the
+            // face's name to follow it.
             if !fixed
-                && !internal
                 && let Some(sheet) = state.sheets.iter().find(|sheet| sheet.body == body.name)
                 && let Some((face, plane)) = sheet.panel_face_at(local_point, tolerance * 10.0)
             {
@@ -192,7 +192,8 @@ fn capture_impl(s: &Session, value: &Value, cmd: &str, internal: bool) -> Result
         {
             return Err(bad(
                 cmd,
-                "this face can't keep an attachment: it was merged from more than one feature's faces or reshaped by an edit. \
+                "this face can't keep an attachment: its history can't tell it apart from other faces (an edit reshaped it, \
+                 or more than one face could claim its name). \
                  Pick another face, or use a fixed plane here (fixed:true), which won't follow later changes to the face",
             ));
         }
@@ -205,7 +206,7 @@ fn capture_impl(s: &Session, value: &Value, cmd: &str, internal: bool) -> Result
 pub(in crate::cmd) fn anchor(mut plane: &PlaneRef) -> Option<&solidcraft_doc::FaceAnchor> {
     loop {
         match plane {
-            PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } => plane = base,
+            PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => plane = base,
             PlaneRef::Face { anchor, .. } => return anchor.as_deref(),
             _ => return None,
         }
@@ -215,7 +216,7 @@ pub(in crate::cmd) fn anchor(mut plane: &PlaneRef) -> Option<&solidcraft_doc::Fa
 pub(in crate::cmd) fn anchor_mut(mut plane: &mut PlaneRef) -> Option<&mut solidcraft_doc::FaceAnchor> {
     loop {
         match plane {
-            PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } => plane = base,
+            PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => plane = base,
             PlaneRef::Face { anchor, .. } => return anchor.as_deref_mut(),
             _ => return None,
         }

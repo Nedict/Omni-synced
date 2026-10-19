@@ -27,6 +27,8 @@ pub struct DocSlot {
 /// The per-design part of the UI state (what is hidden, shown or locked).
 #[derive(Clone, Debug, Default)]
 struct DocView {
+    render: crate::render_workspace::ViewState,
+    sketch_choices: crate::sketch_families::Choices,
     hidden_profiles: Vec<u64>,
     shown_dims: Vec<u64>,
     locked_bodies: Vec<String>,
@@ -47,6 +49,10 @@ pub struct Documents {
     pub closing: Option<usize>,
     /// Quitting: the tabs answered so far with Don't Save (`None`: not quitting).
     pub quitting: Option<Vec<usize>>,
+    /// The "save changes?" button the arrow keys have picked; Enter gives it.
+    pub choice: Answer,
+    /// Save As is answering a Close/Quit prompt.
+    saving: bool,
 }
 
 impl Documents {
@@ -59,6 +65,8 @@ impl Documents {
 fn take_view(app: &mut SolveApp) -> DocView {
     let u = &mut app.ui;
     DocView {
+        render: std::mem::take(&mut app.render_workspace.view),
+        sketch_choices: std::mem::take(&mut app.sketch_choices),
         hidden_profiles: std::mem::take(&mut u.hidden_profiles),
         shown_dims: std::mem::take(&mut u.shown_dims),
         locked_bodies: std::mem::take(&mut u.locked_bodies),
@@ -66,6 +74,10 @@ fn take_view(app: &mut SolveApp) -> DocView {
 }
 
 fn put_view(app: &mut SolveApp, v: DocView) {
+    app.render_workspace.view = v.render;
+    crate::render_workspace::invalidate_scene(app);
+    crate::render_workspace::sync_backend(app);
+    app.sketch_choices = v.sketch_choices;
     let u = &mut app.ui;
     u.hidden_profiles = v.hidden_profiles;
     u.shown_dims = v.shown_dims;
@@ -74,15 +86,20 @@ fn put_view(app: &mut SolveApp, v: DocView) {
 
 /// Put `slot` into the app and return what was there.
 fn swap_in(app: &mut SolveApp, slot: DocSlot) -> DocSlot {
+    if crate::render_workspace::active(app) {
+        let _ = crate::render_workspace::enter(app, false);
+    }
     // Whatever was going on in the design leaves with it.
+    crate::sketch_text_move::cancel_drag(app);
     crate::dialogs::cancel(app);
     crate::dim_view::cancel();
     app.tool = None;
     app.params = None;
+    app.design_properties = None;
     app.cancel_view_animation();
     app.viewport.orbit_snap = None;
     app.viewport.orbit_free = None;
-    app.preview = crate::preview::PreviewState::default();
+    app.preview.reset();
     app.viewport.hover = None;
     app.menu.props = None;
     crate::sketch_attachment_ui::clear(app);
@@ -95,6 +112,8 @@ fn swap_in(app: &mut SolveApp, slot: DocSlot) -> DocSlot {
         view: take_view(app),
     };
     put_view(app, slot.view);
+    // Preferences the session holds go with the user, not the tab (#680).
+    app.session.auto_project = out.session.auto_project;
     // Views cache by revision: the incoming design must not look unchanged.
     app.session.invalidate_view(out_rev);
     app.ui.tab = if app.session.active_sketch.is_some() { "SKETCH".into() } else { "SOLID".into() };
@@ -103,6 +122,9 @@ fn swap_in(app: &mut SolveApp, slot: DocSlot) -> DocSlot {
 
 /// Make tab `i` the active design.
 pub fn switch(app: &mut SolveApp, i: usize) {
+    if app.file_picker_busy() {
+        return;
+    }
     app.home.open = false;
     if i == app.docs.active || i >= app.docs.slots.len() {
         return;
@@ -147,7 +169,9 @@ pub fn adopt(app: &mut SolveApp, session: Session) {
         app.tool = None;
         app.menu.props = None;
         crate::sketch_attachment_ui::clear(app);
-        app.session = session;
+        app.session.replace_design(session);
+        crate::render_workspace::reset_document(app);
+        app.sketch_choices = crate::sketch_families::Choices::default();
         app.session.invalidate_view(rev);
         app.cam = Camera::default();
         app.fit_view();
@@ -156,29 +180,63 @@ pub fn adopt(app: &mut SolveApp, session: Session) {
     }
 }
 
-/// A new, empty design in its own tab.
+/// A new, empty design in its own tab. One that is already empty keeps its tab and still
+/// takes Units of new designs (#1205): a launch starts on that empty design, so returning
+/// here used to leave it in millimetres.
 pub fn new_design(app: &mut SolveApp) {
+    if app.file_picker_busy() {
+        return;
+    }
     app.home.open = false;
     if active_is_blank(app) {
+        crate::prefs::apply_new_design(app);
         return;
     }
     if let Err(e) = open_tab(app, Session::default()) {
         app.set_status(e, true);
+    } else {
+        crate::prefs::apply_new_design(app);
     }
-    crate::prefs::apply_new_design(app);
 }
 
-/// Before opening a file: a fresh tab unless the active design is blank.
-pub fn prepare_open(app: &mut SolveApp) {
-    if !active_is_blank(app)
-        && let Err(e) = open_tab(app, Session::default())
-    {
+/// The tab strip's +: always a new tab, except over the blank design the start page covers
+/// (a launch), which New takes as [`new_design`] does.
+pub fn new_tab(app: &mut SolveApp) {
+    if app.file_picker_busy() {
+        return;
+    }
+    if app.home.open && active_is_blank(app) {
+        new_design(app);
+        return;
+    }
+    app.home.open = false;
+    if let Err(e) = open_tab(app, Session::default()) {
         app.set_status(e, true);
+    } else {
+        crate::prefs::apply_new_design(app);
+    }
+}
+
+/// Before opening a file: a fresh tab unless the active design is blank. The empty design,
+/// new or already showing, takes Units of new designs so a cancelled open is not millimetres
+/// when the preference says otherwise.
+pub fn prepare_open(app: &mut SolveApp) {
+    if active_is_blank(app) {
+        crate::prefs::apply_new_design(app);
+        return;
+    }
+    if let Err(e) = open_tab(app, Session::default()) {
+        app.set_status(e, true);
+    } else {
+        crate::prefs::apply_new_design(app);
     }
 }
 
 /// Close tab `i`: asks first when it has unsaved changes (`force`: close anyway).
 pub fn close(app: &mut SolveApp, i: usize, force: bool) {
+    if app.file_picker_busy() {
+        return;
+    }
     let n = app.docs.count();
     if i >= n {
         return;
@@ -190,11 +248,13 @@ pub fn close(app: &mut SolveApp, i: usize, force: bool) {
     app.docs.closing = None;
     if n <= 1 {
         // The last design: a blank one takes its place.
+        crate::sketch_text_move::cancel_drag(app);
         let rev = app.session.revision;
         crate::dialogs::cancel(app);
         app.tool = None;
-        app.session = Session::default();
+        app.session.replace_design(Session::default());
         app.session.revision = rev + 1;
+        crate::prefs::apply_new_design(app);
         app.cam = Camera::default();
         app.fit_view();
         put_view(app, DocView::default());
@@ -217,6 +277,9 @@ pub fn close(app: &mut SolveApp, i: usize, force: bool) {
 /// design with unsaved changes, then sets `app.quit_requested` for the host to close the window.
 /// Cancel, or a Save that didn't save, stays open.
 pub fn request_quit(app: &mut SolveApp) {
+    if app.file_picker_busy() {
+        return;
+    }
     if app.docs.quitting.is_none() {
         app.docs.quitting = Some(Vec::new());
     }
@@ -303,17 +366,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
     let t = Tokens::get();
     let home = Rect::from_min_size(pos2(x0, r.top() + 5.0), vec2(66.0, r.height() - 5.0));
     let response = ui.interact(home, ui.id().with("home_tab"), Sense::click());
-    ui.painter().rect_filled(
-        home,
-        egui::CornerRadius { nw: 5, ne: 5, sw: 0, se: 0 },
-        if app.home.open {
-            t.toolbar
-        } else if response.hovered() {
-            t.hover
-        } else {
-            t.app_bar
-        },
-    );
+    tab_shape(ui.painter(), &t, home, app.home.open, response.hovered());
     let home_text = app.tr("ui.home");
     ui.painter().text(
         home.center(),
@@ -323,7 +376,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
         if app.home.open { t.text } else { t.app_bar_text },
     );
     crate::scenario::publish_handle("tab:home", home.center());
-    if response.clicked() {
+    if response.clicked() && !app.file_load.busy() {
         app.home.show(app.session.revision);
     }
     let x0 = x0 + 70.0;
@@ -347,17 +400,9 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
                 crate::titlebar::toggle_maximize(ui.ctx());
             }
         }
-        let fill = if active {
-            t.toolbar
-        } else if resp.hovered() {
-            Color32::from_white_alpha(28)
-        } else {
-            t.app_bar
-        };
-        ui.painter().rect_filled(tr, egui::CornerRadius { nw: 5, ne: 5, sw: 0, se: 0 }, fill);
+        tab_shape(ui.painter(), &t, tr, active, resp.hovered());
         let ink = if active { t.text } else { t.app_bar_text };
-        let name_display = if name == "Untitled" { app.tr("ui.untitled") } else { name };
-        let label = format!("{name_display}{}", if *dirty { " •" } else { "" });
+        let label = format!("{}{}", crate::i18n::Locale::for_language(&app.preferences.language).given_name(name), if *dirty { " •" } else { "" });
         let g = ui.painter().layout_no_wrap(label, FontId::proportional(13.0), ink);
         let text_w = (tr.width() - 30.0).max(10.0);
         let clip = Rect::from_min_size(tr.min, vec2(text_w + 10.0, tr.height()));
@@ -388,7 +433,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
         }
         ui.painter().text(mr.center(), egui::Align2::CENTER_CENTER, format!("»{}", n - shown), FontId::proportional(12.0), t.app_bar_text);
         let id = egui::Id::new("sc_doc_more");
-        if mresp.clone().on_hover_text("All open designs").clicked() {
+        if mresp.clone().on_hover_text(crate::i18n::tr_label("All open designs")).clicked() {
             ui.ctx().data_mut(|d| d.insert_temp(id, !d.get_temp::<bool>(id).unwrap_or(false)));
         }
         if ui.ctx().data(|d| d.get_temp::<bool>(id).unwrap_or(false)) {
@@ -424,14 +469,31 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
     let s = Stroke::new(1.6, t.app_bar_text);
     ui.painter().line_segment([c - vec2(6.0, 0.0), c + vec2(6.0, 0.0)], s);
     ui.painter().line_segment([c - vec2(0.0, 6.0), c + vec2(0.0, 6.0)], s);
-    if presp.on_hover_text("New Design (Ctrl+N)").clicked() {
-        new_design(app);
+    // A file loading into the window keeps the tabs as they are (dragging still moves it).
+    let idle = !app.file_load.busy();
+    if presp.on_hover_text("New Design (Ctrl+N)").clicked() && idle {
+        new_tab(app);
     }
-    if let Some(i) = shut {
-        close(app, i, false);
-    } else if let Some(i) = pick {
-        switch(app, i);
+    match (shut, pick) {
+        _ if !idle => {}
+        (Some(i), _) => close(app, i, false),
+        (None, Some(i)) => switch(app, i),
+        (None, None) => {}
     }
+}
+
+/// One tab of the strip: the active tab takes the toolbar's colour and runs into it; the others
+/// sit on the application bar, lighter while hovered.
+fn tab_shape(painter: &egui::Painter, t: &Tokens, r: Rect, active: bool, hovered: bool) {
+    let corners = egui::CornerRadius { nw: 5, ne: 5, sw: 0, se: 0 };
+    let fill = if active {
+        t.toolbar
+    } else if hovered {
+        t.app_bar_hover
+    } else {
+        t.app_bar
+    };
+    painter.rect_filled(r, corners, fill);
 }
 
 /// Which tabs the strip shows in `room` points: (first, how many, tab width). Tabs shrink to
@@ -451,8 +513,9 @@ pub fn layout(n: usize, active: usize, room: f32) -> (usize, usize, f32) {
 }
 
 /// What "save changes?" was answered.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Answer {
+    #[default]
     Save,
     DontSave,
     Cancel,
@@ -464,25 +527,47 @@ pub fn prompt(app: &mut SolveApp, ctx: &egui::Context) {
     quit_step(app);
     let Some(i) = app.docs.closing else { return };
     let name = tabs_info(app).get(i).map(|x| x.0.clone()).unwrap_or_default();
-    let name_display = if name == "Untitled" { crate::i18n::tr("ui.untitled") } else { &name };
+    let name_display = crate::i18n::tr_name(&name);
     let mut answer: Option<Answer> = None;
-    let title = crate::i18n::format("document.save_changes", &[("name", name_display)]);
+    // Left and Right move between the buttons (Save is picked first); Enter gives the picked one.
+    let order = [Answer::Save, Answer::DontSave, Answer::Cancel];
+    let (left, right, enter) = ctx.input_mut(|x| {
+        (
+            x.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft),
+            x.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight),
+            x.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+        )
+    });
+    let at = order.iter().position(|a| *a == app.docs.choice).unwrap_or(0);
+    let at = if left {
+        at.saturating_sub(1)
+    } else if right {
+        (at + 1).min(order.len() - 1)
+    } else {
+        at
+    };
+    let choice = order.get(at).copied().unwrap_or_default();
+    app.docs.choice = choice;
+    if enter {
+        answer = Some(choice);
+    }
+    let title = crate::i18n::format("document.save_changes", &[("name", &name_display)]);
     crate::frame::window(ctx, title, crate::frame::Width::Normal)
         .id(egui::Id::new("sc_close_prompt"))
         .collapsible(false)
         .resizable(false)
         .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
         .show(ctx, |ui| {
-            ui.label(crate::i18n::format("document.unsaved_changes", &[("name", name_display)]));
+            ui.label(crate::i18n::format("document.unsaved_changes", &[("name", &name_display)]));
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.button(crate::i18n::tr("ui.save")).clicked() {
+                if ui.add(egui::Button::new(crate::i18n::tr("ui.save")).selected(choice == Answer::Save)).clicked() {
                     answer = Some(Answer::Save);
                 }
-                if ui.button(crate::i18n::tr("ui.don_t_save")).clicked() {
+                if ui.add(egui::Button::new(crate::i18n::tr("ui.don_t_save")).selected(choice == Answer::DontSave)).clicked() {
                     answer = Some(Answer::DontSave);
                 }
-                if ui.button(crate::i18n::tr("ui.cancel")).clicked() {
+                if ui.add(egui::Button::new(crate::i18n::tr("ui.cancel")).selected(choice == Answer::Cancel)).clicked() {
                     answer = Some(Answer::Cancel);
                 }
             });
@@ -498,20 +583,18 @@ pub fn prompt(app: &mut SolveApp, ctx: &egui::Context) {
 
 /// Act on the "save changes?" answer (also the control channel's `ui.documents {answer}`).
 pub fn answer_prompt(app: &mut SolveApp, answer: Answer) {
+    if app.file_picker_busy() {
+        return;
+    }
     let Some(i) = app.docs.closing else { return };
+    app.docs.choice = Answer::Save;
     match answer {
         Answer::Save => {
             switch(app, i);
+            app.docs.saving = true;
             crate::toolbar::save(app);
-            let saved = !app.session.is_dirty();
-            app.docs.closing = None;
-            if app.docs.quitting.is_some() {
-                // Quit only once it is saved; a cancelled picker or a failed save stays open.
-                if !saved {
-                    app.docs.quitting = None;
-                }
-            } else if saved {
-                close(app, app.docs.active, true);
+            if !app.file_picker_busy() {
+                saved_for_close(app);
             }
         }
         Answer::DontSave => {
@@ -526,6 +609,23 @@ pub fn answer_prompt(app: &mut SolveApp, answer: Answer) {
             app.docs.closing = None;
             app.docs.quitting = None;
         }
+    }
+    quit_step(app);
+}
+
+/// Resume Close/Quit only after Save As has answered and the write succeeded.
+pub(crate) fn saved_for_close(app: &mut SolveApp) {
+    if !std::mem::take(&mut app.docs.saving) || app.docs.closing.is_none() {
+        return;
+    }
+    let saved = !app.session.is_dirty();
+    app.docs.closing = None;
+    if app.docs.quitting.is_some() {
+        if !saved {
+            app.docs.quitting = None;
+        }
+    } else if saved {
+        close(app, app.docs.active, true);
     }
     quit_step(app);
 }
@@ -549,6 +649,44 @@ mod tests {
         assert!((first..first + shown).contains(&11), "the active tab stays visible");
         assert!(shown as f32 * w + 26.0 + 34.0 <= 600.0 + 0.5);
         assert_eq!(layout(12, 0, 600.0).0, 0);
+    }
+
+    /// The tabs sit on the dark application bar in both themes: a hovered tab (the Home tab
+    /// included) keeps the bar's light text readable, and no tab is outlined.
+    #[test]
+    fn title_bar_tabs_keep_their_text_readable_on_hover() {
+        fn luminance(c: Color32) -> f32 {
+            let c = egui::Rgba::from(c);
+            0.2126 * c.r() + 0.7152 * c.g() + 0.0722 * c.b()
+        }
+        // egui blends premultiplied colours in gamma space.
+        fn over(top: Color32, bottom: Color32) -> Color32 {
+            let ch = |t: u8, b: u8| t.saturating_add(((u16::from(b) * u16::from(255 - top.a())) / 255) as u8);
+            Color32::from_rgb(ch(top.r(), bottom.r()), ch(top.g(), bottom.g()), ch(top.b(), bottom.b()))
+        }
+        for t in [Tokens::light(), Tokens::dark()] {
+            let r = Rect::from_min_size(pos2(10.0, 5.0), vec2(80.0, 30.0));
+            for (active, hovered) in [(false, false), (false, true), (true, false)] {
+                let ctx = egui::Context::default();
+                let mut out = ctx.run_ui(egui::RawInput::default(), |ui| tab_shape(ui.painter(), &t, r, active, hovered));
+                out.textures_delta.clear();
+                let rects: Vec<_> = out
+                    .shapes
+                    .iter()
+                    .filter_map(|s| match &s.shape {
+                        egui::Shape::Rect(rect) => Some((rect.clone(), s.clip_rect)),
+                        _ => None,
+                    })
+                    .collect();
+                let fill = rects.iter().find(|(rect, _)| rect.fill.a() > 0).map(|(rect, _)| rect.fill).unwrap_or_default();
+                if !active {
+                    let bg = over(fill, t.app_bar);
+                    let (hi, lo) = (luminance(t.app_bar_text).max(luminance(bg)), luminance(t.app_bar_text).min(luminance(bg)));
+                    assert!((hi + 0.05) / (lo + 0.05) >= 4.5, "text on a tab (hovered: {hovered}) must stay readable: {bg:?} {t:?}");
+                }
+                assert!(rects.iter().all(|(rect, _)| rect.stroke.width == 0.0), "tabs have no outline (active: {active})");
+            }
+        }
     }
 
     #[test]
@@ -580,6 +718,21 @@ mod tests {
         assert_eq!(a.docs.active, 0);
         close(&mut a, 0, true);
         assert!(active_is_blank(&a) && a.home.open);
+    }
+
+    /// The tab strip's + opens a tab every time, an empty design's included; over the start
+    /// page's blank design (a launch) it uses that design.
+    #[test]
+    fn plus_opens_a_tab_every_time() {
+        let mut a = app();
+        a.home.open = true;
+        new_tab(&mut a);
+        assert_eq!(a.docs.count(), 1, "the launch's blank design is used");
+        assert!(!a.home.open);
+        new_tab(&mut a);
+        new_tab(&mut a);
+        assert_eq!(a.docs.count(), 3);
+        assert_eq!(a.docs.active, 2);
     }
 
     /// Quitting asks once per design with unsaved changes: Don't Save moves on (and keeps no
@@ -641,11 +794,84 @@ mod tests {
         let file = std::env::temp_dir().join(format!("solidcraft-quit-saveas-{}.solidcraft", std::process::id()));
         let _ = std::fs::remove_file(&file);
         let to = file.to_string_lossy().to_string();
-        a.services.pick_save = Some(Box::new(move |_: &str, _: &[&str]| Some(to.clone())));
+        a.services.pick_save = Some(Box::new(move |_: &str, _: &[&str]| Box::pin(std::future::ready(Some(to.clone())))));
         request_quit(&mut a);
         answer_prompt(&mut a, Answer::Save);
+        assert!(!a.quit_requested && a.file_picker_busy());
+        crate::file_picker::tick(&mut a, &egui::Context::default());
         assert!(a.quit_requested && file.exists());
         let _ = std::fs::remove_file(&file);
+    }
+
+    /// #680: "Project face edges into new sketches" is a preference: it holds in new tabs, in
+    /// the tab switched to, in a design adopted over a blank one and after the last tab closes,
+    /// and it is what the preferences file keeps.
+    #[test]
+    fn auto_project_follows_the_user_across_tabs() {
+        let mut a = app();
+        a.run("solid.box", json!({"length": 10, "width": 10, "height": 10})).unwrap();
+        a.run("sketch.auto_project", json!({"value": false})).unwrap();
+        new_design(&mut a);
+        assert_eq!(a.docs.count(), 2);
+        assert!(!a.session.auto_project, "a new tab");
+        a.run("solid.box", json!({"length": 5, "width": 5, "height": 5})).unwrap();
+        a.run("sketch.auto_project", json!({"value": true})).unwrap();
+        switch(&mut a, 0);
+        assert!(a.session.auto_project, "the tab switched to");
+        a.run("sketch.auto_project", json!({"value": false})).unwrap();
+        switch(&mut a, 1);
+        assert!(!a.session.auto_project);
+        let prefs: Value = serde_json::from_str(&a.prefs()).unwrap();
+        assert_eq!(prefs["auto_project"], false);
+        close(&mut a, 1, true);
+        close(&mut a, 0, true);
+        assert!(active_is_blank(&a) && !a.session.auto_project, "after the last tab closes");
+        adopt(&mut a, Session::default());
+        assert_eq!(a.docs.count(), 1);
+        assert!(!a.session.auto_project, "a design adopted over a blank one");
+    }
+
+    /// #1205: Units of new designs apply to the empty design a launch shows, to New while that
+    /// design is still empty, to `file.new`, and to the blank design left when the last tab closes.
+    /// A design that already has features keeps its units.
+    #[test]
+    fn new_designs_use_the_preferred_units_including_a_blank_one() {
+        let mut a = app();
+        a.preferences.default_units = "in".into();
+        assert_eq!(a.session.doc.units, "mm");
+        // What a launch with no file does after reading preferences.
+        crate::prefs::apply_new_design(&mut a);
+        assert_eq!(a.session.doc.units, "in");
+        assert!(!a.session.is_dirty());
+        assert!(active_is_blank(&a));
+        let tabs = a.docs.count();
+        new_design(&mut a);
+        assert_eq!(a.docs.count(), tabs, "New on an empty design does not open another tab");
+        assert_eq!(a.session.doc.units, "in");
+        assert!(!a.session.is_dirty());
+        // Geometry already there is left alone. New then opens a tab in the preferred units.
+        a.run("solid.box", json!({"length": 25.4, "width": 25.4, "height": 25.4})).unwrap();
+        assert_eq!(a.session.doc.units, "in");
+        a.preferences.default_units = "ft".into();
+        new_design(&mut a);
+        assert_eq!(a.docs.count(), tabs + 1);
+        assert_eq!(a.session.doc.units, "ft");
+        assert!(a.session.doc.features.is_empty());
+        assert!(!a.session.is_dirty());
+        a.run("file.new", json!({"name": "From command"})).unwrap();
+        assert_eq!(a.session.doc.units, "ft");
+        assert_eq!(a.session.doc.name, "From command");
+        assert!(!a.session.is_dirty());
+        // Closing every tab leaves a blank design in the preferred units.
+        assert_eq!(a.docs.count(), 2);
+        let active = a.docs.active;
+        close(&mut a, active, true);
+        assert_eq!(a.docs.count(), 1);
+        assert!(!a.session.doc.features.is_empty(), "the other tab still has its part");
+        close(&mut a, 0, true);
+        assert!(active_is_blank(&a));
+        assert_eq!(a.session.doc.units, "ft");
+        assert!(!a.session.is_dirty());
     }
 
     /// A design built elsewhere replaces a blank one and gets a tab otherwise.

@@ -124,7 +124,12 @@ impl Document {
         target.validate()?;
         let prefix = format!("F{}:", target.origin_feature);
         let role = target.name.strip_prefix(&prefix).ok_or_else(|| DocError::Invalid("face lineage does not match its feature".into()))?;
-        if crate::naming::strip_piece(&target.name) != target.name {
+        // An exact history name may name a piece by the faces around it (`F2:top#[F2:side:l4,…]`),
+        // never by a number (an older design's piece, or a tie the faces around it left).
+        let numbered =
+            target.name.match_indices('#').any(|(i, _)| target.name.get(i + 1..).is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit())));
+        let lineage_piece = matches!(target.certificate, Some(super::FaceCertificate::Lineage)) && !numbered;
+        if crate::naming::strip_piece(&target.name) != target.name && !lineage_piece {
             return Err(DocError::Invalid("configure a face lineage, not a numbered split piece".into()));
         }
         let feature = self.feature(target.origin_feature).ok_or_else(|| DocError::Unknown("face origin feature is gone".into()))?;
@@ -145,6 +150,7 @@ impl Document {
                         && self.feature(*sketch).is_some_and(|feature| matches!(&feature.kind, FeatureKind::Sketch { sketch, .. } if sketch.curves.iter().any(|candidate| candidate.id == *curve && !candidate.construction && matches!(candidate.kind, solidcraft_sketch::CurveKind::Line { .. } | solidcraft_sketch::CurveKind::Circle { .. } | solidcraft_sketch::CurveKind::Arc { .. }))))
                 }
                 (super::FaceCertificate::Imported { .. }, FeatureKind::Import { .. }) => role.strip_prefix("face:").is_some_and(|index| index.parse::<usize>().is_ok()),
+                (super::FaceCertificate::Lineage, _) => !role.is_empty(),
                 (super::FaceCertificate::ShellPlanar { source_producer, source, inner }, FeatureKind::Shell { .. }) => {
                     *source_producer != target.origin_feature
                         && self.flat_certificate_producer_matches(*source_producer, source)
@@ -184,6 +190,9 @@ impl Document {
         self.certify_config_face(target)?;
         if body.body.is_mesh() || body.definition_name() != target.body {
             return Err(DocError::Invalid("configured face definition does not match".into()));
+        }
+        if let Some(super::FaceCertificate::Lineage) = &target.certificate {
+            return self.lineage_face_indices(body, &target.name);
         }
         if let Some(super::FaceCertificate::ShellPlanar { source_producer, source, inner }) = &target.certificate {
             let indices: Vec<_> = body.body.face_sources().into_iter().flatten().enumerate().filter_map(|(index, current)| {
@@ -238,19 +247,30 @@ impl Document {
                     matched.then_some(index)
                 })
                 .collect();
-            if indices.len() != 1 {
+            if indices.is_empty() {
                 return Err(DocError::Unknown("attached planar face certificate is missing or ambiguous".into()));
             }
-            return Ok(indices);
+            return self.certified_pieces(body, indices, target.origin_feature);
         }
         if let Some(super::FaceCertificate::ExtrudeSide { sketch, curve }) = &target.certificate {
-            let indices: Vec<_> = body.body.face_sources().into_iter().flatten().enumerate().filter_map(|(index, source)| {
-                matches!(source, Some(solidcraft_kernel::FaceSource::CertifiedExtrudeSide { producer, sketch: current_sketch, curve: current_curve, .. }) if *producer == target.origin_feature && current_sketch == sketch && current_curve == curve).then_some(index)
-            }).collect();
+            let side = |index: usize, exact: bool| matches!(body.body.face_sources().and_then(|sources| sources.get(index)), Some(Some(solidcraft_kernel::FaceSource::CertifiedExtrudeSide { producer, sketch: current_sketch, curve: current_curve, .. })) if *producer == target.origin_feature && current_sketch == sketch && (!exact || current_curve == curve));
+            let count = body.body.face_sources().map_or(0, |sources| sources.len());
+            let mut indices: Vec<_> = (0..count).filter(|index| side(*index, true)).collect();
+            // A side drawn in collinear pieces is one face over all of them (#1788): a certificate
+            // made when the pieces were faces of their own finds it by the piece's name, which
+            // the joined face answers to.
+            if indices.is_empty() {
+                let names = crate::naming::names(body);
+                indices = (0..count)
+                    .filter(|index| {
+                        side(*index, false) && crate::history_names::matches(&names, *index, &target.name) == Some(crate::history_names::Match::Alias)
+                    })
+                    .collect();
+            }
             if indices.is_empty() {
                 return Err(DocError::Unknown("constructed side certificate no longer exists".into()));
             }
-            return Ok(indices);
+            return Ok(self.without_copies(body, indices));
         }
         if let Some(super::FaceCertificate::Imported { payload_sha256, item, face }) = &target.certificate {
             let indices: Vec<_> = body.body.face_sources().into_iter().flatten().enumerate().filter_map(|(index, source)| {
@@ -259,7 +279,7 @@ impl Document {
             if indices.is_empty() {
                 return Err(DocError::Unknown("immutable import face certificate no longer exists".into()));
             }
-            return Ok(indices);
+            return Ok(self.without_copies(body, indices));
         }
         let names = crate::naming::face_names(body);
         let indices: Vec<usize> =

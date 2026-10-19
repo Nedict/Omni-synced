@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use solidcraft_geom::Vec2;
 use solidcraft_sketch::{ConstraintKind, CurveKind, Sketch};
 
-use super::sketch::{add_c, dof_now, edit, reject_redundant};
+use super::sketch::{add_c, constraint_result, dof_now, edit, listed, redundancy, residual_of};
 use super::{CommandSpec, in_sketch};
 use crate::params::{bad, num, req_vec2, str_, string_list, vec2};
 use crate::{EngineError, Result, Session};
@@ -41,14 +41,14 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("constrainer")
         .enabled(in_sketch)
         .params("entities: [one or two sketch entity ids]: applies the constraint the geometry nearly has (horizontal/vertical, parallel, perpendicular, collinear, coincident, concentric, equal, tangent)"),
-    CommandSpec::new("sketch.toggle_driven", "Toggle Driven Dimension", toggle_driven)
+    CommandSpec::new("sketch.toggle_driven", "Toggle Driven Dimension", toggle_driven).icon("dimension")
         .enabled(in_sketch)
         .params("constraint: dimension id, driven?: bool (default toggles); a driving dimension gets a parameter with its current value"),
-    CommandSpec::new("sketch.glyphs", "Constraint Glyphs", glyphs)
+    CommandSpec::new("sketch.glyphs", "Constraint Glyphs", glyphs).icon("eye")
         .enabled(in_sketch)
         .noundo()
         .params("sketch?: id|name: every constraint with where to draw its glyph (sketch coordinates)"),
-    CommandSpec::new("sketch.snap", "Snap Inference", snap)
+    CommandSpec::new("sketch.snap", "Snap Inference", snap).icon("snap")
         .enabled(in_sketch)
         .noundo()
         .params("at: [x,y], from?: [x,y] (previous click), radius?: mm (snap distance, default 1): what a click there would snap to and infer"),
@@ -56,15 +56,17 @@ pub static COMMANDS: &[CommandSpec] = &[
 
 fn c_smooth(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sketch.constraint.curvature";
-    let mut before = None;
+    let (mut before, mut residual) = (None, None);
     let (id, info) = edit(s, p, cmd, true, |sk, _| {
         let a = curve(sk, p.get("a"), cmd)?;
         let b = curve(sk, p.get("b"), cmd)?;
         before = Some(dof_now(sk));
-        add_c(sk, ConstraintKind::Smooth { a, b })
+        let id = add_c(sk, ConstraintKind::Smooth { a, b })?;
+        residual = residual_of(sk, &id);
+        Ok(id)
     })?;
-    reject_redundant(before, &info, cmd)?;
-    Ok(json!({"constraint": id, "sketch": info}))
+    let by = redundancy(s, p, cmd, before, &info, residual, &id)?;
+    constraint_result(p, cmd, id, info, by, Value::Null)
 }
 
 fn curve(sk: &Sketch, v: Option<&Value>, cmd: &str) -> Result<usize> {
@@ -349,16 +351,18 @@ fn guess(sk: &Sketch, ents: &[String], cmd: &str) -> Result<ConstraintKind> {
 fn smart_constrain(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sketch.constrainer";
     let ents = string_list(p, "entities");
-    let mut before = None;
+    let (mut before, mut residual) = (None, None);
     let mut name = "";
     let (id, info) = edit(s, p, cmd, true, |sk, _| {
         let k = guess(sk, &ents, cmd)?;
         name = k.name();
         before = Some(dof_now(sk));
-        add_c(sk, k)
+        let id = add_c(sk, k)?;
+        residual = residual_of(sk, &id);
+        Ok(id)
     })?;
-    reject_redundant(before, &info, cmd)?;
-    Ok(json!({"constraint": id, "type": name, "sketch": info}))
+    let by = redundancy(s, p, cmd, before, &info, residual, &id)?;
+    constraint_result(p, cmd, id, info, by, json!({"type": name}))
 }
 
 fn toggle_driven(s: &mut Session, p: &Value) -> Result<Value> {
@@ -397,7 +401,10 @@ fn toggle_driven(s: &mut Session, p: &Value) -> Result<Value> {
             c.driven = true;
         }
         before = Some(dof_now(&sk));
-        reject_redundant(before, &info, cmd)?;
+        // It holds (its parameter takes the value it measures), so it can only be redundant.
+        if let Some(by) = redundancy(s, p, cmd, before, &info, Some(0.0), &cid)? {
+            return Err(bad(cmd, format!("that dimension is already determined by {}; it stays driven", listed(&by))));
+        }
     }
     s.doc_mut().prune_model_params();
     Ok(json!({"constraint": cid, "driven": driven, "sketch": info}))
@@ -423,6 +430,9 @@ fn anchor(sk: &Sketch, k: &ConstraintKind) -> Option<Vec2> {
     };
     let pt = |p: usize| sk.point(p);
     match *k {
+        OffsetDistance { ref output, .. } => sk.offset_dimension_points(output).map(|(a, b)| (a + b) * 0.5),
+        PatternPoint { q, center, .. } => pt(center.unwrap_or(q)),
+        PatternRadius { b, .. } => mid(b),
         Coincident { p, .. } | Fix { p } | Midpoint { p, .. } => pt(p),
         PointOnCurve { p, .. } => pt(p),
         HorizontalPoints { p, q } | VerticalPoints { p, q } | Symmetric { p, q, .. } => Some((pt(p)? + pt(q)?) * 0.5),
@@ -468,6 +478,8 @@ fn glyphs(s: &mut Session, p: &Value) -> Result<Value> {
                 "param": c.param,
                 "at": anchor(&ss.sketch, &c.kind),
                 "failing": failing.contains(&c.id),
+                // Implied by the others (it removes no freedom) but holding: shown dimmed.
+                "redundant": ss.report.redundant.contains(&c.id),
             })
         })
         .collect();

@@ -36,19 +36,72 @@ rejected before any jobs or output directories are created. The maximum seed
 - `cargo test` runs a fixed set of seeds that must stay clean
   (`crates/engine/src/tests/robustness.rs`), next to the minimised cases fixed so far.
 
+## Seeded goldens
+
+`tests/robustness/goldens.json` records what each of seeds 0–95 builds (eight steps at most):
+its steps, how it ended (ok, or the kind and the start of the error it was refused with), and
+for the design it left the bodies' total volume and area (within a relative 1e-6) and their
+face, edge and shell counts (exact). `tests::robustness_goldens` fails on any change, better or
+worse, so a kernel change shows every seed it moves. Pull requests that can change them (the
+kernel, engine, doc, sketch and geom crates) run every seed but the slowest few (`SLOW_SEEDS` in
+`.github/workflows/ci.yml`, about four fifths of their time); the merge queue, pushes to `main`
+and the nightly run them all. Each seed is its own test
+(`seed_00` … `seed_95`), so the CI shards and their cores share them out.
+
+Explicit `platforms.<os>.seeds` records override only the listed seeds on that
+operating system; all other seeds keep the shared records and strict tolerances.
+The first four Windows records were independently reproduced on unmodified main
+`1e984c8e`; seed 94 was independently reproduced on unmodified main `c5992386`
+after the extrusion rebase. Both match the extrusion branch. Recording on a platform
+with such entries updates its changed seeds and preserves shared references.
+
+To record an intended change, give the reason:
+
+```
+ROBUSTNESS_GOLDENS_BLESS="why it changed" cargo test --profile ci -p solidcraft-engine --lib robustness_goldens::seed_
+```
+
+The changed seeds and the reason are added to the file's `notes`; say why in the pull request too.
+
 ## Successful Boolean retries
 
-When an accepted Boolean result needs a numerical retry, the feature shows a
-warning in the timeline. `timeline.inspect` and `doc.inspect` expose its
+When an accepted Boolean result needs a retry that can make it differ from the
+exact one (a tool nudge, or the unverified shortcut), the feature shows a
+warning in the timeline. Every other retry works on temporary geometry or
+tolerances and leaves the exact result, so it is recorded but not warned about.
+`timeline.inspect` and `doc.inspect` expose every retry in the feature's
 `boolean_diagnostics`, including the strategy and the applied translation,
 rotation, face offset and tessellation tolerance in millimetres/radians.
 
 A common shift of both operands is reversed on the result. Coincident-face
 separation and bore offsets describe temporary working geometry; they are not
-claims about the final model's error. A tool nudge changes the relative operand
-placement and reports both its translation magnitude and rotation angle.
-Exact planar and piecewise fallbacks report zero displacement. The existing
-volume and spatial acceptance checks still apply to all results.
+claims about the final model's error. A coincident face is separated only
+where the space it moves through holds what the Boolean leaves there anyway
+(nothing of the target for a cut's face, the target's material for a join's);
+a face with no such room stays, and the exact planar fallback is tried first.
+A tool nudge changes the relative operand
+placement and reports both its translation magnitude and rotation angle. When it
+fails, or leaves a sliver face (narrower than 1/200 of the part), it is tried the
+other way too: one way can push a face into a curved face it only touched (a cut
+whose end lies tangent to a round side) and leave a sliver of it, where the other
+way parts them (#897, #827).
+Exact planar and piecewise fallbacks report zero displacement. When a conical
+cutter meets a body with earlier conical faces (pointed bores copied in a pattern),
+two finer, unshifted passes are tried first, at 1e-5 and 1e-6 of their size (never
+below 1e-6 mm). A coarse first cut can leave tiny junctions that later copies cannot
+intersect, so refining only the failing copy is too late. Every candidate must pass
+the volume, membership and spatial checks; a rejected candidate continues to the
+next tolerance, then the ordinary routes. The existing acceptance checks still
+apply to all results.
+
+A join or a cut that needed any retry is then held to what it can do at all
+(`crates/kernel/src/boolean_guard.rs`, #616): the result is closed, a join
+never loses volume and a cut never gains any, and outside the tool's box the
+result's surface is the target's and the target's is the result's (a join or
+a cut can only change the target where the tool is). A cut may come out empty
+only when the tool covers the target. A result that fails is refused with an
+error naming what was wrong and where, rather than returned: a wrong result
+that looks right is worse than an error.
 
 Reports belong to the evaluated feature and survive cached rebuilds and
 undo/redo. Cold reopening regenerates them from the embedded design. Failed or
@@ -85,6 +138,14 @@ fixes below (sound face pushes, no panics in the boolean's final assembly).
 
 ### Fixed
 
+- Back-to-back contact joins preserve intentional Split Face boundaries, including on
+  faces away from the contact. The glue pass retains their lines during healing and in
+  the resulting body for subsequent operations. Partial circular-contact regressions
+  cover offsets, rotation, operand order, volume, area and history; the seed-16 pattern
+  also runs in the ordinary engine suite with analytic volume and area checks.
+  Imprinting visits a shared analytic support only once: the two side faces of a
+  cylinder must not recut the same outline into redundant arcs.
+
 - **Shell corners where a curved face meets another at an angle** (the biggest cause, 215 of
   the 363 failed designs before). Moving a vertex took one linear step, exact only for planes;
   a cylinder meeting a plane at an angle (a shallow arc side) landed off the moved surface.
@@ -118,7 +179,7 @@ Found by QA on new users' first steps, each with an engine test against the anal
   round runs round the corners as spindle tori (the tube wider than its circle), which the
   offset now takes. Volume within 1e-5 of the analytic one.
 - **Shell thicker than or equal to a round** (r2 rounds shelled 2 mm): the round's inside
-  collapses to a sharp edge, as in Fusion, instead of "a cylinder shrinks to nothing".
+  collapses to a sharp edge, as intended, instead of "a cylinder shrinks to nothing".
 - **Shell thinner than a round tangent to the open face** (1.5 mm): every face moves in
   (tangencies keep) and the opening is the open face's copy swept out through the body.
 - **Shell after a drilled hole** (its tip a cone).
@@ -133,7 +194,7 @@ Found by QA on new users' first steps, each with an engine test against the anal
 ### Known limitations (counted as "not supported", with a clear message)
 
 - A shell thicker than a wall or a step: the moved faces would cross and the cavity turn
-  inside out. Fusion fills such places solid; we need a topology-changing offset.
+  inside out. The intended behaviour fills such places solid; we need a topology-changing offset.
 - Fillets and chamfers between two curved faces, or ending at faces that aren't planar.
 
 ### Still failing

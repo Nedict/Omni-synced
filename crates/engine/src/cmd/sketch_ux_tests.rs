@@ -482,6 +482,63 @@ fn palette_options_are_kept_with_each_sketch() {
     assert!(!sketch(&s).view.hide_points);
 }
 
+/// Construction Geometries is a display option of one sketch, saved with it, and it changes
+/// nothing about the geometry: construction curves were already outside every profile, and
+/// they still are while hidden. Centerlines are a line type of their own and keep showing. A
+/// design written before the option existed carries no key for it and loads with construction
+/// geometry shown.
+#[test]
+fn hiding_construction_geometry_is_per_sketch_saved_and_leaves_profiles_and_centerlines_alone() {
+    use crate::view::sketch_curve_visible;
+    let mut s = new_sketch();
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [40, 30]}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 45], [40, 45]], "connect": false, "infer": false}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 55], [40, 55]], "connect": false, "infer": false}));
+    run(&mut s, "sketch.construction", json!({"curves": ["l5"], "value": true}));
+    run(&mut s, "sketch.centerline", json!({"curves": ["l6"], "value": true}));
+    let (rect, construction, centerline) = (0, 4, 5);
+    let profiles = run(&mut s, "sketch.inspect", json!({}))["profiles"].clone();
+    assert_eq!(profiles.as_array().map(Vec::len), Some(1), "the rectangle is one profile: {profiles}");
+
+    assert_eq!(run(&mut s, "sketch.options", json!({}))["options"]["show_construction"], true);
+    let o = run(&mut s, "sketch.options", json!({"show_construction": false}));
+    assert_eq!(o["options"]["show_construction"], false);
+    let sk = sketch(&s);
+    assert!(sk.view.hide_construction);
+    assert!(!sketch_curve_visible(&sk, construction), "construction geometry is hidden");
+    assert!(sketch_curve_visible(&sk, centerline), "a centerline is its own line type");
+    assert!(sketch_curve_visible(&sk, rect), "ordinary geometry stays");
+    // Hiding is display only: the curves, their line types and the profiles are untouched.
+    let after = run(&mut s, "sketch.inspect", json!({}));
+    assert_eq!(after["profiles"], profiles);
+    assert_eq!(after["curves"][construction]["construction"], true);
+    assert!(sketch(&s).curves[centerline].centerline, "the centerline keeps its line type");
+    // Undo puts the option back.
+    run(&mut s, "edit.undo", json!({}));
+    assert!(!sketch(&s).view.hide_construction);
+    run(&mut s, "sketch.options", json!({"show_construction": false}));
+
+    // Another sketch shows construction geometry; the first keeps the option after finishing.
+    let first = s.active_sketch.expect("sketch");
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "sketch.create", json!({"plane": "XZ"}));
+    assert_eq!(run(&mut s, "sketch.options", json!({}))["options"]["show_construction"], true);
+    assert_eq!(run(&mut s, "sketch.options", json!({"sketch": first}))["options"]["show_construction"], false);
+
+    // Saved with the design.
+    let text = serde_json::to_string(s.doc.sketch(first).expect("first")).expect("json");
+    assert!(text.contains("hide_construction"), "{text}");
+    let back: Sketch = serde_json::from_str(&text).expect("parse");
+    assert!(back.view.hide_construction);
+
+    // An older design file has no `hide_construction` key at all: `SketchView`'s serde default
+    // fills it in, and construction geometry shows, the way it did before the option existed.
+    let older = r#"{"points":[{"id":"origin","pos":[0.0,0.0],"fixed":true}],"curves":[],"constraints":[],
+        "view":{"hide_projected":true,"slice":true}}"#;
+    let old: Sketch = serde_json::from_str(older).expect("an older sketch still loads");
+    assert!(old.view.hide_projected && old.view.slice && !old.view.hide_construction);
+}
+
 // ---------------------------------------------------------------------------------------------
 // Dragging
 
@@ -532,6 +589,32 @@ fn dragging_circles_and_arcs() {
     assert!(pt(&s, "a1.center").dist(v(50.0, 0.0)) < 1e-9);
     assert!((snap(&s, "a1").1.unwrap_or(0.0) - 20.0).abs() < 1e-9, "{:?}", snap(&s, "a1"));
     assert!(pt(&s, "a1.start").dist(v(70.0, 0.0)) < 1e-9, "{:?}", pt(&s, "a1.start"));
+}
+
+#[test]
+fn dragging_a_conic_reads_rho_off_the_cursor_and_its_apex_slides_like_any_point() {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.conic", json!({"start": [0, 0], "end": [40, 0], "apex": [20, 20]}));
+    let rho = |s: &Session| match sketch(s).curves[0].kind {
+        solidcraft_sketch::CurveKind::Conic { rho, .. } => rho,
+        ref k => panic!("not a conic: {k:?}"),
+    };
+    assert!((rho(&s) - 0.5).abs() < 1e-9, "default rho: {}", rho(&s));
+
+    // Grabbed on the curve itself (its midpoint, at the default rho of 0.5): `rho` follows the
+    // cursor, read off where it falls between the chord's midpoint (20, 0) and the apex (20,
+    // 20). The three defining points stay exactly where they were.
+    drag(&mut s, "k1", [20.0, 10.0], [20.0, 14.0]);
+    assert!((rho(&s) - 0.7).abs() < 1e-6, "rho after drag: {}", rho(&s));
+    assert!(pt(&s, "k1.start").dist(v(0.0, 0.0)) < 1e-9);
+    assert!(pt(&s, "k1.end").dist(v(40.0, 0.0)) < 1e-9);
+    assert!(pt(&s, "k1.apex").dist(v(20.0, 20.0)) < 1e-9);
+
+    // Grabbed on the apex itself: it slides like any other point (not a `rho` edit), and `rho`
+    // is unaffected.
+    drag(&mut s, "k1.apex", [20.0, 20.0], [10.0, 30.0]);
+    assert!(pt(&s, "k1.apex").dist(v(10.0, 30.0)) < 1e-9);
+    assert!((rho(&s) - 0.7).abs() < 1e-6, "rho after apex drag: {}", rho(&s));
 }
 
 #[test]
@@ -1384,4 +1467,60 @@ fn a_live_drag_shares_one_decomposition_budget() {
     let d = super::drag::last_drag::get();
     assert!(d.count > 6, "{d:?}");
     assert!(d.work <= budget + one.work, "{d:?} over a budget of {budget}");
+}
+
+/// #1365: lines drawn by eye and a construction line through the origin, as in the report.
+fn drawn_by_eye() -> Session {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[-56.7, 0], [56.7, 0]], "construction": true, "ids": ["hc"]}));
+    run(&mut s, "sketch.constraint.coincident", json!({"a": "origin", "b": "hc"}));
+    run(&mut s, "sketch.line", json!({"points": [[0, -54], [0, 55.2]], "construction": true, "ids": ["vc"]}));
+    run(&mut s, "sketch.constraint.coincident", json!({"a": "origin", "b": "vc"}));
+    run(
+        &mut s,
+        "sketch.line",
+        json!({"points": [[0, 26], [29.6, 26], [29.6, 41.2], [44, 41.2], [44, 0]], "infer": true, "ids": ["a", "b", "c", "d"]}),
+    );
+    run(&mut s, "sketch.constraint.coincident", json!({"a": "a.start", "b": "vc"}));
+    run(&mut s, "sketch.constraint.coincident", json!({"a": "d.end", "b": "hc"}));
+    s
+}
+
+#[test]
+fn the_first_dimension_scales_a_sketch_drawn_by_eye() {
+    let mut s = drawn_by_eye();
+    let before = sketch(&s);
+    let out = run(&mut s, "sketch.dimension", json!({"entities": ["vc", "b"], "value": "50 mm", "text_at": [15, 47], "scale_sketch": true}));
+    let f = 50.0 / 29.6;
+    assert!((out["scaled"].as_f64().unwrap() - f).abs() < 1e-6, "{out}");
+    assert!((out["measured"].as_f64().unwrap() - 50.0).abs() < 1e-6, "{out}");
+    // Every point scaled about the origin: the shape and the construction lines keep their
+    // directions (the vertical construction line stays vertical), only the size changes.
+    let after = sketch(&s);
+    for (p, q) in before.points.iter().zip(&after.points) {
+        assert!(q.pos.dist(p.pos * f) < 1e-6, "{} {:?} -> {:?}", p.id, p.pos, q.pos);
+    }
+    // The second dimension sizes the sketch as usual: nothing scales again.
+    let out = run(&mut s, "sketch.dimension", json!({"entities": ["c"], "value": "30 mm", "scale_sketch": true}));
+    assert!(out.get("scaled").is_none(), "{out}");
+    assert!((pt(&s, "c.end").x - pt(&s, "c.start").x - 30.0).abs() < 1e-6);
+    assert!((pt(&s, "b.start").x - pt(&s, "vc.start").x - 50.0).abs() < 1e-6);
+    // The construction line can still be made vertical (it already is: redundant, not a conflict).
+    run(&mut s, "sketch.constraint.horizontal_vertical", json!({"line": "vc"}));
+}
+
+#[test]
+fn the_first_dimension_does_not_scale_a_sketch_that_has_a_size() {
+    // A sketch with projected or fixed geometry, or another length dimension, already has a
+    // size: its first new dimension sizes what it measures as before.
+    let mut s = new_sketch();
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [60, 40]}));
+    run(&mut s, "sketch.constraint.fix", json!({"entity": "l1.end"}));
+    let out = run(&mut s, "sketch.dimension", json!({"entities": ["l2"], "value": "50 mm", "scale_sketch": true}));
+    assert!(out.get("scaled").is_none(), "{out}");
+    // An angle never scales.
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [30, 0], [50, 20]]}));
+    let out = run(&mut s, "sketch.dimension", json!({"entities": ["l1", "l2"], "value": "60 deg", "scale_sketch": true}));
+    assert!(out.get("scaled").is_none(), "{out}");
 }

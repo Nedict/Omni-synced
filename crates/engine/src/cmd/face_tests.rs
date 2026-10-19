@@ -35,7 +35,7 @@ fn generated_face_profiles_keep_exact_links_live_after_edit_and_reopen() {
         let result = run(&mut s, "solid.extrude", json!({"face":[5,5,20],"distance":10,"operation":"new","name":"Pad"}));
         let pad = s.doc.feature(result["feature"].as_u64().unwrap()).unwrap();
         let FeatureKind::Extrude { sketch, .. } = pad.kind else { panic!("extrude") };
-        let generated = s.doc.feature(sketch).unwrap();
+        let generated = s.doc.feature(sketch.0).unwrap();
         let FeatureKind::Sketch { plane, sketch: profile } = &generated.kind else { panic!("sketch") };
         let PlaneRef::Face { anchor: Some(anchor), .. } = plane else { panic!("the original Box cap remains exact after a hole cut") };
         assert_eq!(anchor.target.origin_feature, base);
@@ -50,8 +50,8 @@ fn generated_face_profiles_keep_exact_links_live_after_edit_and_reopen() {
         let edited = s.model.state();
         assert!(edited.bodies.iter().any(|body| body.body.contains(Vec3::new(49.0, 5.0, 34.0))));
         assert!(!edited.bodies.iter().any(|body| body.body.contains(Vec3::new(51.0, 5.0, 34.0))));
-        assert!(edited.sketch(sketch).unwrap().sketch.links.iter().all(|link| link.auto_face && !link.lost));
-        let solved = edited.sketch(sketch).unwrap().plane;
+        assert!(edited.sketch(sketch.0).unwrap().sketch.links.iter().all(|link| link.auto_face && !link.lost));
+        let solved = edited.sketch(sketch.0).unwrap().plane;
         assert!((solved.origin.z - 25.0).abs() < 1e-6);
         let before = s.model.state();
         let before_volume: f64 = before.bodies.iter().map(|body| solidcraft_kernel::measure(&body.body).unwrap().volume).sum();
@@ -84,7 +84,7 @@ fn internal_capture_does_not_bypass_missing_ambiguous_or_invalid_path_picks() {
 fn generated_profiles_and_press_pull_convert_rotated_occurrence_picks_once() {
     for hole in [false, true] {
         let mut s = Session::default();
-        let component = run(&mut s, "component.create", json!({"name":"Arm"}));
+        let component = run(&mut s, "component.create", json!({"name":"Arm","grounded":false}));
         let cid = component["component"].as_u64().unwrap();
         let occ = component["occurrence"].as_u64().unwrap();
         run(&mut s, "solid.box", json!({"length":40,"width":30,"height":20,"name":"Base","body_name":"Stock"}));
@@ -136,31 +136,42 @@ fn generated_profiles_and_press_pull_convert_rotated_occurrence_picks_once() {
     }
 }
 
+/// A 40 x 30 x 20 box whose top is split at x = 20 and its left half raised 5 by Offset Face:
+/// the raised top has no construction certificate and no exact history name yet (#494).
+fn raised_half(s: &mut Session, body: &str) {
+    run(s, "solid.box", json!({"length":40,"width":30,"height":20,"body_name":body}));
+    run(s, "solid.split_face", json!({"faces":[[10,15,20]],"plane":{"origin":[20,0,0],"normal":[1,0,0]}}));
+    run(s, "solid.offset_face", json!({"faces":[[10,15,20]],"distance":5}));
+}
+
 #[test]
 fn legacy_internal_capture_refuses_an_uncaptured_source_in_another_component() {
     let mut s = Session::default();
-    let component = run(&mut s, "component.create", json!({"name":"Source"}));
+    let component = run(&mut s, "component.create", json!({"name":"Source","grounded":false}));
     let occurrence = component["occurrence"].as_u64().unwrap();
-    run(&mut s, "solid.box", json!({"length":40,"width":30,"height":20,"body_name":"Stock"}));
-    // A top merged from two joined boxes has no single certified source: the legacy path.
-    run(&mut s, "solid.box", json!({"length":40,"width":30,"height":20,"corner":[40,0,0],"operation":"join"}));
+    // A face Offset Face raised has no construction certificate or exact history name yet:
+    // the legacy path.
+    raised_half(&mut s, "Stock");
     run(&mut s, "component.activate", json!({"component":0}));
     run(&mut s, "occurrence.move", json!({"occurrence":occurrence,"translate":[30,0,0],"capture":false}));
     let state = s.model.state();
-    let index = state
+    // The raised half's top.
+    let end = state
         .body("Stock")
         .unwrap()
         .body
         .faces(1e-4)
         .unwrap()
-        .iter()
-        .find(|face| face.plane_normal.is_some_and(|normal| normal.z > 0.999) && (face.centroid.z - 20.0).abs() < 1e-6)
-        .unwrap()
-        .index;
+        .into_iter()
+        .find(|face| face.plane_normal.is_some_and(|normal| normal.z > 0.999) && (face.centroid.z - 25.0).abs() < 1e-6)
+        .unwrap();
     let before = s.doc.to_json();
-    let error =
-        super::super::sketch::face::capture_internal(&s, &json!({"face":[35,5,20],"body":"Stock","index":index,"path":[occurrence]}), "internal")
-            .unwrap_err();
+    let error = super::super::sketch::face::capture_internal(
+        &s,
+        &json!({"face":[40,15,25],"body":"Stock","index":end.index,"path":[occurrence]}),
+        "internal",
+    )
+    .unwrap_err();
     assert!(error.to_string().contains("capture the source occurrence position"), "{error}");
     assert_eq!(s.doc.to_json(), before);
 }
@@ -278,14 +289,14 @@ fn join_keeps_exact_face_attachments_from_both_operands() {
 }
 
 #[test]
-fn join_leaves_a_face_merged_from_both_operands_without_an_attachment() {
+fn join_gives_a_face_merged_from_both_operands_its_history_name() {
     let mut s = Session::default();
     run(&mut s, "solid.box", json!({"length":20,"width":20,"height":10}));
     run(&mut s, "solid.box", json!({"length":20,"width":20,"height":10,"corner":[20,0,0],"operation":"join"}));
-    // Both boxes' tops share one support: no single construction identity owns it.
-    let error = s.execute("sketch.create", &json!({"plane":{"face":[10,10,10]}})).unwrap_err().to_string();
-    assert!(error.contains("fixed:true"), "{error}");
-    run(&mut s, "sketch.create", json!({"plane":{"face":[10,10,10],"fixed":true}}));
+    // Both boxes' tops share one support: no single construction certificate owns it, but its
+    // exact history names it (#491).
+    let top = run(&mut s, "sketch.create", json!({"plane":{"face":[10,10,10]}}))["sketch"].as_u64().unwrap();
+    assert_eq!(face_anchor(&s, top).target.certificate, Some(solidcraft_doc::config::FaceCertificate::Lineage));
     // An unshared support keeps its box role.
     run(&mut s, "sketch.finish", json!({}));
     let side = run(&mut s, "sketch.create", json!({"plane":{"face":[0,10,5]}}))["sketch"].as_u64().unwrap();

@@ -2,8 +2,10 @@
 //! into the shipped programs (solidcraft, solidcraft-cli, solidcraft-web), read from
 //! `cargo metadata` and the crates' own licence files. The programs embed it (Help ▸ About ▸
 //! Licences, `solidcraft-cli licences`), so a release download needs no licence files beside it.
-//! `--check` (part of `cargo xtask ci`) fails when the committed file is out of date, e.g. after a
-//! dependency changed.
+//! `--check` (part of `cargo xtask ci`) generates it without writing it: it fails when the
+//! dependency graph can't be read, and only reports a file that is out of date, since pull
+//! requests leave it to the Generated files workflow (`.github/workflows/generated.yml`), which
+//! rewrites it on main after each merge.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
@@ -21,7 +23,10 @@ pub fn run(root: &Path, check: bool) -> Result<(), String> {
     if check {
         let old = std::fs::read_to_string(&path).unwrap_or_default();
         if old.replace("\r\n", "\n") != text {
-            return Err(format!("{FILE} is out of date (dependencies changed): run `cargo xtask licences` and commit it"));
+            // Not an error: pull requests don't edit the file (two that did would always conflict);
+            // the Generated files workflow rewrites it on main after the merge.
+            println!("licences: {FILE} will change when this lands (the Generated files workflow rewrites it on main)");
+            return Ok(());
         }
         println!("licences: {FILE} is up to date");
         return Ok(());
@@ -162,15 +167,15 @@ fn render(root: &Path, crates: &[Crate]) -> String {
     let font_rule = "=".repeat(80);
     out += &format!(
         "\n{font_rule}\nBundled fonts (SIL Open Font License, Version 1.1)\n{font_rule}\n\n\
-         - LiberationSans-Regular.ttf (crates/sketch/fonts/LiberationSans-Regular.ttf)\n  \
+         - LiberationSans-Regular.ttf (assets/fonts/liberation-sans/LiberationSans-Regular.ttf)\n  \
            Copyright 2012 Red Hat, Inc. (Liberation Fonts 2.x; digitized data Google)\n  \
            Source: https://github.com/liberationfonts\n\n\
-         - BIZUDPGothic-Regular.ttf (apps/solidcraft-web/fonts/BIZUDPGothic-Regular.ttf)\n  \
+         - BIZUDPGothic-Regular.ttf (assets/fonts/biz-udp-gothic/BIZUDPGothic-Regular.ttf)\n  \
            Copyright 2022 The BIZ UDGothic Project Authors (https://github.com/googlefonts/morisawa-biz-ud-mincho)\n  \
            Source: https://github.com/googlefonts/morisawa-biz-ud-gothic\n\n"
     );
-    let ofl_path = root.join("apps/solidcraft-web/fonts/OFL.txt");
-    let fallback_path = root.join("crates/sketch/fonts/OFL.txt");
+    let ofl_path = root.join("assets/fonts/biz-udp-gothic/OFL.txt");
+    let fallback_path = root.join("assets/fonts/liberation-sans/OFL.txt");
     let ofl_text = std::fs::read_to_string(&ofl_path).or_else(|_| std::fs::read_to_string(&fallback_path)).unwrap_or_default();
     let ofl_clean = ofl_text.replace("\r\n", "\n").trim().to_string();
     if !ofl_clean.is_empty() {

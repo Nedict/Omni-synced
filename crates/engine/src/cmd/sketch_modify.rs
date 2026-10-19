@@ -13,6 +13,8 @@ use super::{CommandSpec, in_sketch};
 use crate::params::{bad, bool_, expr, num, req_vec2, str_, string_list, vec2, vec2_list};
 use crate::{Result, Session};
 
+#[path = "sketch_pattern.rs"]
+mod pattern;
 #[path = "sketch_support.rs"]
 mod support;
 
@@ -29,12 +31,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params(concat!("point | a, b: a corner of two lines; distance", created_doc!())),
     CommandSpec::new("sketch.chamfer.distance_angle", "Distance and Angle Chamfer", chamfer_dist_angle)
         .at("SKETCH", "MODIFY")
-        .icon("sketch_chamfer")
+        .icon("sketch_chamfer_angle")
         .enabled(in_sketch)
         .params(concat!("point | a, b: a corner of two lines; distance: along a, angle: deg from a", created_doc!())),
     CommandSpec::new("sketch.chamfer.two_distance", "Two Distance Chamfer", chamfer_two)
         .at("SKETCH", "MODIFY")
-        .icon("sketch_chamfer")
+        .icon("sketch_chamfer_two_distances")
         .enabled(in_sketch)
         .params(concat!("point | a, b: a corner of two lines; distance: along a, distance2: along b", created_doc!())),
     CommandSpec::new("sketch.offset", "Offset", offset)
@@ -42,8 +44,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("offset")
         .key("O")
         .enabled(in_sketch)
-        .params(concat!("curves: [ids], distance: number (positive = left of the chain, or toward `side`), side?: [x,y], chain?: bool (default true: the connected chain)", created_doc!())),
-    CommandSpec::new("sketch.offset.break", "Break Offset Association", break_offset)
+        .params(concat!(
+            "curves: [ids], distance: number in mm or length expression (creates an editable dimension; positive = left of the chain, or toward `side`), side?: [x,y], chain?: bool (default true: the connected chain); ",
+            "direction?: one_side|symmetric (default one_side) or symmetric?: bool (the same distance each way; no `side`, whose job it takes over), ",
+            "distance2?: positive length expression (Two Sides: an independent distance the other way, as for `solid.extrude`). Each side is its own offset association, listed in `sides`; flip?: bool reverses the primary side; `param`/`param2` name the driving dimensions",
+            created_doc!()
+        )),
+    CommandSpec::new("sketch.offset.break", "Break Offset Association", break_offset).icon("sketch_break")
         .enabled(in_sketch)
         .params("curve: derived offset curve id (retains geometry and makes its points editable)"),
     CommandSpec::new("sketch.trim", "Trim", trim)
@@ -59,32 +66,34 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params("curve: id, at: [x,y] near the end to extend (to the nearest curve)"),
     CommandSpec::new("sketch.break", "Break", break_cmd)
         .at("SKETCH", "MODIFY")
-        .icon("break")
+        .icon("sketch_break")
         .enabled(in_sketch)
         .params(concat!("curve: id, at: [x,y] (split at intersections) | points: [[x,y]…] (1…1000 positions projected onto the curve; duplicates are merged)", created_doc!())),
     CommandSpec::new("sketch.scale", "Sketch Scale", scale)
         .at("SKETCH", "MODIFY")
-        .icon("scale")
+        .icon("sketch_scale")
         .enabled(in_sketch)
         .params("entities: [curve/point ids], base: [x,y] or point ref, factor: number"),
     CommandSpec::new("sketch.move", "Move/Copy Sketch Entities", move_copy)
+        .at("SKETCH", "MODIFY")
+        .icon("sketch_move")
         .enabled(in_sketch)
-        .params(concat!("entities: [ids], translate?: [dx,dy], angle?: deg, center?: [x,y], copy?: bool", created_doc!())),
+        .params(concat!("entities: [ids], translate?: [dx,dy], angle?: deg, center?: [x,y], copy?: bool; picking a text outline or linked point transforms its whole text source once, and copies remain editable text", created_doc!())),
     CommandSpec::new("sketch.mirror", "Mirror", mirror)
-        .at("SKETCH", "CREATE")
+        .at("SKETCH", "PATTERN")
         .icon("sketch_mirror")
         .enabled(in_sketch)
         .params(concat!("entities: [curve/point ids], line: mirror line id (symmetry constraints are added)", created_doc!())),
     CommandSpec::new("sketch.pattern.circular", "Circular Pattern", pattern_circular)
-        .at("SKETCH", "CREATE")
+        .at("SKETCH", "PATTERN")
         .icon("sketch_circ_pattern")
         .enabled(in_sketch)
-        .params(concat!("entities: [ids], center: [x,y] or point ref, count: 2…500, angle?: total deg (default 360)", created_doc!())),
+        .params(concat!("entities: [ids], center: [x,y] or point ref, count: 2…500, angle?: total deg (default 360); alignment?: left|center|right (default right); reversed?: bool (default false). Quantity includes the original. Center balances copies around it; reversed flips the direction and extra side for even totals. Partial arcs span angle with angle/(count-1) spacing; full turns use angle/count. Adds associative pattern constraints; a coordinate center creates a constrainable point. Returns pattern and center ids. pattern?: existing pattern id to edit (omitted values retained; surviving instance ids retained)", created_doc!())),
     CommandSpec::new("sketch.pattern.rectangular", "Rectangular Pattern", pattern_rect)
-        .at("SKETCH", "CREATE")
+        .at("SKETCH", "PATTERN")
         .icon("sketch_rect_pattern")
         .enabled(in_sketch)
-        .params(concat!("entities: [ids], dir?: [x,y] (default x), count, spacing; count2?, spacing2? (perpendicular direction)", created_doc!())),
+        .params(concat!("entities: [ids], count, spacing; count2?, spacing2?; direction?, direction2?: sketch line ids (live references); dir?, dir2?: [x,y] vectors (defaults: sketch x, perpendicular to direction 1); alignment?, alignment2?: left|center|right (default right). Signed spacings reverse each direction. reversed?, reversed2?: bool (default false); reverses placement and the extra side of even centered totals. Quantities include the original. Adds associative pattern constraints. Returns pattern id. pattern?: existing pattern id to edit (omitted values retained; surviving instance ids retained)", created_doc!())),
 ];
 
 const TOL: f64 = 1e-7;
@@ -138,8 +147,10 @@ fn cut_points(sk: &Sketch, ci: usize) -> Vec<(f64, Vec2, usize)> {
         {
             pts.extend([other.point(0.0), other.point(sweep)]);
         }
+        // An infinite line (#1359) cuts wherever its line crosses, beyond its two points too.
+        let other_infinite = sk.curves.get(oi).is_some_and(|c| c.infinite);
         for q in pts {
-            if on_bounded(&other, q).is_some()
+            if (other_infinite || on_bounded(&other, q).is_some())
                 && let Some(t) = on_bounded(&sh, q)
                 && !out.iter().any(|(_, x, _)| x.dist(q) < TOL * 10.0)
             {
@@ -188,7 +199,7 @@ fn split_at(sk: &mut Sketch, ci: usize, ts: &[f64]) -> Result<(Vec<usize>, Vec<u
     let mut pieces = vec![ci];
     let mut push = |sk: &mut Sketch, kind: CurveKind, prefix: &str| -> Result<()> {
         let id = sk.fresh(prefix)?;
-        sk.curves.push(Curve { id, kind, construction, reversed: false, link: None, centerline: false, fixed: false });
+        sk.curves.push(Curve { id, kind, construction, reversed: false, link: None, centerline: false, fixed: false, infinite: false });
         pieces.push(sk.curves.len() - 1);
         Ok(())
     };
@@ -277,6 +288,9 @@ fn trim(s: &mut Session, p: &Value) -> Result<Value> {
     let (out, info) = edit(s, p, cmd, false, |sk, doc| {
         let ci = curve_arg(sk, p, cmd)?;
         let id = sk.curves.get(ci).map(|c| c.id.clone()).unwrap_or_default();
+        if sk.curves.get(ci).is_some_and(|c| c.infinite) {
+            return Err(bad(cmd, "an infinite line has no ends to trim back to: make it a normal line first"));
+        }
         if sk.curves.get(ci).is_some_and(|c| c.kind.is_freeform()) {
             let r = super::sketch_freeform::trim_or_break(sk, ci, at, true, cmd)?;
             doc.prune_model_params();
@@ -409,7 +423,11 @@ fn extend(s: &mut Session, p: &Value) -> Result<Value> {
             if oi == ci {
                 continue;
             }
-            let pieces = sk.exact_segs(oi).unwrap_or_else(|| sk.segs(oi));
+            let mut pieces = sk.exact_segs(oi).unwrap_or_else(|| sk.segs(oi));
+            // An infinite line (#1359) is a boundary along its whole line.
+            if sk.curves.get(oi).is_some_and(|c| c.infinite) {
+                pieces = pieces.iter().map(|s| support::endless(s, sh.point(sh.param(at)))).collect();
+            }
             segment_count += pieces.len();
             if segment_count > 16_384 {
                 return Err(bad(cmd, "too many exact curve pieces to extend safely"));
@@ -470,6 +488,65 @@ fn uses(c: &Curve, p: usize) -> bool {
 // ---------------------------------------------------------------------------------------------
 // Corners: fillet and chamfer
 
+/// A corner drawn as two curves whose ends are separate points held together by a Coincident
+/// constraint (a line drawn to where an arc starts, #1208) becomes one shared point, so it can be
+/// rounded or cut like a corner drawn through one point. Only a partner held by nothing but that
+/// constraint is welded; anything else is left as it is.
+fn weld_corner(sk: &mut Sketch, p: &Value) {
+    let ends = |sk: &Sketch, c: usize| match sk.curves.get(c).map(|c| &c.kind) {
+        Some(CurveKind::Line { a, b }) | Some(CurveKind::Arc { a, b, .. }) => Some([*a, *b]),
+        _ => None,
+    };
+    let q = if let Some(r) = str_(p, "point") {
+        sk.resolve_point(r)
+    } else {
+        let curve = |k: &str| str_(p, k).and_then(|i| sk.curve_index(i)).and_then(|c| ends(sk, c));
+        let (Some(ea), Some(eb)) = (curve("a"), curve("b")) else { return };
+        if ea.iter().any(|x| eb.contains(x)) {
+            return;
+        }
+        // The end of `a` held coincident with an end of `b`.
+        ea.into_iter().find(|x| {
+            sk.constraints
+                .iter()
+                .any(|k| matches!(k.kind, ConstraintKind::Coincident { p, q } if (p == *x && eb.contains(&q)) || (q == *x && eb.contains(&p))))
+        })
+    };
+    let Some(mut q) = q else { return };
+    // Each pass welds one partner; a pass removes a constraint, so this ends.
+    for _ in 0..sk.constraints.len() {
+        let partner = sk.constraints.iter().enumerate().find_map(|(i, k)| {
+            let o = match k.kind {
+                ConstraintKind::Coincident { p, q: r } if p == q && r != q => r,
+                ConstraintKind::Coincident { p, q: r } if r == q && p != q => p,
+                _ => return None,
+            };
+            let held_elsewhere = sk.constraints.iter().enumerate().any(|(j, k)| j != i && k.kind.refers_to_point(o));
+            let linked = (0..sk.curves.len()).any(|c| sk.is_linked_curve(c) && sk.curves.get(c).is_some_and(|x| x.kind.uses(o)));
+            (o != 0 && !held_elsewhere && !linked).then_some((i, o))
+        });
+        let Some((i, o)) = partner else { return };
+        for c in sk.curves.iter_mut() {
+            c.kind.map_points(&|x| if x == o { q } else { x });
+        }
+        sk.constraints.remove(i);
+        sk.remove_points(&[o]);
+        if o < q {
+            q -= 1;
+        }
+    }
+}
+
+/// Fillets and chamfers refuse a corner on an infinite line (#1359): it has no end there.
+fn refuse_infinite_corner(sk: &Sketch, p: &Value, cmd: &str) -> Result<()> {
+    let infinite = |c: Option<usize>| c.and_then(|c| sk.curves.get(c)).is_some_and(|c| c.infinite);
+    let at_corner = match str_(p, "point").and_then(|r| sk.resolve_point(r)) {
+        Some(q) => sk.curves.iter().any(|c| c.infinite && c.kind.uses(q)),
+        None => ["a", "b"].iter().any(|k| infinite(str_(p, k).and_then(|i| sk.curve_index(i)))),
+    };
+    if at_corner { Err(bad(cmd, "an infinite line has no corner to round or cut: make it a normal line first")) } else { Ok(()) }
+}
+
 /// A corner of two lines: (line a, line b, corner point, far end of a, far end of b).
 fn corner(sk: &Sketch, p: &Value, cmd: &str) -> Result<(usize, usize, usize, usize, usize)> {
     let ends = |l: usize| match sk.curves.get(l).map(|c| &c.kind) {
@@ -479,9 +556,13 @@ fn corner(sk: &Sketch, p: &Value, cmd: &str) -> Result<(usize, usize, usize, usi
     let (la, lb) = if let Some(r) = str_(p, "point") {
         let q = sk.resolve_point(r).ok_or_else(|| bad(cmd, format!("unknown point `{r}`")))?;
         let lines: Vec<usize> = (0..sk.curves.len()).filter(|i| ends(*i).is_some_and(|(a, b)| a == q || b == q) && !sk.is_linked_curve(*i)).collect();
-        match lines[..] {
+        // A construction line ending there too (a diagonal that centres something) is not one of
+        // the corner's sides: it keeps its end on the virtual sharp corner (#1026).
+        let sides: Vec<usize> =
+            if lines.len() == 2 { lines } else { lines.into_iter().filter(|i| sk.curves.get(*i).is_some_and(|c| !c.construction)).collect() };
+        match sides[..] {
             [a, b] => (a, b),
-            _ => return Err(bad(cmd, "the corner must join exactly two lines")),
+            _ => return Err(bad(cmd, "the corner must join exactly two lines (or give the two lines as `a` and `b`)")),
         }
     } else {
         let a = str_(p, "a").and_then(|i| sk.curve_index(i)).ok_or_else(|| bad(cmd, "`a` must be a line"))?;
@@ -507,6 +588,44 @@ fn reattach(sk: &mut Sketch, l: usize, corner: usize, np: usize) {
     }
 }
 
+/// Equal lengths and midpoints describe the original side, not its shortened tangent
+/// segment. Keep that side as construction geometry sharing the original corner points.
+/// Later corner cuts retain those points through `keep_corner`, so this also works when
+/// the other end is rounded in a separate command.
+fn keep_side_relations(sk: &mut Sketch, line: usize) -> Result<Vec<String>> {
+    let affected = |k: &ConstraintKind| {
+        matches!(*k, ConstraintKind::Equal { a, b } if a == line || b == line) || matches!(*k, ConstraintKind::Midpoint { l, .. } if l == line)
+    };
+    if !sk.constraints.iter().any(|k| affected(&k.kind)) {
+        return Ok(Vec::new());
+    }
+    let Some(CurveKind::Line { a, b }) = sk.curves.get(line).map(|c| c.kind.clone()) else { return Ok(Vec::new()) };
+    let support = sk.add_line_pts(a, b, None)?;
+    if let Some(c) = sk.curves.get_mut(support) {
+        c.construction = true;
+    }
+    let mut moved = Vec::new();
+    for k in &mut sk.constraints {
+        if !affected(&k.kind) {
+            continue;
+        }
+        match &mut k.kind {
+            ConstraintKind::Equal { a, b } => {
+                if *a == line {
+                    *a = support;
+                }
+                if *b == line {
+                    *b = support;
+                }
+            }
+            ConstraintKind::Midpoint { l, .. } => *l = support,
+            _ => {}
+        }
+        moved.push(k.id.clone());
+    }
+    Ok(moved)
+}
+
 /// What became of a rounded or cut corner's point: kept as a virtual sharp corner (its id),
 /// and the constraints and dimensions that now measure to it.
 #[derive(Default)]
@@ -519,7 +638,7 @@ struct CornerKept {
 /// when anything measures to it: a constraint or dimension on the point, the length of either
 /// line, or it is the origin or still ends another curve. It stays as a virtual sharp corner,
 /// held on both curves' extensions (their intersection), and the line lengths become distances
-/// from the far end to it, so the part keeps its size, as in Fusion. Otherwise None: the
+/// from the far end to it, so the part keeps its size. Otherwise None: the
 /// caller removes the point.
 fn keep_corner(sk: &mut Sketch, c: usize, [(ca, na), (cb, nb)]: [(usize, usize); 2]) -> Result<Option<CornerKept>> {
     let used = sk.curves.iter().any(|x| uses(x, c));
@@ -580,9 +699,14 @@ fn cut_corner(
     let v = (pb - pc).normalized().ok_or_else(|| bad(cmd, "degenerate line"))?;
     let ta = sk.add_point(pc + u * da, None)?;
     let tb = sk.add_point(pc + v * db, None)?;
+    let mut moved = keep_side_relations(sk, la)?;
+    moved.extend(keep_side_relations(sk, lb)?);
     reattach(sk, la, c, ta);
     reattach(sk, lb, c, tb);
-    let kept = keep_corner(sk, c, [(la, ta), (lb, tb)])?;
+    let mut kept = keep_corner(sk, c, [(la, ta), (lb, tb)])?;
+    if let Some(k) = &mut kept {
+        k.moved.extend(moved);
+    }
     let removed = kept.is_none();
     if removed {
         sk.remove_points(&[c]);
@@ -640,6 +764,8 @@ fn kept_json(kept: Vec<CornerKept>) -> (Vec<String>, Vec<String>) {
 /// Round one corner (`point` or `a`, `b`) with an arc of radius `r` tangent to both curves:
 /// the arc, the tangent constraints and what became of the corner point.
 fn fillet_corner(sk: &mut Sketch, p: &Value, r: f64, cmd: &str) -> Result<(usize, Vec<String>, CornerKept)> {
+    refuse_infinite_corner(sk, p, cmd)?;
+    weld_corner(sk, p);
     let (la, lb, c, fa, fb) = match corner(sk, p, cmd) {
         Ok(x) => x,
         // Not two lines: a corner with an arc.
@@ -748,6 +874,8 @@ fn round_corner(sk: &mut Sketch, p: &Value, r: f64, cmd: &str) -> Result<Option<
 
 fn chamfer(s: &mut Session, p: &Value, cmd: &str, dists: impl FnOnce(f64) -> Result<(f64, f64)>) -> Result<Value> {
     let (out, info) = edit(s, p, cmd, false, |sk, _| {
+        refuse_infinite_corner(sk, p, cmd)?;
+        weld_corner(sk, p);
         let (la, lb, c, fa, fb) = corner(sk, p, cmd)?;
         let (pc, pa, pb) = (sk.point(c).unwrap_or_default(), sk.point(fa).unwrap_or_default(), sk.point(fb).unwrap_or_default());
         let (u, v) = ((pa - pc).normalized().unwrap_or(Vec2::X), (pb - pc).normalized().unwrap_or(Vec2::Y));
@@ -917,202 +1045,376 @@ fn piece_dist(p: &Piece, q: Vec2) -> f64 {
     }
 }
 
+/// One side of an offset. The curves created at the signed distance, the parallel constraints
+/// added with them, and the association when the boundary carries an offset topology.
+struct Side {
+    distance: f64,
+    curves: Vec<String>,
+    constraints: Vec<String>,
+    association: Option<String>,
+    param: Option<String>,
+}
+
+/// The signed distances an offset runs at. One side is the distance as given. `symmetric` is the
+/// same distance each way. `distance2` is an
+/// independent distance the other way, as `distance2` means for `solid.extrude`. The primary side
+/// comes first, so a one-sided caller reads the same first entry it always did.
+fn offset_runs(d: f64, symmetric: bool, distance2: Option<f64>) -> Vec<f64> {
+    match (symmetric, distance2) {
+        (true, _) => vec![d.abs(), -d.abs()],
+        (_, Some(second)) => vec![d, -second * d.signum()],
+        _ => vec![d],
+    }
+}
+
+/// Build one side of a chain offset at the signed distance `d`. `order` and `sources` are the
+/// walked chain, computed once before anything is created so a second side walks the same
+/// curves rather than a pool the first side has already grown.
+fn offset_side(sk: &mut Sketch, cmd: &str, order: &[(usize, bool)], sources: &[(String, bool)], closed: bool, convex: bool, d: f64) -> Result<Side> {
+    let mut made = Vec::new();
+    let mut cons = Vec::new();
+    if convex {
+        let created = sk.add_convex_offset(sources.to_vec(), d)?;
+        let roles = sk
+            .offsets
+            .iter()
+            .filter_map(|offset| offset.topology.as_ref())
+            .find(|topology| topology.id == created.association)
+            .map(|topology| topology.roles.clone())
+            .ok_or_else(|| bad(cmd, "new offset association is missing"))?;
+        for (source, role) in sources.iter().zip(&roles) {
+            if role.kind == solidcraft_sketch::OffsetRoleKind::Line {
+                let a = sk.curve_index(&source.0).ok_or_else(|| bad(cmd, "offset source line vanished"))?;
+                let b = sk.curve_index(&role.output).ok_or_else(|| bad(cmd, "offset output line vanished"))?;
+                cons.push(add_c(sk, ConstraintKind::Parallel { a, b })?);
+            }
+        }
+        return Ok(Side { distance: d, curves: created.curves, constraints: cons, association: Some(created.association), param: None });
+    }
+    let pieces: Vec<Piece> =
+        order.iter().map(|(c, f)| offset_piece(sk, *c, *f, d)).collect::<Option<_>>().ok_or_else(|| bad(cmd, "the offset collapses an arc"))?;
+    let n = pieces.len();
+    let start_of = |p: &Piece| match p {
+        Piece::Line(a, _) => *a,
+        Piece::Arc(_, _, _, s, _, _) => *s,
+        Piece::Free(v) => v.first().copied().unwrap_or_default(),
+    };
+    let end_of = |p: &Piece| match p {
+        Piece::Line(_, b) => *b,
+        Piece::Arc(_, _, _, _, e, _) => *e,
+        Piece::Free(v) => v.last().copied().unwrap_or_default(),
+    };
+    // Junction points between consecutive pieces.
+    let joint = |x: &Piece, y: &Piece| -> Vec2 {
+        let (e, s0) = (end_of(x), start_of(y));
+        if e.dist(s0) < TOL * 10.0 {
+            return e;
+        }
+        let guess = (e + s0) * 0.5;
+        if matches!(x, Piece::Free(_)) || matches!(y, Piece::Free(_)) {
+            return guess;
+        }
+        intersections(&piece_shape(x), &piece_shape(y)).into_iter().min_by(|a, b| a.dist(guess).total_cmp(&b.dist(guess))).unwrap_or(guess)
+    };
+    let (Some(head), Some(tail)) = (pieces.first(), pieces.last()) else {
+        return Err(bad(cmd, "no curves"));
+    };
+    let mut joints: Vec<Vec2> = Vec::new();
+    joints.push(if closed { joint(tail, head) } else { start_of(head) });
+    for k in 0..n.saturating_sub(1) {
+        let (Some(x), Some(y)) = (pieces.get(k), pieces.get(k + 1)) else {
+            return Err(bad(cmd, "the offset chain changed while it was built"));
+        };
+        joints.push(joint(x, y));
+    }
+    if !closed {
+        joints.push(end_of(tail));
+    }
+    // A straight piece whose joints come out reversed (or meet) was overrun by its
+    // neighbours: the offset is larger than the shape allows there.
+    for (k, pc) in pieces.iter().enumerate() {
+        if let Piece::Line(a, b) = pc {
+            let (ja, jb) = (joints.get(k).copied(), joints.get(if closed { (k + 1) % n } else { k + 1 }).copied());
+            if let (Some(ja), Some(jb)) = (ja, jb)
+                && (jb - ja).dot(*b - *a) <= TOL * a.dist(*b)
+            {
+                return Err(bad(cmd, "the offset is larger than the shape allows (the offset curves would cross)"));
+            }
+        }
+    }
+    let pts: Vec<usize> = joints.iter().map(|q| sk.add_point(*q, None)).collect::<std::result::Result<_, _>>()?;
+    for (k, pc) in pieces.iter().enumerate() {
+        let (Some(pa), Some(pb)) = (pts.get(k).copied(), pts.get(if closed { (k + 1) % n } else { k + 1 }).copied()) else {
+            return Err(bad(cmd, "the offset chain changed while it was built"));
+        };
+        let orig = order.get(k).map(|(c, _)| *c).ok_or_else(|| bad(cmd, "the offset chain changed while it was built"))?;
+        match pc.clone() {
+            Piece::Free(v) => {
+                // A fit spline through a few of the samples, ending at the joints.
+                let step = (v.len() / 24).max(1);
+                let mut idx = vec![pa];
+                for q in v.iter().skip(step).step_by(step) {
+                    if q.dist(*v.last().unwrap_or(q)) > 1e-6 {
+                        idx.push(sk.add_point(*q, None)?);
+                    }
+                }
+                idx.push(pb);
+                idx.dedup();
+                if idx.len() >= 2 {
+                    made.push(sk.add_curve(CurveKind::Spline { pts: idx, control: false, degree: 3, periodic: false }, None)?);
+                }
+            }
+            Piece::Line(..) => {
+                let l = sk.add_line_pts(pa, pb, None)?;
+                cons.push(add_c(sk, ConstraintKind::Parallel { a: orig, b: l })?);
+                made.push(l);
+            }
+            Piece::Arc(ci, cc, _, _, _, ccw) => {
+                let (qa, qb) = (sk.point(pa).unwrap_or_default(), sk.point(pb).unwrap_or_default());
+                let a = if ccw {
+                    sk.add_arc(cc, qa, qb, [Some(ci), Some(pa), Some(pb)], None)?
+                } else {
+                    sk.add_arc(cc, qb, qa, [Some(ci), Some(pb), Some(pa)], None)?
+                };
+                made.push(a);
+            }
+        }
+    }
+    let outputs = ids_of(sk, &made);
+    if pieces.iter().all(|p| !matches!(p, Piece::Free(_))) {
+        sk.offsets.push(solidcraft_sketch::OffsetChain { sources: sources.to_vec(), outputs: outputs.clone(), distance: d, closed, topology: None });
+        sk.refresh_offsets()?;
+    }
+    Ok(Side { distance: d, curves: outputs, constraints: cons, association: None, param: None })
+}
+
+/// Numbers remain millimetres for programmatic callers; expressions use design units.
+fn offset_length(s: &Session, p: &Value, key: &str, positive: bool) -> Result<(f64, String)> {
+    let cmd = "sketch.offset";
+    let expression = match num(p, key) {
+        Some(v) => format!("{v} mm"),
+        None => expr(p, key).ok_or_else(|| bad(cmd, format!("`{key}` must be a length expression")))?.into_string(),
+    };
+    let expression = s.doc.with_design_unit(&expression, solidcraft_doc::expr::Kind::Length);
+    let value = s.doc.eval(&expression, solidcraft_doc::expr::Kind::Length)?;
+    if !value.is_finite() || value.abs() <= 1e-9 || value.abs() > solidcraft_sketch::MAX_COORD || (positive && value < 0.0) {
+        return Err(bad(cmd, format!("`{key}` must be a {}length within the sketch bounds", if positive { "positive " } else { "finite nonzero " })));
+    }
+    Ok((value, expression))
+}
+
+#[derive(Clone, Copy)]
+struct OffsetOptions {
+    side: Option<Vec2>,
+    chain: bool,
+    distance: f64,
+    symmetric: bool,
+    distance2: Option<f64>,
+}
+
+/// Build every side of one connected source group. The pool is frozen before any output
+/// is created, so later groups cannot accidentally walk a newly created offset.
+fn offset_group(sk: &mut Sketch, ids: &[String], eligible: &std::collections::HashSet<String>, options: OffsetOptions) -> Result<Vec<Side>> {
+    let OffsetOptions { side, chain: use_chain, distance: d0, symmetric, distance2 } = options;
+    let cmd = "sketch.offset";
+    sk.refresh_offsets()?;
+    let sel: Vec<usize> = ids.iter().map(|i| sk.curve_index(i).ok_or_else(|| bad(cmd, format!("unknown curve `{i}`")))).collect::<Result<_>>()?;
+    let first = *sel.first().ok_or_else(|| bad(cmd, "no curves"))?;
+    if sk.offsets.iter().filter_map(|offset| offset.topology.as_ref()).any(|topology| {
+        topology.roles.iter().any(|role| role.retired) && topology.roles.iter().any(|role| !role.retired && ids.contains(&role.output))
+    }) {
+        return Err(bad(
+            cmd,
+            "offsets of a boundary with retired corner arcs are not supported yet; break its offset association to use the current fixed topology",
+        ));
+    }
+    let mut sides: Vec<Side> = Vec::new();
+    // Circles offset on their own, concentrically. Both sides are then a smaller circle and
+    // a larger one; the one toward the centre still has to have a size.
+    if let Some(CurveKind::Circle { c, r }) = sk.curves.get(first).map(|c| c.kind.clone()) {
+        let cc = sk.point(c).unwrap_or_default();
+        let source = sk.curves.get(first).map(|c| c.id.clone()).ok_or_else(|| bad(cmd, "offset source circle vanished"))?;
+        let grow = match side {
+            Some(q) => q.dist(cc) > r,
+            None => d0 < 0.0,
+        };
+        let radii: Vec<f64> = match (symmetric, distance2) {
+            (true, _) => vec![r - d0.abs(), r + d0.abs()],
+            (_, Some(second)) if grow => vec![r + d0.abs(), r - second],
+            (_, Some(second)) => vec![r - d0.abs(), r + second],
+            _ if grow => vec![r + d0.abs()],
+            _ => vec![r - d0.abs()],
+        };
+        for nr in radii {
+            if nr <= 1e-9 {
+                return Err(bad(cmd, "the offset circle would have no size"));
+            }
+            let ci = sk.add_circle(cc, nr, Some(c), None)?;
+            let outputs = ids_of(sk, &[ci]);
+            sk.offsets.push(solidcraft_sketch::OffsetChain {
+                sources: vec![(source.clone(), true)],
+                outputs: outputs.clone(),
+                distance: r - nr,
+                closed: true,
+                topology: None,
+            });
+            sides.push(Side { distance: r - nr, curves: outputs, constraints: Vec::new(), association: None, param: None });
+        }
+        return Ok(sides);
+    }
+    // The chain is walked once, before anything is created: a second side has to follow the
+    // same source curves, not a pool the first side has already added its output to.
+    let pool: Vec<usize> = if use_chain {
+        (0..sk.curves.len())
+            .filter(|i| {
+                sk.curves.get(*i).is_some_and(|c| eligible.contains(&c.id) && c.construction == sk.curves.get(first).is_some_and(|f| f.construction))
+            })
+            .collect()
+    } else {
+        sel.clone()
+    };
+    let (order, closed) = chain(sk, first, &pool);
+    // Side: toward `side` (compare both offsets' distance to it), else the sign.
+    let d = match side {
+        Some(q) => {
+            let dist = |dd: f64| {
+                offset_piece(sk, first, order.iter().find(|x| x.0 == first).is_none_or(|x| x.1), dd).map(|pc| piece_dist(&pc, q)).unwrap_or(f64::MAX)
+            };
+            if dist(d0.abs()) <= dist(-d0.abs()) { d0.abs() } else { -d0.abs() }
+        }
+        None => d0,
+    };
+    let runs = offset_runs(d, symmetric, distance2);
+    if order.iter().any(|(i, _)| sk.shape(*i).is_none()) {
+        // A smooth free-form entity is offset from exact pieces. Junctions that
+        // would require trimming/intersecting independent normal offsets are
+        // refused rather than joined by a guessed average point.
+        if order.len() != 1 {
+            return Err(bad(cmd, "offset smooth free-form curves individually; mixed chain junctions are ambiguous"));
+        }
+        let (source, forward) = *order.first().ok_or_else(|| bad(cmd, "no curves"))?;
+        for dd in runs {
+            let output = sk.add_freeform_offset(source, forward, dd)?;
+            sides.push(Side { distance: dd, curves: ids_of(sk, &[output]), constraints: Vec::new(), association: None, param: None });
+        }
+        return Ok(sides);
+    }
+    let sources = order
+        .iter()
+        .map(|(index, forward)| {
+            sk.curves.get(*index).map(|curve| (curve.id.clone(), *forward)).ok_or_else(|| bad(cmd, "offset chain source vanished"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let convex = closed && sk.convex_offset_supported(&sources)?;
+    for dd in runs {
+        sides.push(offset_side(sk, cmd, &order, &sources, closed, convex, dd)?);
+    }
+    Ok(sides)
+}
+
 fn offset(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sketch.offset";
     let ids = string_list(p, "curves");
-    if ids.is_empty() {
-        return Err(bad(cmd, "`curves` must list curves"));
+    if ids.is_empty() || ids.len() > 500 {
+        return Err(bad(cmd, "`curves` must list 1…500 curves"));
     }
-    let d0 = num(p, "distance").filter(|d| d.abs() > 1e-9).ok_or_else(|| bad(cmd, "`distance` must be a non-zero number"))?;
+    let (value, expression) = offset_length(s, p, "distance", false)?;
+    let expression = if value > 0.0 { expression } else { format!("-({expression})") };
+    let d0 = if bool_(p, "flip").unwrap_or(false) { -value } else { value };
     let side = p.get("side").and_then(vec2);
     let use_chain = bool_(p, "chain").unwrap_or(true);
-    let (out, info) = edit(s, p, cmd, true, |sk, doc| {
+    // Both sides at once: `symmetric` is
+    // one distance applied each way, `distance2` is an independent distance the other way.
+    let symmetric = match str_(p, "direction").map(str::to_ascii_lowercase).as_deref() {
+        None | Some("positive") | Some("one_side") => bool_(p, "symmetric").unwrap_or(false),
+        Some("symmetric") => true,
+        Some("negative" | "reverse" | "flip") => {
+            return Err(bad(cmd, "an offset has no negative direction: give a negative `distance`, or a `side` to offset toward"));
+        }
+        Some(other) => return Err(bad(cmd, format!("unknown direction `{other}` (one_side, symmetric)"))),
+    };
+    let second = if p.get("distance2").is_some() { Some(offset_length(s, p, "distance2", true)?) } else { None };
+    let distance2 = second.as_ref().map(|(value, _)| *value);
+    let expression2 = second.map(|(_, expression)| expression);
+    if symmetric && distance2.is_some() {
+        return Err(bad(cmd, "give `distance2` or `symmetric`, not both"));
+    }
+    if symmetric && side.is_some() {
+        return Err(bad(cmd, "`symmetric` offsets both sides, so `side` has no side left to pick: drop one of them"));
+    }
+    let ((sides, param, param2), info) = edit(s, p, cmd, true, |sk, doc| {
         sk.refresh_offsets()?;
         let rep = solve_current(sk, doc)?;
         if !rep.keeps_orientation() {
             return Err(bad(cmd, rep.failure(|_| "solve existing constraints before offsetting".into())));
         }
         sk.refresh_offsets()?;
-        let sel: Vec<usize> = ids.iter().map(|i| sk.curve_index(i).ok_or_else(|| bad(cmd, format!("unknown curve `{i}`")))).collect::<Result<_>>()?;
-        let first = *sel.first().ok_or_else(|| bad(cmd, "no curves"))?;
-        if sk.offsets.iter().filter_map(|offset| offset.topology.as_ref()).any(|topology| {
-            topology.roles.iter().any(|role| role.retired) && topology.roles.iter().any(|role| !role.retired && ids.contains(&role.output))
-        }) {
-            return Err(bad(
-                cmd,
-                "offsets of a boundary with retired corner arcs are not supported yet; break its offset association to use the current fixed topology",
-            ));
-        }
-        let mut made = Vec::new();
-        let mut cons = Vec::new();
-        // Circles offset on their own.
-        if let Some(CurveKind::Circle { c, r }) = sk.curves.get(first).map(|c| c.kind.clone()) {
-            let cc = sk.point(c).unwrap_or_default();
-            let grow = match side {
-                Some(q) => q.dist(cc) > r,
-                None => d0 < 0.0,
-            };
-            let nr = if grow { r + d0.abs() } else { r - d0.abs() };
-            if nr <= 1e-9 {
-                return Err(bad(cmd, "the offset circle would have no size"));
-            }
-            let ci = sk.add_circle(cc, nr, Some(c), None)?;
-            made.push(ci);
-            sk.offsets.push(solidcraft_sketch::OffsetChain {
-                sources: vec![(ids[0].clone(), true)],
-                outputs: ids_of(sk, &made),
-                distance: r - nr,
-                closed: true,
-                topology: None,
-            });
-            return Ok((ids_of(sk, &made), cons, None));
-        }
-        let pool: Vec<usize> = if use_chain {
-            (0..sk.curves.len())
-                .filter(|i| sk.curves.get(*i).is_some_and(|c| c.construction == sk.curves.get(first).is_some_and(|f| f.construction)))
-                .collect()
-        } else {
-            sel.clone()
-        };
-        let (order, closed) = chain(sk, first, &pool);
-        // Side: toward `side` (compare both offsets' distance to it), else the sign.
-        let d = match side {
-            Some(q) => {
-                let dist = |dd: f64| {
-                    offset_piece(sk, first, order.iter().find(|x| x.0 == first).is_none_or(|x| x.1), dd)
-                        .map(|pc| piece_dist(&pc, q))
-                        .unwrap_or(f64::MAX)
-                };
-                if dist(d0.abs()) <= dist(-d0.abs()) { d0.abs() } else { -d0.abs() }
-            }
-            None => d0,
-        };
-        if order.iter().any(|(i, _)| sk.shape(*i).is_none()) {
-            // A smooth free-form entity is offset from exact pieces. Junctions that
-            // would require trimming/intersecting independent normal offsets are
-            // refused rather than joined by a guessed average point.
-            if order.len() != 1 {
-                return Err(bad(cmd, "offset smooth free-form curves individually; mixed chain junctions are ambiguous"));
-            }
-            let (source, forward) = order[0];
-            let output = sk.add_freeform_offset(source, forward, d)?;
-            return Ok((ids_of(sk, &[output]), cons, None));
-        }
-        let sources = order
-            .iter()
-            .map(|(index, forward)| {
-                sk.curves.get(*index).map(|curve| (curve.id.clone(), *forward)).ok_or_else(|| bad(cmd, "offset chain source vanished"))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        if closed && sk.convex_offset_supported(&sources)? {
-            let created = sk.add_convex_offset(sources.clone(), d)?;
-            let roles = sk
+        let eligible = sk.curves.iter().map(|c| c.id.clone()).collect::<std::collections::HashSet<_>>();
+        let param = doc.new_model_param(&expression, "mm");
+        let param2 = expression2.as_ref().map(|e| doc.new_model_param(e, "mm"));
+        let mut pending = ids.clone();
+        let mut sides = Vec::new();
+        while !pending.is_empty() {
+            let mut group = offset_group(sk, &pending, &eligible, OffsetOptions { side, chain: use_chain, distance: d0, symmetric, distance2 })?;
+            let output = group.first().and_then(|side| side.curves.first()).ok_or_else(|| bad(cmd, "offset produced no curves"))?;
+            let sources = sk
                 .offsets
                 .iter()
-                .filter_map(|offset| offset.topology.as_ref())
-                .find(|topology| topology.id == created.association)
-                .map(|topology| topology.roles.clone())
-                .ok_or_else(|| bad(cmd, "new offset association is missing"))?;
-            for (source, role) in sources.iter().zip(&roles) {
-                if role.kind == solidcraft_sketch::OffsetRoleKind::Line {
-                    let a = sk.curve_index(&source.0).ok_or_else(|| bad(cmd, "offset source line vanished"))?;
-                    let b = sk.curve_index(&role.output).ok_or_else(|| bad(cmd, "offset output line vanished"))?;
-                    cons.push(add_c(sk, ConstraintKind::Parallel { a, b })?);
-                }
-            }
-            return Ok((created.curves, cons, Some(created.association)));
-        }
-        let pieces: Vec<Piece> =
-            order.iter().map(|(c, f)| offset_piece(sk, *c, *f, d)).collect::<Option<_>>().ok_or_else(|| bad(cmd, "the offset collapses an arc"))?;
-        let n = pieces.len();
-        let start_of = |p: &Piece| match p {
-            Piece::Line(a, _) => *a,
-            Piece::Arc(_, _, _, s, _, _) => *s,
-            Piece::Free(v) => v.first().copied().unwrap_or_default(),
-        };
-        let end_of = |p: &Piece| match p {
-            Piece::Line(_, b) => *b,
-            Piece::Arc(_, _, _, _, e, _) => *e,
-            Piece::Free(v) => v.last().copied().unwrap_or_default(),
-        };
-        // Junction points between consecutive pieces.
-        let joint = |x: &Piece, y: &Piece| -> Vec2 {
-            let (e, s0) = (end_of(x), start_of(y));
-            if e.dist(s0) < TOL * 10.0 {
-                return e;
-            }
-            let guess = (e + s0) * 0.5;
-            if matches!(x, Piece::Free(_)) || matches!(y, Piece::Free(_)) {
-                return guess;
-            }
-            intersections(&piece_shape(x), &piece_shape(y)).into_iter().min_by(|a, b| a.dist(guess).total_cmp(&b.dist(guess))).unwrap_or(guess)
-        };
-        let mut joints: Vec<Vec2> = Vec::new();
-        joints.push(if closed { joint(&pieces[n - 1], &pieces[0]) } else { start_of(&pieces[0]) });
-        for k in 0..n.saturating_sub(1) {
-            joints.push(joint(&pieces[k], &pieces[k + 1]));
-        }
-        if !closed {
-            joints.push(end_of(&pieces[n - 1]));
-        }
-        // A straight piece whose joints come out reversed (or meet) was overrun by its
-        // neighbours: the offset is larger than the shape allows there.
-        for (k, pc) in pieces.iter().enumerate() {
-            if let Piece::Line(a, b) = pc {
-                let (ja, jb) = (joints.get(k).copied(), joints.get(if closed { (k + 1) % n } else { k + 1 }).copied());
-                if let (Some(ja), Some(jb)) = (ja, jb)
-                    && (jb - ja).dot(*b - *a) <= TOL * a.dist(*b)
-                {
-                    return Err(bad(cmd, "the offset is larger than the shape allows (the offset curves would cross)"));
-                }
-            }
-        }
-        let pts: Vec<usize> = joints.iter().map(|q| sk.add_point(*q, None)).collect::<std::result::Result<_, _>>()?;
-        for (k, pc) in pieces.iter().enumerate() {
-            let (pa, pb) = (pts[k], if closed { pts[(k + 1) % n] } else { pts[k + 1] });
-            let (orig, _) = order[k];
-            match pc.clone() {
-                Piece::Free(v) => {
-                    // A fit spline through a few of the samples, ending at the joints.
-                    let step = (v.len() / 24).max(1);
-                    let mut idx = vec![pa];
-                    for q in v.iter().skip(step).step_by(step) {
-                        if q.dist(*v.last().unwrap_or(q)) > 1e-6 {
-                            idx.push(sk.add_point(*q, None)?);
-                        }
-                    }
-                    idx.push(pb);
-                    idx.dedup();
-                    if idx.len() >= 2 {
-                        made.push(sk.add_curve(CurveKind::Spline { pts: idx, control: false, degree: 3, periodic: false }, None)?);
+                .find(|o| o.owns_output(output))
+                .map(|o| o.sources.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>())
+                .or_else(|| sk.freeform_offsets.iter().find(|o| o.output == *output).map(|o| vec![o.source.clone()]))
+                .ok_or_else(|| bad(cmd, "offset association is missing"))?;
+            // An offset of infinite lines is infinite lines too (#1359).
+            let infinite = sources.iter().all(|id| sk.curve_index(id).and_then(|c| sk.curves.get(c)).is_some_and(|c| c.infinite));
+            if infinite {
+                for id in group.iter().flat_map(|side| side.curves.iter()) {
+                    if let Some(cu) = sk.curve_index(id).and_then(|c| sk.curves.get_mut(c))
+                        && matches!(cu.kind, CurveKind::Line { .. })
+                    {
+                        cu.infinite = true;
+                        cu.construction = true;
                     }
                 }
-                Piece::Line(..) => {
-                    let l = sk.add_line_pts(pa, pb, None)?;
-                    cons.push(add_c(sk, ConstraintKind::Parallel { a: orig, b: l })?);
-                    made.push(l);
-                }
-                Piece::Arc(ci, cc, _, _, _, ccw) => {
-                    let (qa, qb) = (sk.point(pa).unwrap_or_default(), sk.point(pb).unwrap_or_default());
-                    let a = if ccw {
-                        sk.add_arc(cc, qa, qb, [Some(ci), Some(pa), Some(pb)], None)?
-                    } else {
-                        sk.add_arc(cc, qb, qa, [Some(ci), Some(pb), Some(pa)], None)?
-                    };
-                    made.push(a);
-                }
             }
+            for (index, side) in group.iter_mut().enumerate() {
+                let name = if index == 1 { param2.as_ref().unwrap_or(&param) } else { &param };
+                let output = side.curves.first().ok_or_else(|| bad(cmd, "offset produced no curves"))?;
+                side.constraints.push(sk.add_constraint(
+                    ConstraintKind::OffsetDistance { output: output.clone(), value: side.distance.abs(), reverse: side.distance < 0.0 },
+                    Some(name.clone()),
+                )?);
+                side.param = Some(name.clone());
+            }
+            let before = pending.len();
+            pending.retain(|id| !sources.contains(id));
+            if pending.len() == before {
+                return Err(bad(cmd, "offset did not consume its source selection"));
+            }
+            sides.extend(group);
         }
-        let outputs = ids_of(sk, &made);
-        if pieces.iter().all(|p| !matches!(p, Piece::Free(_))) {
-            let sources = order.iter().filter_map(|(i, forward)| sk.curves.get(*i).map(|c| (c.id.clone(), *forward))).collect();
-            sk.offsets.push(solidcraft_sketch::OffsetChain { sources, outputs: outputs.clone(), distance: d, closed, topology: None });
-            sk.refresh_offsets()?;
-        }
-        Ok((outputs, cons, None))
+        Ok((sides, param, param2))
     })?;
-    let mut response = json!({"curves":out.0,"constraints":out.1,"sketch":info});
-    if let Some(association) = out.2 {
+    let curves: Vec<&String> = sides.iter().flat_map(|side| side.curves.iter()).collect();
+    let constraints: Vec<&String> = sides.iter().flat_map(|side| side.constraints.iter()).collect();
+    let each: Vec<Value> = sides
+        .iter()
+        .map(|side| {
+            let mut entry = json!({"distance": side.distance, "curves": side.curves, "param": side.param});
+            if let Some(association) = &side.association {
+                entry["association"] = json!(association);
+            }
+            entry
+        })
+        .collect();
+    let mut response = json!({"curves":curves,"constraints":constraints,"sketch":info,"sides":each,"param":param});
+    if let Some(param2) = param2 {
+        response["param2"] = json!(param2);
+    }
+    // One side keeps the single `association` it always returned. Two sides have one each, in
+    // `sides`, so there is no single association left to name.
+    if let [only] = sides.as_slice()
+        && let Some(association) = &only.association
+    {
         response["association"] = json!(association);
     }
     Ok(response)
@@ -1129,7 +1431,8 @@ fn break_offset(s: &mut Session, p: &Value) -> Result<Value> {
             .iter()
             .filter_map(|record| record.topology.as_ref())
             .any(|record| record.id == output || record.roles.iter().any(|role| role.output == output));
-        if record.is_none() && !topology {
+        let analytic = sk.offsets.iter().any(|o| o.outputs.iter().any(|id| id == output));
+        if record.is_none() && !topology && !analytic {
             return Err(bad(cmd, "curve is not an offset output"));
         }
         // A parameter edit may have changed the evaluated source without
@@ -1152,7 +1455,48 @@ fn break_offset(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(curves) = sk.break_offset_topology(output)? {
             return Ok((output.to_string(), Some(curves)));
         }
+        let ordinary = sk.offsets.iter().position(|o| o.topology.is_none() && o.outputs.iter().any(|id| id == output));
+        if let Some(index) = ordinary {
+            let record = sk.offsets.remove(index);
+            let centres = record
+                .outputs
+                .iter()
+                .filter_map(|id| sk.curve_index(id).and_then(|i| sk.curves.get(i)))
+                .filter_map(|curve| match curve.kind {
+                    CurveKind::Circle { c, .. } | CurveKind::Arc { c, .. } => Some(c),
+                    _ => None,
+                })
+                .collect::<std::collections::BTreeSet<_>>();
+            for centre in centres {
+                let position = sk.point(centre).ok_or_else(|| bad(cmd, "missing offset centre"))?;
+                let detached = sk.add_point(position, None)?;
+                for curve in &mut sk.curves {
+                    if record.outputs.contains(&curve.id) {
+                        match &mut curve.kind {
+                            CurveKind::Circle { c, .. } | CurveKind::Arc { c, .. } if *c == centre => *c = detached,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            sk.constraints.retain(|c| !matches!(&c.kind, ConstraintKind::OffsetDistance { output, .. } if record.outputs.contains(output)));
+            for id in &record.outputs {
+                if let Some(curve) = sk.curve_index(id).and_then(|i| sk.curves.get(i)) {
+                    let points = curve.kind.point_ids();
+                    for i in points {
+                        if i != 0
+                            && sk.curves.iter().all(|c| !c.kind.uses(i) || record.outputs.contains(&c.id))
+                            && let Some(p) = sk.points.get_mut(i)
+                        {
+                            p.fixed = false;
+                        }
+                    }
+                }
+            }
+            return Ok((output.to_string(), Some(record.outputs)));
+        }
         let record = record.ok_or_else(|| bad(cmd, "offset association changed while materializing its current geometry"))?;
+        sk.constraints.retain(|c| !matches!(&c.kind, ConstraintKind::OffsetDistance { output: id, .. } if id == output));
         let ci = sk.curve_index(output).ok_or_else(|| bad(cmd, "missing offset output"))?;
         let indices = sk.curves[ci].kind.point_ids();
         sk.freeform_offsets.remove(record);
@@ -1163,6 +1507,7 @@ fn break_offset(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Ok((output.to_string(), None))
     })?;
+    s.doc_mut().prune_model_params();
     let mut response = json!({"curve":out.0,"sketch":info});
     if let Some(curves) = out.1 {
         response["curves"] = json!(curves);
@@ -1283,6 +1628,9 @@ fn copy_through(
     keep: &dyn Fn(Vec2) -> bool,
     scale_r: f64,
 ) -> Result<(Vec<usize>, Vec<(usize, usize)>)> {
+    if sk.curves.len().saturating_add(cs.len()) > solidcraft_sketch::MAX_CURVES {
+        return Err(solidcraft_sketch::SketchError::TooLarge.into());
+    }
     let pts = involved_points(sk, cs, ps);
     let mut map: Vec<(usize, usize)> = Vec::new();
     for q in &pts {
@@ -1316,6 +1664,8 @@ fn copy_through(
             }
         };
         let id = sk.fresh(prefix)?;
+        // A mirrored or patterned infinite line is an infinite line too (#1359).
+        let infinite = cu.infinite && matches!(kind, CurveKind::Line { .. });
         sk.curves.push(Curve {
             id,
             kind,
@@ -1324,6 +1674,7 @@ fn copy_through(
             link: None,
             centerline: false,
             fixed: false,
+            infinite,
         });
         made.push(sk.curves.len() - 1);
     }
@@ -1349,6 +1700,9 @@ fn mirror(s: &mut Session, p: &Value) -> Result<Value> {
         for (o, n) in &map {
             if o != n {
                 cons.push(add_c(sk, ConstraintKind::Symmetric { p: *o, q: *n, l })?);
+            } else if !sk.curves.get(l).is_some_and(|curve| curve.kind.point_ids().contains(o)) {
+                // A shared endpoint must stay on the mirror line as the source changes.
+                cons.push(add_c(sk, ConstraintKind::PointOnCurve { p: *o, c: l })?);
             }
         }
         for (o, n) in cs.iter().zip(&made) {
@@ -1363,7 +1717,7 @@ fn mirror(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn count(p: &Value, k: &str, cmd: &str) -> Result<usize> {
     let n = num(p, k).ok_or_else(|| bad(cmd, format!("`{k}` must be a number")))?;
-    if !(1.0..=MAX_COPIES as f64).contains(&n) {
+    if !(1.0..=MAX_COPIES as f64).contains(&n) || n.fract() != 0.0 {
         return Err(bad(cmd, format!("`{k}` must be 1…{MAX_COPIES}")));
     }
     Ok(n as usize)
@@ -1386,55 +1740,11 @@ fn rotate(c: Vec2, ang: f64) -> impl Fn(Vec2) -> Vec2 {
 }
 
 fn pattern_circular(s: &mut Session, p: &Value) -> Result<Value> {
-    let cmd = "sketch.pattern.circular";
-    let n = count(p, "count", cmd)?;
-    let total = num(p, "angle").unwrap_or(360.0);
-    if !(total.abs() > 1e-9 && total.abs() <= 360.0) {
-        return Err(bad(cmd, "`angle` must be in (0, 360]"));
-    }
-    let (out, info) = edit(s, p, cmd, false, |sk, _| {
-        let (cs, ps) = entities(sk, p, cmd)?;
-        let c = point_or_ref(sk, p, "center", cmd)?;
-        let full = (total.abs() - 360.0).abs() < 1e-9;
-        let step = if full { total / n as f64 } else { total / (n.max(2) - 1) as f64 };
-        let mut made = Vec::new();
-        for k in 1..n {
-            let f = rotate(c, (step * k as f64).to_radians());
-            let (m, _) = copy_through(sk, &cs, &ps, &f, false, &|_| false, 1.0)?;
-            made.extend(m);
-        }
-        Ok(ids_of(sk, &made))
-    })?;
-    Ok(json!({"curves": out, "sketch": info}))
+    pattern::run(s, p, true)
 }
 
 fn pattern_rect(s: &mut Session, p: &Value) -> Result<Value> {
-    let cmd = "sketch.pattern.rectangular";
-    let n1 = count(p, "count", cmd)?;
-    let s1 = num(p, "spacing").ok_or_else(|| bad(cmd, "`spacing` must be a number"))?;
-    let n2 = if p.get("count2").is_some() { count(p, "count2", cmd)? } else { 1 };
-    let s2 = num(p, "spacing2").unwrap_or(s1);
-    if n1 * n2 > MAX_COPIES {
-        return Err(bad(cmd, "too many copies"));
-    }
-    let d1 = p.get("dir").and_then(vec2).and_then(Vec2::normalized).unwrap_or(Vec2::X);
-    let d2 = d1.perp();
-    let (out, info) = edit(s, p, cmd, false, |sk, _| {
-        let (cs, ps) = entities(sk, p, cmd)?;
-        let mut made = Vec::new();
-        for i in 0..n1 {
-            for j in 0..n2 {
-                if i == 0 && j == 0 {
-                    continue;
-                }
-                let off = d1 * (s1 * i as f64) + d2 * (s2 * j as f64);
-                let (m, _) = copy_through(sk, &cs, &ps, &move |q| q + off, false, &|_| false, 1.0)?;
-                made.extend(m);
-            }
-        }
-        Ok(ids_of(sk, &made))
-    })?;
-    Ok(json!({"curves": out, "sketch": info}))
+    pattern::run(s, p, false)
 }
 
 /// Move the points of the entities (in place) through `f`; circle radii scale by `k`.
@@ -1453,24 +1763,41 @@ fn transform_in_place(sk: &mut Sketch, cs: &[usize], ps: &[usize], f: &dyn Fn(Ve
             *r *= k;
         }
     }
+    sk.follow_pattern_seeds();
     Ok(())
 }
 
 fn move_copy(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sketch.move";
-    let t = p.get("translate").and_then(vec2).unwrap_or(Vec2::ZERO);
-    let ang = num(p, "angle").unwrap_or(0.0).to_radians();
+    let t = if p.get("translate").is_some() { req_vec2(cmd, p, "translate")? } else { Vec2::ZERO };
+    let ang = if p.get("angle").is_some() { num(p, "angle").ok_or_else(|| bad(cmd, "`angle` must be finite"))? } else { 0.0 }.to_radians();
     let copy = bool_(p, "copy").unwrap_or(false);
     let (out, info) = edit(s, p, cmd, false, |sk, _| {
-        let (cs, ps) = entities(sk, p, cmd)?;
+        let (mut cs, mut ps) = entities(sk, p, cmd)?;
         let c = if p.get("center").is_some() { point_or_ref(sk, p, "center", cmd)? } else { Vec2::ZERO };
         let rot = rotate(c, ang);
         let f = move |q: Vec2| rot(q) + t;
+        let mut links = Vec::new();
+        for entity in string_list(p, "entities") {
+            if let Some(link) = super::sketch_create::text_link(sk, &entity)
+                && !links.iter().any(|old| old == link)
+            {
+                links.push(link.to_owned());
+            }
+        }
+        cs.retain(|&i| !sk.curves.get(i).and_then(|c| c.link.as_ref()).is_some_and(|link| links.contains(link)));
+        ps.retain(|&i| !sk.points.get(i).and_then(|p| p.link.as_ref()).is_some_and(|link| links.contains(link)));
+        let mut text_curves = Vec::new();
+        for link in links {
+            text_curves.extend(super::sketch_create::move_text(sk, &link, t, ang, c, copy)?);
+        }
         if copy {
-            let (m, _) = copy_through(sk, &cs, &ps, &f, false, &|_| false, 1.0)?;
+            let (mut m, _) = copy_through(sk, &cs, &ps, &f, false, &|_| false, 1.0)?;
+            m.extend(text_curves);
             return Ok(ids_of(sk, &m));
         }
         transform_in_place(sk, &cs, &ps, &f, 1.0, cmd)?;
+        cs.extend(text_curves);
         Ok(ids_of(sk, &cs))
     })?;
     Ok(json!({"curves": out, "sketch": info}))

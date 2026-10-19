@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
-use solidcraft_geom::{Loop2, Mesh, Plane, Region2, Seg2, Vec2, Vec3};
+use solidcraft_geom::{Loop2, Mesh, Plane, Region2, Seg2, UnitVec3, Vec2, Vec3};
 
 use super::{Body, DISPLAY_ANGLE};
 use crate::{FaceSurface, extrude, face_surface};
@@ -46,7 +46,7 @@ fn plate_with_holes(centres: &[Vec2], radius: f64) -> Body {
 }
 
 /// The faces of a body on cylinders of this radius.
-fn cylinder_faces(b: &Body, radius: f64) -> Vec<(usize, Vec3, Vec3)> {
+fn cylinder_faces(b: &Body, radius: f64) -> Vec<(usize, Vec3, UnitVec3)> {
     (0..b.face_count())
         .filter_map(|i| match face_surface(b, i)? {
             FaceSurface::Cylinder { origin, axis, radius: r } if (r - radius).abs() < 1e-6 => Some((i, origin, axis)),
@@ -166,16 +166,16 @@ fn a_small_bend_on_a_large_sheet_is_meshed_round() {
         assert_eq!(faces.len(), 1, "one bend face of radius {radius}");
         let (face, origin, axis) = faces[0];
         // The chord tolerance alone: one flat strip from tangent line to tangent line.
-        assert_eq!(angles_around(&coarse, face, origin, axis).len(), 2, "radius {radius}");
-        assert!(sag(&coarse, face, origin, axis, radius) > 0.29 * radius);
-        let a = angles_around(&round, face, origin, axis);
+        assert_eq!(angles_around(&coarse, face, origin, *axis).len(), 2, "radius {radius}");
+        assert!(sag(&coarse, face, origin, *axis, radius) > 0.29 * radius);
+        let a = angles_around(&round, face, origin, *axis);
         assert!(a.len() > facets, "radius {radius}: {} facets across the bend", a.len() - 1);
         assert!((a[a.len() - 1] - FRAC_PI_2).abs() < 1e-6, "the bend is a quarter turn: {a:?}");
         let widest = a.windows(2).map(|w| w[1] - w[0]).fold(0.0, f64::max);
         assert!(widest <= DISPLAY_ANGLE * 1.001, "radius {radius}: a facet spans {} degrees", widest.to_degrees());
         // Within the chord tolerance of the cylinder, and by much: a facet that turns no more
         // than the angle sags no more than 1 - cos(angle / 2) of the radius.
-        let s = sag(&round, face, origin, axis, radius);
+        let s = sag(&round, face, origin, *axis, radius);
         assert!(s <= radius * (1.0 - (DISPLAY_ANGLE / 2.0).cos()) * 1.001 && s < tol, "radius {radius}: sag {s}");
     }
     // The flat faces along the sheet meet the bends in straight lines and need nothing more:
@@ -236,9 +236,9 @@ fn a_small_hole_on_a_large_plate_has_a_round_rim() {
     }
     // The hole's wall follows its rims.
     for (face, origin, axis) in cylinder_faces(&b, 2.0) {
-        let a = angles_around(&round, face, origin, axis);
+        let a = angles_around(&round, face, origin, *axis);
         assert!(a.windows(2).map(|w| w[1] - w[0]).fold(0.0, f64::max) <= DISPLAY_ANGLE * 1.001);
-        assert!(sag(&round, face, origin, axis, 2.0) <= 2.0 * (1.0 - (DISPLAY_ANGLE / 2.0).cos()) * 1.001);
+        assert!(sag(&round, face, origin, *axis, 2.0) <= 2.0 * (1.0 - (DISPLAY_ANGLE / 2.0).cos()) * 1.001);
     }
     assert_eq!(open_sides(&round, 1e-6), 0);
 }
@@ -337,7 +337,9 @@ fn round_faces_of_every_kind_are_divided_by_the_angle() {
     let check = |name: &str, b: &Body| {
         let coarse = b.display_mesh(3.0).unwrap();
         let round = b.display_mesh_angular(3.0, DISPLAY_ANGLE).unwrap();
-        assert!(turn(b, &coarse) > 2.0 * DISPLAY_ANGLE, "{name}: the chord tolerance leaves facets of {} degrees", turn(b, &coarse).to_degrees());
+        // The chord tolerance alone leaves facets coarser than the angle (the size rules' longest
+        // side and aspect limit already keep them near 40°), so the angle has work to do.
+        assert!(turn(b, &coarse) > 1.5 * DISPLAY_ANGLE, "{name}: the chord tolerance leaves facets of {} degrees", turn(b, &coarse).to_degrees());
         // A side crosses at most one facet in each direction.
         assert!(turn(b, &round) <= 1.5 * DISPLAY_ANGLE, "{name}: a side turns {} degrees", turn(b, &round).to_degrees());
         assert_eq!(open_sides(&round, 1e-6), 0, "{name}");
@@ -346,5 +348,44 @@ fn round_faces_of_every_kind_are_divided_by_the_angle() {
     };
     for (name, b) in &bodies {
         check(name, b);
+    }
+}
+
+/// The signed volume a closed mesh encloses.
+fn mesh_volume(m: &Mesh) -> f64 {
+    m.triangles.iter().filter_map(|t| m.tri(t)).map(|[a, b, c]| a.dot(b.cross(c)) / 6.0).sum()
+}
+
+#[test]
+fn a_cylinder_wall_split_along_its_seam_meshes_round() {
+    // A cup: a Ø100 × 10 disc with a Ø96 pocket 8 deep cut into its top, as Shell leaves it.
+    // The cut splits the outer wall's straight seam edges at the pocket's floor (z = 2); the
+    // wall used to be meshed as fans from those two vertices to the far rims, triangles that cut
+    // through the disc (the shelled Bolted Flange sample showed its rim cut off).
+    let disc = |r: f64, z0: f64, z1: f64| {
+        extrude(&Plane::XY, &[Region2 { outer: Loop2::circle(Vec2::ZERO, r), holes: vec![] }], z0, z1).unwrap().pop().unwrap()
+    };
+    let cup = crate::ops::boolean(&disc(50.0, 0.0, 10.0), &disc(48.0, 2.0, 20.0), crate::BoolOp::Cut).unwrap().unwrap();
+    let exact = PI * (50.0 * 50.0 * 10.0 - 48.0 * 48.0 * 8.0);
+    let outer: Vec<bool> = (0..cup.face_count())
+        .map(|i| matches!(face_surface(&cup, i), Some(FaceSurface::Cylinder { radius, .. }) if (radius - 50.0).abs() < 1e-6))
+        .collect();
+    assert_eq!(outer.iter().filter(|o| **o).count(), 2);
+    for tol in [display_tol(&cup), 0.1, 0.01] {
+        let m = cup.tessellate(tol).unwrap();
+        assert_eq!(open_sides(&m, 1e-6), 0);
+        let v = mesh_volume(&m);
+        assert!((v - exact).abs() < exact * 0.01, "tolerance {tol}: mesh volume {v:.1}, exact {exact:.1}");
+        // Every vertex of the outer wall's triangles lies on it, and none spans its height
+        // from one of the split vertices across the rim.
+        for (t, f) in m.triangles.iter().zip(&m.tri_face) {
+            if !outer.get(*f as usize).copied().unwrap_or(false) {
+                continue;
+            }
+            let [a, b, c] = m.tri(t).unwrap();
+            let centre = (a + b + c) * (1.0 / 3.0);
+            let r = Vec2::new(centre.x, centre.y).len();
+            assert!(r > 50.0 - 10.0 * tol.max(0.05), "tolerance {tol}: an outer wall triangle passes {r:.2} mm from the axis");
+        }
     }
 }

@@ -6,7 +6,7 @@
 //! - `{"start": "solid.extrude"}`: a toolbar click; `{"key": "E", "shift"?, "cmd"?}`; `{"text": "20"}`
 //! - `{"widget": "Revolute", "near"?: "Type"}`: click a dialog field, choice or button by its
 //!   text (with `near`: the one in that label's row)
-//! - `{"click": AT, "double"?, "shift"?, "ctrl"?, "button"?}`, `{"move": AT}`,
+//! - `{"click": AT, "double"?, "shift"?, "ctrl"?, "button"?}`, `{"move": AT, "shift"?, "alt"?, "ctrl"?, "cmd"?}`,
 //!   `{"hold": AT, "frames"?}` (press and hold still: Select Other),
 //!   `{"drag": [AT, AT], "shift"?, "ctrl"?, "steps"?}` where AT is `[x, y]` (screen), `{"world": [x,y,z]}`
 //!   or `{"sketch": [x,y]}` (the sketch being edited)
@@ -34,6 +34,7 @@
 //! - `{"note": "…"}`: a comment; `{"pending": "why"}`: the scenario waits for a fix (its test
 //!   is ignored)
 //! - `{"expect": {…}}`: checks, see [`check`]; `{"until": {…}}` waits (frames) until they pass
+//!   (`"status"` takes a substring of the status line, or null for none)
 //!
 //! The same files drive the live app over the control channel for screenshots.
 
@@ -111,11 +112,12 @@ fn with_dir(v: Value, dir: &str) -> Value {
     }
 }
 
-/// A fresh folder for one scenario's files.
+/// A fresh folder for one scenario's files, under the temporary folder spelled with long names
+/// (a short 8.3 `TEMP` would trip the short-name refusal before the scope checks the scenarios test).
 fn scratch_dir() -> PathBuf {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static N: AtomicUsize = AtomicUsize::new(0);
-    let d = std::env::temp_dir().join(format!("solidcraft-scenario-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
+    let d = solidcraft_engine::io::vfs::temp_dir().join(format!("solidcraft-scenario-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
     let _ = std::fs::create_dir_all(&d);
     d
 }
@@ -177,12 +179,11 @@ impl Harness {
     /// File pickers answer like a person would: save into the scenario's folder, open the file
     /// the scenario chose.
     fn install(&mut self) {
-        // Frames are laid out, never painted.
-        self.app.viewport.no_pixels = true;
         let dir = self.dir.clone();
-        self.app.services.pick_save = Some(Box::new(move |name, _| Some(dir.join(name).to_string_lossy().into_owned())));
+        self.app.services.pick_save =
+            Some(Box::new(move |name, _| Box::pin(std::future::ready(Some(dir.join(name).to_string_lossy().into_owned())))));
         let next = self.next_file.clone();
-        self.app.services.pick_open = Some(Box::new(move || next.borrow_mut().take()));
+        self.app.services.pick_open = Some(Box::new(move |_| Box::pin(std::future::ready(next.borrow_mut().take()))));
     }
 
     /// Autosave into the scenario's recovery folder (as the desktop app does into the user's).
@@ -216,6 +217,34 @@ impl Harness {
         }
     }
 
+    /// One frame in which the platform drops `files`, the pointer last seen at `at` (a drop
+    /// itself carries no position with winit 0.30).
+    pub fn drop_files(&mut self, at: egui::Pos2, files: Vec<egui::DroppedFileHandle>) {
+        self.drag_files(at, Vec::new(), files);
+    }
+
+    /// One frame in which files are dragged over the window (`hovered`) or dropped, the pointer
+    /// last seen at `at`.
+    pub fn drag_files(&mut self, at: egui::Pos2, hovered: Vec<egui::HoveredFile>, dropped: Vec<egui::DroppedFileHandle>) {
+        self.time += 1.0 / 60.0;
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, self.size)),
+            time: Some(self.time),
+            focused: true,
+            events: vec![egui::Event::PointerMoved(at)],
+            hovered_files: hovered,
+            dropped_files: dropped,
+            ..Default::default()
+        };
+        let app = &mut self.app;
+        let mut out = self.ctx.run_ui(raw, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        });
+        out.textures_delta.clear();
+        self.output = out.platform_output;
+    }
+
     /// Frames until the queued input is used up (and the view has settled).
     pub fn settle(&mut self) {
         for _ in 0..2000 {
@@ -224,6 +253,12 @@ impl Harness {
                 break;
             }
             self.frame();
+        }
+        // A file opening or recovering in the background: wait for it (as a person would).
+        let began = std::time::Instant::now();
+        while !self.app.file_load.idle() && began.elapsed() < std::time::Duration::from_secs(120) {
+            self.frame();
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
         self.frames(4);
     }
@@ -391,7 +426,7 @@ impl Harness {
                 )
             } else if let Some(at) = s.get("move") {
                 let [x, y] = self.at(at)?;
-                self.call("ui.move", json!({"x": x, "y": y}))
+                self.call("ui.move", json!({"x": x, "y": y,"shift":flag("shift"),"alt":flag("alt"),"ctrl":flag("ctrl"),"cmd":flag("cmd")}))
             } else if let Some(d) = s.get("drag") {
                 let [x0, y0] = self.at(d.get(0).unwrap_or(&Value::Null))?;
                 let [x1, y1] = self.at(d.get(1).unwrap_or(&Value::Null))?;
@@ -435,8 +470,19 @@ impl Harness {
             } else if let Some(name) = s.get("shot").and_then(Value::as_str) {
                 // With SOLIDCRAFT_SCENARIO_SHOTS set: a render of the model as the camera sees it.
                 if let Ok(dir) = solidcraft_engine::geom::env::var("SCENARIO_SHOTS").ok_or(()) {
+                    // Drawn on the GPU: the headless device, as the CLI draws.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if solidcraft_engine::capture::installed().is_none() {
+                        solidcraft_engine::capture::install(std::sync::Arc::new(|scene, cam, w, h| {
+                            let (rgba, renderer) = solidcraft_gpu::capture::headless_rgba(scene, cam, w, h)?;
+                            Ok(solidcraft_engine::capture::Picture { rgba, renderer })
+                        }));
+                    }
                     let path = std::path::Path::new(&dir).join(format!("{name}.png"));
-                    self.call("ui.render", json!({"path": path.to_string_lossy(), "width": 1000, "height": 700}));
+                    let r = self.call("ui.render", json!({"path": path.to_string_lossy(), "width": 1000, "height": 700}));
+                    if r["ok"] != true {
+                        return Err(format!("shot {name}: {}", r["error"]));
+                    }
                 }
                 return Ok(());
             } else if let Some(c) = s.get("camera") {
@@ -556,7 +602,8 @@ fn approx(got: f64, want: &Value, what: &str) -> Result<(), String> {
 
 /// Checks: `bodies` (count), `volume` / `area` (total, number or [value, rel tol]), `faces`,
 /// `features` (count), `errors` (timeline features in error, default 0), `dialog` (null: none
-/// open, or a word its kind must contain), `tool` (null or command id), `sketching` (bool),
+/// open, or a word its kind must contain), `tool` (null or command id), `status` (null, or a
+/// substring of the status line), `sketching` (bool),
 /// `selection` (count), `glyphs` ({constraint id: count}, none overlapping one another or a dimension value), `param` ({name: value}), `sketch_status` (solved|…), `dof`, `query`
 /// ({command, params?, path, value}: a command's result).
 pub fn check(h: &mut Harness, e: &Value) -> Result<(), String> {
@@ -708,9 +755,24 @@ pub fn check(h: &mut Harness, e: &Value) -> Result<(), String> {
                     return Err(format!("{a} {lo:?} does not span {b} {hi:?} (±{tol})"));
                 }
             }
+            "disjoint" => {
+                // {"disjoint": ["a", "b"]}: both published rects are on screen and neither
+                // covers any part of the other (a dialog beside the Sketch Palette).
+                let names: Vec<&str> = v.as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+                let (Some(a), Some(b)) = (names.first(), names.get(1)) else {
+                    return Err("disjoint takes two published rect names".to_string());
+                };
+                let ra = rect_of(a).ok_or(format!("no rect {a}"))?;
+                let rb = rect_of(b).ok_or(format!("no rect {b}"))?;
+                if ra.intersect(rb).is_positive() {
+                    return Err(format!("{a} {ra:?} overlaps {b} {rb:?}"));
+                }
+            }
             "dialog_docked" => {
                 // The command dialog: docked at the viewport's right, its width in [min, max].
-                let r = h.ctx.memory(|m| m.area_rect(egui::Id::new("sc_dialog"))).ok_or("no command dialog")?;
+                // Its window id carries the dialog's title, so read the rect the dialog
+                // publishes each frame rather than looking up a fixed id.
+                let r = h.app.viewport.dialog_rect.filter(|_| h.app.dialog.is_some()).ok_or("no command dialog")?;
                 let vp = h.app.viewport.rect.unwrap_or(egui::Rect::NOTHING);
                 let (lo, hi) = (v["min"].as_f64().unwrap_or(260.0) as f32, v["max"].as_f64().unwrap_or(380.0) as f32);
                 if r.width() < lo - 0.5 || r.width() > hi + 0.5 {
@@ -752,6 +814,18 @@ pub fn check(h: &mut Harness, e: &Value) -> Result<(), String> {
             "tool" => {
                 if ui["tool"] != *v {
                     return Err(format!("tool: got {}, want {v}", ui["tool"]));
+                }
+            }
+            "status" => {
+                // A substring of the status line's text, or null for no status at all.
+                let got = &ui["status"]["text"];
+                let ok = match v {
+                    Value::Null => ui["status"].is_null(),
+                    Value::String(w) => got.as_str().is_some_and(|g| g.contains(w.as_str())),
+                    _ => false,
+                };
+                if !ok {
+                    return Err(format!("status: got {}, want {v}", ui["status"]));
                 }
             }
             "glyphs" => {

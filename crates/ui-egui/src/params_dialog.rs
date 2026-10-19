@@ -18,6 +18,8 @@ use crate::SolveApp;
 use crate::theme::Tokens;
 
 const UNITS: [&str; 9] = ["mm", "cm", "m", "in", "ft", "deg", "rad", "", "um"];
+/// The expression a new parameter row starts with.
+const NEW_EXPR: &str = "10 mm";
 
 /// Dialog state (what is being typed; the parameters themselves live in the document).
 #[derive(Default)]
@@ -41,7 +43,7 @@ pub struct ParamsDialog {
 
 impl ParamsDialog {
     pub fn new() -> Self {
-        ParamsDialog { new_expr: "10 mm".into(), ..Default::default() }
+        ParamsDialog { new_expr: NEW_EXPR.into(), ..Default::default() }
     }
     /// The command the live preview should run (a valid expression being edited).
     pub fn preview_commands(&self) -> Option<Vec<(String, Value)>> {
@@ -120,12 +122,17 @@ pub fn open(app: &mut SolveApp) {
 
 /// Draw the dialog when it is open. Called once per frame.
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
-    publish(app, ctx);
+    // Completions are offered only under a focused text box; gathering them evaluates every
+    // parameter, so a design changing command after command (an agent building over MCP)
+    // does not pay for it on every change while nobody is typing.
+    if app.params.is_some() || ctx.memory(|m| m.focused().is_some()) {
+        publish(app, ctx);
+    }
     let Some(mut d) = app.params.take() else { return };
     let t = Tokens::get();
     let mut open = true;
     let all = rows(app);
-    crate::frame::window(ctx, RichText::new("PARAMETERS").strong().size(13.0), crate::frame::Width::Wide)
+    crate::frame::window(ctx, RichText::new(crate::i18n::tr_label("PARAMETERS")).strong().size(13.0), crate::frame::Width::Wide)
         .id(egui::Id::new("sc_params_dialog"))
         .open(&mut open)
         .default_width(740.0)
@@ -134,18 +141,14 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         .collapsible(false)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut d.filter).hint_text("Filter").desired_width(180.0));
+                ui.add(egui::TextEdit::singleline(&mut d.filter).hint_text(crate::i18n::tr_label("Filter")).desired_width(180.0));
                 ui.separator();
-                if ui.button("Import…").on_hover_text("CSV or JSON: updates existing parameters, adds new ones").clicked()
-                    && let Some(p) = app.services.pick_open.as_ref().and_then(|f| f())
-                {
-                    d.error = app.run("parameters.import", json!({ "path": p })).err();
+                if ui.button("Import…").on_hover_text(crate::i18n::tr_label("CSV or JSON: updates existing parameters, adds new ones")).clicked() {
+                    app.pick_open_command("parameters.import", json!({}), &[]);
                 }
                 for (label, ext) in [("Export CSV…", "csv"), ("Export JSON…", "json")] {
-                    if ui.button(label).clicked()
-                        && let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&format!("parameters.{ext}"), &[ext]))
-                    {
-                        d.error = app.run("parameters.export", json!({ "path": p, "format": ext })).err();
+                    if ui.button(label).clicked() {
+                        app.pick_save_command(&format!("parameters.{ext}"), &[ext], "parameters.export", json!({"format": ext}));
                     }
                 }
             });
@@ -223,12 +226,30 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
             ui.label(RichText::new(h).color(t.text_dim).small());
         }
         ui.end_row();
-        for r in rows {
-            // Favourite star.
-            let star = if r.favorite { RichText::new("★").color(t.accent) } else { RichText::new("☆").color(t.text_dim) };
-            if ui.add(egui::Button::new(star).frame(false)).on_hover_text("Favourite").clicked() {
-                d.error = app.run("parameters.favorite", json!({"name": r.name, "favorite": !r.favorite})).err();
-            }
+        for (i, r) in rows.iter().enumerate() {
+            ui.horizontal(|ui| {
+                // Favourite star.
+                let star = if r.favorite { RichText::new("★").color(t.accent) } else { RichText::new("☆").color(t.text_dim) };
+                if ui.add(egui::Button::new(star).frame(false)).on_hover_text(crate::i18n::tr_label("Favourite")).clicked() {
+                    d.error = app.run("parameters.favorite", json!({"name": r.name, "favorite": !r.favorite})).err();
+                }
+                // Up and down past the neighbouring user parameter (#1187), in the user table only:
+                // the favourites table lists favourites first whatever their order.
+                if salt == "user" {
+                    for (glyph, tip, neighbour, side) in
+                        [("▲", "Move up", i.checked_sub(1).and_then(|j| rows.get(j)), "before"), ("▼", "Move down", rows.get(i + 1), "after")]
+                    {
+                        let button = egui::Button::new(RichText::new(glyph).small().color(t.text_dim)).frame_when_inactive(false);
+                        let resp = ui.add_enabled(neighbour.is_some(), button).on_hover_text(crate::i18n::tr_label(tip));
+                        crate::scenario::publish_handle(&format!("param:{}:{}", side, r.name), resp.rect.center());
+                        if resp.clicked()
+                            && let Some(n) = neighbour
+                        {
+                            d.error = app.run("parameters.move", json!({"name": r.name, side: n.name})).err();
+                        }
+                    }
+                }
+            });
             // Name: double-click to rename.
             match &mut d.renaming {
                 Some((old, new)) if *old == r.name => {
@@ -239,13 +260,18 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
                             d.error = app.run("parameters.rename", json!({"name": old, "new_name": new})).err();
                         }
                         d.renaming = None;
-                    } else {
+                    } else if !resp.has_focus() {
+                        // Only take focus once: requesting it every frame resets the text box's
+                        // focus lock, so arrow keys would move focus away and end the rename.
                         resp.request_focus();
                     }
                 }
                 _ => {
                     let name = if r.source == "user" { RichText::new(&r.name) } else { RichText::new(&r.name).color(t.text_dim) };
-                    if ui.add(egui::Label::new(name).sense(egui::Sense::click())).on_hover_text("Double-click to rename").double_clicked() {
+                    let resp =
+                        ui.add(egui::Label::new(name).sense(egui::Sense::click())).on_hover_text(crate::i18n::tr_label("Double-click to rename"));
+                    crate::scenario::publish_handle(&format!("param:name:{}", r.name), resp.rect.center());
+                    if resp.double_clicked() {
                         d.renaming = Some((r.name.clone(), r.name.clone()));
                     }
                 }
@@ -254,7 +280,7 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
             if r.source == "user" {
                 let mut sel = UNITS.iter().position(|u| *u == r.unit).unwrap_or(0);
                 let before = sel;
-                egui::ComboBox::from_id_salt(("punit", &r.name)).width(56.0).selected_text(unit_label(&r.unit)).show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt(("punit", salt, &r.name)).width(56.0).selected_text(unit_label(&r.unit)).show_ui(ui, |ui| {
                     for (i, u) in UNITS.iter().enumerate() {
                         ui.selectable_value(&mut sel, i, unit_label(u));
                     }
@@ -275,10 +301,15 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
             if bad {
                 te = te.text_color(t.error);
             }
-            let id = ui.make_persistent_id(("pexpr", &r.name));
+            // Per table: a favourite is listed twice, and one id would give both boxes the focus and
+            // each key to both (#1767).
+            let id = ui.make_persistent_id(("pexpr", salt, &r.name));
             let focused = ui.memory(|m| m.has_focus(id));
             let resp = ui.add_sized([170.0, 20.0], te.id(id));
             crate::scenario::publish_handle(&format!("param:{}", r.name), resp.rect.center());
+            if salt == "fav" {
+                crate::scenario::publish_handle(&format!("param:favorite:{}", r.name), resp.rect.center());
+            }
             let completed = complete(ui, &resp, &mut e);
             if resp.changed() || completed {
                 d.editing.insert(r.name.clone(), e.clone());
@@ -319,11 +350,8 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
             }
             // Delete (user parameters; refused while used, the message says by what).
             if r.source == "user" {
-                if ui
-                    .add(egui::Button::new(RichText::new("Delete").small().color(t.text_dim)).frame(false))
-                    .on_hover_text("Delete this parameter")
-                    .clicked()
-                {
+                // Outlined on hover like the expression and comment fields; the label says what it does.
+                if ui.add(egui::Button::new(RichText::new("Delete").small().color(t.text_dim)).frame_when_inactive(false)).clicked() {
                     d.error = app.run("parameters.delete", json!({"name": r.name})).err();
                 }
             } else {
@@ -360,7 +388,8 @@ fn add_row(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog) {
         let expr_id = ui.make_persistent_id("pnew_expr");
         let comment_id = ui.make_persistent_id("pnew_comment");
         let focused_id = ui.memory(|m| [name_id, expr_id, comment_id].into_iter().find(|id| m.has_focus(*id)));
-        let name = ui.add(egui::TextEdit::singleline(&mut d.new_name).id(name_id).hint_text("new parameter").desired_width(120.0));
+        let name =
+            ui.add(egui::TextEdit::singleline(&mut d.new_name).id(name_id).hint_text(crate::i18n::tr_label("new parameter")).desired_width(120.0));
         crate::scenario::publish_handle("param:new:name", name.rect.center());
         let unit_response = egui::ComboBox::from_id_salt("pnew_unit")
             .width(56.0)
@@ -389,7 +418,7 @@ fn add_row(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog) {
         crate::scenario::publish_handle("param:new:comment", comment.rect.center());
         let submit = !completed && enter_for(ui, focused_id.is_some());
         let ok = !d.new_name.trim().is_empty() && live.is_ok();
-        if ui.add_enabled(ok, egui::Button::new("Add")).clicked() || submit {
+        if ui.add_enabled(ok, egui::Button::new(crate::i18n::tr_label("Add"))).clicked() || submit {
             if let Err(error) = &live {
                 d.error = Some(error.clone());
                 if let Some(id) = focused_id {
@@ -401,6 +430,7 @@ fn add_row(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog) {
             match app.run("parameters.add", p) {
                 Ok(_) => {
                     d.new_name.clear();
+                    d.new_expr = NEW_EXPR.into();
                     d.new_comment.clear();
                     d.error = None;
                     name.request_focus();
@@ -473,16 +503,24 @@ pub(crate) fn word_before(text: &str, cursor: usize) -> (usize, String) {
 
 /// Suggestions for the word being typed.
 pub fn suggestions(ctx: &egui::Context, word: &str) -> Vec<Suggestion> {
-    if word.is_empty() || word.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+    suggestions_for(ctx, word, false)
+}
+
+pub(crate) fn suggestions_for(ctx: &egui::Context, word: &str, explicit: bool) -> Vec<Suggestion> {
+    if (!explicit && word.is_empty()) || word.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         return Vec::new();
     }
     let all = ctx.data(|d| d.get_temp::<Cache>(cache_id())).map(|c| c.all).unwrap_or_default();
     // A complete token is ready to submit, even when longer names share its prefix.
-    if all.iter().any(|s| s.text == word) {
+    if !explicit && all.iter().any(|s| s.text == word) {
         return Vec::new();
     }
     let w = word.to_ascii_lowercase();
-    all.iter().filter(|s| s.text.to_ascii_lowercase().starts_with(&w) && s.text.trim_end_matches('(') != word).take(8).cloned().collect()
+    all.iter()
+        .filter(|s| s.text.to_ascii_lowercase().starts_with(&w) && (explicit || s.text.trim_end_matches('(') != word))
+        .take(8)
+        .cloned()
+        .collect()
 }
 
 /// Offer keyboard and pointer completions under a focused expression box.
@@ -514,5 +552,30 @@ mod tests {
         assert!(r.iter().any(|x| x.name == "width" && x.source == "user"));
         assert!(check(&mut app, "width / 2", "mm").is_ok());
         assert!(check(&mut app, "width + 1 deg", "mm").is_err());
+    }
+
+    /// A favourite is listed twice, under Favorites and in its own table; typing into either of its
+    /// expression boxes enters each key once (#1767: `1.1` came out `1.11.1`).
+    #[test]
+    fn a_favourite_parameter_takes_each_key_once() {
+        for (favourite, row) in [(false, 0), (true, 0), (true, 1)] {
+            let mut h = crate::scenario::Harness::new();
+            h.app.home.open = false;
+            h.app.run("parameters.add", json!({"name": "width", "expression": "10 mm"})).unwrap();
+            if favourite {
+                h.app.run("parameters.favorite", json!({"name": "width", "favorite": true})).unwrap();
+            }
+            h.step(&json!({"start": "parameters.change"})).unwrap();
+            h.frames(4);
+            // `param:width` is the box in the parameter's own table, `param:favorite:width` the one
+            // under Favorites.
+            h.step(&json!({"click": {"handle": if row == 0 { "param:width" } else { "param:favorite:width" }}})).unwrap();
+            h.frames(2);
+            h.step(&json!({"key": "A", "cmd": true})).unwrap();
+            h.step(&json!({"text": "1.1"})).unwrap();
+            h.frames(2);
+            let editing = h.app.params.as_ref().unwrap().editing.get("width").cloned();
+            assert_eq!(editing.as_deref(), Some("1.1"), "favourite {favourite}, row {row}");
+        }
     }
 }

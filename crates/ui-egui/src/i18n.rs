@@ -31,11 +31,44 @@ impl Catalog {
     }
 }
 
-static ENGLISH: Catalog = Catalog::new("en", "English", include_str!("locales/en.json"));
-static JAPANESE: Catalog = Catalog::new("ja", "日本語", include_str!("locales/ja.json"));
-static GERMAN: Catalog = Catalog::new("de", "Deutsch", include_str!("locales/de.json"));
-static KOREAN: Catalog = Catalog::new("ko", "한국어", include_str!("locales/ko.json"));
-pub const LOCALES: &[&Catalog] = &[&ENGLISH, &JAPANESE, &GERMAN, &KOREAN];
+static ENGLISH: Catalog = Catalog::new("en", "English", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/en.json")));
+static CZECH: Catalog = Catalog::new("cs", "Čeština", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/cs.json")));
+static GERMAN: Catalog = Catalog::new("de", "Deutsch", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/de.json")));
+static SPANISH: Catalog = Catalog::new("es", "Español (España)", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/es.json")));
+static FRENCH: Catalog = Catalog::new("fr", "Français", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/fr.json")));
+static GALICIAN: Catalog = Catalog::new("gl", "Galego", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/gl.json")));
+static ITALIAN: Catalog = Catalog::new("it", "Italiano", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/it.json")));
+static JAPANESE: Catalog = Catalog::new("ja", "日本語", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ja.json")));
+static KOREAN: Catalog = Catalog::new("ko", "한국어", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ko.json")));
+static MALAY: Catalog = Catalog::new("ms", "Bahasa Melayu", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ms.json")));
+static POLISH: Catalog = Catalog::new("pl", "Polski", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/pl.json")));
+static PORTUGUESE_BR: Catalog =
+    Catalog::new("pt-BR", "Português (Brasil)", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/pt-BR.json")));
+static RUSSIAN: Catalog = Catalog::new("ru", "Русский", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ru.json")));
+static TURKISH: Catalog = Catalog::new("tr", "Türkçe", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/tr.json")));
+static UKRAINIAN: Catalog = Catalog::new("uk", "Українська", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/uk.json")));
+static CHINESE: Catalog = Catalog::new("zh", "中文", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/zh.json")));
+/// English first (the fallback), then by language id, one per line so that adding a language
+/// doesn't edit a line another addition edits.
+#[rustfmt::skip]
+pub const LOCALES: &[&Catalog] = &[
+    &ENGLISH,
+    &CZECH,
+    &GERMAN,
+    &SPANISH,
+    &FRENCH,
+    &GALICIAN,
+    &ITALIAN,
+    &JAPANESE,
+    &KOREAN,
+    &MALAY,
+    &POLISH,
+    &PORTUGUESE_BR,
+    &RUSSIAN,
+    &TURKISH,
+    &UKRAINIAN,
+    &CHINESE,
+];
 
 pub fn is_supported(id: &str) -> bool {
     LOCALES.iter().any(|catalog| catalog.id == id)
@@ -73,15 +106,33 @@ impl Locale {
         interpolate(self.text(id), args)
     }
 
-    /// Translate generated browser names and labels, preserving custom names otherwise.
-    pub fn dynamic(self, text: &str) -> String {
+    /// The default names SolidCraft gives (`Untitled` for a new design, `Sketch1`, `Body2`,
+    /// `Component3`), translated.
+    fn default_name(self, text: &str) -> Option<String> {
+        if text == "Untitled" {
+            return Some(self.text("ui.untitled").to_string());
+        }
         for (prefix, id) in [("Sketch", "browser.sketch_name"), ("Body", "browser.body_name"), ("Component", "browser.component_name")] {
             if let Some(number) = text.strip_prefix(prefix)
                 && !number.is_empty()
                 && number.chars().all(|c| c.is_ascii_digit())
             {
-                return self.format(id, &[("number", number)]);
+                return Some(self.format(id, &[("number", number)]));
             }
+        }
+        None
+    }
+
+    /// A name someone gave (a body, sketch, component, …): shown as typed, even when it matches
+    /// a UI label ("Fillet", "Boss"); only the default names are translated.
+    pub fn given_name(self, text: &str) -> String {
+        self.default_name(text).unwrap_or_else(|| text.to_string())
+    }
+
+    /// Translate generated browser names and labels, preserving custom names otherwise.
+    pub fn dynamic(self, text: &str) -> String {
+        if let Some(name) = self.default_name(text) {
+            return name;
         }
         for (prefix, id, arg) in [("Units: ", "browser.units", "units"), ("Precision: ", "browser.precision", "precision")] {
             if let Some(value) = text.strip_prefix(prefix) {
@@ -150,6 +201,11 @@ impl Drop for LanguageScope {
     }
 }
 
+/// This thread's language, to carry into a worker thread with [`scope`].
+pub fn language() -> &'static str {
+    CURRENT.with(|current| current.get().0.id)
+}
+
 pub fn tr(id: &str) -> &str {
     CURRENT.with(|current| current.get().text(id))
 }
@@ -162,10 +218,35 @@ pub fn format(id: &str, args: &[(&str, &str)]) -> String {
 pub fn tr_dyn(text: &str) -> String {
     CURRENT.with(|current| current.get().dynamic(text))
 }
+pub fn tr_name(text: &str) -> String {
+    CURRENT.with(|current| current.get().given_name(text))
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The languages are listed English first, then by id, so adding one doesn't edit the
+    /// line another addition edits.
+    #[test]
+    fn locales_are_listed_english_first_then_by_id() {
+        let ids: Vec<&str> = LOCALES.iter().map(|c| c.id).collect();
+        assert_eq!(ids.first(), Some(&"en"));
+        assert!(ids[1..].is_sorted(), "{ids:?}");
+    }
+
+    /// A new design's name, `Untitled`, is a default name like `Sketch1`: it shows translated
+    /// wherever the design's name is shown (the tab, the browser's top row, the save prompt).
+    #[test]
+    fn a_new_designs_name_is_translated_like_the_other_default_names() {
+        let ja = Locale::for_language("ja");
+        assert_eq!(ja.given_name("Untitled"), ja.text("ui.untitled"));
+        assert_ne!(ja.given_name("Untitled"), "Untitled");
+        assert_eq!(Locale::for_language("en").given_name("Untitled"), "Untitled");
+        // Only the whole default name: names people type stay as typed.
+        assert_eq!(ja.given_name("Untitled bracket"), "Untitled bracket");
+        assert_eq!(ja.given_name("Boss"), "Boss");
+    }
     use std::collections::BTreeSet;
 
     fn placeholders(text: &str) -> BTreeSet<&str> {
@@ -178,6 +259,108 @@ mod tests {
             rest = remaining;
         }
         result
+    }
+
+    /// Every English text `label()` can be asked to translate, read straight from the catalogs.
+    fn english_texts() -> BTreeSet<&'static str> {
+        ENGLISH.messages().values().map(String::as_str).collect()
+    }
+
+    /// Catalogs delivered complete. English is the source catalog; Czech, Italian, Japanese and Chinese
+    /// are complete. German, Korean, Malay, Russian, French and Ukrainian
+    /// are partial (German and Korean predate the coverage guards; Russian, French and Ukrainian
+    /// are kept partial so a new label doesn't need more translations), so their gaps fall back
+    /// to English and are reported by `cargo xtask i18n` without failing the build, while
+    /// nothing in the complete catalogs may regress.
+    const COMPLETE: &[&str] = &["ja", "zh"];
+
+    /// `text()` falls back to English silently, so a message a complete locale never received is
+    /// shown in English inside an otherwise translated UI, with nothing in the build to say so.
+    /// This is the guard against that: adding a key to `en.json` and forgetting a complete
+    /// catalog fails here.
+    #[test]
+    fn every_complete_catalog_carries_every_english_message() {
+        let english: Messages = serde_json::from_str(ENGLISH.source).unwrap();
+        for catalog in LOCALES.iter().filter(|c| COMPLETE.contains(&c.id)) {
+            let messages: Messages = serde_json::from_str(catalog.source).unwrap();
+            let missing: Vec<&str> = english.keys().filter(|id| !messages.contains_key(*id)).map(String::as_str).collect();
+            assert!(missing.is_empty(), "{} is missing {} English message(s): {}", catalog.id, missing.len(), missing.join(", "));
+        }
+    }
+
+    /// A toolbar tab or panel reaches the UI as a bare source string (`toolbar::TABS`,
+    /// `CommandSpec::tab` / `.panel`) and is resolved only by `label()`'s English-text lookup, so
+    /// a heading missing from `en.json` can never translate in any locale. There are a dozen of
+    /// them, so all of them are required rather than ratcheted.
+    #[test]
+    fn every_toolbar_tab_and_panel_is_in_the_english_catalog() {
+        let texts = english_texts();
+        let mut wanted: Vec<&str> = crate::toolbar::TABS.to_vec();
+        wanted.push(crate::toolbar_custom::WORKSPACE);
+        for spec in solidcraft_engine::command_specs() {
+            wanted.push(spec.tab);
+            wanted.push(spec.panel);
+        }
+        let mut missing: Vec<&str> = wanted.into_iter().filter(|t| !t.is_empty() && !texts.contains(t)).collect();
+        missing.sort_unstable();
+        missing.dedup();
+        assert!(missing.is_empty(), "toolbar tabs/panels absent from en.json: {missing:?}");
+    }
+
+    /// Every command label the engine can show must exist as an English catalog message.
+    ///
+    /// `label()` resolves source text coming from the engine by looking that exact English string
+    /// up in `en.json`, so a label the catalog does not carry stays English in *every* locale —
+    /// nothing fails, the row just looks untranslated. The whole registry now has entries (their
+    /// ids are `cmd.<command id>`), so this is a hard requirement rather than a budget: a new
+    /// command added without a catalog entry fails here.
+    #[test]
+    fn every_command_label_is_in_the_english_catalog() {
+        let texts = english_texts();
+        let mut untranslated: Vec<&str> = solidcraft_engine::command_specs().iter().map(|c| c.label).filter(|label| !texts.contains(label)).collect();
+        untranslated.sort_unstable();
+        untranslated.dedup();
+        assert!(
+            untranslated.is_empty(),
+            "{} command label(s) have no English catalog entry, so they would stay English in every locale: {untranslated:?}",
+            untranslated.len()
+        );
+    }
+
+    /// The start page shows each built-in sample's name and description through `label()`, so a
+    /// sample added to the engine without English catalog entries would stay English everywhere.
+    #[test]
+    fn every_sample_name_and_description_is_in_the_english_catalog() {
+        let texts = english_texts();
+        let samples = solidcraft_engine::sample::samples();
+        let missing: Vec<&str> = samples.iter().flat_map(|s| [s.name, s.about]).filter(|text| !texts.contains(text)).collect();
+        assert!(missing.is_empty(), "sample texts absent from en.json: {missing:?}");
+        assert_eq!(Locale::for_language("ja").label("Sample Plate"), "サンプル プレート");
+    }
+
+    /// The whole engine registry now reaches the catalogs. Sample command labels from areas that
+    /// had no entry at all before (sheet metal, inspect, joints, motion) must resolve to their
+    /// translation rather than echo the English source text — `label()` returns its argument when
+    /// it finds no English message, so a dropped entry looks like a working English UI.
+    #[test]
+    fn newly_catalogued_command_labels_translate() {
+        let cases = [
+            ("cs", "Příruba", "Zebra analýza", "Studie pohybu"),
+            ("zh", "法兰", "斑马纹分析", "运动研究"),
+            ("ja", "フランジ", "ゼブラ解析", "モーション スタディ"),
+            ("de", "Flansch", "Zebra-Analyse", "Bewegungsuntersuchung"),
+            ("ko", "플랜지", "얼룩말줄무늬 분석", "운동 연구"),
+            ("pl", "Kołnierz", "Analiza zebry", "Badanie ruchu"),
+            ("ru", "Фланец", "Зебра-анализ", "Исследование движения"),
+            ("fr", "Bord tombé", "Analyse zébrée", "Étude de mouvement"),
+            ("uk", "Фланець", "Зебра-аналіз", "Дослідження руху"),
+        ];
+        for (lang, flange, zebra, motion) in cases {
+            let locale = Locale::for_language(lang);
+            for (source, expected) in [("Flange", flange), ("Zebra Analysis", zebra), ("Motion Study", motion)] {
+                assert_eq!(locale.label(source), expected, "{lang}: {source}");
+            }
+        }
     }
 
     #[test]
@@ -206,6 +389,8 @@ mod tests {
             include_str!("dialogs.rs"),
             include_str!("browser.rs"),
             include_str!("sketch_palette.rs"),
+            include_str!("design_properties.rs"),
+            include_str!("home.rs"),
         ] {
             for call in [".tr(\"", "i18n::tr(\"", "i18n::format(\""] {
                 for tail in source.split(call).skip(1) {
@@ -222,11 +407,51 @@ mod tests {
         assert_eq!(ja.text("ui.preferences"), "環境設定");
         assert_eq!(ja.label("Extrude"), "押し出し");
         assert_eq!(ja.label("CREATE SKETCH"), "スケッチを作成");
+        assert_eq!(ja.label("New Component"), "新規コンポーネント");
+        assert_eq!(ja.label("UTILITIES"), "ユーティリティ");
+        assert_eq!(ja.label("CONFIGURE"), "構成");
+        assert_eq!(ja.label("Drive Joints"), "ジョイントを駆動");
+        assert_eq!(ja.label("Axis Through Cylinder/Cone/Torus"), "円柱/円錐/トーラスを通る軸");
+        assert_eq!(ja.label("Filter commands or keys"), "コマンドまたはキーを検索");
+        assert_eq!(ja.label("Context menu"), "コンテキスト メニュー");
         assert_eq!(ja.label("NonExistentKey"), "NonExistentKey");
         assert_eq!(Locale::for_language("unknown").text("ui.preferences"), "Preferences");
         static PARTIAL: Catalog = Catalog::new("test", "Test", r#"{"ui.preferences":"Prefs"}"#);
         assert_eq!(Locale(&PARTIAL).text("ui.preferences"), "Prefs");
         assert_eq!(Locale(&PARTIAL).text("ui.extrude"), "Extrude");
+    }
+
+    #[test]
+    fn italian_labels_templates_and_names_preserve_technical_values() {
+        assert!(is_supported("it"));
+        let it = Locale::for_language("it");
+        assert_eq!(it.name(), "Italiano");
+        for (source, expected) in [
+            ("Sketch", "Schizzo"),
+            ("Extrude", "Estrusione"),
+            ("Fillet", "Raccordo"),
+            ("Chamfer", "Smusso"),
+            ("Body", "Corpo"),
+            ("New Component", "Nuovo componente"),
+            ("CONSTRAINTS", "VINCOLI"),
+            ("Draft", "Sformo"),
+            ("Counterbore", "Lamatura"),
+            ("Countersink", "Svasatura"),
+        ] {
+            assert_eq!(it.label(source), expected, "{source}");
+        }
+        assert_eq!(it.dynamic("Sketch12"), "Schizzo12");
+        assert_eq!(it.dynamic("Body2"), "Corpo2");
+        assert_eq!(it.dynamic("Component3"), "Componente3");
+        assert_eq!(it.dynamic("Units: mm"), "Unità: mm");
+        assert_eq!(it.dynamic("4 degrees of freedom"), "4 gradi di libertà");
+        assert_eq!(it.given_name("Fillet"), "Fillet");
+        assert_eq!(it.label("solid.extrude"), "solid.extrude");
+        assert_eq!(it.format("document.save_changes", &[("name", "Staffa {v2}")]), "Salvare le modifiche a Staffa {v2}?");
+        assert_eq!(
+            it.format("ui.command_palette_hint", &[("example", "solid.extrude {\"distance\": 20}")]),
+            "Digita un comando, ad es. solid.extrude {\"distance\": 20}  — oppure premi S per cercare"
+        );
     }
 
     /// `label()`'s id fallback (an argument that matches no other entry's English text is
@@ -238,7 +463,14 @@ mod tests {
     /// non-empty string" would not catch that.
     #[test]
     fn id_labels_resolve_to_their_own_translation_not_an_english_fallback() {
-        for (lang, profile, points) in [("de", "Profil", "Punkte"), ("ja", "プロファイル", "点"), ("ko", "프로파일", "점")] {
+        for (lang, profile, points) in [
+            ("de", "Profil", "Punkte"),
+            ("ja", "プロファイル", "点"),
+            ("ko", "프로파일", "점"),
+            ("ru", "Профиль", "Точки"),
+            ("fr", "Profil", "Points"),
+            ("uk", "Профіль", "Точки"),
+        ] {
             let locale = Locale::for_language(lang);
             assert_eq!(locale.label("ui.palette_profile"), profile, "{lang}");
             assert_eq!(locale.label("ui.palette_points"), points, "{lang}");
@@ -249,6 +481,27 @@ mod tests {
         // entire reason these two rows pass an id instead of their English text.
         assert_eq!(Locale::for_language("de").label("Profile"), Locale::for_language("de").text("ui.profile"));
         assert_eq!(Locale::for_language("de").label("Points"), Locale::for_language("de").text("ui.points"));
+    }
+
+    /// The Construction Geometries row passes its English text, like the other seven text
+    /// rows. "Construction" on its own is already the line-type entry `ui.construction`, so
+    /// the row's two-word text must reach its own entry rather than that one.
+    #[test]
+    fn the_construction_geometries_row_reaches_its_own_entry_not_the_line_type() {
+        let rows = [
+            ("de", "Konstruktionsgeometrien"),
+            ("ja", "構築ジオメトリ"),
+            ("ko", "구성 형상"),
+            ("ru", "Вспомогательная геометрия"),
+            ("fr", "Géométries de construction"),
+            ("uk", "Конструкційна геометрія"),
+        ];
+        for (lang, want) in rows {
+            let locale = Locale::for_language(lang);
+            assert_eq!(locale.label("Construction Geometries"), want, "{lang}");
+            assert_ne!(locale.label("Construction Geometries"), locale.text("ui.construction"), "{lang}");
+        }
+        assert_eq!(Locale::for_language("en").label("Construction Geometries"), "Construction Geometries");
     }
 
     #[test]
@@ -274,6 +527,30 @@ mod tests {
     }
 
     #[test]
+    fn given_names_are_not_translated_as_labels() {
+        let de = Locale::for_language("de");
+        // "Boss" and "Fillet" are also UI labels, which `dynamic` translates.
+        assert_ne!(de.dynamic("Boss"), "Boss");
+        assert_ne!(de.dynamic("Fillet"), "Fillet");
+        assert_eq!(de.given_name("Boss"), "Boss");
+        assert_eq!(de.given_name("Fillet"), "Fillet");
+        assert_eq!(de.given_name("Sketch3"), de.dynamic("Sketch3"));
+        assert_ne!(de.given_name("Sketch3"), "Sketch3");
+    }
+
+    #[test]
+    fn spanish_catalog_is_registered_and_translates_cad_labels() {
+        let es = Locale::for_language("es");
+        assert_eq!(es.name(), "Español (España)");
+        assert!(is_supported("es"));
+        assert_eq!(es.text("ui.preferences"), "Preferencias");
+        assert_eq!(es.label("Extrude"), "Extruir");
+        assert_eq!(es.label("Fillet"), "Redondeo");
+        assert_eq!(es.dynamic("Sketch1"), "Boceto1");
+        assert_eq!(es.format("document.save_changes", &[("name", "Pieza")]), "¿Guardar los cambios de Pieza?");
+    }
+
+    #[test]
     fn korean_catalog_translates_keys_labels_and_browser_patterns() {
         let ko = Locale::for_language("ko");
         assert_eq!(ko.name(), "한국어");
@@ -292,6 +569,126 @@ mod tests {
         assert_eq!(ko.dynamic("Parameters (5)"), "매개변수 (5)");
         assert_eq!(ko.dynamic("4 degrees of freedom"), "자유도 4개");
         assert_eq!(ko.dynamic("Sketch of bracket"), "Sketch of bracket");
+    }
+
+    #[test]
+    fn malay_catalog_translates_keys_labels_and_browser_patterns() {
+        let ms = Locale::for_language("ms");
+        assert!(is_supported("ms"));
+        assert_eq!(ms.name(), "Bahasa Melayu");
+        assert_eq!(ms.text("ui.preferences"), "Tetapan");
+        assert_eq!(ms.label("Extrude"), "Semperit");
+        assert_eq!(ms.label("CREATE SKETCH"), "CIPTA LAKARAN");
+        assert_eq!(ms.format("document.save_changes", &[("name", "My {design}")]), "Simpan perubahan pada My {design}?");
+        assert_eq!(ms.format("dialog.selected_count", &[("count", "2")]), "↖ 2 dipilih");
+        assert_eq!(ms.dynamic("Sketch1"), "Lakaran1");
+        assert_eq!(ms.dynamic("Body2"), "Jasad2");
+        assert_eq!(ms.dynamic("Component12"), "Komponen12");
+        assert_eq!(ms.dynamic("Units: mm"), "Unit: mm");
+        assert_eq!(ms.dynamic("Precision: 3"), "Ketepatan: 3");
+        assert_eq!(ms.dynamic("Parameters (5)"), "Parameter (5)");
+        assert_eq!(ms.dynamic("4 degrees of freedom"), "4 darjah kebebasan");
+        assert_eq!(ms.given_name("Sketch of bracket"), "Sketch of bracket");
+        assert_eq!(ms.label("NonExistentKey"), "NonExistentKey");
+    }
+
+    #[test]
+    fn russian_catalog_translates_keys_labels_and_browser_patterns() {
+        let ru = Locale::for_language("ru");
+        assert_eq!(ru.name(), "Русский");
+        assert!(is_supported("ru"));
+        assert_eq!(ru.text("ui.preferences"), "Настройки");
+        assert_eq!(ru.label("Extrude"), "Выдавливание");
+        assert_eq!(ru.label("CREATE SKETCH"), "СОЗДАТЬ ЭСКИЗ");
+        assert_eq!(ru.label("NonExistentKey"), "NonExistentKey");
+        assert_eq!(ru.format("document.save_changes", &[("name", "My {design}")]), "Сохранить изменения в My {design}?");
+        assert_eq!(ru.format("dialog.selected_count", &[("count", "2")]), "↖ Выбрано: 2");
+        assert_eq!(ru.dynamic("Sketch1"), "Эскиз1");
+        assert_eq!(ru.dynamic("Body2"), "Тело2");
+        assert_eq!(ru.dynamic("Component12"), "Компонент12");
+        assert_eq!(ru.dynamic("Units: mm"), "Единицы: mm");
+        assert_eq!(ru.dynamic("Precision: 3"), "Точность: 3");
+        assert_eq!(ru.dynamic("Parameters (5)"), "Параметры (5)");
+        assert_eq!(ru.dynamic("4 degrees of freedom"), "Степеней свободы: 4");
+        assert_eq!(ru.dynamic("Sketch of bracket"), "Sketch of bracket");
+    }
+
+    #[test]
+    fn french_catalog_translates_keys_labels_and_browser_patterns() {
+        let fr = Locale::for_language("fr");
+        assert_eq!(fr.name(), "Français");
+        assert!(is_supported("fr"));
+        assert_eq!(fr.text("ui.preferences"), "Préférences");
+        assert_eq!(fr.label("Extrude"), "Extrusion");
+        assert_eq!(fr.label("Fillet"), "Congé");
+        assert_eq!(fr.label("CREATE SKETCH"), "CRÉER UNE ESQUISSE");
+        assert_eq!(fr.label("NonExistentKey"), "NonExistentKey");
+        // French puts a no-break space before the two-part punctuation marks.
+        assert_eq!(fr.format("document.save_changes", &[("name", "My {design}")]), "Enregistrer les modifications de My {design}\u{a0}?");
+        assert_eq!(fr.format("dialog.selected_count", &[("count", "2")]), "↖ 2 sélectionné(s)");
+        assert_eq!(fr.dynamic("Sketch1"), "Esquisse1");
+        assert_eq!(fr.dynamic("Body2"), "Corps2");
+        assert_eq!(fr.dynamic("Component12"), "Composant12");
+        assert_eq!(fr.dynamic("Units: mm"), "Unités\u{a0}: mm");
+        assert_eq!(fr.dynamic("Precision: 3"), "Précision\u{a0}: 3");
+        assert_eq!(fr.dynamic("Parameters (5)"), "Paramètres (5)");
+        assert_eq!(fr.dynamic("4 degrees of freedom"), "4 degrés de liberté");
+        assert_eq!(fr.dynamic("Sketch of bracket"), "Sketch of bracket");
+    }
+
+    #[test]
+    fn turkish_catalog_is_registered_and_translates_keys() {
+        let tr = Locale::for_language("tr");
+        assert_eq!(tr.name(), "Türkçe");
+        assert!(is_supported("tr"));
+        assert_eq!(tr.text("ui.preferences"), "Ayarlar");
+        assert_eq!(tr.format("document.save_changes", &[("name", "My {design}")]), "My {design} içindeki değişiklikler kaydedilsin mi?");
+        assert_eq!(tr.format("dialog.selected_count", &[("count", "2")]), "↖ 2 seçildi");
+        assert_eq!(tr.label("NonExistentKey"), "NonExistentKey");
+    }
+
+    #[test]
+    fn brazilian_portuguese_catalog_is_registered_and_translates_keys() {
+        let pt = Locale::for_language("pt-BR");
+        assert_eq!(pt.name(), "Português (Brasil)");
+        assert!(is_supported("pt-BR"));
+        assert_eq!(pt.text("ui.preferences"), "Preferências");
+        assert_eq!(pt.format("document.save_changes", &[("name", "My {design}")]), "Salvar as alterações em My {design}?");
+        assert_eq!(pt.format("dialog.selected_count", &[("count", "2")]), "↖ 2 selecionados");
+        assert_eq!(pt.label("NonExistentKey"), "NonExistentKey");
+    }
+
+    #[test]
+    fn galician_catalog_is_registered_and_translates_keys() {
+        let gl = Locale::for_language("gl");
+        assert_eq!(gl.name(), "Galego");
+        assert!(is_supported("gl"));
+        assert_eq!(gl.text("ui.preferences"), "Preferencias");
+        assert_eq!(gl.format("document.save_changes", &[("name", "My {design}")]), "Gardar os cambios en My {design}?");
+        assert_eq!(gl.format("dialog.selected_count", &[("count", "2")]), "↖ 2 seleccionados");
+        assert_eq!(gl.label("Fillet"), "Arredondamento");
+        assert_eq!(gl.label("NonExistentKey"), "NonExistentKey");
+    }
+
+    #[test]
+    fn ukrainian_catalog_translates_keys_labels_and_browser_patterns() {
+        let uk = Locale::for_language("uk");
+        assert_eq!(uk.name(), "Українська");
+        assert!(is_supported("uk"));
+        assert_eq!(uk.text("ui.preferences"), "Налаштування");
+        assert_eq!(uk.label("Extrude"), "Видавлювання");
+        assert_eq!(uk.label("CREATE SKETCH"), "СТВОРИТИ ЕСКІЗ");
+        assert_eq!(uk.label("NonExistentKey"), "NonExistentKey");
+        assert_eq!(uk.format("document.save_changes", &[("name", "My {design}")]), "Зберегти зміни в My {design}?");
+        assert_eq!(uk.format("dialog.selected_count", &[("count", "2")]), "↖ Вибрано: 2");
+        assert_eq!(uk.dynamic("Sketch1"), "Ескіз1");
+        assert_eq!(uk.dynamic("Body2"), "Тіло2");
+        assert_eq!(uk.dynamic("Component12"), "Компонент12");
+        assert_eq!(uk.dynamic("Units: mm"), "Одиниці: mm");
+        assert_eq!(uk.dynamic("Precision: 3"), "Точність: 3");
+        assert_eq!(uk.dynamic("Parameters (5)"), "Параметри (5)");
+        assert_eq!(uk.dynamic("4 degrees of freedom"), "4 ступенів вільності");
+        assert_eq!(uk.dynamic("Sketch of bracket"), "Sketch of bracket");
     }
 
     #[test]

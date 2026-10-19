@@ -13,8 +13,39 @@ use crate::SolveApp;
 use crate::theme::Tokens;
 
 /// Keys the application handles before any command shortcut.
-pub const RESERVED: &[&str] =
-    &["Escape", "S", "V", "F2", "F6", "Delete", "Backspace", "Ctrl+Z", "Ctrl+Y", "Ctrl+S", "Ctrl+N", "Ctrl+O", "Ctrl+Comma"];
+pub const RESERVED: &[&str] = &[
+    "Escape",
+    "S",
+    "V",
+    "F2",
+    "F6",
+    "Delete",
+    "Backspace",
+    "Ctrl+Z",
+    "Ctrl+Y",
+    "Ctrl+S",
+    "Ctrl+N",
+    "Ctrl+O",
+    "Ctrl+Comma",
+    "Ctrl+Shift+A",
+    "Ctrl+C",
+    "Ctrl+X",
+    "Ctrl+V",
+    // View keys (`navigation::view_key`).
+    "Left",
+    "Right",
+    "Up",
+    "Down",
+    "Shift+Left",
+    "Shift+Right",
+    "Shift+Up",
+    "Shift+Down",
+    "Ctrl+Left",
+    "Ctrl+Right",
+    "Ctrl+Up",
+    "Ctrl+Down",
+    "Ctrl+8",
+];
 
 #[derive(Default)]
 pub struct Keymap {
@@ -67,6 +98,15 @@ pub fn effective(app: &SolveApp, id: &str) -> Option<String> {
     }
 }
 
+/// Whether the current binding is held, for commands that modify a pointer gesture.
+pub fn held(app: &SolveApp, ctx: &egui::Context, id: &str) -> bool {
+    let Some(binding) = effective(app, id) else { return false };
+    if capturing(app) || ctx.egui_wants_keyboard_input() {
+        return false;
+    }
+    ctx.input(|i| i.keys_down.iter().any(|key| key_name(*key, i.modifiers) == binding))
+}
+
 /// Commands bound to `key` now.
 pub fn commands_for(app: &SolveApp, key: &str) -> Vec<&'static str> {
     command_specs().into_iter().filter(|c| effective(app, c.id).as_deref() == Some(key)).map(|c| c.id).collect()
@@ -75,6 +115,31 @@ pub fn commands_for(app: &SolveApp, key: &str) -> Vec<&'static str> {
 /// The enabled command a key press runs, if any.
 pub fn command_for(app: &SolveApp, key: &str) -> Option<&'static str> {
     commands_for(app, key).into_iter().find(|id| solidcraft_engine::find_command(id).is_some_and(|c| c.info(&app.session).enabled))
+}
+
+/// Run a shortcut key: its enabled command; outside a sketch, a sketch tool's key opens Create
+/// Sketch (on the selected plane or planar face, else on the plane picked next) and the tool
+/// starts in the new sketch.
+pub fn press(app: &mut SolveApp, key: &str) {
+    if let Some(id) = command_for(app, key) {
+        app.start(id);
+    } else if let Some(id) = sketch_tool_for(app, key) {
+        app.start("sketch.create");
+        if let Some(d) = app.dialog.as_mut().filter(|d| matches!(d.kind, crate::dialogs::Kind::Sketch)) {
+            d.then_start = Some(id);
+        }
+    }
+}
+
+/// Outside a sketch: the SKETCH-tab command bound to `key` that a new sketch would start. Not
+/// Normal/Construction (a mode of the drawing in progress) nor the Finish Sketch panel.
+fn sketch_tool_for(app: &SolveApp, key: &str) -> Option<&'static str> {
+    if app.session.active_sketch.is_some() {
+        return None;
+    }
+    commands_for(app, key).into_iter().find(|id| {
+        solidcraft_engine::find_command(id).is_some_and(|c| c.tab == "SKETCH" && c.panel != "FINISH SKETCH" && c.id != "sketch.construction")
+    })
 }
 
 /// Bind `key` to a command (`""` clears it). Refused for reserved keys, and when other commands
@@ -141,14 +206,18 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
     {
         {
             ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut app.keymap.filter).hint_text("Filter commands or keys").desired_width(300.0));
-                if !app.keymap.read_only && ui.button("Reset All").clicked() {
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.keymap.filter)
+                        .hint_text(crate::i18n::tr_label("Filter commands or keys"))
+                        .desired_width(300.0),
+                );
+                if !app.keymap.read_only && ui.button(app.tr_label("Reset All")).clicked() {
                     action = Some((String::new(), "reset_all"));
                 }
-                if ui.button("Export…").on_hover_text("Keys, S box favourites and the toolbar, as a file").clicked() {
+                if ui.button(app.tr_label("Export…")).on_hover_text(app.tr_label("Keys, S box favourites and the toolbar, as a file")).clicked() {
                     action = Some((String::new(), "export"));
                 }
-                if !app.keymap.read_only && ui.button("Import…").clicked() {
+                if !app.keymap.read_only && ui.button(app.tr_label("Import…")).clicked() {
                     action = Some((String::new(), "import"));
                 }
             });
@@ -160,14 +229,14 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
                     if ui.button(format!("Use {key} here anyway")).clicked() {
                         action = Some((format!("{id}\n{key}"), "replace"));
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(app.tr_label("Cancel")).clicked() {
                         action = Some((String::new(), "cancel"));
                     }
                 });
             }
             ui.label(
                 RichText::new(
-                    "Select Other: hold the left button still on the model (or right-click › Select Other…) to list everything under the cursor; click again on the same spot to select the next thing there.",
+                    app.tr_label("Select Other: hold the left button still on the model (or right-click › Select Other…) to list everything under the cursor; click again on the same spot to select the next thing there. Double-click the middle button to go Home (Preferences › Navigation)."),
                 )
                 .size(11.0)
                 .color(t.text_dim),
@@ -178,15 +247,16 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
                 egui::Grid::new("sc_keymap_grid").num_columns(4).striped(true).spacing([10.0, 4.0]).show(ui, |ui| {
                     for c in command_specs() {
                         let key = effective(app, c.id).unwrap_or_default();
-                        if !q.is_empty() && ![c.label, c.id, key.as_str()].iter().any(|s| s.to_lowercase().contains(&q)) {
+                        let translated_label = app.tr_label(c.label);
+                        if !q.is_empty() && ![c.label, c.id, key.as_str(), translated_label].iter().any(|s| s.to_lowercase().contains(&q)) {
                             continue;
                         }
-                        ui.label(c.label);
+                        ui.label(translated_label);
                         ui.label(RichText::new(c.id).size(10.5).color(t.text_dim));
                         let capturing = app.keymap.capturing.as_deref() == Some(c.id);
                         let changed = app.keymap.custom.contains_key(c.id);
                         let text = if capturing {
-                            "press a key…".to_string()
+                            app.tr_label("press a key…").to_string()
                         } else if key.is_empty() {
                             "—".to_string()
                         } else {
@@ -198,14 +268,14 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
                             continue;
                         }
                         let b = egui::Button::new(RichText::new(text).color(if changed { t.accent } else { t.text })).min_size(egui::vec2(80.0, 0.0));
-                        if ui.add(b).on_hover_text("Click, then press the new key").clicked() {
+                        if ui.add(b).on_hover_text(app.tr_label("Click, then press the new key")).clicked() {
                             action = Some((c.id.to_string(), "capture"));
                         }
                         ui.horizontal(|ui| {
-                            if ui.add_enabled(!key.is_empty(), egui::Button::new("Clear").small()).clicked() {
+                            if ui.add_enabled(!key.is_empty(), egui::Button::new(app.tr_label("Clear")).small()).clicked() {
                                 action = Some((c.id.to_string(), "clear"));
                             }
-                            if ui.add_enabled(changed, egui::Button::new("Reset").small()).clicked() {
+                            if ui.add_enabled(changed, egui::Button::new(app.tr_label("Reset")).small()).clicked() {
                                 action = Some((c.id.to_string(), "reset"));
                             }
                         });
@@ -226,18 +296,21 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
         Some((_, "reset_all")) => reset(app, None),
         Some((_, "export")) => {
             let text = crate::toolbar_custom::export(app).to_string();
-            if let Some(path) = app.services.pick_save.as_ref().and_then(|f| f("SolidCraft shortcuts.json", &["json"])) {
-                app.keymap.message = std::fs::write(&path, text).err().map(|e| format!("export: {e}"));
-            }
+            app.pick_save("SolidCraft shortcuts.json", &["json"], move |app, path| {
+                if let Some(path) = path {
+                    app.keymap.message = std::fs::write(&path, text).err().map(|e| format!("export: {e}"));
+                }
+            });
         }
         Some((_, "import")) => {
-            if let Some(path) = app.services.pick_open.as_ref().and_then(|f| f()) {
+            app.pick_open(|app, path| {
+                let Some(path) = path else { return };
                 let r = std::fs::read_to_string(&path)
                     .map_err(|e| e.to_string())
                     .and_then(|t| serde_json::from_str::<Value>(&t).map_err(|e| e.to_string()))
                     .and_then(|v| crate::toolbar_custom::import(app, &v));
                 app.keymap.message = r.err().map(|e| format!("import: {e}"));
-            }
+            });
         }
         Some((pair, "replace")) => {
             if let Some((id, key)) = pair.split_once('\n') {
@@ -298,3 +371,7 @@ mod tests {
         assert_eq!(key_name(egui::Key::K, egui::Modifiers { ctrl: true, shift: true, ..Default::default() }), "Ctrl+Shift+K");
     }
 }
+
+#[cfg(test)]
+#[path = "sketch_shortcut_tests.rs"]
+mod sketch_shortcut_tests;

@@ -75,9 +75,10 @@ fn explicit_rebind_preserves_geometry_dimensions_context_and_one_undo() {
 #[test]
 fn unsupported_face_has_explicit_fixed_alternative_and_no_live_projection() {
     let mut s = Session::default();
-    run(&mut s, "solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Base"}));
-    // The tops of two joined boxes merge into one face that no single construction owns.
-    run(&mut s, "solid.box", json!({"length":10,"width":10,"height":10,"corner":[10,0,0],"operation":"join"}));
+    // A top half Offset Face raised: no construction certificate and no exact history name yet.
+    run(&mut s, "solid.box", json!({"length":40,"width":30,"height":20,"body_name":"Base"}));
+    run(&mut s, "solid.split_face", json!({"faces":[[10,15,20]],"plane":{"origin":[20,0,0],"normal":[1,0,0]}}));
+    run(&mut s, "solid.offset_face", json!({"faces":[[10,15,20]],"distance":5}));
     let mut pick = top_pick(&s, "Base");
     let before = s.doc.to_json();
     let error = s.execute("sketch.create", &json!({"plane":pick})).unwrap_err();
@@ -580,4 +581,120 @@ fn offset_rectangle_pocket_has_one_logical_outer_wall_and_closed_face_projection
         let expected = 60. * 54. * 10. - 4. * 24.73317426966596 * 21.733174269665962 * 9.;
         assert!((mesh.measure().volume - expected).abs() < 1e-6, "actual {}, expected {expected}", mesh.measure().volume);
     }
+}
+
+/// Every flat face of every body: (body, face index, a point well inside it, its normal). The
+/// middle of the face's largest triangle, so an L-shaped face is picked on itself.
+fn flat_faces(s: &Session) -> Vec<(String, usize, Vec3, Vec3)> {
+    let world = s.world_state();
+    let mut out = Vec::new();
+    for body in &world.bodies {
+        let mesh = body.mesh();
+        let mut inside: std::collections::BTreeMap<usize, (Vec3, f64)> = std::collections::BTreeMap::new();
+        for (triangle, face) in mesh.triangles.iter().zip(&mesh.tri_face) {
+            if let Some([a, b, c]) = mesh.tri(triangle) {
+                let area = (b - a).cross(c - a).len();
+                let entry = inside.entry(*face as usize).or_insert(((a + b + c) * (1. / 3.), -1.));
+                if area > entry.1 {
+                    *entry = ((a + b + c) * (1. / 3.), area);
+                }
+            }
+        }
+        for (index, (point, _)) in inside {
+            if let Some(plane) = body.body.planar_face(index) {
+                out.push((body.name.clone(), index, point, plane.normal()));
+            }
+        }
+    }
+    out
+}
+
+fn timeline_errors(s: &Session) -> Vec<String> {
+    s.model.results.iter().filter_map(|r| r.error.as_ref().map(|e| format!("{}: {e}", r.name))).collect()
+}
+
+fn save_and_reopen(s: &mut Session, dir: &std::path::Path, name: &str) -> Session {
+    let path = dir.join(name);
+    run(s, "file.save_as", json!({"path": path.to_string_lossy()}));
+    let mut reopened = Session::default();
+    run(&mut reopened, "doc.open", json!({"path": path.to_string_lossy()}));
+    reopened
+}
+
+/// A sketch on every flat face of `s`'s bodies (as the desktop picks it: body, index, a point on
+/// it) stays attached to that face, and a square drawn on it extrudes out of the face, fresh and
+/// after the result is saved and opened again.
+fn sketch_and_extrude_on_every_flat_face(s: &Session, dir: &std::path::Path, label: &str) -> usize {
+    use solidcraft_doc::FaceAttachmentStatus;
+    let faces = flat_faces(s);
+    let before = timeline_errors(s);
+    for (body, index, point, normal) in &faces {
+        let what = format!("{label}: {body} face {index} at {point:?}");
+        let mut t = s.scratch();
+        let pick = json!({"body": body, "index": index, "face": [point.x, point.y, point.z]});
+        let sketch =
+            t.execute("sketch.create", &json!({"plane": pick, "project_edges": false})).unwrap_or_else(|error| panic!("{what}: {error}"))["sketch"]
+                .as_u64()
+                .unwrap();
+        let plane = t.model.state().sketch(sketch).unwrap().plane;
+        assert!(plane.normal().dot(*normal) > 1. - 1e-9, "{what}: the sketch faces out of the face");
+        let local = [(*point - plane.origin).dot(plane.x), (*point - plane.origin).dot(plane.y)];
+        run(&mut t, "sketch.rectangle.two_point", json!({"p0": [local[0] - 0.5, local[1] - 0.5], "p1": [local[0] + 0.5, local[1] + 0.5]}));
+        run(&mut t, "sketch.finish", json!({}));
+        t.execute("solid.extrude", &json!({"sketch": sketch, "distance": 1, "operation": "join"})).unwrap_or_else(|error| panic!("{what}: {error}"));
+        let check = |t: &Session, when: &str| {
+            assert!(
+                matches!(t.placed_document().sketch_face_attachment(sketch, &t.model), FaceAttachmentStatus::Healthy { .. }),
+                "{what} ({when}): the sketch must stay attached to its face"
+            );
+            assert_eq!(timeline_errors(t), before, "{what} ({when}): no new timeline errors");
+        };
+        check(&t, "fresh");
+        let reopened = save_and_reopen(&mut t, dir, &format!("{label}-{index}.solidcraft"));
+        check(&reopened, "after save and reopen");
+    }
+    faces.len()
+}
+
+/// The logo: one sketch extruded up and the same sketch extruded down, joined. Its side walls
+/// are merged from both extrudes' sides, or run along two coincident sketch lines (squares drawn
+/// edge to edge); each still takes a sketch that follows it, as the tops and bottoms do.
+#[test]
+fn every_flat_face_of_one_sketch_extruded_up_and_down_takes_an_attached_sketch() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/action_matrix/designs");
+    let dir = std::env::temp_dir().join(format!("solidcraft-up-down-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let script: Value = serde_json::from_str(&std::fs::read_to_string(root.join("up-down-join.json")).unwrap()).unwrap();
+    let mut s = Session::default();
+    s.run_script(&script).unwrap();
+    assert_eq!(s.world_state().bodies.len(), 1, "the two extrudes join into one body");
+    assert_eq!(sketch_and_extrude_on_every_flat_face(&s, &dir, "synthetic"), 12, "8 side walls, top, bottom, 2 at the sketch plane");
+    let reopened = save_and_reopen(&mut s, &dir, "synthetic.solidcraft");
+    assert_eq!(sketch_and_extrude_on_every_flat_face(&reopened, &dir, "synthetic-reopened"), 12);
+    // The logo design as it was reported (format 17, with a removed shelled body before it).
+    let mut logo = Session::default();
+    run(&mut logo, "doc.open", json!({"path": root.join("logo-up-down-join.solidcraft").to_string_lossy()}));
+    assert_eq!(sketch_and_extrude_on_every_flat_face(&logo, &dir, "logo"), 12);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A face given next to `plane` instead of inside it was ignored and the sketch went to XY:
+/// it is refused, with where it belongs, and nothing is added. Inside `plane` it attaches.
+#[test]
+fn a_face_next_to_plane_is_refused_not_ignored() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 10}));
+    let features = s.doc.features.len();
+    for p in [
+        json!({"face": [10, 10, 10]}),
+        json!({"plane": "XY", "face": [10, 10, 10]}),
+        json!({"origin": [0, 0, 5], "x_dir": [1, 0, 0], "y_dir": [0, 1, 0]}),
+    ] {
+        let e = s.execute("sketch.create", &p).unwrap_err().to_string();
+        assert!(e.contains("belongs inside `plane`"), "{p}: {e}");
+    }
+    assert_eq!(s.doc.features.len(), features);
+    assert!(s.active_sketch.is_none());
+    let r = run(&mut s, "sketch.create", json!({"plane": {"face": [10, 10, 10]}}));
+    assert_eq!(r["attachment"], "exact_face", "{r}");
 }

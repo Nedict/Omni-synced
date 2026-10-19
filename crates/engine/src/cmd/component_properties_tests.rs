@@ -8,7 +8,7 @@ fn close(actual: &Value, expected: f64) {
     assert!((actual.as_f64().unwrap() - expected).abs() < 1e-6, "{actual} != {expected}");
 }
 fn box_in(s: &mut Session, name: &str) -> (u64, u64, String) {
-    let c = run(s, "component.create", json!({"name": name}));
+    let c = run(s, "component.create", json!({"name": name, "grounded": false}));
     run(s, "solid.box", json!({"length": 10, "width": 10, "height": 10}));
     let body = s.model.state().bodies.last().unwrap().name.clone();
     (c["component"].as_u64().unwrap(), c["occurrence"].as_u64().unwrap(), body)
@@ -81,7 +81,7 @@ fn body_reassignment_offsets_preserve_world_properties() {
     let mut s = Session::default();
     run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10}));
     let body = s.model.state().bodies.first().unwrap().name.clone();
-    let c = run(&mut s, "component.create", json!({"name": "Moved"}));
+    let c = run(&mut s, "component.create", json!({"name": "Moved", "grounded": false}));
     run(&mut s, "occurrence.move", json!({"occurrence": c["occurrence"], "translate": [100, 0, 0]}));
     run(&mut s, "component.move_bodies", json!({"bodies": [body], "component": c["component"]}));
     let r = run(&mut s, "component.properties", json!({"component": c["component"]}));
@@ -241,7 +241,7 @@ fn user_defined_material_survives_save_and_reopen() {
     run(&mut s, "material.create", json!({"name": "Leather", "density_g_cm3": 0.86, "appearance": "Rubber - Black"}));
     run(&mut s, "material.assign", json!({"bodies": ["Tab"], "material": "Leather"}));
     run(&mut s, "file.save", json!({"path": path}));
-    assert!(s.doc.to_json().contains("\"solidcraft/16\""));
+    assert!(s.doc.to_json().contains(&format!("\"{}\"", solidcraft_doc::format::format_string(solidcraft_doc::format::FORMAT))));
 
     run(&mut s, "file.new", json!({}));
     run(&mut s, "doc.open", json!({"path": path}));

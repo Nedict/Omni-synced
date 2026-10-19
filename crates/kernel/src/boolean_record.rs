@@ -116,9 +116,30 @@ pub(crate) fn shapeops(h: &truck_shapeops::History, tool: &Solid, tool_edges: Op
     Some((faces, edges))
 }
 
+/// Samples along each edge when checking that its curve evaluates.
+const EVALUATION_SAMPLES: usize = 32;
+
+/// Whether every edge of `solid` evaluates along its whole range. An intersection curve projects
+/// its leader's point onto both surfaces, which fails to converge where a boolean made the edge
+/// from an approximation that strayed (#1252). Such a result is no solid to keep: the mesher,
+/// healing and measuring all sample the edge and stumble over the gap.
+pub(crate) fn edges_evaluate(solid: &Solid) -> bool {
+    use truck_meshalgo::prelude::TrySubs;
+    use truck_modeling::BoundedCurve;
+    solid.boundaries().iter().flat_map(|shell| shell.edge_iter()).all(|edge| {
+        let curve = edge.curve();
+        let (t0, t1) = curve.range_tuple();
+        (0..=EVALUATION_SAMPLES).all(|k| {
+            let t = t0 + (t1 - t0) * k as f64 / EVALUATION_SAMPLES as f64;
+            curve.try_subs(t).is_some_and(|p| p.x.is_finite() && p.y.is_finite() && p.z.is_finite())
+        })
+    })
+}
+
 /// The body made of `solid` healed (keeping faces apart along `keep`), with the history whose
 /// faces and edges (in `solid`'s orders) are given before healing, carried through it.
-/// Operands with `counts` faces and edges.
+/// Operands with `counts` faces and edges. A result with an edge that does not evaluate is
+/// refused (see [`edges_evaluate`]).
 pub(crate) fn heal_build(
     solid: Solid,
     size: f64,
@@ -128,6 +149,9 @@ pub(crate) fn heal_build(
     counts: &[(usize, usize)],
 ) -> Result<Body> {
     let (healed, map) = crate::heal::heal_traced(solid, size, keep);
+    if !edges_evaluate(&healed) {
+        return Err(crate::KernelError::Failed("an edge of the result does not evaluate".into()));
+    }
     let carried = faces.zip(edges).zip(map).and_then(|((f, e), m)| m.carry(&f, &e));
     let (faces, edges) = carried.unzip();
     record::build(healed, counts, faces, edges.as_ref())
@@ -144,6 +168,35 @@ pub(crate) fn truck_result(s: Solid, h: Option<Shapeops>, size: f64, keep: &[Vec
 pub(crate) fn heal_body(body: &Body, solid: Solid, size: f64, keep: &[Vec<Vec3>], counts: &[(usize, usize)]) -> Result<Body> {
     let (faces, edges) = body.history().map(|h| (h.faces.clone(), h.edges.iter().map(|e| e.origins.clone()).collect())).unzip();
     heal_build(solid, size, keep, faces, edges, counts)
+}
+
+/// A prism boolean's result `body` with the coplanar pieces its slabs leave merged (nothing
+/// else healed: its edges are exact as they are), its history carried through, and what else it carries kept: each face's
+/// construction source where every piece merged into it had that same one, its Split Face
+/// lines and its regularization protection.
+pub(crate) fn heal_prism_result(body: &Body, size: f64, keep: &[Vec<Vec3>], counts: &[(usize, usize)]) -> Result<Body> {
+    let (faces, edges): (Option<Vec<FaceProv>>, Option<Vec<Vec<EdgeOrigin>>>) =
+        body.history().map(|h| (h.faces.clone(), h.edges.iter().map(|e| e.origins.clone()).collect())).unzip();
+    let (healed, map) = crate::heal::merge_faces_traced((*body.solid).clone(), size, keep);
+    let sources = match (body.face_sources(), &map) {
+        (Some(sources), Some(m)) => Some(
+            m.faces
+                .iter()
+                .map(|under| {
+                    let mut each = under.iter().map(|i| sources.get(*i).cloned().flatten());
+                    let first = each.next().flatten()?;
+                    each.all(|s| s.as_ref() == Some(&first)).then_some(first)
+                })
+                .collect::<Vec<_>>(),
+        ),
+        _ => None,
+    };
+    let carried = faces.zip(edges).zip(map).and_then(|((f, e), m)| m.carry(&f, &e));
+    let (faces, edges) = carried.unzip();
+    let mut out = record::build(healed, counts, faces, edges.as_ref())?;
+    out = out.with_face_sources(sources.map(std::sync::Arc::new)).inherit_regularization_protection(body);
+    out.splits = body.splits.clone();
+    Ok(out)
 }
 
 /// `body` healed as the local modifiers take it (coplanar neighbours as one face, as after a

@@ -5,7 +5,9 @@ use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 mod native_cache;
+mod thumbnail;
 pub use native_cache::{DesignGeometry, read_design_geometry};
+pub use thumbnail::{THUMBNAIL_SIZE, read_design_thumbnail, read_design_thumbnail_file};
 
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -111,6 +113,18 @@ pub fn write_design_container_with_cache(
     preview: Option<&DesignPreview>,
     geometry: Option<&[DesignGeometry]>,
 ) -> Result<Vec<u8>> {
+    write_design_container_with_thumbnail(doc, compression, preview, geometry, None)
+}
+
+/// Include a bounded portable PNG picture when one is already available.
+/// Unsupported headers or oversized pictures are omitted without changing the design.
+pub fn write_design_container_with_thumbnail(
+    doc: &Document,
+    compression: DesignCompression,
+    preview: Option<&DesignPreview>,
+    geometry: Option<&[DesignGeometry]>,
+    thumbnail: Option<&[u8]>,
+) -> Result<Vec<u8>> {
     let mut writer = PackageWriter { zip: zip::ZipWriter::new(Cursor::new(Vec::new())), names: BTreeSet::new(), expanded: 0, resolved: 0 };
     let mut features = Vec::with_capacity(doc.features.len());
     for feature in &doc.features {
@@ -183,6 +197,9 @@ pub fn write_design_container_with_cache(
     {
         writer.part("cache/preview.json", &manifest, false)?;
         writer.part("cache/preview.bin", &data, false)?;
+    }
+    if let Some(png) = thumbnail {
+        thumbnail::write(&mut writer, png, &metadata)?;
     }
     let bytes = writer.zip.finish().map_err(invalid)?.into_inner();
     if bytes.len() > MAX_DESIGN_BYTES {
@@ -277,7 +294,11 @@ impl<R: Read + Seek> PackageReader<R> {
         if declared > MAX_ENTRIES || u16_at(4)? != 0 || u16_at(6)? != 0 || u16_at(8)? as usize != declared || end.len() != 22 + u16_at(20)? as usize {
             return Err(invalid("too many entries or unsupported ZIP directory"));
         }
-        let mut zip = zip::ZipArchive::new(source).map_err(invalid)?;
+        // A design file is a ZIP with nothing in front of it. Saying so skips zip's search for a
+        // prefix, which reads back through the stored parts and would load a large embedded
+        // source before the preview can be shown.
+        let config = zip::read::Config { archive_offset: zip::read::ArchiveOffset::Known(0) };
+        let mut zip = zip::ZipArchive::with_config(config, source).map_err(invalid)?;
         if u16_at(4)? != 0
             || u16_at(6)? != 0
             || u16_at(8)? as usize != zip.len()
@@ -290,7 +311,7 @@ impl<R: Read + Seek> PackageReader<R> {
         let mut total = 0u64;
         for i in 0..zip.len() {
             let part = zip.by_index_raw(i).map_err(invalid)?;
-            let name = part.name();
+            let name = part.name().map_err(invalid)?.into_owned();
             if name.is_empty()
                 || name.contains('\\')
                 || name.split('/').any(|c| c.is_empty() || c == "." || c == "..")
@@ -465,6 +486,11 @@ impl<R: Read + Seek> DesignContainerReader<R> {
         read_preview(&mut self.reader).ok().or_else(|| native_cache::geometry_preview(self.geometry()?).ok())
     }
 
+    /// Portable PNG picture only; no source blobs or geometry are evaluated.
+    pub fn thumbnail(&mut self) -> Option<Vec<u8>> {
+        thumbnail::read(&mut self.reader).ok()
+    }
+
     /// Native geometry is provisional, never a substitute for rebuilding the document.
     pub fn geometry(&mut self) -> Option<Vec<DesignGeometry>> {
         let document = self.reader.document(16 << 20).ok()?;
@@ -487,6 +513,7 @@ pub(super) fn read(bytes: &[u8]) -> Result<Document> {
 pub fn read_design_file(path: &str, notify: Option<impl FnOnce(DesignPreview)>) -> Result<Document> {
     #[cfg(not(target_arch = "wasm32"))]
     let mut source = {
+        crate::vfs::check(path).map_err(invalid)?;
         let metadata = std::fs::metadata(path).map_err(invalid)?;
         if !metadata.is_file() {
             return Err(invalid("not a regular file"));
@@ -545,7 +572,7 @@ fn read_document<R: Read + Seek>(reader: &mut PackageReader<R>) -> Result<Docume
                 if !step.is_empty() {
                     return Err(invalid("ambiguous embedded STEP and blob"));
                 }
-                *step = std::str::from_utf8(reader.blob(value, "step_blob", "step")?).map_err(invalid)?.to_owned();
+                *step = std::str::from_utf8(reader.blob(value, "step_blob", "step")?).map_err(invalid)?.into();
             }
             FeatureKind::MeshImport { meshes, .. } => {
                 for (index, mesh) in meshes.iter_mut().enumerate() {
@@ -617,7 +644,8 @@ mod tests {
     fn seekable_preview_defers_large_source_blob_until_document_read() {
         let mut doc = Document::new("Deferred source");
         let step = "ISO-10303-21;".repeat(200_000);
-        doc.add_feature(FeatureKind::Import { file: "large.step".into(), step: step.clone(), components: Vec::new() }, None).unwrap();
+        doc.add_feature(FeatureKind::Import { file: "large.step".into(), step: step.clone().into(), components: Vec::new(), skip: Vec::new() }, None)
+            .unwrap();
         let preview = DesignPreview { meshes: vec![mesh()] };
         let bytes = write_design_container_with_preview(&doc, DesignCompression::Fast, Some(&preview)).unwrap();
         let count = std::rc::Rc::new(std::cell::Cell::new(0));
@@ -676,7 +704,8 @@ mod tests {
     fn native_cache_round_trip_and_preview_defer_original_sources() {
         let mut doc = Document::new("Native cache");
         let step = "ISO-10303-21;".repeat(200_000);
-        doc.add_feature(FeatureKind::Import { file: "large.step".into(), step: step.clone(), components: Vec::new() }, None).unwrap();
+        doc.add_feature(FeatureKind::Import { file: "large.step".into(), step: step.clone().into(), components: Vec::new(), skip: Vec::new() }, None)
+            .unwrap();
         let bodies = native_geometry();
         let bytes = write_design_container_with_cache(&doc, DesignCompression::Fast, None, Some(&bodies)).unwrap();
         let entries = parts(&bytes);
@@ -743,7 +772,7 @@ mod tests {
         let doc = document();
         let preview = DesignPreview { meshes: vec![mesh()] };
         let bytes = write_design_container_with_preview(&doc, DesignCompression::Fast, Some(&preview)).unwrap();
-        let offset = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap().by_name("document.json").unwrap().data_start() as usize;
+        let offset = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap().by_name("document.json").unwrap().data_start().unwrap() as usize;
         let bytes = Rc::new(RefCell::new(bytes));
         let mut reader = DesignContainerReader::new(Shared { bytes: bytes.clone(), position: 0 }).unwrap();
         assert!(reader.preview().is_some());
@@ -788,7 +817,12 @@ mod tests {
         let mut doc = Document::new("Payloads");
         for _ in 0..2 {
             doc.add_feature(
-                FeatureKind::Import { file: "example.step".into(), step: "ISO-10303-21;\nEND-ISO-10303-21;".into(), components: Vec::new() },
+                FeatureKind::Import {
+                    file: "example.step".into(),
+                    step: "ISO-10303-21;\nEND-ISO-10303-21;".into(),
+                    components: Vec::new(),
+                    skip: Vec::new(),
+                },
                 None,
             )
             .unwrap();
@@ -820,7 +854,7 @@ mod tests {
         (0..zip.len())
             .map(|i| {
                 let mut entry = zip.by_index(i).unwrap();
-                let name = entry.name().to_owned();
+                let name = entry.name().unwrap().into_owned();
                 let mut bytes = Vec::new();
                 entry.read_to_end(&mut bytes).unwrap();
                 (name, bytes)
@@ -835,6 +869,53 @@ mod tests {
             zip.write_all(bytes).unwrap();
         }
         zip.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn portable_thumbnail_is_keyed_bounded_and_does_not_read_sources() {
+        // IO validates an opaque PNG header/hash; UI tests exercise real PNG decoding.
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        png.extend(240u32.to_be_bytes());
+        png.extend(150u32.to_be_bytes());
+        let mut doc = Document::from_json(&document().to_json()).unwrap();
+        if let FeatureKind::Import { step, .. } = &mut doc.features[0].kind {
+            *step = "source data".repeat(250_000).into();
+        }
+        let bytes = write_design_container_with_thumbnail(&doc, DesignCompression::Fast, None, None, Some(&png)).unwrap();
+        let count = std::rc::Rc::new(std::cell::Cell::new(0));
+        let mut reader = DesignContainerReader::new(CountingReader { source: Cursor::new(bytes.clone()), count: count.clone() }).unwrap();
+        assert_eq!(reader.thumbnail(), Some(png.clone()));
+        assert!(count.get() < 256 * 1024);
+        assert_eq!(reader.read_document().unwrap(), doc);
+        let original = parts(&bytes);
+        for field in ["format", "app", "document", "payload"] {
+            let mut entries = original.clone();
+            let mut key: Value = serde_json::from_slice(&entries["cache/thumbnail.json"]).unwrap();
+            key[field] = json!("mismatch");
+            entries.insert("cache/thumbnail.json".into(), serde_json::to_vec(&key).unwrap());
+            let changed = package(&entries);
+            assert!(read_design_thumbnail(&changed).is_none());
+            assert_eq!(crate::read_design(&changed).unwrap(), doc);
+        }
+        let mut entries = original.clone();
+        let source = entries.keys().find(|k| k.ends_with(".step")).unwrap().clone();
+        entries.insert(source, b"corrupt source".to_vec());
+        let changed = package(&entries);
+        assert_eq!(read_design_thumbnail(&changed), Some(png));
+        assert!(crate::read_design(&changed).is_err());
+        for n in [0, 1, 8, bytes.len() / 2, bytes.len() - 1] {
+            assert!(read_design_thumbnail(&bytes[..n]).is_none());
+        }
+        for i in (0..bytes.len()).step_by((bytes.len() / 128).max(1)) {
+            let mut changed = bytes.clone();
+            changed[i] ^= 0xff;
+            assert!(std::panic::catch_unwind(|| read_design_thumbnail(&changed)).is_ok());
+        }
+        for invalid in [vec![], vec![0; 300_000]] {
+            let bytes = write_design_container_with_thumbnail(&doc, DesignCompression::Fast, None, None, Some(&invalid)).unwrap();
+            assert!(read_design_thumbnail(&bytes).is_none());
+            assert_eq!(crate::read_design(&bytes).unwrap(), doc);
+        }
     }
 
     #[test]
@@ -1058,7 +1139,17 @@ mod tests {
         doc.units = "in".into();
         doc.named_views.push(solidcraft_doc::NamedView { name: "View".into(), ..Default::default() });
         doc.param_comments.insert("test".into(), "metadata".into());
+        let setup = solidcraft_doc::render_settings::RenderSetup { exposure_ev: 1.5, ..Default::default() };
+        std::sync::Arc::make_mut(&mut doc.render).setups.insert("Studio".into(), setup);
+        // Design properties and other tools' data (#1015), kept as they are in both forms.
+        doc.metadata = serde_json::from_value(json!({
+            "author": 42,
+            "revision": "B",
+            "com.acme.description": {"shop_id": 88123, "list": [1, 2.5, null, true, "x", {"deep": []}]},
+        }))
+        .unwrap();
         let expected = crate::read_design(&crate::write_design(&doc)).unwrap();
+        assert_eq!(expected, doc);
         assert_eq!(crate::read_design(&write_design_container(&doc).unwrap()).unwrap(), expected);
     }
 
@@ -1087,7 +1178,8 @@ mod tests {
             .collect();
         let step = solidcraft_kernel::step_export(&bodies.iter().collect::<Vec<_>>(), "SolidCraft storage benchmark").unwrap();
         let mut doc = Document::new("Generated STEP benchmark");
-        doc.add_feature(FeatureKind::Import { file: "generated.step".into(), step, components: Vec::new() }, None).unwrap();
+        doc.add_feature(FeatureKind::Import { file: "generated.step".into(), step: step.into(), components: Vec::new(), skip: Vec::new() }, None)
+            .unwrap();
         measure_storage(&doc, "step");
     }
 

@@ -25,17 +25,17 @@ fn sketch(s: &Session) -> solidcraft_sketch::Sketch {
 }
 
 #[test]
-fn redundant_constraints_and_dimensions_are_refused_driven_ones_measure() {
+fn redundant_dimensions_are_refused_driven_ones_measure() {
     let mut s = new_sketch();
     let l = ids(&run(&mut s, "sketch.line", json!({"points": [[0, 0], [10, 0]], "infer": true}))["curves"])[0].clone();
-    // Already horizontal (inferred).
-    let e = s.execute("sketch.constraint.horizontal_vertical", &json!({"line": l})).unwrap_err().to_string();
-    assert!(e.contains("over-constrain"), "{e}");
+    // Already horizontal (inferred): kept as redundant, unless asked to refuse it.
+    let e = s.execute("sketch.constraint.horizontal_vertical", &json!({"line": l, "if_redundant": "refuse"})).unwrap_err().to_string();
+    assert!(e.contains("over-constrain") && e.contains("already determined by"), "{e}");
     run(&mut s, "sketch.constraint.coincident", json!({"a": format!("{l}.start"), "b": "origin"}));
     run(&mut s, "sketch.dimension", json!({"entities": [l], "value": 10}));
     let si = run(&mut s, "sketch.inspect", json!({}));
     assert_eq!(si["dof"], 0, "{si}");
-    // A second length on it over-constrains: refused, unless driven.
+    // A second length on it is already determined: refused, unless driven.
     assert!(s.execute("sketch.dimension", &json!({"entities": [format!("{l}.start"), format!("{l}.end")]})).is_err());
     let d = run(&mut s, "sketch.dimension", json!({"entities": [format!("{l}.start"), format!("{l}.end")], "driven": true}));
     assert_eq!(d["driven"], true);
@@ -282,4 +282,24 @@ fn an_angle_between_lines_takes_the_reading_nearest_its_value_and_reports_degree
     // Lengths report millimetres.
     let d = run(&mut s, "sketch.dimension", json!({"entities": ["l2"], "driven": true}));
     assert_eq!(d["unit"], "mm", "{d}");
+}
+
+#[test]
+fn symmetry_moves_a_free_line_between_two_fixed_lines() {
+    // #1796: with both mirrored lines fixed, the symmetry line between them (a free construction
+    // line) is the one to move; it was refused as "neither entity can move".
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [0, 20]], "ids": ["left"]}));
+    run(&mut s, "sketch.line", json!({"points": [[10, 0], [10, 20]], "ids": ["right"]}));
+    run(&mut s, "sketch.line", json!({"points": [[3, 0], [3, 20]], "construction": true, "ids": ["mid"]}));
+    run(&mut s, "sketch.constraint.fix", json!({"entities": ["left", "right"]}));
+    run(&mut s, "sketch.constraint.symmetry", json!({"a": "left", "b": "right", "line": "mid"}));
+    let sk = sketch(&s);
+    let at = |r: &str| sk.point(sk.resolve_point(r).unwrap()).unwrap();
+    for end in ["mid.start", "mid.end"] {
+        assert!((at(end).x - 5.0).abs() < 1e-7, "{end} at {:?}", at(end));
+    }
+    for (end, x) in [("left.start", 0.0), ("left.end", 0.0), ("right.start", 10.0), ("right.end", 10.0)] {
+        assert!((at(end).x - x).abs() < 1e-9, "{end} moved to {:?}", at(end));
+    }
 }

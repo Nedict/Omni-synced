@@ -34,7 +34,7 @@ fn recorded_assignment_preserves_sample_joined_material_and_timeline() {
 fn transformed_pending_destination_repeated_transfer_preserves_world_pose() {
     let mut s = Session::default();
     run(&mut s, "solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Block"}));
-    let created = run(&mut s, "component.create", json!({"name":"Destination"}));
+    let created = run(&mut s, "component.create", json!({"name":"Destination","grounded":false}));
     let to = created["component"].as_u64().unwrap();
     let occurrence = created["occurrence"].as_u64().unwrap();
     run(&mut s, "occurrence.move", json!({"occurrence":occurrence,"translate":[30,20,0],"angle":90,"axis":[0,0,1],"capture":false}));
@@ -141,17 +141,17 @@ fn transferred_thread_follows_body_frame_without_changing_world_axis() {
     run(&mut s, "solid.cylinder", json!({"radius":4,"height":20,"body_name":"Shaft"}));
     run(&mut s, "solid.thread", json!({"face":[4,0,10],"designation":"M8"}));
     let before = s.world_state().threads[0].clone();
-    let c = run(&mut s, "component.create", json!({"name":"Threaded"}));
+    let c = run(&mut s, "component.create", json!({"name":"Threaded","grounded":false}));
     let to = c["component"].as_u64().unwrap();
     let occurrence = c["occurrence"].as_u64().unwrap();
     run(&mut s, "occurrence.move", json!({"occurrence":occurrence,"translate":[30,20,10],"axis":[1,0,0],"angle":90,"capture":true}));
     run(&mut s, "component.move_bodies", json!({"component":to,"bodies":["Shaft"]}));
     let after = s.world_state().threads[0].clone();
     assert!(after.axis_point.dist(before.axis_point) < 1e-6);
-    assert!(after.axis.dist(before.axis) < 1e-6);
+    assert!(after.axis.dist(*before.axis) < 1e-6);
     let mut reopened = Session { doc: solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap().into(), ..Session::default() };
     reopened.refresh();
-    assert!(reopened.world_state().threads[0].axis.dist(before.axis) < 1e-6);
+    assert!(reopened.world_state().threads[0].axis.dist(*before.axis) < 1e-6);
 }
 
 #[test]
@@ -159,7 +159,10 @@ fn inherited_component_appearance_and_legacy_assignment_survive_transfer() {
     let mut s = Session::default();
     let source = run(&mut s, "component.create", json!({"name":"Source"}))["component"].as_u64().unwrap();
     run(&mut s, "solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Block"}));
-    s.doc_mut().appearances.components.insert(source, solidcraft_doc::appearance::Look { name: "Green".into(), color: [0, 150, 0], opacity: 0.7 });
+    s.doc_mut()
+        .appearances
+        .components
+        .insert(source, solidcraft_doc::appearance::Look { name: "Green".into(), color: [0, 150, 0], opacity: 0.7, pbr: None });
     s.refresh();
     let look = s.doc.model_body_look(s.model.state().body("Block").unwrap()).unwrap();
     run(&mut s, "component.move_bodies", json!({"component":0,"bodies":["Block"]}));
@@ -196,7 +199,7 @@ fn deleting_external_transfer_source_refuses_without_dangling_archive() {
 #[test]
 fn earlier_selected_cylinder_emboss_keeps_source_frame_after_transfer_and_edit() {
     let mut s = Session::default();
-    let source = run(&mut s, "component.create", json!({"name":"Source"}));
+    let source = run(&mut s, "component.create", json!({"name":"Source","grounded":false}));
     let occurrence = source["occurrence"].as_u64().unwrap();
     run(&mut s, "solid.cylinder", json!({"radius":10,"height":20,"body_name":"Sleeve"}));
     run(&mut s, "occurrence.move", json!({"occurrence":occurrence,"translate":[30,0,0],"capture":true}));
@@ -224,7 +227,7 @@ fn earlier_selected_cylinder_emboss_keeps_source_frame_after_transfer_and_edit()
 #[test]
 fn transfer_undo_redo_restores_original_pending_source_world_pose() {
     let mut s = Session::default();
-    let created = run(&mut s, "component.create", json!({"name":"Source"}));
+    let created = run(&mut s, "component.create", json!({"name":"Source","grounded":false}));
     let source = created["component"].as_u64().unwrap();
     let occurrence = created["occurrence"].as_u64().unwrap();
     run(&mut s, "solid.box", json!({"length":2,"width":2,"height":2,"body_name":"Block"}));
@@ -245,7 +248,7 @@ fn transfer_undo_redo_restores_original_pending_source_world_pose() {
 #[test]
 fn transfer_checkpoint_restores_pending_world_pose_and_history() {
     let mut s = Session::default();
-    let created = run(&mut s, "component.create", json!({"name":"Source"}));
+    let created = run(&mut s, "component.create", json!({"name":"Source","grounded":false}));
     let source = created["component"].as_u64().unwrap();
     let occurrence = created["occurrence"].as_u64().unwrap();
     run(&mut s, "solid.box", json!({"length":2,"width":2,"height":2,"body_name":"Block"}));

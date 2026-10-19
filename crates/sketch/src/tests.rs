@@ -1,6 +1,6 @@
 use std::f64::consts::{FRAC_PI_2, PI};
 
-use solidcraft_geom::Vec2;
+use solidcraft_geom::{Seg2, Vec2};
 
 use crate::*;
 
@@ -39,7 +39,7 @@ pub(crate) fn given(sk: &Sketch) -> Vec<bool> {
 
 /// The constructive seed of a plain solve.
 pub(crate) fn seed_of(sk: &Sketch) -> crate::construct::Seed {
-    crate::construct::seed(sk, &given(sk), None, &crate::solver::points_on_curves(sk), &mut crate::decompose::Budget::full())
+    crate::construct::seed(sk, &given(sk), None, true, &crate::solver::points_on_curves(sk), &mut crate::decompose::Budget::full())
 }
 
 /// Rough rectangle from four lines sharing corner points.
@@ -320,6 +320,313 @@ fn profiles_split_at_crossings_and_touch_points() {
     assert!(total > PI * 500.0, "{total}");
 }
 
+/// Curves made tangent by the solver touch within rounding noise, either side of exact (#588):
+/// the touch still splits them. Lines running past their tangent points close the band between
+/// two circles, and a square's side tangent to a circle closes the square off from the disc.
+#[test]
+fn solver_tangencies_split_profiles() {
+    use ConstraintKind::*;
+    // Two fixed circles and two free lines, longer than the band, made tangent to both.
+    for (r1, r2, d) in [(15.0, 8.0, 40.0), (20.0, 10.0, 50.0), (7.3, 7.3, 21.1)] {
+        let mut b = Sketch::new();
+        let c1 = b.add_circle(v(0.0, 0.0), r1, None, None).unwrap();
+        let c2 = b.add_circle(v(d, 0.0), r2, None, None).unwrap();
+        let l1 = b.add_line(v(-r1, r1 + 2.0), v(d + r2 + 5.0, r2 - 1.0), None, None, None).unwrap();
+        let l2 = b.add_line(v(-r1, -r1 - 2.0), v(d + r2 + 5.0, 1.0 - r2), None, None, None).unwrap();
+        for c in [c1, c2] {
+            let p = b.resolve_point(&format!("{}.center", b.curves[c].id)).unwrap();
+            b.add_constraint(Fix { p }, None).unwrap();
+        }
+        b.add_constraint(Radius { c: c1, value: r1 }, None).unwrap();
+        b.add_constraint(Radius { c: c2, value: r2 }, None).unwrap();
+        for (l, c) in [(l1, c1), (l1, c2), (l2, c1), (l2, c2)] {
+            b.add_constraint(Tangent { a: l, b: c }, None).unwrap();
+        }
+        assert!(solve(&mut b).ok());
+        let ps = find_profiles(&b);
+        // The band: the trapezoid between the tangent points less the circular segments the
+        // circles take from it (as exact sums: the hull less the two discs).
+        let alpha = ((r1 - r2) / d).asin();
+        let tangent_len = (d * d - (r1 - r2).powi(2)).sqrt();
+        let hull = r1 * r1 * (PI / 2.0 + alpha) + r2 * r2 * (PI / 2.0 - alpha) + (r1 + r2) * tangent_len;
+        let total: f64 = ps.iter().map(|p| p.area).sum();
+        assert_eq!(ps.len(), 3, "r {r1}, {r2}: {:?}", ps.iter().map(|p| p.area).collect::<Vec<_>>());
+        assert!((total - hull).abs() < 1e-6 * hull, "r {r1}, {r2}: {total} vs {hull}");
+    }
+    // A square tangent to a circle inside it and outside it, the circle placed by the solver.
+    for (inside, centre) in [(true, v(5.0, 6.3)), (false, v(5.0, 16.7))] {
+        let mut s = Sketch::new();
+        let sides = [v(0.0, 0.0), v(10.0, 0.0), v(10.0, 10.0), v(0.0, 10.0)];
+        let mut lines = Vec::new();
+        for k in 0..4 {
+            lines.push(s.add_line(sides[k], sides[(k + 1) % 4], None, None, None).unwrap());
+        }
+        for k in 0..4 {
+            let (a, b) = (
+                s.resolve_point(&format!("{}.end", s.curves[lines[k]].id)).unwrap(),
+                s.resolve_point(&format!("{}.start", s.curves[lines[(k + 1) % 4]].id)).unwrap(),
+            );
+            s.add_constraint(Coincident { p: a, q: b }, None).unwrap();
+            s.add_constraint(Fix { p: a }, None).unwrap();
+        }
+        let c = s.add_circle(centre, 3.7, None, None).unwrap();
+        s.add_constraint(Radius { c, value: 3.7 }, None).unwrap();
+        s.add_constraint(Tangent { a: lines[2], b: c }, None).unwrap();
+        assert!(solve(&mut s).ok());
+        let ps = find_profiles(&s);
+        let disc = PI * 3.7 * 3.7;
+        let mut areas: Vec<f64> = ps.iter().map(|p| p.area).collect();
+        areas.sort_by(f64::total_cmp);
+        let want = if inside { [disc, 100.0 - disc] } else { [disc, 100.0] };
+        let mut want = want.to_vec();
+        want.sort_by(f64::total_cmp);
+        assert_eq!(areas.len(), 2, "inside {inside}: {areas:?}");
+        for (a, w) in areas.iter().zip(&want) {
+            assert!((a - w).abs() < 1e-6, "inside {inside}: {areas:?} vs {want:?}");
+        }
+    }
+}
+
+/// Sorted curve ids.
+fn id_set(sk: &Sketch, curves: &[usize]) -> Vec<String> {
+    let mut ids: Vec<String> = curves.iter().map(|c| sk.curves[*c].id.clone()).collect();
+    ids.sort();
+    ids
+}
+
+/// A projected line of `a`–`b` in `sk`.
+fn reference_line(sk: &mut Sketch, a: Vec2, b: Vec2) -> usize {
+    let link = sk.add_link(LinkKind::Project, LinkSource::SketchCurve { sketch: 1, curve: "edge".into() }, &[LinkGeom::Line(a, b)]).unwrap();
+    sk.link_curves(&link)[0]
+}
+
+/// #635: a side constrained onto a longer projected line lies on it only up to the solver's
+/// round-off. Where they overlap they are one edge of the drawing, so the rectangle is still a
+/// closed profile, and the curve that came first names that edge, as when the side lies on the
+/// line exactly.
+#[test]
+fn a_side_on_a_projected_line_still_closes_its_rectangle() {
+    // Round-off left on the side's two ends (the first pair as solved in #635), and none.
+    for (y0, y1) in
+        [(1.6e-12, 2.2e-12), (2.2e-12, 1.6e-12), (-1e-12, 1e-12), (1e-12, -1e-12), (-3e-11, -1e-11), (-3e-10, 3e-10), (2e-10, 4e-10), (0.0, 0.0)]
+    {
+        for reference_first in [true, false] {
+            for (ra, rb) in [(v(40.0, 0.0), v(-10.0, 0.0)), (v(-10.0, 0.0), v(40.0, 0.0))] {
+                let mut sk = Sketch::new();
+                let early = reference_first.then(|| reference_line(&mut sk, ra, rb));
+                let sides = rect(&mut sk, [v(5.0, y0), v(25.0, y1), v(25.0, 15.0), v(5.0, 15.0)]);
+                let reference = early.unwrap_or_else(|| reference_line(&mut sk, ra, rb));
+                let case = format!("ends at y {y0}, {y1}; reference {} {ra:?} to {rb:?}", if reference_first { "first" } else { "last" });
+                let ps = find_profiles(&sk);
+                assert_eq!(ps.len(), 1, "{case}: {:?}", ps.iter().map(|p| (p.area, &p.outer_curves)).collect::<Vec<_>>());
+                assert!((ps[0].area - 300.0).abs() < 1e-6, "{case}: {}", ps[0].area);
+                let mut got = ps[0].outer_curves.clone();
+                got.sort();
+                let want = id_set(&sk, &[if reference_first { reference } else { sides[0] }, sides[1], sides[2], sides[3]]);
+                assert_eq!(got, want, "{case}");
+                // Whole curves make a lasting identity; a piece of the reference cut at the corners does not.
+                let whole = (!reference_first).then(|| (want, Vec::new()));
+                assert_eq!(ps[0].whole_curve_boundaries(), whole, "{case}");
+            }
+        }
+    }
+}
+
+/// A third curve meeting a side and the projected line under it would meet each a little apart:
+/// a circle touching the line from inside the rectangle (it misses or crosses the side by the
+/// round-off), and a line crossing both at a shallow angle (the crossings 3e-5 mm apart). It
+/// meets both where it meets the first of them, so they still make one edge, whichever way the
+/// side runs.
+#[test]
+fn a_curve_meeting_a_side_on_a_projected_line_meets_both_at_once() {
+    for y0 in [3e-10, -3e-10, 0.0] {
+        for reference_first in [true, false] {
+            for reversed in [false, true] {
+                let case = format!("side at y {y0}, reference {}, side reversed {reversed}", if reference_first { "first" } else { "last" });
+                let corners = |x1: f64| {
+                    let (a, b) = if reversed { (x1, 5.0) } else { (5.0, x1) };
+                    [v(a, y0), v(b, y0), v(b, 15.0), v(a, 15.0)]
+                };
+                let mut sk = Sketch::new();
+                let early = reference_first.then(|| reference_line(&mut sk, v(-10.0, 0.0), v(40.0, 0.0)));
+                rect(&mut sk, corners(25.0));
+                sk.add_circle(v(15.0, 5.0), 5.0, None, None).unwrap();
+                early.unwrap_or_else(|| reference_line(&mut sk, v(-10.0, 0.0), v(40.0, 0.0)));
+                let mut areas: Vec<f64> = find_profiles(&sk).iter().map(|p| p.area).collect();
+                areas.sort_by(f64::total_cmp);
+                assert_eq!(areas.len(), 2, "touching circle, {case}: {areas:?}");
+                assert!((areas[0] - 25.0 * PI).abs() < 1e-6 && (areas[1] - (300.0 - 25.0 * PI)).abs() < 1e-6, "touching circle, {case}: {areas:?}");
+
+                let mut sk = Sketch::new();
+                let early = reference_first.then(|| reference_line(&mut sk, v(-10.0, 0.0), v(440.0, 0.0)));
+                rect(&mut sk, corners(405.0));
+                // Through (200, 0), rising 1e-5 per mm: a sliver of 205 x 0.00205 / 2 under it.
+                sk.add_line(v(0.0, -0.002), v(430.0, 0.0023), None, None, None).unwrap();
+                early.unwrap_or_else(|| reference_line(&mut sk, v(-10.0, 0.0), v(440.0, 0.0)));
+                let mut areas: Vec<f64> = find_profiles(&sk).iter().map(|p| p.area).collect();
+                areas.sort_by(f64::total_cmp);
+                assert_eq!(areas.len(), 2, "shallow line, {case}: {areas:?}");
+                assert!((areas[0] - 0.210125).abs() < 1e-6 && (areas[1] - (6000.0 - 0.210125)).abs() < 1e-6, "shallow line, {case}: {areas:?}");
+            }
+        }
+    }
+}
+
+/// The same for drawn curves on drawn curves: two rectangles drawn side by side, the second's
+/// side solved onto the first's; and a quarter disc whose arc is solved onto a projected circle.
+#[test]
+fn curves_solved_onto_each_other_keep_the_regions_on_both_sides() {
+    for (x0, x1) in [(1e-12, -1e-12), (-2e-12, -1e-12), (2.2e-12, 1.6e-12), (0.0, 0.0)] {
+        let mut sk = Sketch::new();
+        let a = rect(&mut sk, [v(0.0, 0.0), v(20.0, 0.0), v(20.0, 15.0), v(0.0, 15.0)]);
+        let b = rect(&mut sk, [v(20.0 + x0, 0.0), v(40.0, 0.0), v(40.0, 15.0), v(20.0 + x1, 15.0)]);
+        let ps = find_profiles(&sk);
+        let areas: Vec<f64> = ps.iter().map(|p| p.area).collect();
+        assert_eq!(ps.len(), 2, "{x0}, {x1}: {areas:?}");
+        assert!(areas.iter().all(|a| (a - 300.0).abs() < 1e-6), "{x0}, {x1}: {areas:?}");
+        // The shared side is the first rectangle's (it was there first).
+        let mut first = ps[0].outer_curves.clone();
+        first.sort();
+        assert_eq!(first, id_set(&sk, &a), "{x0}, {x1}");
+        let mut second = ps[1].outer_curves.clone();
+        second.sort();
+        assert_eq!(second, id_set(&sk, &[b[0], b[1], b[2], a[1]]), "{x0}, {x1}");
+    }
+    let hole = |sk: &mut Sketch| {
+        let link = sk
+            .add_link(LinkKind::Project, LinkSource::SketchCurve { sketch: 1, curve: "hole".into() }, &[LinkGeom::Circle(v(0.0, 0.0), 10.0)])
+            .unwrap();
+        sk.link_curves(&link)[0]
+    };
+    for (dx, dr) in [(1e-12, 2e-12), (-1e-12, -1e-12), (0.0, 0.0)] {
+        for circle_first in [true, false] {
+            let mut sk = Sketch::new();
+            let early = circle_first.then(|| hole(&mut sk));
+            let c = sk.add_point(v(dx, -dx), None).unwrap();
+            let (p0, p1) = (sk.add_point(v(10.0 + dr, 0.0), None).unwrap(), sk.add_point(v(0.0, 10.0 + dr), None).unwrap());
+            let arc = sk.add_arc(v(dx, -dx), v(10.0 + dr, 0.0), v(0.0, 10.0 + dr), [Some(c), Some(p0), Some(p1)], None).unwrap();
+            let (l0, l1) = (sk.add_line_pts(c, p0, None).unwrap(), sk.add_line_pts(p1, c, None).unwrap());
+            let circle = early.unwrap_or_else(|| hole(&mut sk));
+            let case = format!("{dx}, {dr}, circle {}", if circle_first { "first" } else { "last" });
+            let ps = find_profiles(&sk);
+            let areas: Vec<f64> = ps.iter().map(|p| p.area).collect();
+            assert_eq!(ps.len(), 2, "{case}: {areas:?}");
+            let quarter = ps.iter().find(|p| p.area < 100.0).unwrap();
+            assert!((quarter.area - 25.0 * PI).abs() < 1e-6, "{case}: {areas:?}");
+            // One piece each: round-off alone does not cut the arc where it crosses the circle.
+            let mut got = quarter.outer_curves.clone();
+            got.sort();
+            assert_eq!(got, id_set(&sk, &[if circle_first { circle } else { arc }, l0, l1]), "{case}");
+            let rest = ps.iter().find(|p| p.area > 100.0).unwrap();
+            assert!((rest.area - 75.0 * PI).abs() < 1e-6, "{case}: {areas:?}");
+        }
+    }
+}
+
+/// What does not run along one path stays apart: a chord and an arc bulging past it by about
+/// the merge tolerance still bound their thin region, and two whole circles further apart than
+/// it are still cut where they cross, into a lens and two crescents. Closer than it, their
+/// halves are one path: one disc.
+#[test]
+fn near_overlaps_that_are_not_one_path_keep_their_regions() {
+    let s = 1.5e-5;
+    let r = (25.0 + s * s) / (2.0 * s);
+    let mut sk = Sketch::new();
+    let (a, b) = (sk.add_point(v(-5.0, 0.0), None).unwrap(), sk.add_point(v(5.0, 0.0), None).unwrap());
+    let chord = sk.add_line_pts(a, b, None).unwrap();
+    let arc = sk.add_arc(v(0.0, s - r), v(5.0, 0.0), v(-5.0, 0.0), [None, Some(b), Some(a)], None).unwrap();
+    let ps = find_profiles(&sk);
+    assert_eq!(ps.len(), 1, "{:?}", ps.iter().map(|p| p.area).collect::<Vec<_>>());
+    // Two thirds of chord times height, to well within the rounding of the area.
+    assert!((ps[0].area - 2.0 / 3.0 * 10.0 * s).abs() < 1e-8, "{}", ps[0].area);
+    let mut got = ps[0].outer_curves.clone();
+    got.sort();
+    assert_eq!(got, id_set(&sk, &[chord, arc]));
+
+    // The same with a free-form curve: a flat cubic (height s) over its chord. It takes part as
+    // sampled pieces, one of them on the chord, but its exact curve bounds the region.
+    let s = 8e-6;
+    let mut sk = Sketch::new();
+    let ids: Vec<usize> = [v(-5.0, 0.0), v(-5.0 / 3.0, 4.0 * s / 3.0), v(5.0 / 3.0, 4.0 * s / 3.0), v(5.0, 0.0)]
+        .iter()
+        .map(|p| sk.add_point(*p, None).unwrap())
+        .collect();
+    sk.add_curve(CurveKind::Spline { pts: ids.clone(), control: true, degree: 3, periodic: false }, None).unwrap();
+    sk.add_line_pts(ids[3], ids[0], None).unwrap();
+    let ps = find_profiles(&sk);
+    assert_eq!(ps.len(), 1, "{:?}", ps.iter().map(|p| p.area).collect::<Vec<_>>());
+    assert!((ps[0].area - 20.0 * s / 3.0).abs() < 1e-9, "{}", ps[0].area);
+
+    // An arc a little off a circle, more than the merge tolerance apart at its ends (so they
+    // don't cut the circle): the two still cut each other where they cross, and no profile is
+    // the uncut circle.
+    let mut sk = Sketch::new();
+    let circle = sk.add_circle(v(0.0, 0.0), 10.0, None, None).unwrap();
+    let (c, r) = (v(8e-6, 0.0), 10.0 + 6e-6);
+    let (p0, p1) = (c + Vec2::from_angle(PI / 4.0) * r, c + Vec2::from_angle(-PI / 4.0) * r);
+    let (a0, a1, tip) = (sk.add_point(p0, None).unwrap(), sk.add_point(p1, None).unwrap(), sk.add_point(v(30.0, 0.0), None).unwrap());
+    sk.add_arc(c, p0, p1, [None, Some(a0), Some(a1)], None).unwrap();
+    sk.add_line_pts(a1, tip, None).unwrap();
+    sk.add_line_pts(tip, a0, None).unwrap();
+    let ps = find_profiles(&sk);
+    let circle_id = sk.curves[circle].id.clone();
+    assert!(ps.iter().all(|p| p.outer_curves != [circle_id.clone()] && p.whole_curve_boundaries().is_none()), "{ps:?}");
+    // Profiles don't overlap: together they cover the disc and the arc's region once, that is the
+    // disc and the triangle to the tip less the disc's segment inside it (to within the slivers
+    // between arc and circle).
+    let beyond = 0.5 * (p0 - v(30.0, 0.0)).cross(p1 - v(30.0, 0.0)).abs() - 50.0 * (PI / 2.0 - 1.0);
+    let covered = ps.iter().map(|p| p.area).sum::<f64>();
+    assert!((covered - PI * 100.0 - beyond).abs() < 1e-2, "{:?}", ps.iter().map(|p| p.area).collect::<Vec<_>>());
+
+    let r = 10.0_f64;
+    for (d, regions) in [(1e-3, 3), (1e-4, 3), (8e-6, 1)] {
+        let mut sk = Sketch::new();
+        let first = sk.add_circle(v(0.0, 0.0), r, None, None).unwrap();
+        sk.add_circle(v(d, 0.0), r, None, None).unwrap();
+        let ps = find_profiles(&sk);
+        let areas: Vec<f64> = ps.iter().map(|p| p.area).collect();
+        assert_eq!(ps.len(), regions, "{d}: {areas:?}");
+        let lens = 2.0 * r * r * (d / (2.0 * r)).acos() - d / 2.0 * (4.0 * r * r - d * d).sqrt();
+        let union = if regions == 1 { PI * r * r } else { 2.0 * PI * r * r - lens };
+        assert!((areas.iter().sum::<f64>() - union).abs() < 1e-6, "{d}: {areas:?}");
+        // Cut where they cross: no whole-circle identity.
+        assert!(ps.iter().all(|p| p.whole_curve_boundaries().is_none()), "{d}");
+        if regions == 1 {
+            assert_eq!(ps[0].outer_curves, vec![sk.curves[first].id.clone(); 2], "{d}: the first circle's halves");
+        }
+    }
+}
+
+/// Curves count as lying on one another only within the merge tolerance of the one carrying
+/// them, not along a chain: an arc between two whole circles 1.6e-5 apart (each within 8e-6 of
+/// it) does not stop the circles cutting each other where they cross.
+#[test]
+fn curves_lying_on_one_another_do_not_chain_past_the_tolerance() {
+    let (d, r) = (16e-6, 10.0_f64);
+    let mut sk = Sketch::new();
+    sk.add_circle(v(0.0, 0.0), r, None, None).unwrap();
+    sk.add_circle(v(d, 0.0), r, None, None).unwrap();
+    let c = v(d / 2.0, 0.0);
+    let (p0, p1) = (c + Vec2::from_angle(PI / 4.0) * r, c + Vec2::from_angle(3.0 * PI / 4.0) * r);
+    sk.add_arc(c, p0, p1, [None, None, None], None).unwrap();
+    let areas: Vec<f64> = find_profiles(&sk).iter().map(|p| p.area).collect();
+    let lens = 2.0 * r * r * (d / (2.0 * r)).acos() - d / 2.0 * (4.0 * r * r - d * d).sqrt();
+    // The discs' union once, not each disc whole.
+    assert!((areas.iter().sum::<f64>() - (2.0 * PI * r * r - lens)).abs() < 1e-6, "{areas:?}");
+
+    // Two dividers of a square, each carried by a short line 8e-6 off it that does not reach
+    // their crossing: they still cross at one node, and the square has four quarters.
+    let mut sk = Sketch::new();
+    sk.add_line(v(-20.0, 0.0), v(-10.0, 0.0), None, None, None).unwrap();
+    sk.add_line(v(0.0, -20.0), v(0.0, -10.0), None, None, None).unwrap();
+    rect(&mut sk, [v(-15.0, -15.0), v(15.0, -15.0), v(15.0, 15.0), v(-15.0, 15.0)]);
+    sk.add_line(v(-15.0, 8e-6), v(15.0, 8e-6), None, None, None).unwrap();
+    sk.add_line(v(8e-6, -15.0), v(8e-6, 15.0), None, None, None).unwrap();
+    let areas: Vec<f64> = find_profiles(&sk).iter().map(|p| p.area).collect();
+    assert_eq!(areas.len(), 4, "{areas:?}");
+    assert!((areas.iter().sum::<f64>() - 900.0).abs() < 1e-6, "{areas:?}");
+}
+
 #[test]
 fn merging_adjacent_regions() {
     let a =
@@ -343,7 +650,7 @@ fn merging_adjacent_regions() {
 /// outlines.
 fn text_sketch(text: &str, at: Vec2, height: f64) -> Sketch {
     let mut sk = Sketch::new();
-    let source = LinkSource::Text { text: text.into(), at, height, angle: 0.0, font: None };
+    let source = LinkSource::Text { text: text.into(), at, height, angle: 0.0, font: None, style: Default::default(), exprs: Default::default() };
     sk.add_link(LinkKind::Text, source, &text_geometry(text, at, height, 0.0).unwrap()).unwrap();
     sk
 }
@@ -575,4 +882,176 @@ fn exact_profiles_for_high_degree_and_cut_free_form_curves() {
     sk.curves.pop();
     let uncut: f64 = find_profiles(&sk).iter().map(|p| p.area).sum();
     assert!((whole - uncut).abs() < 1e-6 * uncut, "{whole} vs {uncut}");
+}
+
+/// A face boundary saved with stations along its straight edges (#1049: booleans used to leave
+/// vertices nothing else used) keeps its saved pieces when the face comes back with each
+/// straight edge whole: the same region, and features that name the pieces still find them.
+#[test]
+fn projected_boundary_keeps_its_pieces_when_only_stations_go() {
+    use crate::{LinkGeom, LinkKind, LinkSource};
+    let mut sk = Sketch::new();
+    let v = Vec2::new;
+    let split = vec![
+        LinkGeom::Line(v(0.0, 0.0), v(5.0, 0.0)),
+        LinkGeom::Line(v(5.0, 0.0), v(10.0, 0.0)),
+        LinkGeom::Line(v(10.0, 0.0), v(10.0, 4.0)),
+        LinkGeom::Line(v(10.0, 4.0), v(10.0, 10.0)),
+        LinkGeom::Line(v(10.0, 10.0), v(0.0, 10.0)),
+        LinkGeom::Line(v(0.0, 10.0), v(0.0, 0.0)),
+    ];
+    let j = sk.add_link(LinkKind::Project, LinkSource::Origin, &split).unwrap();
+    let ids: Vec<String> = sk.link_curves(&j).iter().map(|c| sk.curves[*c].id.clone()).collect();
+    let whole = vec![
+        LinkGeom::Line(v(0.0, 0.0), v(10.0, 0.0)),
+        LinkGeom::Line(v(10.0, 0.0), v(10.0, 10.0)),
+        LinkGeom::Line(v(10.0, 10.0), v(0.0, 10.0)),
+        LinkGeom::Line(v(0.0, 10.0), v(0.0, 0.0)),
+    ];
+    assert!(!sk.update_link(&j, &whole).unwrap(), "only the stations went: the pieces stay");
+    let kept: Vec<String> = sk.link_curves(&j).iter().map(|c| sk.curves[*c].id.clone()).collect();
+    assert_eq!(ids, kept);
+    // A boundary that really changed is rebuilt.
+    let smaller = vec![
+        LinkGeom::Line(v(0.0, 0.0), v(8.0, 0.0)),
+        LinkGeom::Line(v(8.0, 0.0), v(8.0, 10.0)),
+        LinkGeom::Line(v(8.0, 10.0), v(0.0, 10.0)),
+        LinkGeom::Line(v(0.0, 10.0), v(0.0, 0.0)),
+    ];
+    assert!(sk.update_link(&j, &smaller).unwrap());
+    assert_eq!(sk.link_curves(&j).len(), 4);
+}
+
+#[test]
+fn a_degree_nine_control_spline_stays_exact_and_closes_a_profile_exactly() {
+    // A G4 blend curve is one degree-9 Bézier; a sketch keeps it as a control spline whose exact
+    // piece is that Bézier, and profile measurement must keep using the curve, not its chords.
+    let mut sk = Sketch::new();
+    let bump =
+        [v(0.0, 0.0), v(1.5, 4.0), v(3.0, 7.0), v(5.0, 9.5), v(7.5, 11.0), v(12.5, 11.0), v(15.0, 9.5), v(17.0, 7.0), v(18.5, 4.0), v(20.0, 0.0)];
+    let pts: Vec<usize> = bump.iter().map(|q| sk.add_point(*q, None).unwrap()).collect();
+    let s = sk.add_curve(CurveKind::Spline { pts: pts.clone(), control: true, degree: 9, periodic: false }, None).unwrap();
+    let pieces = sk.exact_pieces(s);
+    assert_eq!(pieces.len(), 1, "{pieces:?}");
+    let Seg2::Bezier { n, p } = pieces[0] else { panic!("{:?}", pieces[0]) };
+    assert_eq!(n, 9, "the highest degree a sketch piece can carry");
+    for (i, q) in bump.iter().enumerate() {
+        assert!(p[i].dist(*q) < 1e-12, "control {i}");
+    }
+    // Evaluation and the exact piece agree at the spline's real degree (a degree clamp would show
+    // here), and a line's own exact piece still comes back as a line.
+    let exact = pieces[0];
+    for k in 0..=10 {
+        let t = k as f64 / 10.0;
+        assert!(crate::curves::spline_point(&bump, true, 9, t).dist(exact.point_at(t)) < 1e-9, "t={t}");
+    }
+    let l = sk.add_line(v(-5.0, 0.0), v(-2.0, 1.0), None, None, None).unwrap();
+    assert!(matches!(sk.exact_pieces(l).as_slice(), [Seg2::Line { .. }]));
+    // Close the loop: the region's area is the shoelace integral of the exact pieces, which a fine
+    // sampling of the piece reproduces (a chord approximation would miss the bump's sagitta).
+    sk.add_line(v(20.0, 0.0), v(0.0, 0.0), Some(pts[9]), Some(pts[0]), None).unwrap();
+    let ps = find_profiles(&sk);
+    assert_eq!(ps.len(), 1, "{ps:?}");
+    let n = 20_000;
+    let mut sampled = 0.0;
+    for i in 0..n {
+        let (t0, t1) = (i as f64 / n as f64, (i + 1) as f64 / n as f64);
+        let (a, b) = (exact.point_at(t0), exact.point_at(t1));
+        sampled += 0.5 * a.cross(b);
+    }
+    sampled -= 0.5 * v(20.0, 0.0).cross(v(0.0, 0.0));
+    assert!((ps[0].area - sampled.abs()).abs() < 1e-5, "{} vs {sampled}", ps[0].area);
+    assert!((ps[0].area - 100.0).abs() > 1e-3, "the region is not its chord: {}", ps[0].area);
+    // A degree above the cap is still refused.
+    let mut high: Vec<usize> = pts.clone();
+    high.push(sk.add_point(v(21.0, -2.0), None).unwrap());
+    assert!(sk.add_curve(CurveKind::Spline { pts: high, control: true, degree: 10, periodic: false }, None).is_err());
+}
+
+/// #755: a line drawn through a junction of a loop, but 2e-5 off it, still splits the loop. The
+/// junction lies on the loop's two curves only, so it cuts neither of them where the line
+/// crosses, and that crossing, next to the junction, was taken for one already cut there: the
+/// line crossed the loop without meeting it, and the sketch had no profiles at all.
+#[test]
+fn profiles_line_passing_next_to_a_junction_splits_the_loop() {
+    let o = v(0.0, 0.0);
+    let at = |r: f64, a: f64| v(r * a.cos(), r * a.sin());
+    // A slot: half circles of radius 1 round (0, 0) and (-5, 0), joined by the lines y = 1 and
+    // y = -1, which meet the arcs tangentially at (0, 1) and (0, -1).
+    let mut sk = Sketch::new();
+    let right = sk.add_arc(o, v(0.0, -1.0), v(0.0, 1.0), [None; 3], None).unwrap();
+    let left = sk.add_arc(v(-5.0, 0.0), v(-5.0, 1.0), v(-5.0, -1.0), [None; 3], None).unwrap();
+    let ends = |i: usize| match sk.curves[i].kind {
+        CurveKind::Arc { a, b, .. } => (a, b),
+        _ => panic!("an arc"),
+    };
+    let ((r0, r1), (l0, l1)) = (ends(right), ends(left));
+    sk.add_line_pts(r1, l0, None).unwrap();
+    sk.add_line_pts(l1, r0, None).unwrap();
+    // Lines from (0, 0) through the junctions to an arc of radius 2. The upper one is turned by
+    // 2e-5 rad, so it passes 2e-5 from (0, 1) and crosses the line y = 1 next to it.
+    let d = 2e-5;
+    let (top, bottom) = (at(2.0, FRAC_PI_2 + d), v(0.0, -2.0));
+    sk.add_line(o, top, None, None, None).unwrap();
+    sk.add_line(o, bottom, None, None, None).unwrap();
+    sk.add_arc(o, bottom, top, [None; 3], None).unwrap();
+    let mut areas: Vec<f64> = find_profiles(&sk).iter().map(|p| p.area).collect();
+    areas.sort_by(f64::total_cmp);
+    // The right half disc, the band round it out to radius 2, and the rest of the slot.
+    let want = [FRAC_PI_2, FRAC_PI_2 * (4.0 - 1.0), 10.0 + FRAC_PI_2];
+    assert_eq!(areas.len(), 3, "{areas:?}");
+    for (got, want) in areas.iter().zip(want) {
+        assert!((got - want).abs() < 1e-3, "{areas:?} against {want}");
+    }
+}
+
+/// A line ending 2e-5 from a corner, next to a crossing there: the corner, where the side of the
+/// square meets the long line, stays a cut of the long line, and the square stays a profile.
+#[test]
+fn profiles_crossing_next_to_a_corner_keeps_the_corner() {
+    let mut sk = Sketch::new();
+    let (a, b) = (sk.add_point(v(1.0, 0.0), None).unwrap(), sk.add_point(v(2.0, 0.0), None).unwrap());
+    let (c, d) = (sk.add_point(v(2.0, 1.0), None).unwrap(), sk.add_point(v(1.0, 1.0), None).unwrap());
+    // The square's base is part of a longer line, which its sides end on.
+    sk.add_line(v(0.0, 0.0), v(3.0, 0.0), None, None, None).unwrap();
+    for (p, q) in [(b, c), (c, d), (d, a)] {
+        sk.add_line_pts(p, q, None).unwrap();
+    }
+    // A line hanging across the long one, 2e-5 from the square's corner (1, 0).
+    sk.add_line(v(1.0 - 2e-5, -0.5), v(1.0 - 2e-5, 0.5), None, None, None).unwrap();
+    let areas: Vec<f64> = find_profiles(&sk).iter().map(|p| p.area).collect();
+    assert_eq!(areas.len(), 1, "{areas:?}");
+    assert!(areas.iter().all(|x| (x - 1.0).abs() < 1e-9), "{areas:?}");
+}
+
+/// A line across a rectangle, and a stray line ending on it 1e-3 from where it crosses the
+/// rectangle's side: both the crossing and that end cut the long line, and the rectangle is
+/// split into its two halves.
+#[test]
+fn profiles_crossing_next_to_a_stray_end_still_splits() {
+    let mut sk = Sketch::new();
+    rect(&mut sk, [v(0.0, -1.0), v(1.0, -1.0), v(1.0, 1.0), v(0.0, 1.0)]);
+    sk.add_line(v(-1.0, 0.0), v(2.0, 0.0), None, None, None).unwrap();
+    sk.add_line(v(0.00099998, 0.0000099), v(0.3, 0.6), None, None, None).unwrap();
+    let areas: Vec<f64> = find_profiles(&sk).iter().map(|p| p.area).collect();
+    assert_eq!(areas.len(), 2, "{areas:?}");
+    assert!(areas.iter().all(|x| (x - 1.0).abs() < 1e-9), "{areas:?}");
+}
+
+/// A line whose own end overshoots a crossing line by 2e-5, with a rectangle standing on it 1e-3
+/// further on: the crossing next to that end gives way to the rectangle's corner, which still
+/// cuts the line, and the rectangle stays a profile.
+#[test]
+fn profiles_crossing_next_to_an_overshooting_end_keeps_the_corner_beside_it() {
+    let mut sk = Sketch::new();
+    sk.add_line(v(-2e-5, 0.0), v(3.0, 0.0), None, None, None).unwrap();
+    sk.add_line(v(0.0, -0.5), v(0.0, 0.5), None, None, None).unwrap();
+    let x = 0.00099999;
+    let p = [v(x, 0.0000099), v(x, 1.0), v(2.0, 1.0), v(2.0, 0.0)].map(|q| sk.add_point(q, None).unwrap());
+    for w in p.windows(2) {
+        sk.add_line_pts(w[0], w[1], None).unwrap();
+    }
+    let areas: Vec<f64> = find_profiles(&sk).iter().map(|p| p.area).collect();
+    assert_eq!(areas.len(), 1, "{areas:?}");
+    assert!(areas.iter().all(|a| (a - (2.0 - x)).abs() < 1e-4), "{areas:?}");
 }

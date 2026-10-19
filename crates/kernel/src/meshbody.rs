@@ -103,6 +103,8 @@ pub fn mesh_body(positions: &[Vec3], triangles: &[[u32; 3]]) -> Result<Body> {
     }
     Ok(Body {
         solid: Arc::new(crate::body::Solid::new_unchecked(Vec::new())),
+        size: 0.0,
+        volume: Some(std::sync::Arc::new(std::sync::Mutex::new(None))),
         coarse_missing: None,
         mesh: Some(Arc::new(out)),
         color: None,
@@ -110,6 +112,7 @@ pub fn mesh_body(positions: &[Vec3], triangles: &[[u32; 3]]) -> Result<Body> {
         splits: None,
         face_sources: None,
         history: None,
+        display_of: None,
         regularization_protected: false,
     })
 }
@@ -197,6 +200,8 @@ impl Body {
         }
         Some(Body {
             solid: self.solid.clone(),
+            size: 0.0,
+            volume: Some(std::sync::Arc::new(std::sync::Mutex::new(None))),
             coarse_missing: None,
             mesh: Some(Arc::new(out)),
             color: self.color,
@@ -204,6 +209,7 @@ impl Body {
             splits: self.splits.clone(),
             face_sources: None,
             history: None,
+            display_of: None,
             regularization_protected: self.regularization_protected,
         })
     }

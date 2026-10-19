@@ -13,8 +13,10 @@
 //! fails the test (a regression). Newly passing actions are reported; record them with
 //! `cargo xtask action-matrix --bless` (or `ACTION_MATRIX_BLESS=1` on [`action_matrix_all`]).
 //! Every CI run checks a fixed sample ([`action_matrix_sample`], under a minute); the full matrix
-//! is four ignored tests (`action_matrix_full_N`) that the nightly "Action matrix" job runs side by
-//! side. See docs/action-matrix.md.
+//! is the ignored [`action_matrix_shard`], which the nightly "Action matrix" jobs run one shard
+//! each (`ACTION_MATRIX_SHARD=k/n`), cut by what each design costs (`tests/action_matrix/costs.json`).
+//! [`action_matrix_determinism`] runs a sample twice and lists any action whose outcome changed.
+//! See docs/action-matrix.md.
 //!
 //! Each design runs in a child process (this test binary, [`action_matrix_worker`]) so an action
 //! that hangs or aborts is recorded as such and the rest of the design still runs.
@@ -33,6 +35,10 @@ use solidcraft_engine::geom::Vec3;
 
 /// One in this many actions runs on pull requests (by a stable hash of its key).
 const PR_SAMPLE: u64 = 40;
+/// One in this many actions runs twice in the nightly determinism check, on the designs whose
+/// whole matrix takes at most [`DETERMINISM_MAX_SECS`] on a runner (most of the corpus).
+const DETERMINISM_SAMPLE: u64 = 8;
+const DETERMINISM_MAX_SECS: f64 = 300.0;
 /// Designs that take seconds to build: the full matrix only.
 const SLOW: [&str; 7] = [
     "oracle/41-tube-radial-holes",
@@ -47,6 +53,10 @@ const SLOW: [&str; 7] = [
 const EDIT_SAMPLE: u64 = 6;
 /// An action that takes longer than this is recorded as a timeout.
 const ACTION_TIMEOUT: Duration = Duration::from_secs(90);
+/// Building a design and listing its actions, before the first one runs: the biggest designs
+/// (oracle 41's tube with radial holes, about 25 s here) take several times that on a loaded CI
+/// runner, and a design that never loads loses all its actions, not one.
+const LOAD_TIMEOUT: Duration = Duration::from_secs(300);
 /// Caps per body, so one large imported or patterned body cannot dominate the run.
 const MAX_FACES: usize = 120;
 const MAX_EDGES: usize = 240;
@@ -340,7 +350,7 @@ fn actions(s: &Session) -> Vec<Action> {
         // The surface's normal at `p` (either way round): exact on analytic faces.
         let normal_at = |f: u32, p: Vec3| -> Option<Vec3> {
             match face_surface(&b.body, f as usize) {
-                Some(FaceSurface::Plane { normal, .. }) => Some(normal),
+                Some(FaceSurface::Plane { normal, .. }) => Some(*normal),
                 Some(FaceSurface::Cylinder { origin, axis, .. }) => {
                     let v = p - origin;
                     (v - axis * v.dot(axis)).normalized()
@@ -619,23 +629,41 @@ fn action_matrix_worker() {
         out.flush().unwrap();
     };
     let Some((_, path)) = designs().into_iter().find(|(n, _)| *n == design) else { panic!("no design {design}") };
+    // A slice of a heavy design (`j/n`): the actions whose name hashes to `j` modulo `n` (by
+    // index, slices would take whole kinds of action when n shares a factor with the number of
+    // actions per entity, and a slice of only fillets runs three times as long); the first
+    // slice records the load.
+    let slice: Option<(usize, usize)> = std::env::var("ACTION_MATRIX_SLICE").ok().and_then(|v| parse_part(&v));
+    let first = slice.is_none_or(|(j, _)| j == 0);
     let t0 = Instant::now();
     let s = match load(&path) {
         Ok(s) => s,
         Err(e) => {
-            emit(outcome(&design, "design", "load", &Err(("load".into(), e)), t0.elapsed().as_millis()));
+            if first {
+                emit(outcome(&design, "design", "load", &Err(("load".into(), e)), t0.elapsed().as_millis()));
+            }
             emit(json!({"done": true}));
             return;
         }
     };
     let before = errors(&s);
-    if from == 0 {
+    if from == 0 && first {
         let r = if before.is_empty() { Ok(()) } else { Err(("timeline_error".into(), before.values().cloned().collect::<Vec<_>>().join("; "))) };
         emit(outcome(&design, "design", "load", &r, t0.elapsed().as_millis()));
     }
     let list = actions(&s);
     let edit = driving_parameter(&s);
+    // Local runs only: `ACTION_MATRIX_ACTIONS=edge.fillet,edge.chamfer` tries just those actions
+    // (don't bless such a run), `ACTION_MATRIX_VALIDITY=1` adds each passing action's body check.
+    let only: Option<Vec<String>> = std::env::var("ACTION_MATRIX_ACTIONS").ok().map(|v| v.split(',').map(str::to_string).collect());
+    let validity = std::env::var_os("ACTION_MATRIX_VALIDITY").is_some();
     for (i, a) in list.iter().enumerate().skip(from) {
+        if only.as_ref().is_some_and(|o| !o.iter().any(|x| x == a.action)) {
+            continue;
+        }
+        if slice.is_some_and(|(j, n)| stable_hash(&format!("{} {}", a.entity, a.action)) % n as u64 != j as u64) {
+            continue;
+        }
         // Whole families of pieces are sampled together (see [`family`]).
         let k = key(&design, &family(&a.entity), a.action);
         if !stable_hash(&k).is_multiple_of(sample) {
@@ -646,17 +674,44 @@ fn action_matrix_worker() {
         let mut scratch = s.scratch();
         let r = perform(&mut scratch, &a.act, &before);
         let mut line = outcome(&design, &a.entity, a.action, &r, t.elapsed().as_millis());
+        if validity && r.is_ok() {
+            let st = scratch.model.state();
+            let bad: Vec<String> = st.bodies.iter().flat_map(|b| b.body.validity().into_iter().map(|v| format!("{}: {v}", b.name))).collect();
+            line["validity"] = json!(bad);
+        }
         // What was sent, for reproducing a failure (kept in the results, not the baseline).
         line["command"] = match &a.act {
             Act::Run(id, p) => json!({"command": id, "params": p}),
             Act::Project { plane, edge } => json!({"command": "sketch.project", "params": {"refs": [edge]}, "sketch_plane": plane}),
         };
         emit(line);
+        // With ACTION_MATRIX_UNFOLD, sheet metal must still unfold and fold back after the action.
+        if r.is_ok() && std::env::var_os("ACTION_MATRIX_UNFOLD").is_some() {
+            let t = Instant::now();
+            let sheets: Vec<String> = scratch.model.state().sheets.iter().map(|sh| sh.body.clone()).collect();
+            let mut r = Ok(());
+            for body in &sheets {
+                for id in ["sheet.unfold", "sheet.refold"] {
+                    if r.is_ok() {
+                        r = scratch
+                            .execute(id, &json!({"body": body}))
+                            .map(|_| ())
+                            .map_err(|e| (command_kind(&e).to_string(), format!("{body}: {e}")));
+                    }
+                }
+            }
+            if !sheets.is_empty() {
+                let unfold: &'static str = Box::leak(format!("{}+unfold", a.action).into_boxed_str());
+                emit(outcome(&design, &a.entity, unfold, &r, t.elapsed().as_millis()));
+            }
+        }
         // The edit round: a driving parameter changes; the new feature still resolves.
         if r.is_ok()
             && let Some((name, expr)) = &edit
             && stable_hash(&format!("{k} edit")).is_multiple_of(EDIT_SAMPLE)
         {
+            // Marked like an action, so a hang here is put down to the edit round (not to loading).
+            emit(json!({"start": i, "edit": true}));
             let t = Instant::now();
             let start = s.doc.features.len();
             let r = scratch
@@ -670,46 +725,155 @@ fn action_matrix_worker() {
     emit(json!({"done": true, "actions": list.len()}));
 }
 
-/// Run the actions (one in `sample`) of every design in part `part` of `parts`, in child
-/// processes, `jobs` at a time.
-fn run_matrix(sample: u64, part: usize, parts: usize) -> Vec<Value> {
+/// `"k/n"` (1-based `k`) as `(k - 1, n)`.
+fn parse_part(v: &str) -> Option<(usize, usize)> {
+    let (k, n) = v.split_once('/')?;
+    let (k, n): (usize, usize) = (k.trim().parse().ok()?, n.trim().parse().ok()?);
+    (k >= 1 && k <= n).then_some((k - 1, n))
+}
+
+/// What one design costs on a CI runner (`tests/action_matrix/costs.json`, measured by the
+/// nightly shards): the whole run and the load before its first action, in seconds.
+#[derive(Clone, Copy, Debug)]
+struct Cost {
+    secs: f64,
+    load: f64,
+}
+
+fn costs_path() -> PathBuf {
+    root().join("tests/action_matrix/costs.json")
+}
+
+fn read_costs() -> BTreeMap<String, Cost> {
+    let Some(v) = std::fs::read(costs_path()).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else { return BTreeMap::new() };
+    v["designs"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(d, c)| (d.clone(), Cost { secs: c["secs"].as_f64().unwrap_or(0.0), load: c["load"].as_f64().unwrap_or(0.0) }))
+        .collect()
+}
+
+/// A design new to the corpus (not in costs.json yet) is planned as this.
+const UNKNOWN_COST: Cost = Cost { secs: 120.0, load: 5.0 };
+/// A design that takes longer than this on a runner is split into slices of about this much, or
+/// five loads if that is more (each slice loads the design again), so no shard waits on one design.
+const SLICE_SECS: f64 = 600.0;
+/// Designs that take longer than this to load on a runner stay out of the pull request sample.
+const SAMPLE_MAX_LOAD_SECS: f64 = 8.0;
+
+/// A piece of work: one design, or a slice `(j, n)` of a heavy one, and what it should cost.
+#[derive(Clone, Debug)]
+struct Unit {
+    design: String,
+    slice: Option<(usize, usize)>,
+    cost: f64,
+}
+
+impl Unit {
+    fn name(&self) -> String {
+        match self.slice {
+            Some((j, n)) => format!("{} [{}/{n}]", self.design, j + 1),
+            None => self.design.clone(),
+        }
+    }
+}
+
+/// The whole matrix split into `parts` shards of about equal cost: heavy designs in slices, then
+/// the largest pieces first, each to the shard with the least so far. The same corpus and
+/// costs.json always give the same shards.
+fn plan(designs: &[String], costs: &BTreeMap<String, Cost>, parts: usize) -> Vec<Vec<Unit>> {
+    let mut units = Vec::new();
+    for d in designs {
+        let c = costs.get(d).copied().unwrap_or(UNKNOWN_COST);
+        let n = ((c.secs / SLICE_SECS.max(5.0 * c.load)).ceil() as usize).max(1);
+        if n == 1 {
+            units.push(Unit { design: d.clone(), slice: None, cost: c.secs });
+        } else {
+            let each = c.load + (c.secs - c.load).max(0.0) / n as f64;
+            units.extend((0..n).map(|j| Unit { design: d.clone(), slice: Some((j, n)), cost: each }));
+        }
+    }
+    units.sort_by(|a, b| b.cost.total_cmp(&a.cost).then_with(|| a.name().cmp(&b.name())));
+    let mut shards: Vec<(f64, Vec<Unit>)> = vec![(0.0, Vec::new()); parts];
+    for u in units {
+        let i = (0..parts).min_by(|&a, &b| shards[a].0.total_cmp(&shards[b].0)).unwrap_or(0);
+        shards[i].0 += u.cost;
+        shards[i].1.push(u);
+    }
+    shards.into_iter().map(|(_, v)| v).collect()
+}
+
+/// Every design's name, with `ACTION_MATRIX_FILTER` applied.
+fn design_names() -> Vec<String> {
     let designs = designs();
     assert!(designs.len() > 80, "only {} designs", designs.len());
-    let dir = std::env::temp_dir().join(format!("action-matrix-{}-{part}", std::process::id()));
+    let filter = std::env::var("ACTION_MATRIX_FILTER").ok();
+    designs.into_iter().map(|(n, _)| n).filter(|n| filter.as_deref().is_none_or(|f| n.contains(f))).collect()
+}
+
+/// Run the actions (one in `sample`) of these units in child processes, `jobs` at a time.
+///
+/// `ACTION_MATRIX_WORKDIR` keeps each design's raw outcomes there (one JSON line each, written as
+/// they come, so a run cut short still shows what it did) and `ACTION_MATRIX_TIMINGS` appends
+/// each unit's time to that file (JSON lines).
+fn run_units(sample: u64, queue: &[Unit]) -> Vec<Value> {
+    let keep = std::env::var_os("ACTION_MATRIX_WORKDIR").map(PathBuf::from);
+    static RUN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let run = RUN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = keep.clone().unwrap_or_else(|| std::env::temp_dir().join(format!("action-matrix-{}-{run}", std::process::id())));
     std::fs::create_dir_all(&dir).unwrap();
+    let timings = std::env::var_os("ACTION_MATRIX_TIMINGS").map(PathBuf::from);
     let jobs: usize = std::env::var("ACTION_MATRIX_JOBS")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(2, |n| n.get()))
         .max(1);
-    let filter = std::env::var("ACTION_MATRIX_FILTER").ok();
-    let queue: Vec<(String, PathBuf)> = designs
-        .into_iter()
-        .enumerate()
-        .filter(|(i, (n, _))| i % parts == part && filter.as_deref().is_none_or(|f| n.contains(f)) && (sample == 1 || !SLOW.contains(&n.as_str())))
-        .map(|(_, d)| d)
-        .collect();
     let next = std::sync::atomic::AtomicUsize::new(0);
     let results = std::sync::Mutex::new(Vec::new());
     std::thread::scope(|scope| {
         for _ in 0..jobs {
             scope.spawn(|| {
-                while let Some((name, _)) = queue.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed)) {
-                    let out = dir.join(format!("{}.jsonl", name.replace('/', "__")));
-                    let lines = run_design(name, &out, sample);
+                while let Some(u) = queue.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed)) {
+                    let file = u.name().replace('/', "__").replace([' ', '[', ']'], "_");
+                    let out = dir.join(format!("{file}.r{run}.jsonl"));
+                    let t = Instant::now();
+                    let lines = run_design(&u.design, &out, sample, u.slice);
+                    let secs = t.elapsed().as_secs_f64();
+                    let load = lines.iter().find(|o| o["entity"] == "design" && o["action"] == "load").and_then(|o| o["ms"].as_f64()).unwrap_or(0.0) / 1000.0;
+                    if let Some(p) = &timings {
+                        let line = json!({"design": u.design, "slice": u.slice.map(|(j, n)| format!("{}/{n}", j + 1)), "secs": round3(secs), "load": round3(load), "actions": lines.len()});
+                        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(p).unwrap();
+                        writeln!(f, "{line}").unwrap();
+                    }
+                    eprintln!("action matrix: {} took {secs:.1} s ({} outcomes, load {load:.1} s)", u.name(), lines.len());
                     results.lock().unwrap().extend(lines);
                 }
             });
         }
     });
-    let _ = std::fs::remove_dir_all(&dir);
+    if keep.is_none() {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     let mut v = results.into_inner().unwrap();
     v.sort_by_key(|o| key(o["design"].as_str().unwrap_or(""), o["entity"].as_str().unwrap_or(""), o["action"].as_str().unwrap_or("")));
     v
 }
 
+/// Run the actions (one in `sample`) of every design (the pull request sample leaves out the
+/// slow-loading ones).
+fn run_matrix(sample: u64) -> Vec<Value> {
+    let costs = read_costs();
+    let queue: Vec<Unit> = design_names()
+        .into_iter()
+        .filter(|n| sample == 1 || !(SLOW.contains(&n.as_str()) || costs.get(n).is_some_and(|c| c.load > SAMPLE_MAX_LOAD_SECS)))
+        .map(|design| Unit { design, slice: None, cost: 0.0 })
+        .collect();
+    run_units(sample, &queue)
+}
+
 /// One design in child processes, restarting after an action that hangs or aborts.
-fn run_design(design: &str, out: &Path, sample: u64) -> Vec<Value> {
+fn run_design(design: &str, out: &Path, sample: u64, slice: Option<(usize, usize)>) -> Vec<Value> {
     let _ = std::fs::remove_file(out);
     let mut from = 0usize;
     let mut results = Vec::new();
@@ -721,11 +885,14 @@ fn run_design(design: &str, out: &Path, sample: u64) -> Vec<Value> {
             .env("ACTION_MATRIX_OUT", out)
             .env("ACTION_MATRIX_FROM", from.to_string())
             .env("ACTION_MATRIX_SAMPLE", sample.to_string())
+            .env("ACTION_MATRIX_SLICE", slice.map(|(j, n)| format!("{}/{n}", j + 1)).unwrap_or_default())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        let mut seen = 0usize;
+        // Until the child writes, it is loading the design (again, after a restart).
+        let loaded_at = std::fs::metadata(out).map(|m| m.len() as usize).unwrap_or(0);
+        let mut seen = loaded_at;
         let mut last_change = Instant::now();
         let (status, timed_out) = loop {
             if let Some(status) = child.try_wait().unwrap() {
@@ -735,7 +902,7 @@ fn run_design(design: &str, out: &Path, sample: u64) -> Vec<Value> {
             if n != seen {
                 seen = n;
                 last_change = Instant::now();
-            } else if last_change.elapsed() > ACTION_TIMEOUT {
+            } else if last_change.elapsed() > if seen == loaded_at { LOAD_TIMEOUT } else { ACTION_TIMEOUT } {
                 let _ = child.kill();
                 let _ = child.wait();
                 break (None, true);
@@ -747,13 +914,18 @@ fn run_design(design: &str, out: &Path, sample: u64) -> Vec<Value> {
             .map(|f| std::io::BufReader::new(f).lines().map_while(Result::ok).filter_map(|l| serde_json::from_str(&l).ok()).collect())
             .unwrap_or_default();
         let done = lines.iter().any(|l| l.get("done").is_some());
-        let last_start = lines.iter().rev().take_while(|l| l.get("start").is_some() || l.get("design").is_none()).find_map(|l| l["start"].as_u64());
+        let last = lines.iter().rev().take_while(|l| l.get("start").is_some() || l.get("design").is_none()).find(|l| l.get("start").is_some());
+        let last_start = last.and_then(|l| l["start"].as_u64());
+        let in_edit = last.is_some_and(|l| l["edit"] == true);
         results = lines.iter().filter(|l| l.get("design").is_some()).cloned().collect();
         if done {
             break;
         }
         // It stopped inside action `last_start`: record it and go on after it.
         let Some(i) = last_start else {
+            if slice.is_some_and(|(j, _)| j > 0) {
+                break;
+            }
             extra.push(
                 json!({"design": design, "entity": "design", "action": "load", "ok": false, "kind": if timed_out { "timeout" } else { "crash" },
                               "message": format!("the design did not load ({status:?})")}),
@@ -762,7 +934,7 @@ fn run_design(design: &str, out: &Path, sample: u64) -> Vec<Value> {
         };
         // Which action was it? The child enumerates them; ask it by running from there with a
         // marker: simplest is to record the index and let the next run name it.
-        extra.push(json!({"design": design, "index": i, "kind": if timed_out { "timeout" } else { "crash" },
+        extra.push(json!({"design": design, "index": i, "edit": in_edit, "kind": if timed_out { "timeout" } else { "crash" },
                           "message": if timed_out { format!("no result after {} s", ACTION_TIMEOUT.as_secs()) } else { format!("the process ended: {status:?}") }}));
         from = i as usize + 1;
     }
@@ -771,7 +943,10 @@ fn run_design(design: &str, out: &Path, sample: u64) -> Vec<Value> {
         let names = action_names(design);
         for e in &mut extra {
             if let Some(i) = e.get("index").and_then(Value::as_u64) {
-                let (entity, action) = names.get(i as usize).cloned().unwrap_or_else(|| (format!("action{i}"), "unknown".into()));
+                let (entity, mut action) = names.get(i as usize).cloned().unwrap_or_else(|| (format!("action{i}"), "unknown".into()));
+                if e["edit"] == true {
+                    action += "+edit";
+                }
                 *e = json!({"design": design, "entity": entity, "action": action, "ok": false, "kind": e["kind"], "message": e["message"]});
             }
         }
@@ -818,9 +993,12 @@ fn write_baseline(results: &[Value]) {
             m.entry(design).or_default().entry(entity).or_default().extend(actions.as_str().unwrap_or("").split_whitespace().map(str::to_string));
         }
     }
+    // A timeout of an action that passed keeps it passing (see [`ratchet`]).
+    let base = read_baseline();
     for o in results {
         let (design, entity, action) = (o["design"].as_str().unwrap_or(""), o["entity"].as_str().unwrap_or(""), o["action"].as_str().unwrap_or(""));
-        let mark = if o["ok"].as_bool() == Some(true) { "" } else { "!" };
+        let kept = o["kind"] == "timeout" && base.get(&key(design, entity, action)) == Some(&true);
+        let mark = if o["ok"].as_bool() == Some(true) || kept { "" } else { "!" };
         m.entry(design).or_default().entry(entity).or_default().push(format!("{mark}{action}"));
     }
     // One entity per line, sorted: small diffs when a few actions change.
@@ -849,10 +1027,18 @@ fn ratchet(results: &[Value], full: bool) {
     // baseline, over the same names this run tried, and in this run.
     let mut fam: BTreeMap<String, (usize, usize, Vec<String>, Vec<String>)> = BTreeMap::new();
     let mut fresh = 0usize;
+    // An action that passed in the baseline and now runs past ACTION_TIMEOUT is listed but not
+    // judged: on a busy runner the slowest actions (40-80 s on oracle 41's tube) land either side
+    // of the limit from one night to the next. An error or a crash is judged as usual.
+    let mut slow = Vec::new();
     for o in results {
         let (design, entity, action) = (o["design"].as_str().unwrap_or(""), o["entity"].as_str().unwrap_or(""), o["action"].as_str().unwrap_or(""));
         let k = key(design, entity, action);
         let ok = o["ok"].as_bool() == Some(true);
+        if o["kind"] == "timeout" && base.get(&k) == Some(&true) {
+            slow.push(k);
+            continue;
+        }
         let f = fam.entry(key(design, &family(entity), action)).or_default();
         match base.get(&k) {
             Some(was) => {
@@ -889,6 +1075,14 @@ fn ratchet(results: &[Value], full: bool) {
         eprintln!("baseline written: {}", baseline_path().display());
         return;
     }
+    if !slow.is_empty() {
+        eprintln!(
+            "{} actions that pass in the baseline ran past the {} s limit this time (not judged):\n{}",
+            slow.len(),
+            ACTION_TIMEOUT.as_secs(),
+            slow.join("\n")
+        );
+    }
     if !fixed.is_empty() || fresh > 0 {
         eprintln!(
             "{} actions pass now that failed in the baseline, and {fresh} are not in it: record them with `cargo xtask action-matrix --bless`:\n{}",
@@ -907,49 +1101,154 @@ fn ratchet(results: &[Value], full: bool) {
 /// Pull requests: a fixed sample of the matrix (one action in [`PR_SAMPLE`]) against the ratchet.
 #[test]
 fn action_matrix_sample() {
-    let results = run_matrix(PR_SAMPLE, 0, 1);
+    let results = run_matrix(PR_SAMPLE);
     assert!(results.len() > 300, "only {} actions ran", results.len());
     ratchet(&results, false);
 }
 
-/// The whole matrix against the ratchet, in four parts that the nightly CI job runs side by side
-/// (`--run-ignored only`).
-fn full_part(part: usize) {
-    let results = run_matrix(1, part, 4);
+/// One shard of the whole matrix against the ratchet: `ACTION_MATRIX_SHARD=k/n` (the nightly
+/// "Action matrix" CI jobs run the n shards side by side, `--run-ignored only`). Shards are cut by
+/// what each design costs (tests/action_matrix/costs.json), see [`plan`].
+/// `ACTION_MATRIX_SHARD_LIST=1` only prints the plan.
+#[test]
+#[ignore = "heavy: the nightly Action matrix CI jobs run it, one shard each"]
+fn action_matrix_shard() {
+    let Some((k, n)) = std::env::var("ACTION_MATRIX_SHARD").ok().and_then(|v| parse_part(&v)) else { panic!("set ACTION_MATRIX_SHARD=k/n") };
+    let shards = plan(&design_names(), &read_costs(), n);
+    for (i, sh) in shards.iter().enumerate() {
+        let total: f64 = sh.iter().map(|u| u.cost).sum();
+        eprintln!("shard {}/{n}: {} pieces, about {:.0} s of work{}", i + 1, sh.len(), total, if i == k { " (this one)" } else { "" });
+    }
+    eprintln!("this shard: {}", shards[k].iter().map(Unit::name).collect::<Vec<_>>().join(", "));
+    if std::env::var_os("ACTION_MATRIX_SHARD_LIST").is_some() {
+        return;
+    }
+    let results = run_units(1, &shards[k]);
     ratchet(&results, false);
 }
 
+/// Determinism: a sample of the matrix (one family in [`DETERMINISM_SAMPLE`], the heaviest
+/// designs left out) run twice must give the same outcome for every action. Lists each action
+/// whose outcome changed between the runs.
 #[test]
-#[ignore = "heavy: the nightly Action matrix CI job runs it"]
-fn action_matrix_full_1() {
-    full_part(0);
-}
-
-#[test]
-#[ignore = "heavy: the nightly Action matrix CI job runs it"]
-fn action_matrix_full_2() {
-    full_part(1);
-}
-
-#[test]
-#[ignore = "heavy: the nightly Action matrix CI job runs it"]
-fn action_matrix_full_3() {
-    full_part(2);
-}
-
-#[test]
-#[ignore = "heavy: the nightly Action matrix CI job runs it"]
-fn action_matrix_full_4() {
-    full_part(3);
+#[ignore = "heavy: the nightly Action matrix determinism CI job runs it"]
+fn action_matrix_determinism() {
+    let outcomes = |v: Vec<Value>| -> BTreeMap<String, String> {
+        v.into_iter()
+            .map(|o| {
+                let k = key(o["design"].as_str().unwrap_or(""), o["entity"].as_str().unwrap_or(""), o["action"].as_str().unwrap_or(""));
+                let r = if o["ok"].as_bool() == Some(true) {
+                    "pass".to_string()
+                } else {
+                    format!("{}: {}", o["kind"].as_str().unwrap_or(""), o["message"].as_str().unwrap_or(""))
+                };
+                (k, r)
+            })
+            .collect()
+    };
+    let costs = read_costs();
+    let queue: Vec<Unit> = design_names()
+        .into_iter()
+        .filter(|n| costs.get(n).copied().unwrap_or(UNKNOWN_COST).secs <= DETERMINISM_MAX_SECS)
+        .map(|design| Unit { design, slice: None, cost: 0.0 })
+        .collect();
+    let a = outcomes(run_units(DETERMINISM_SAMPLE, &queue));
+    let b = outcomes(run_units(DETERMINISM_SAMPLE, &queue));
+    let keys: BTreeSet<&String> = a.keys().chain(b.keys()).collect();
+    let mut changed = Vec::new();
+    // Pieces that share a name can swap numbers between runs (#569): compare passes per family
+    // too, and report a family whose pass count differs.
+    let mut fam: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    for k in &keys {
+        let (x, y) = (a.get(*k).map_or("missing", String::as_str), b.get(*k).map_or("missing", String::as_str));
+        let mut parts = k.splitn(3, " :: ");
+        let (d, e, act) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+        let f = fam.entry(key(d, &family(e), act)).or_default();
+        f.0 += usize::from(x == "pass");
+        f.1 += usize::from(y == "pass");
+        if x != y {
+            changed.push(format!("{k}\n    first:  {x}\n    second: {y}"));
+        }
+    }
+    let families: Vec<String> = fam.into_iter().filter(|(_, (x, y))| x != y).map(|(k, (x, y))| format!("{k}: {x} then {y} pass")).collect();
+    eprintln!(
+        "action matrix determinism: {} actions, {} changed between two runs, {} families pass a different number of times",
+        keys.len(),
+        changed.len(),
+        families.len()
+    );
+    for c in &changed {
+        eprintln!("  {c}");
+    }
+    assert!(
+        families.is_empty(),
+        "{} families of actions pass a different number of times in two runs of the same build:\n{}",
+        families.len(),
+        families.join("\n")
+    );
 }
 
 /// The whole matrix at once (`cargo xtask action-matrix`): `ACTION_MATRIX_BLESS=1` rewrites the
 /// baseline; `ACTION_MATRIX_RESULTS=file.json` keeps every outcome with its message.
+/// `ACTION_MATRIX_MERGE=DIR` runs nothing and takes the outcomes from the `results-*.json` files
+/// in DIR instead (the nightly shards' artifacts), and the timings from its `timings-*.jsonl`
+/// files, which `ACTION_MATRIX_BLESS` then also writes to tests/action_matrix/costs.json.
 #[test]
-#[ignore = "cargo xtask action-matrix runs it (CI runs it as the four action_matrix_full parts)"]
+#[ignore = "cargo xtask action-matrix runs it (CI runs it as the action_matrix_shard jobs)"]
 fn action_matrix_all() {
-    let results = run_matrix(1, 0, 1);
+    let Some(dir) = std::env::var_os("ACTION_MATRIX_MERGE").map(PathBuf::from) else {
+        let results = run_matrix(1);
+        ratchet(&results, true);
+        return;
+    };
+    let mut results: Vec<Value> = Vec::new();
+    let mut timings: Vec<Value> = Vec::new();
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).collect();
+    files.sort();
+    for f in files {
+        let name = f.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let text = std::fs::read_to_string(&f).unwrap_or_default();
+        if name.starts_with("results-") && name.ends_with(".json") {
+            results.extend(serde_json::from_str::<Vec<Value>>(&text).unwrap_or_else(|e| panic!("{name}: {e}")));
+        } else if name.starts_with("timings-") {
+            timings.extend(text.lines().filter_map(|l| serde_json::from_str(l).ok()));
+        }
+    }
+    let ran: BTreeSet<&str> = results.iter().filter_map(|o| o["design"].as_str()).collect();
+    let missing: Vec<String> = design_names().into_iter().filter(|d| !ran.contains(d.as_str())).collect();
+    assert!(missing.is_empty(), "no results for {}", missing.join(", "));
+    results.sort_by_key(|o| key(o["design"].as_str().unwrap_or(""), o["entity"].as_str().unwrap_or(""), o["action"].as_str().unwrap_or("")));
+    if std::env::var_os("ACTION_MATRIX_BLESS").is_some() && !timings.is_empty() {
+        write_costs(&timings);
+    }
     ratchet(&results, true);
+}
+
+/// tests/action_matrix/costs.json from the shards' timings: per design, its whole time (a sliced
+/// design's slices added up, less the loads all but one of them repeat) and its load.
+fn write_costs(timings: &[Value]) {
+    let mut m: BTreeMap<String, (f64, f64, usize)> = BTreeMap::new();
+    for t in timings {
+        let e = m.entry(t["design"].as_str().unwrap_or("").to_string()).or_default();
+        e.0 += t["secs"].as_f64().unwrap_or(0.0);
+        e.1 = e.1.max(t["load"].as_f64().unwrap_or(0.0));
+        e.2 += 1;
+    }
+    // Designs these timings don't cover keep their old costs.
+    for (d, c) in read_costs() {
+        m.entry(d).or_insert((c.secs, c.load, 1));
+    }
+    let mut s = String::from(
+        "{\n \"about\": \"What each action matrix design costs on a CI runner, in seconds (secs: the whole design, load: before its first action), for cutting the nightly shards (apps/solidcraft-cli/tests/action_matrix.rs, plan). Written with the baseline by cargo xtask action-matrix --bless --from DIR.\",\n \"designs\": {\n",
+    );
+    let n = m.len();
+    for (i, (d, (secs, load, pieces))) in m.into_iter().enumerate() {
+        let secs = (secs - load * pieces.saturating_sub(1) as f64).max(load);
+        s += &format!("  {}: {{\"secs\": {:.1}, \"load\": {:.1}}}{}\n", json!(d), secs, load, if i + 1 < n { "," } else { "" });
+    }
+    s += " }\n}\n";
+    std::fs::write(costs_path(), s).unwrap();
+    eprintln!("costs written: {}", costs_path().display());
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -980,7 +1279,6 @@ fn rectangle(plane: Value, p0: [f64; 2], p1: [f64; 2]) -> [Value; 3] {
 }
 
 #[test]
-#[ignore = "fails until #556 is fixed"]
 fn a_fillet_or_chamfer_on_one_edge_ending_at_a_cylinder() {
     for (cmd, size) in [("solid.fillet", "radius"), ("solid.chamfer", "distance")] {
         reproduces(
@@ -994,8 +1292,107 @@ fn a_fillet_or_chamfer_on_one_edge_ending_at_a_cylinder() {
     }
 }
 
+// #1255: a round on a knuckle's cap circle (oracle/63's hinge), 0.73 wide on a ring of radius
+// 4. The run past each end of the circle followed the end tangent so far that its sections
+// wrapped round the ring and the blend was refused; it is shortened now while it still
+// crosses the end face. Before #1101 a 0.13 mm station on the leaf's top edge kept the
+// matrix's radius at 0.013, which never got that far.
 #[test]
-#[ignore = "fails until #557 is fixed"]
+fn a_round_on_a_knuckle_cap_circle() {
+    for (cmd, size, removed) in [("solid.fillet", "radius", (2.4, 2.8)), ("solid.chamfer", "distance", (5.6, 6.3))] {
+        let mut s = load(&root().join("tests/oracle/63-hinge-knuckle/recipe.json")).unwrap();
+        let volume = |s: &Session| s.model.state().bodies.iter().map(|b| b.body.tessellate(0.001).unwrap().measure().volume).sum::<f64>();
+        let before = volume(&s);
+        s.execute(cmd, &json!({"edges": [[40.0, 29.837_722, 6.449_490]], size: 0.728})).unwrap_or_else(|e| panic!("{cmd}: {e}"));
+        check(&s, 0, &BTreeMap::new()).unwrap_or_else(|(kind, e)| panic!("{cmd}: {kind}: {e}"));
+        let st = s.model.state();
+        let body = &st.bodies.first().unwrap().body;
+        assert!(body.validity().is_empty(), "{cmd}: {:?}", body.validity());
+        let gone = before - volume(&s);
+        assert!(gone > removed.0 && gone < removed.1, "{cmd} took {gone} mm³");
+    }
+}
+
+// #1255: a hole 0.133 mm across on the 0.5 mm ledge a loft cut leaves in a pocket floor of a
+// 900 mm slab. The Boolean needed a retry, and its guard meshed the drill as coarsely as the
+// slab's size allows (0.4 mm, three times the drill's width): the mesh had no inside, the drill
+// measured −30272 mm³ and the right cut was refused. Volumes are measured finer than each
+// body's smallest radius now.
+#[test]
+fn a_hair_thin_hole_on_a_ledge_beside_a_loft_cut() {
+    let mut s = load(&root().join("examples/regressions/loft_cut_beside_round_hole.json")).unwrap();
+    let volume = |s: &Session| s.model.state().bodies.iter().map(|b| b.body.tessellate_with(0.005, true).unwrap().measure().volume).sum::<f64>();
+    let before = volume(&s);
+    s.execute("solid.hole", &json!({"diameter": 0.133, "position": [357.22, -150.993_333, 730.0]})).unwrap();
+    check(&s, 0, &BTreeMap::new()).unwrap_or_else(|(kind, e)| panic!("{kind}: {e}"));
+    // The drill goes through the 4 mm ledge and on through the slab below: 690 to 730.
+    let gone = before - volume(&s);
+    let expected = std::f64::consts::PI * 0.0665 * 0.0665 * 40.0;
+    assert!((gone - expected).abs() < 0.2, "the hole took {gone} mm³, not {expected}");
+}
+
+// #1255: a 0.8 mm hole through the side wall of the plastic part's rest. Meshed at the
+// tolerance the 200 mm drill sets, the part with its rounds, bosses and draft measured 6.8 mm³
+// more after the cut than before; ten times finer it is 1.44 mm³ less, the drill's volume
+// through the 2.9 mm wall. A volume out of bounds is measured again finer before it refuses.
+#[test]
+fn a_small_hole_through_the_wall_of_a_plastic_rest() {
+    let mut s = load(&root().join("apps/solidcraft-cli/tests/corpus/modern-plastic.solidcraft")).unwrap();
+    let volume = |s: &Session| s.model.state().bodies.iter().map(|b| b.body.tessellate_with(0.002, true).unwrap().measure().volume).sum::<f64>();
+    let before = volume(&s);
+    s.execute("solid.hole", &json!({"diameter": 0.8, "position": [63.069_841_5, 28.333_333, 4.0]})).unwrap();
+    check(&s, 0, &BTreeMap::new()).unwrap_or_else(|(kind, e)| panic!("{kind}: {e}"));
+    let gone = before - volume(&s);
+    assert!(gone > 1.2 && gone < 1.7, "the hole took {gone} mm³");
+}
+
+// #1255: a hole square to a flange bent at 45°. The drill's cap, evaluated at that angle, lay
+// 2.9e-11 mm off the plane it was made on against a bound of 2.2e-11, so the sheet didn't take
+// the hole as a cut-out of its flat pattern and the cut was refused. The sheet keeps the hole
+// and still unfolds and folds back.
+#[test]
+fn a_hole_square_to_a_45_degree_flange() {
+    let mut s = load(&root().join("tests/oracle/70-sm-flange-45/recipe.json")).unwrap();
+    let volume = |s: &Session| s.model.state().bodies.iter().map(|b| b.body.tessellate_with(0.002, true).unwrap().measure().volume).sum::<f64>();
+    let before = volume(&s);
+    s.execute("solid.hole", &json!({"diameter": 3.448, "position": [66.666_667, -4.511_845, 4.511_845]})).unwrap();
+    check(&s, 0, &BTreeMap::new()).unwrap_or_else(|(kind, e)| panic!("{kind}: {e}"));
+    // Through the 2.5 mm flange.
+    let gone = before - volume(&s);
+    let expected = std::f64::consts::PI * 1.724 * 1.724 * 2.5;
+    assert!((gone - expected).abs() < 0.1, "the hole took {gone} mm³, not {expected}");
+    let sheets: Vec<String> = s.model.state().sheets.iter().map(|sh| sh.body.clone()).collect();
+    assert!(!sheets.is_empty());
+    for body in sheets {
+        for id in ["sheet.unfold", "sheet.refold"] {
+            s.execute(id, &json!({"body": body})).unwrap_or_else(|e| panic!("{id}: {e}"));
+        }
+    }
+}
+
+// #1255: an axis through a corner round of the sensor enclosure's lid, then a parameter that
+// widens the lid. The round is found again by name, but its point nearest the old pick is the
+// end of its arc, on the edge it shares with the flat side, and picking again by that point
+// took the side: "the face is not a cylinder". The named face is used as found now.
+#[test]
+fn an_axis_through_a_corner_round_that_a_parameter_moves() {
+    let mut s = load(&root().join("examples/acceptance/sensor_enclosure.json")).unwrap();
+    s.execute("construct.axis.through_cylinder", &json!({"face": {"face": [36.242_617, 29.977_740, 27.0]}})).unwrap();
+    let start = s.doc.features.len();
+    s.execute("parameters.change", &json!({"name": "board_w", "expression": "(60 mm) * 1.1"})).unwrap();
+    check(&s, start, &BTreeMap::new()).unwrap_or_else(|(kind, e)| panic!("{kind}: {e}"));
+    let st = s.model.state();
+    let axis = st.construct.iter().find_map(|c| match &c.geom {
+        solidcraft_engine::doc::construct::ConstructGeom::Axis { origin, dir } => Some((*origin, *dir)),
+        _ => None,
+    });
+    let (origin, dir) = axis.expect("the axis");
+    // The round's axis moved with the lid's corner, from x = 36 to 39.
+    let off = origin - Vec3::new(39.0, 26.0, 0.0);
+    assert!((off - dir * off.dot(dir)).len() < 1e-6, "the axis passes {origin:?} along {dir:?}");
+}
+
+#[test]
 fn a_sketch_on_a_patterned_boss_top() {
     let mut c: Vec<Value> = rectangle(json!("XY"), [0., 0.], [60., 20.]).into();
     c.extend([
@@ -1015,7 +1412,7 @@ fn a_sketch_on_a_patterned_boss_top() {
 fn construction_geometry_and_holes_on_a_moved_component() {
     let moved = || {
         vec![
-            json!({"command": "component.create", "params": {"name": "Arm"}}),
+            json!({"command": "component.create", "params": {"name": "Arm", "grounded": false}}),
             json!({"command": "solid.box", "params": {"corner": [20, 0, 0], "length": 10, "width": 4, "height": 4, "body_name": "ArmBody"}}),
             json!({"command": "component.activate", "params": {"component": 0}}),
             json!({"command": "occurrence.move", "params": {"occurrence": "Arm:1", "translate": [0, 50, 0]}}),
@@ -1036,7 +1433,6 @@ fn construction_geometry_and_holes_on_a_moved_component() {
 }
 
 #[test]
-#[ignore = "fails until #559 is fixed"]
 fn a_through_hole_into_a_shelled_box_rim() {
     reproduces(
         None,
@@ -1048,8 +1444,19 @@ fn a_through_hole_into_a_shelled_box_rim() {
     );
 }
 
+/// #559: a 6 mm hole drilled at an angle through a 920 mm prism, its through-all tool nearly
+/// 1.9 m long beside a thin bar it misses. The bar's cut came out empty: the tool filled too
+/// little of its own box for the sampled shortcut, and the boolean's tolerances (from the
+/// tool's length) were wider than the hole.
 #[test]
-#[ignore = "fails until #560 is fixed"]
+fn an_oblique_through_hole_beside_a_thin_bar() {
+    reproduces(
+        Some("examples/regressions/oblique_cut_of_cylinder.json"),
+        json!([{"command": "solid.hole", "params": {"diameter": 6.0, "position": [296.66666666666663, -458.66666666666663, 848.7633333333333]}}]),
+    );
+}
+
+#[test]
 fn a_hole_through_a_sheet_metal_base() {
     let mut c: Vec<Value> = rectangle(json!("XY"), [0., 0.], [60., 40.]).into();
     c.extend([
@@ -1059,8 +1466,30 @@ fn a_hole_through_a_sheet_metal_base() {
     reproduces(None, Value::Array(c));
 }
 
+/// `face.hole` on a rim of the sheet metal corpus (#560): drilled along the panel, the hole is a
+/// bore of that panel, and the part still unfolds and folds back.
 #[test]
-#[ignore = "fails until #561 is fixed"]
+fn a_hole_drilled_into_a_sheet_metal_rim() {
+    // What the matrix sends: the face's point, the hole square into it.
+    for (design, at, diameter) in [
+        // The base's end rim of the L bracket, through to the other end.
+        ("typical/sheet-metal-bracket", [60.0, 7.777777777777779, 0.8333333333333333], 0.667),
+        // The end rim of a tray's wall, beside the corner.
+        ("oracle/69-sm-tray", [99.58333333333333, 4.267766952966369, 15.0], 0.333),
+    ] {
+        let Some((_, path)) = designs().into_iter().find(|(n, _)| n == design) else { panic!("no design {design}") };
+        let mut s = load(&path).unwrap();
+        let before = errors(&s);
+        let start = s.doc.features.len();
+        s.execute("solid.hole", &json!({"position": at, "diameter": diameter})).unwrap_or_else(|e| panic!("{design}: {e}"));
+        check(&s, start, &before).unwrap_or_else(|(kind, e)| panic!("{design}: {kind}: {e}"));
+        for id in ["sheet.unfold", "sheet.refold"] {
+            s.execute(id, &json!({})).unwrap_or_else(|e| panic!("{design} {id}: {e}"));
+        }
+    }
+}
+
+#[test]
 fn sketches_on_loft_and_sweep_faces() {
     let mut loft: Vec<Value> = rectangle(json!("XY"), [-20., -20.], [20., 20.]).into();
     loft.extend([
@@ -1090,7 +1519,6 @@ fn sketches_on_loft_and_sweep_faces() {
 }
 
 #[test]
-#[ignore = "fails until #562 is fixed"]
 fn press_pull_on_the_pi_case_floor() {
     reproduces(
         Some("tests/action_matrix/designs/pi-case.solidcraft"),
@@ -1099,7 +1527,6 @@ fn press_pull_on_the_pi_case_floor() {
 }
 
 #[test]
-#[ignore = "fails until #563 is fixed"]
 fn sketches_after_a_draft_and_on_a_tapered_extrude() {
     reproduces(
         None,
@@ -1120,7 +1547,6 @@ fn sketches_after_a_draft_and_on_a_tapered_extrude() {
 }
 
 #[test]
-#[ignore = "fails until #564 is fixed"]
 fn a_sketch_on_the_rim_a_shell_leaves() {
     let mut c: Vec<Value> = rectangle(json!("XY"), [-35., -25.], [35., 25.]).into();
     c.extend([
@@ -1133,7 +1559,6 @@ fn a_sketch_on_the_rim_a_shell_leaves() {
 }
 
 #[test]
-#[ignore = "fails until #565 is fixed"]
 fn sketches_after_split_body_and_intersect() {
     reproduces(
         None,
@@ -1176,8 +1601,36 @@ fn a_shell_of_a_swept_bar() {
     );
 }
 
+/// The construction a drill-tip script ends with.
+struct TipConstruction(solidcraft_engine::doc::construct::ConstructGeom);
+
+impl TipConstruction {
+    fn axis(&self) -> (Vec3, Vec3) {
+        match &self.0 {
+            solidcraft_engine::doc::construct::ConstructGeom::Axis { origin, dir } => (*origin, *dir),
+            other => panic!("expected an axis, got {other:?}"),
+        }
+    }
+    fn plane(&self) -> solidcraft_engine::geom::Plane {
+        match &self.0 {
+            solidcraft_engine::doc::construct::ConstructGeom::Plane(p) => *p,
+            other => panic!("expected a plane, got {other:?}"),
+        }
+    }
+}
+
+/// Replays the script and returns its last construction.
+fn drill_tip_construction(commands: Vec<Value>) -> TipConstruction {
+    let mut s = Session::default();
+    for c in &commands {
+        let id = c["command"].as_str().unwrap();
+        s.execute(id, &c["params"]).unwrap_or_else(|e| panic!("{id}: {e}"));
+    }
+    let state = s.model.state();
+    TipConstruction(state.construct.last().map(|c| c.geom.clone()).expect("a construction"))
+}
+
 #[test]
-#[ignore = "fails until #567 is fixed"]
 fn an_axis_through_a_drill_tip() {
     let mut c: Vec<Value> = rectangle(json!("XY"), [0., 0.], [60., 40.]).into();
     c.extend([
@@ -1185,7 +1638,30 @@ fn an_axis_through_a_drill_tip() {
         json!({"command": "solid.hole", "params": {"position": [50, 20, 15], "direction": [0, 0, -1], "diameter": 6, "depth": 10, "tip_angle": 118}}),
         json!({"command": "construct.axis.through_cylinder", "params": {"face": {"face": [48.44468907075447, 21.22448979591836, 4.399139380972439]}}}),
     ]);
-    reproduces(None, Value::Array(c));
+    reproduces(None, Value::Array(c.clone()));
+    // Not just "no error": the axis runs along the drill, through the hole's centre line.
+    let (origin, dir) = drill_tip_construction(c).axis();
+    assert!((origin.x - 50.).abs() < 1e-6 && (origin.y - 20.).abs() < 1e-6, "{origin:?}");
+    assert!(dir.z.abs() > 1. - 1e-9, "{dir:?}");
+}
+
+#[test]
+fn a_tangent_plane_on_a_drill_tip() {
+    let mut c: Vec<Value> = rectangle(json!("XY"), [0., 0.], [60., 40.]).into();
+    c.extend([
+        json!({"command": "solid.extrude", "params": {"distance": 15}}),
+        json!({"command": "solid.hole", "params": {"position": [50, 20, 15], "direction": [0, 0, -1], "diameter": 6, "depth": 10, "tip_angle": 118}}),
+        json!({"command": "construct.plane.tangent", "params": {"face": {"face": [48.44468907075447, 21.22448979591836, 4.399139380972439]}}}),
+    ]);
+    reproduces(None, Value::Array(c.clone()));
+    // The plane touches the cone at the picked point and leans like the cone does: a 118 degree tip
+    // puts the wall 59 degrees off the drill axis, so its normal is 31 degrees off it.
+    let plane = drill_tip_construction(c).plane();
+    let picked = Vec3::new(48.44468907075447, 21.22448979591836, 4.399139380972439);
+    let distance = (picked - plane.origin).dot(plane.normal());
+    // The pick lies on the tessellated cone and the plane is the exact one, so allow for chord error.
+    assert!(distance.abs() < 0.05, "the pick is {distance} mm off the plane");
+    assert!((plane.normal().z.abs() - 31f64.to_radians().cos()).abs() < 1e-2, "{:?}", plane.normal());
 }
 
 #[test]
@@ -1201,4 +1677,31 @@ fn a_plane_on_a_patterned_counterbore_after_a_thickness_change() {
         json!({"command": "parameters.change", "params": {"name": "thick", "expression": "11 mm"}}),
     ]);
     reproduces(None, Value::Array(c));
+}
+
+/// #707: the same design builds the same body every time, in one process too. Faces were put in
+/// the hash order of their addresses in a few places (truck's connected components, the planar
+/// boolean's rebuild, healing's merges), so a later boolean on the ribbed lid passed or failed
+/// from run to run.
+#[test]
+fn the_ribbed_lid_builds_the_same_body_every_time() {
+    let path = root().join("examples/regressions/lid_ribs_flush_with_window.json");
+    let fingerprint = || {
+        let s = load(&path).unwrap();
+        let st = s.model.state();
+        st.bodies
+            .iter()
+            .map(|b| {
+                let mesh = b.body.tessellate(0.1).unwrap();
+                let bits = mesh.positions.iter().fold(0u64, |acc, p| {
+                    acc.rotate_left(7).wrapping_add(p.x.to_bits() ^ p.y.to_bits().rotate_left(21) ^ p.z.to_bits().rotate_left(42))
+                });
+                format!("{} {} {bits:x}", b.name, b.body.face_count())
+            })
+            .collect::<Vec<_>>()
+    };
+    let first = fingerprint();
+    for _ in 0..5 {
+        assert_eq!(fingerprint(), first);
+    }
 }

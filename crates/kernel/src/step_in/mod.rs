@@ -11,9 +11,10 @@ mod brep;
 pub(crate) mod geom;
 pub(crate) mod p21;
 mod parallel;
-mod split;
+pub(crate) mod split;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use mt::EuclideanSpace as _;
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,9 @@ const MAX_BODIES: usize = 10_000;
 /// Most product occurrences and mapped representations visited (a shared sub-assembly used
 /// twice at every level would otherwise grow exponentially).
 const MAX_VISITS: usize = 100_000;
+/// Most representation entries walked while deciding which items are converted exactly once. A
+/// larger file keeps every conversion instead of paying for the walk.
+const MAX_CLOSURE_WORK: usize = 1 << 16;
 
 /// A body read from a STEP file.
 #[derive(Clone, Debug)]
@@ -44,8 +48,12 @@ pub struct ImportedBody {
     pub body: Body,
     /// Surface colour (linear-ish RGB 0..1) from the file's presentation styles.
     pub color: Option<[f32; 3]>,
-    /// Product names from the root to the part that holds the body.
+    /// Product names from the root to the part that holds the body (the last is the part's own
+    /// name; empty for a solid outside any product).
     pub path: Vec<String>,
+    /// The name of the assembly occurrence (instance) that holds the body: the usage's name in
+    /// the file, else its id. `None` for a body of a root product or outside any product.
+    pub instance: Option<String>,
     /// The body is a closed solid (false: faces were left out, or the file had a surface model).
     pub closed: bool,
     /// Faces read from the file. The body can have more: a face that wraps all the way around
@@ -78,6 +86,21 @@ pub struct StepImport {
     pub schema: String,
     /// FILE_NAME originating system.
     pub system: String,
+}
+
+/// A solid the walk found, converted later.
+struct Planned {
+    item: u64,
+    units: Units,
+    batch: usize,
+}
+
+/// Where the solids of a batch go: their placement and names.
+struct Batch {
+    m: mt::Matrix4,
+    path: Vec<String>,
+    product: String,
+    instance: Option<String>,
 }
 
 /// Reading context: the file and the units of the representation being read.
@@ -216,8 +239,12 @@ fn rigid_inverse(m: &mt::Matrix4) -> mt::Matrix4 {
     m.invert().unwrap_or_else(mt::Matrix4::identity)
 }
 
-struct Reader<'a> {
-    ex: &'a Exchange,
+/// One converted representation item: the truck solid, whether its shells are closed, the
+/// faces the file had, and the file face of each kernel face (band faces split into two).
+type SolidEntry = (mt::Solid, bool, usize, Vec<u64>);
+
+struct Reader {
+    ex: Arc<Exchange>,
     units: HashMap<u64, Units>,
     warnings: BTreeMap<String, usize>,
     /// Representation → its items and context.
@@ -234,8 +261,15 @@ struct Reader<'a> {
     colors: HashMap<u64, [f32; 3]>,
     /// Opacity of styled items with a transparency (1 = opaque).
     opacity: HashMap<u64, f32>,
-    /// Converted items (brep id → solid, or the error).
-    solids: HashMap<u64, std::result::Result<(mt::Solid, bool, usize, Vec<u64>), String>>,
+    /// Converted items (brep id → entry, or the error). Held behind `Arc` so the conversion is
+    /// handed on without copying wherever the file cannot ask for the item a second time.
+    solids: HashMap<u64, std::result::Result<Arc<SolidEntry>, String>>,
+    /// Items the file converts exactly once (see `index`): keeping their solids would hold a
+    /// second copy of the whole import for nothing.
+    once: HashSet<u64>,
+    /// An item placed more than once: its first instance's display, shared by the later ones
+    /// (with the placement that first instance had), so the part is meshed once.
+    shown: HashMap<u64, (Arc<crate::body::SharedDisplay>, mt::Matrix4)>,
     used_items: HashSet<u64>,
     /// Items already instanced for the product being read.
     node_items: HashSet<u64>,
@@ -244,11 +278,26 @@ struct Reader<'a> {
     /// Items whose meshing was checked.
     unmeshed_checked: HashSet<u64>,
     bodies: Vec<ImportedBody>,
+    /// Solids the walk found, in file order, to be converted into bodies afterwards (so the
+    /// conversion, the long part, can be done a piece at a time: [`StepReading`]).
+    plan: Vec<Planned>,
+    /// What the solids of one batch (consecutive solids of one representation) share.
+    batches: Vec<Batch>,
+    /// Planned solids converted so far.
+    converted: usize,
+    /// The body each converted planned solid became (`None`: it failed).
+    made: Vec<Option<usize>>,
     workers: usize,
+    /// Whoever waits for the import (progress, Cancel).
+    watch: Option<Arc<dyn crate::watch::Watch>>,
+    /// Solid items in the file, the measure of the conversion's progress.
+    solid_items: usize,
+    /// The watch cancelled the import: the walk stops and the import fails.
+    cancelled: bool,
 }
 
-impl<'a> Reader<'a> {
-    fn new(ex: &'a Exchange, workers: usize) -> Self {
+impl Reader {
+    fn new(ex: Arc<Exchange>, workers: usize) -> Self {
         Self {
             ex,
             units: HashMap::new(),
@@ -261,13 +310,37 @@ impl<'a> Reader<'a> {
             colors: HashMap::new(),
             opacity: HashMap::new(),
             solids: HashMap::new(),
+            once: HashSet::new(),
+            shown: HashMap::new(),
             used_items: HashSet::new(),
             node_items: HashSet::new(),
             visits: 0,
             unmeshed_checked: HashSet::new(),
             bodies: Vec::new(),
+            plan: Vec::new(),
+            batches: Vec::new(),
+            converted: 0,
+            made: Vec::new(),
             workers,
+            watch: None,
+            solid_items: 0,
+            cancelled: false,
         }
+    }
+
+    /// Report progress; true once the import is cancelled (the walk then unwinds).
+    fn stop(&mut self) -> bool {
+        if self.cancelled {
+            return true;
+        }
+        if let Some(w) = &self.watch {
+            if w.cancelled() {
+                self.cancelled = true;
+                return true;
+            }
+            w.progress("converting", self.converted.min(self.solid_items), self.solid_items);
+        }
+        false
     }
 
     fn warn(&mut self, msg: impl Into<String>) {
@@ -275,16 +348,28 @@ impl<'a> Reader<'a> {
     }
 
     fn index(&mut self) {
-        let ex = self.ex;
+        let ex = self.ex.clone();
+        let ex = &*ex;
         let mut pds: HashMap<u64, u64> = HashMap::new(); // PDS → definition
         let mut sdrs: Vec<(u64, u64)> = Vec::new(); // (PDS, rep)
         let mut cdsrs: Vec<(u64, u64)> = Vec::new(); // (relationship, PDS)
         let mut nauos: Vec<(u64, u64, u64)> = Vec::new(); // (id, parent, child)
+        // Item → how many shape representations list it, and the one representation the item
+        // comes from, to tell items the file converts exactly once (see `once`).
+        let mut item_reps: HashMap<u64, usize> = HashMap::new();
+        let mut item_rep: HashMap<u64, u64> = HashMap::new();
+        // True as soon as the file can walk a product definition twice: every occurrence of a
+        // component makes the reader convert the component's items again.
+        let mut repeated = false;
         let mut ids: Vec<&u64> = ex.entities.keys().collect();
         ids.sort();
         for &id in ids {
             let Some(e) = ex.get(id) else { continue };
             if let Some(r) = representation(e) {
+                for item in &r.0 {
+                    *item_reps.entry(*item).or_default() += 1;
+                    item_rep.entry(*item).or_insert(id);
+                }
                 self.reps.insert(id, r);
             }
             let p = e.params();
@@ -301,11 +386,13 @@ impl<'a> Reader<'a> {
                     }
                 }
                 "CONTEXT_DEPENDENT_SHAPE_REPRESENTATION" => {
+                    repeated = true;
                     if let (Some(r), Some(d)) = (rf(0), rf(1)) {
                         cdsrs.push((r, d));
                     }
                 }
                 "NEXT_ASSEMBLY_USAGE_OCCURRENCE" | "ASSEMBLY_COMPONENT_USAGE" | "SPECIFIED_HIGHER_USAGE_OCCURRENCE" => {
+                    repeated = true;
                     if let (Some(a), Some(b)) = (rf(3), rf(4)) {
                         nauos.push((id, a, b));
                     }
@@ -342,6 +429,52 @@ impl<'a> Reader<'a> {
         for (id, parent, child) in nauos {
             if parent != child {
                 self.children.entry(parent).or_default().push(id);
+            }
+        }
+        // A file without component occurrences walks each product definition once, so a
+        // representation reached from exactly one of them is walked once too. The walk follows
+        // MAPPED_ITEM targets as the reader does: a mapping in one product can walk a
+        // representation a second time from another product's node. An item that only one such
+        // walk lists is converted exactly once and needs no cache entry; anything else keeps
+        // every conversion, as before. A file too large to walk cheaply keeps every conversion
+        // as well.
+        if !repeated {
+            let mut entries: HashMap<u64, usize> = HashMap::new();
+            let mut seen: HashSet<u64> = HashSet::new();
+            let mut queue: Vec<u64> = Vec::new();
+            let mut work = 0usize;
+            let mut within_budget = true;
+            'pds: for reps in self.pd_reps.values() {
+                seen.clear();
+                queue.clear();
+                queue.extend(self.rep_closure(reps));
+                while let Some(r) = queue.pop() {
+                    if !seen.insert(r) {
+                        continue;
+                    }
+                    work += 1;
+                    if work > MAX_CLOSURE_WORK {
+                        within_budget = false;
+                        break 'pds;
+                    }
+                    *entries.entry(r).or_default() += 1;
+                    for item in self.reps.get(&r).map(|x| &x.0).into_iter().flatten() {
+                        queue.extend(self.mapped_targets(*item));
+                    }
+                }
+            }
+            if within_budget {
+                let mut once = HashSet::new();
+                for (&item, &n) in &item_reps {
+                    if n != 1 {
+                        continue;
+                    }
+                    let Some(rep) = item_rep.get(&item) else { continue };
+                    if entries.get(rep).copied() == Some(1) {
+                        once.insert(item);
+                    }
+                }
+                self.once = once;
             }
         }
     }
@@ -418,11 +551,11 @@ impl<'a> Reader<'a> {
 
     fn units_of(&mut self, rep: u64) -> Units {
         let ctx = self.reps.get(&rep).and_then(|r| r.1);
-        context_units(self.ex, ctx, &mut self.units)
+        context_units(&self.ex, ctx, &mut self.units)
     }
 
     fn placement_matrix(&mut self, item: u64, u: Units) -> R<mt::Matrix4> {
-        let cx = Ctx { ex: self.ex, len: u.len, ang: u.ang, tol: u.tol };
+        let cx = Ctx { ex: &self.ex, len: u.len, ang: u.ang, tol: u.tol };
         let e = geom::entity(&cx, item)?;
         if e.name() == "CARTESIAN_TRANSFORMATION_OPERATOR_3D" {
             let p = e.params();
@@ -448,11 +581,24 @@ impl<'a> Reader<'a> {
         seen
     }
 
-    fn item_solid(&mut self, item: u64, u: Units) -> Option<(mt::Solid, bool, usize, Vec<u64>)> {
+    /// Representations a MAPPED_ITEM walks (empty for any other item).
+    fn mapped_targets(&self, item: u64) -> Vec<u64> {
+        let Some(e) = self.ex.get(item).filter(|e| e.name() == "MAPPED_ITEM") else { return Vec::new() };
+        let mapped = e
+            .params()
+            .get(1)
+            .and_then(Param::as_ref_id)
+            .and_then(|map| self.ex.get(map))
+            .and_then(|map| map.params().get(1))
+            .and_then(Param::as_ref_id);
+        mapped.map(|rep| self.rep_closure(&[rep])).unwrap_or_default()
+    }
+
+    fn item_solid(&mut self, item: u64, u: Units) -> Option<Arc<SolidEntry>> {
         if let Some(r) = self.solids.get(&item) {
             return r.as_ref().ok().cloned();
         }
-        let cx = Ctx { ex: self.ex, len: u.len, ang: u.ang, tol: u.tol };
+        let cx = Ctx { ex: &self.ex, len: u.len, ang: u.ang, tol: u.tol };
         let r = match guard("step brep", || brep::read_item(&cx, item).map_err(KernelError::Failed)) {
             Ok(out) => {
                 let label = self.label(item);
@@ -471,8 +617,13 @@ impl<'a> Reader<'a> {
                 Err(msg)
             }
         };
-        self.solids.insert(item, r.clone());
-        r.ok()
+        let entry = r.map(Arc::new);
+        // An item the file converts exactly once hands its only reference on and keeps no copy;
+        // anything it may ask for again keeps its conversion.
+        if !self.once.contains(&item) {
+            self.solids.insert(item, entry.clone());
+        }
+        entry.ok()
     }
 
     fn label(&self, item: u64) -> String {
@@ -481,7 +632,7 @@ impl<'a> Reader<'a> {
     }
 
     /// Bodies of a representation's items (following mapped items), placed by `m`.
-    fn rep_bodies(&mut self, rep: u64, m: &mt::Matrix4, path: &[String], product: &str, out: &mut Vec<usize>, depth: usize) {
+    fn rep_bodies(&mut self, rep: u64, m: &mt::Matrix4, path: &[String], product: &str, instance: Option<&str>, out: &mut Vec<usize>, depth: usize) {
         if depth > MAX_ASSEMBLY_DEPTH {
             self.warn("mapped items nested too deeply");
             return;
@@ -494,13 +645,16 @@ impl<'a> Reader<'a> {
         let u = self.units_of(rep);
         let mut items = self.reps.get(&rep).map(|r| r.0.clone()).unwrap_or_default().into_iter().peekable();
         while let Some(item) = items.next() {
+            if self.stop() {
+                return;
+            }
             let Some(e) = self.ex.get(item) else { continue };
             match e.name() {
                 "MANIFOLD_SOLID_BREP" | "BREP_WITH_VOIDS" | "FACETED_BREP" | "SHELL_BASED_SURFACE_MODEL" => {
                     // Only batch consecutive solids: mapped items must retain traversal and
                     // first-use unit/cache order. Bound temporary geometry independently of file size.
                     let mut batch = vec![item];
-                    let capacity = MAX_BODIES.saturating_sub(self.bodies.len()).min(64);
+                    let capacity = MAX_BODIES.saturating_sub(self.bodies_so_far()).min(64);
                     while batch.len() < capacity
                         && items.peek().is_some_and(|id| {
                             self.ex.get(*id).is_some_and(|e| {
@@ -512,66 +666,20 @@ impl<'a> Reader<'a> {
                             batch.push(next);
                         }
                     }
-                    let mut sources = Vec::new();
-                    let mut solids = Vec::new();
+                    let id = self.batches.len();
+                    self.batches.push(Batch { m: *m, path: path.to_vec(), product: product.to_string(), instance: instance.map(str::to_string) });
                     for item in batch {
                         self.used_items.insert(item);
                         if !self.node_items.insert(item) {
                             continue;
                         }
-                        if self.bodies.len() >= MAX_BODIES {
+                        if self.bodies_so_far() >= MAX_BODIES {
                             self.warn(format!("more than {MAX_BODIES} bodies: the rest are left out"));
                             return;
                         }
-                        let Some((solid, closed, file_faces, face_origin)) = self.item_solid(item, u) else { continue };
-                        sources.push((item, closed, file_faces, face_origin));
-                        solids.push(parallel::Job { solid, check_mesh: !self.unmeshed_checked.contains(&item) });
-                    }
-                    let prepared = parallel::bodies(&solids, m, self.workers);
-                    for ((item, closed, file_faces, face_origin), body) in sources.into_iter().zip(prepared) {
-                        let Some(e) = self.ex.get(item) else { continue };
-                        match body {
-                            Ok((body, missing)) => {
-                                let own = e.params().first().and_then(Param::as_str).unwrap_or("").trim().to_string();
-                                let name = if own.is_empty() { product.to_string() } else { own };
-                                // Faces the mesher gives up on (or that the budget cut short) are reported.
-                                if self.unmeshed_checked.insert(item) && missing > 0 {
-                                    self.warn(format!("solid '{name}': {missing} face(s) could not be meshed and are not shown"));
-                                }
-                                out.push(self.bodies.len());
-                                let color = self.colors.get(&item).copied();
-                                // See-through bodies and faces with colours of their own.
-                                let faces = face_origin
-                                    .iter()
-                                    .enumerate()
-                                    .filter_map(|(i, f)| {
-                                        let c = self.colors.get(f)?;
-                                        Some(crate::FacePaint { face: i, color: *c, opacity: self.opacity.get(f).copied().unwrap_or(1.0) })
-                                    })
-                                    .collect();
-                                let paint = crate::Paint { opacity: self.opacity.get(&item).copied().unwrap_or(1.0), faces };
-                                let body = body.with_color(color).with_paint(Some(paint));
-                                let identities = face_origin
-                                    .iter()
-                                    .map(|face| Some(crate::FaceSource::Imported { item, face: *face, payload_sha256: None, producer: None }))
-                                    .collect();
-                                let body = body.with_face_sources(Some(std::sync::Arc::new(identities)));
-                                self.bodies.push(ImportedBody {
-                                    name,
-                                    body,
-                                    color,
-                                    path: path.to_vec(),
-                                    closed,
-                                    file_faces,
-                                    source_item: item,
-                                    face_origin,
-                                });
-                            }
-                            Err(err) => {
-                                let label = self.label(item);
-                                self.warn(format!("{label}: not imported: {err}"));
-                            }
-                        }
+                        // The node lists the planned solid; it becomes a body index once converted.
+                        out.push(self.plan.len());
+                        self.plan.push(Planned { item, units: u, batch: id });
                     }
                 }
                 "MAPPED_ITEM" => {
@@ -588,7 +696,7 @@ impl<'a> Reader<'a> {
                         (Ok(t), Ok(o)) => {
                             let mm = mat_mul(m, &mat_mul(&t, &rigid_inverse(&o)));
                             for r in self.rep_closure(&[mapped]) {
-                                self.rep_bodies(r, &mm, path, product, out, depth + 1);
+                                self.rep_bodies(r, &mm, path, product, instance, out, depth + 1);
                             }
                         }
                         (Err(e), _) | (_, Err(e)) => self.warn(format!("mapped item #{item}: {e}")),
@@ -597,6 +705,128 @@ impl<'a> Reader<'a> {
                 _ => {}
             }
         }
+    }
+
+    /// Bodies made, and planned ones still to convert (the most a failure can leave out).
+    fn bodies_so_far(&self) -> usize {
+        self.bodies.len() + self.plan.len() - self.converted
+    }
+
+    /// Convert the next batch of planned solids into bodies; false once every one is done.
+    /// `single`: one solid at a time (the caller wants short steps and has no worker threads).
+    fn convert_next(&mut self, single: bool) -> bool {
+        if self.converted >= self.plan.len() {
+            return false;
+        }
+        if self.stop() {
+            return false;
+        }
+        let first = self.converted;
+        let id = self.plan[first].batch;
+        let mut last = first + 1;
+        while !single && last < self.plan.len() && self.plan[last].batch == id {
+            last += 1;
+        }
+        self.converted = last;
+        let ex = self.ex.clone();
+        let mut sources = Vec::new();
+        let mut solids = Vec::new();
+        for i in first..last {
+            let (item, u) = (self.plan[i].item, self.plan[i].units);
+            self.made.push(None);
+            let Some(entry) = self.item_solid(item, u) else { continue };
+            // A one-use item is the only reference to its entry, so the solid moves
+            // out; an item whose conversion is cached for a later instance needs its
+            // own copy.
+            let (solid, closed, file_faces, face_origin) = match Arc::try_unwrap(entry) {
+                Ok(entry) => entry,
+                Err(shared) => (*shared).clone(),
+            };
+            sources.push((i, item, closed, file_faces, face_origin));
+            solids.push(parallel::Job { solid, check_mesh: !self.unmeshed_checked.contains(&item) });
+        }
+        let Some(batch) = self.batches.get(id) else { return true };
+        let (m, path, product, instance) = (batch.m, batch.path.clone(), batch.product.clone(), batch.instance.clone());
+        let prepared = parallel::bodies(&solids, &m, self.workers);
+        for ((i, item, closed, file_faces, face_origin), body) in sources.into_iter().zip(prepared) {
+            let Some(e) = ex.get(item) else { continue };
+            match body {
+                Ok((body, missing)) => {
+                    let own = e.params().first().and_then(Param::as_str).unwrap_or("").trim().to_string();
+                    let name = if own.is_empty() { product.clone() } else { own };
+                    // Faces the mesher gives up on (or that the budget cut short) are reported.
+                    if self.unmeshed_checked.insert(item) && missing > 0 {
+                        self.warn(format!("solid '{name}': {missing} face(s) could not be meshed and are not shown"));
+                    }
+                    if let Some(slot) = self.made.get_mut(i) {
+                        *slot = Some(self.bodies.len());
+                    }
+                    let color = self.colors.get(&item).copied();
+                    // See-through bodies and faces with colours of their own.
+                    let faces = face_origin
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, f)| {
+                            let c = self.colors.get(f)?;
+                            Some(crate::FacePaint { face: i, color: *c, opacity: self.opacity.get(f).copied().unwrap_or(1.0) })
+                        })
+                        .collect();
+                    let paint = crate::Paint { opacity: self.opacity.get(&item).copied().unwrap_or(1.0), faces };
+                    let body = body.with_color(color).with_paint(Some(paint));
+                    let identities = face_origin
+                        .iter()
+                        .map(|face| Some(crate::FaceSource::Imported { item, face: *face, payload_sha256: None, producer: None }))
+                        .collect();
+                    let body = body.with_face_sources(Some(std::sync::Arc::new(identities)));
+                    // A later instance of an item shows its first instance's mesh, placed.
+                    let body = match self.shown.get(&item) {
+                        Some((shared, first)) => body.with_display_of(shared.clone(), to_array(&mat_mul(&m, &rigid_inverse(first)))),
+                        None => {
+                            if !self.once.contains(&item) {
+                                self.shown.insert(item, (Arc::new(crate::body::SharedDisplay::new(body.clone())), m));
+                            }
+                            body
+                        }
+                    };
+                    self.bodies.push(ImportedBody {
+                        name,
+                        body,
+                        color,
+                        path: path.clone(),
+                        instance: instance.clone(),
+                        closed,
+                        file_faces,
+                        source_item: item,
+                        face_origin,
+                    });
+                }
+                Err(err) => {
+                    let label = self.label(item);
+                    self.warn(format!("{label}: not imported: {err}"));
+                }
+            }
+        }
+        true
+    }
+
+    /// Planned-solid indices (a node's `bodies` after the walk) as body indices, leaving out
+    /// the ones that failed.
+    fn remap(&self, planned: &[usize]) -> Vec<usize> {
+        planned.iter().filter_map(|i| self.made.get(*i).copied().flatten()).collect()
+    }
+
+    fn remap_node(&self, n: &mut StepNode) {
+        n.bodies = self.remap(&n.bodies);
+        for c in &mut n.children {
+            self.remap_node(c);
+        }
+    }
+
+    /// The name of an assembly occurrence: the usage's name, else its id.
+    fn occurrence_name(&self, nauo: u64) -> Option<String> {
+        let p = self.ex.get(nauo)?.params();
+        let name = p.get(1).and_then(Param::as_str).filter(|s| !s.trim().is_empty()).or_else(|| p.first().and_then(Param::as_str))?;
+        Some(name.trim().to_string()).filter(|n| !n.is_empty())
     }
 
     fn product_name(&self, pd: u64) -> String {
@@ -613,8 +843,9 @@ impl<'a> Reader<'a> {
     /// Placement of a child occurrence in its parent.
     fn occurrence_matrix(&mut self, nauo: u64, child_reps: &[u64]) -> mt::Matrix4 {
         let Some(&rel) = self.placements.get(&nauo) else { return mt::Matrix4::from_scale(1.0) };
+        let ex = self.ex.clone();
         let r = (|| -> R<mt::Matrix4> {
-            let e = self.ex.get(rel).ok_or("missing placement")?;
+            let e = ex.get(rel).ok_or("missing placement")?;
             let rr = e.record("REPRESENTATION_RELATIONSHIP").ok_or("placement without representations")?;
             let (r1, r2) =
                 (rr.get(2).and_then(Param::as_ref_id).ok_or("bad placement")?, rr.get(3).and_then(Param::as_ref_id).ok_or("bad placement")?);
@@ -623,7 +854,7 @@ impl<'a> Reader<'a> {
                 .and_then(|x| x.first())
                 .and_then(Param::as_ref_id)
                 .ok_or("placement without transformation")?;
-            let ope = self.ex.get(op).ok_or("missing transformation")?;
+            let ope = ex.get(op).ok_or("missing transformation")?;
             let (u1, u2) = (self.units_of(r1), self.units_of(r2));
             if ope.name() == "ITEM_DEFINED_TRANSFORMATION" {
                 let p = ope.params();
@@ -649,9 +880,21 @@ impl<'a> Reader<'a> {
         }
     }
 
-    fn node(&mut self, pd: u64, local: mt::Matrix4, world: mt::Matrix4, path: &[String], depth: usize, stack: &mut Vec<u64>) -> StepNode {
+    fn node(
+        &mut self,
+        pd: u64,
+        local: mt::Matrix4,
+        world: mt::Matrix4,
+        path: &[String],
+        instance: Option<&str>,
+        depth: usize,
+        stack: &mut Vec<u64>,
+    ) -> StepNode {
         let name = self.product_name(pd);
         let mut node = StepNode { name: name.clone(), transform: to_array(&local), bodies: Vec::new(), children: Vec::new() };
+        if self.stop() {
+            return node;
+        }
         if depth > MAX_ASSEMBLY_DEPTH || stack.contains(&pd) {
             self.warn("assembly nested too deeply or recursive: some components were left out");
             return node;
@@ -669,7 +912,7 @@ impl<'a> Reader<'a> {
         let mut bodies = Vec::new();
         self.node_items.clear();
         for r in &reps {
-            self.rep_bodies(*r, &world, &path, &name, &mut bodies, 0);
+            self.rep_bodies(*r, &world, &path, &name, instance, &mut bodies, 0);
         }
         node.bodies = bodies;
         for nauo in self.children.get(&pd).cloned().unwrap_or_default() {
@@ -678,7 +921,8 @@ impl<'a> Reader<'a> {
             let child_reps = self.rep_closure(&child_own);
             let m = self.occurrence_matrix(nauo, &child_reps);
             let w = mat_mul(&world, &m);
-            let c = self.node(child, m, w, &path, depth + 1, stack);
+            let instance = self.occurrence_name(nauo);
+            let c = self.node(child, m, w, &path, instance.as_deref(), depth + 1, stack);
             node.children.push(c);
         }
         stack.pop();
@@ -689,7 +933,7 @@ impl<'a> Reader<'a> {
 /// Check a STEP file's structure: it parses, no entity id is defined twice, every reference
 /// names a defined entity, nothing but root entities (relationships, definitions,
 /// presentation) is left unreferenced, and ids are dense (`#1`…`#n`). Returns the entity count.
-/// Faces whose boundary runs the wrong way round their normal, as a strict reader (Fusion)
+/// Faces whose boundary runs the wrong way round their normal, as a strict reader
 /// sees them: each face's normal is its surface's own parametric normal (∂S/∂u × ∂S/∂v, ISO
 /// 10303-42), reversed when `same_sense` is false, and the outer loop must run counter-clockwise
 /// seen from that side. Checked on faces whose loop spans a clear direction (patches, not bands
@@ -836,30 +1080,60 @@ pub fn step_validate(text: &str) -> std::result::Result<usize, String> {
     Ok(n)
 }
 
+/// A recent import: held weakly, so it lives only as long as someone uses it (the command that
+/// read the file, until the timeline has evaluated it), and strongly only when it is small.
+struct Recent {
+    key: (u64, usize),
+    import: std::sync::Weak<StepImport>,
+    /// Keeps a small import alive (never read).
+    _small: Option<Arc<StepImport>>,
+}
+
 /// Recent imports, so a file read for a command and then evaluated in the timeline is only
 /// read once.
-static RECENT: std::sync::Mutex<Vec<(u64, usize, std::sync::Arc<StepImport>)>> = std::sync::Mutex::new(Vec::new());
+static RECENT: std::sync::Mutex<Vec<Recent>> = std::sync::Mutex::new(Vec::new());
 
-/// [`step_import`] through a small cache of recent results (keyed by the text).
+/// Files up to this size stay cached after their last user is gone (a few cheap re-reads
+/// saved); a larger import is freed with the design that holds it.
+const KEEP_SMALL_BYTES: usize = 1 << 20;
+
+/// [`step_import`] through a small cache of recent results (keyed by the text). Keep the result
+/// while the same text is still to be read elsewhere (in the timeline): that read reuses it.
 pub fn step_import_shared(text: &str) -> Result<std::sync::Arc<StepImport>> {
+    let key = text_key(text);
+    if let Ok(cache) = RECENT.lock()
+        && let Some(imp) = cache.iter().filter(|r| r.key == key).find_map(|r| r.import.upgrade())
+    {
+        return Ok(imp);
+    }
+    let imp = std::sync::Arc::new(step_import(text)?);
+    remember(key, &imp, text.len() <= KEEP_SMALL_BYTES);
+    Ok(imp)
+}
+
+/// The cache key of a STEP text: its hash and length.
+fn text_key(text: &str) -> (u64, usize) {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     text.hash(&mut h);
-    let key = (h.finish(), text.len());
-    if let Ok(cache) = RECENT.lock()
-        && let Some((_, _, imp)) = cache.iter().find(|(k, n, _)| (*k, *n) == key)
-    {
-        return Ok(imp.clone());
-    }
-    let imp = std::sync::Arc::new(step_import(text)?);
+    (h.finish(), text.len())
+}
+
+/// Keep `imp` in the recent imports (strongly only when `small`).
+fn remember(key: (u64, usize), imp: &Arc<StepImport>, small: bool) {
     if let Ok(mut cache) = RECENT.lock() {
-        cache.retain(|(k, n, _)| (*k, *n) != key);
-        cache.push((key.0, key.1, imp.clone()));
-        if cache.len() > 4 {
+        cache.retain(|r| r.key != key && r.import.strong_count() > 0);
+        cache.push(Recent { key, import: Arc::downgrade(imp), _small: small.then(|| imp.clone()) });
+        while cache.len() > 4 {
             cache.remove(0);
         }
     }
-    Ok(imp)
+}
+
+/// Imports the cache still holds alive, and how many STEP bytes they came from (tests and
+/// diagnostics: a closed design must not leave its import behind).
+pub fn step_cache_alive() -> (usize, usize) {
+    RECENT.lock().map(|c| c.iter().filter(|r| r.import.strong_count() > 0).fold((0, 0), |(n, b), r| (n + 1, b + r.key.1))).unwrap_or((0, 0))
 }
 
 /// Read a STEP file: its solids (as bodies, placed by the assembly structure) and the tree.
@@ -868,57 +1142,133 @@ pub fn step_import(text: &str) -> Result<StepImport> {
 }
 
 fn step_import_with_workers(text: &str, workers: usize) -> Result<StepImport> {
-    let ex = p21::parse(text).map_err(KernelError::Invalid)?;
-    let mut rd = Reader::new(&ex, workers);
-    rd.index();
-    // Roots: product definitions that are nobody's component.
-    let child_pds: HashSet<u64> =
-        rd.children.values().flatten().filter_map(|n| ex.get(*n).and_then(|e| e.params().get(4)).and_then(Param::as_ref_id)).collect();
-    let mut roots: Vec<u64> =
-        ex.entities.iter().filter(|(id, e)| e.name() == "PRODUCT_DEFINITION" && !child_pds.contains(id)).map(|(id, _)| *id).collect();
-    roots.sort();
-    let identity = mt::Matrix4::from_scale(1.0);
-    let mut tree = Vec::new();
-    for pd in roots {
-        let n = rd.node(pd, identity, identity, &[], 0, &mut Vec::new());
-        if !n.bodies.is_empty() || !n.children.is_empty() {
-            tree.push(n);
-        }
-    }
-    // Solids outside any product structure (bare geometry files).
-    let mut loose: Vec<u64> = rd
-        .reps
-        .iter()
-        .flat_map(|(r, (items, _))| items.iter().map(move |i| (*r, *i)))
-        .filter(|(_, i)| !rd.used_items.contains(i))
-        .filter(|(_, i)| {
-            ex.get(*i).is_some_and(|e| matches!(e.name(), "MANIFOLD_SOLID_BREP" | "BREP_WITH_VOIDS" | "FACETED_BREP" | "SHELL_BASED_SURFACE_MODEL"))
-        })
-        .map(|(r, _)| r)
-        .collect();
-    loose.sort();
-    loose.dedup();
-    if !loose.is_empty() {
-        let mut bodies = Vec::new();
-        rd.node_items = rd.used_items.clone();
-        rd.visits = 0;
-        for r in loose {
-            rd.rep_bodies(r, &identity, &[], "Import", &mut bodies, 0);
-        }
-        if !bodies.is_empty() {
-            tree.push(StepNode { name: "Import".into(), transform: to_array(&identity), bodies, children: Vec::new() });
-        }
-    }
-    if let Some(first) = ex.duplicates.first() {
-        rd.warn(format!("{} entity ids are defined twice (first #{first}); the first definitions were used", ex.duplicates.len()));
-    }
-    let warnings: Vec<String> = rd.warnings.iter().map(|(m, n)| if *n > 1 { format!("{m} (×{n})") } else { m.clone() }).collect();
-    if rd.bodies.is_empty() {
-        let why = warnings.first().cloned().unwrap_or_else(|| "the file has no solids".into());
-        return Err(KernelError::Failed(format!("STEP import: no bodies ({why})")));
-    }
-    Ok(StepImport { bodies: rd.bodies, tree, warnings, schema: ex.schemas.join(", "), system: ex.originating_system.clone() })
+    let mut reading = StepReading::with_workers(text, workers)?;
+    while reading.step() {}
+    reading.finish()
 }
 
+/// A STEP file being read a piece at a time, for a caller that can't wait for the whole read
+/// in one go (the web app, which has one thread and must keep drawing): [`StepReading::new`]
+/// parses the file and walks its structure, each [`StepReading::step`] converts the next few
+/// solids into bodies, and [`StepReading::finish_shared`] gives the import, cached as
+/// [`step_import_shared`] would, so a command reading the same text next finds it read.
+pub struct StepReading {
+    rd: Reader,
+    tree: Vec<StepNode>,
+    key: (u64, usize),
+    small: bool,
+    /// One solid per step (no worker threads to share a batch between).
+    single: bool,
+}
+
+impl StepReading {
+    /// Parse `text` and walk it; the solids are converted by [`Self::step`].
+    pub fn new(text: &str) -> Result<StepReading> {
+        Self::with_workers(text, parallel::workers())
+    }
+
+    fn with_workers(text: &str, workers: usize) -> Result<StepReading> {
+        let key = text_key(text);
+        let watch = crate::watch::current();
+        let cancelled = || watch.as_ref().is_some_and(|w| w.cancelled());
+        let ex = match p21::parse(text) {
+            Ok(ex) => Arc::new(ex),
+            Err(_) if cancelled() => return Err(crate::watch::cancelled_error("STEP import")),
+            Err(e) => return Err(KernelError::Invalid(e)),
+        };
+        let mut rd = Reader::new(ex.clone(), workers);
+        rd.solid_items = ex
+            .entities
+            .values()
+            .filter(|e| matches!(e.name(), "MANIFOLD_SOLID_BREP" | "BREP_WITH_VOIDS" | "FACETED_BREP" | "SHELL_BASED_SURFACE_MODEL"))
+            .count();
+        rd.watch = watch.clone();
+        rd.index();
+        // Roots: product definitions that are nobody's component.
+        let child_pds: HashSet<u64> =
+            rd.children.values().flatten().filter_map(|n| ex.get(*n).and_then(|e| e.params().get(4)).and_then(Param::as_ref_id)).collect();
+        let mut roots: Vec<u64> =
+            ex.entities.iter().filter(|(id, e)| e.name() == "PRODUCT_DEFINITION" && !child_pds.contains(id)).map(|(id, _)| *id).collect();
+        roots.sort();
+        let identity = mt::Matrix4::from_scale(1.0);
+        let mut tree = Vec::new();
+        for pd in roots {
+            tree.push(rd.node(pd, identity, identity, &[], None, 0, &mut Vec::new()));
+        }
+        // Solids outside any product structure (bare geometry files).
+        let mut loose: Vec<u64> = rd
+            .reps
+            .iter()
+            .flat_map(|(r, (items, _))| items.iter().map(move |i| (*r, *i)))
+            .filter(|(_, i)| !rd.used_items.contains(i))
+            .filter(|(_, i)| {
+                ex.get(*i)
+                    .is_some_and(|e| matches!(e.name(), "MANIFOLD_SOLID_BREP" | "BREP_WITH_VOIDS" | "FACETED_BREP" | "SHELL_BASED_SURFACE_MODEL"))
+            })
+            .map(|(r, _)| r)
+            .collect();
+        loose.sort();
+        loose.dedup();
+        if !loose.is_empty() {
+            let mut bodies = Vec::new();
+            rd.node_items = rd.used_items.clone();
+            rd.visits = 0;
+            for r in loose {
+                rd.rep_bodies(r, &identity, &[], "Import", None, &mut bodies, 0);
+            }
+            tree.push(StepNode { name: "Import".into(), transform: to_array(&identity), bodies, children: Vec::new() });
+        }
+        let single = workers <= 1;
+        Ok(StepReading { rd, tree, key, small: text.len() <= KEEP_SMALL_BYTES, single })
+    }
+
+    /// Convert the next solid (or batch of solids); false once all are converted (or the
+    /// watch cancelled the import).
+    pub fn step(&mut self) -> bool {
+        self.rd.convert_next(self.single)
+    }
+
+    /// Solids converted, of the solids to convert.
+    pub fn progress(&self) -> (usize, usize) {
+        (self.rd.converted, self.rd.plan.len())
+    }
+
+    /// The import, once [`Self::step`] has converted every solid.
+    pub fn finish(mut self) -> Result<StepImport> {
+        while self.step() {}
+        let rd = &mut self.rd;
+        // Cancelled: what was read so far is dropped here, not cached.
+        if rd.cancelled || rd.watch.as_ref().is_some_and(|w| w.cancelled()) {
+            return Err(crate::watch::cancelled_error("STEP import"));
+        }
+        let mut tree = std::mem::take(&mut self.tree);
+        for n in &mut tree {
+            rd.remap_node(n);
+        }
+        tree.retain(|n| !n.bodies.is_empty() || !n.children.is_empty());
+        let ex = rd.ex.clone();
+        if let Some(first) = ex.duplicates.first() {
+            rd.warn(format!("{} entity ids are defined twice (first #{first}); the first definitions were used", ex.duplicates.len()));
+        }
+        let warnings: Vec<String> = rd.warnings.iter().map(|(m, n)| if *n > 1 { format!("{m} (×{n})") } else { m.clone() }).collect();
+        if rd.bodies.is_empty() {
+            let why = warnings.first().cloned().unwrap_or_else(|| "the file has no solids".into());
+            return Err(KernelError::Failed(format!("STEP import: no bodies ({why})")));
+        }
+        let bodies = std::mem::take(&mut rd.bodies);
+        Ok(StepImport { bodies, tree, warnings, schema: ex.schemas.join(", "), system: ex.originating_system.clone() })
+    }
+
+    /// [`Self::finish`], and the import is cached for the next read of the same text.
+    pub fn finish_shared(self) -> Result<Arc<StepImport>> {
+        let (key, small) = (self.key, self.small);
+        let imp = Arc::new(self.finish()?);
+        remember(key, &imp, small);
+        Ok(imp)
+    }
+}
+
+#[cfg(test)]
+mod conic_tests;
 #[cfg(test)]
 mod tests;
