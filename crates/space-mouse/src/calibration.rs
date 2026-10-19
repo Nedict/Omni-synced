@@ -179,8 +179,8 @@ impl Samples {
 pub struct Recording {
     rest: Samples,
     steps: [Samples; 12],
-    /// The reading the cap settled on after step `n` was let go.
-    settled: [Option<[i16; 6]>; 12],
+    /// The readings the cap settled on after step `n` was let go: all of a steady run.
+    settled: [Samples; 12],
 }
 
 impl Recording {
@@ -196,10 +196,10 @@ impl Recording {
         }
     }
 
-    /// Where the cap settled after step `index` was let go; any other index is ignored.
+    /// One reading of where the cap settled after step `index` was let go; any other index is ignored.
     pub fn settled(&mut self, index: usize, raw: [i16; 6]) {
         if let Some(settled) = self.settled.get_mut(index) {
-            *settled = Some(raw);
+            settled.add(raw);
         }
     }
 
@@ -214,7 +214,7 @@ impl Recording {
             *samples = Samples::default();
         }
         if let Some(settled) = self.settled.get_mut(index) {
-            *settled = None;
+            *settled = Samples::default();
         }
     }
 
@@ -228,8 +228,8 @@ impl Recording {
     ///
     /// A device that doesn't come back to the same place after each release (a drifting stick, or
     /// spacenavd keeping a relative-axis device's last small report, #2778) rests, here, at the
-    /// middle of where it settled, and its dead zone covers the furthest of those plus its rest
-    /// wander, so where it stops doesn't creep.
+    /// middle of everything it read at rest and after each release, and its dead zone covers all of
+    /// it, so where it stops doesn't creep.
     pub fn solve(&self) -> Result<Calibration, Problem> {
         let rest = self.rest.mean().ok_or(Problem::NoRest)?;
         let mut means = [[0.0; 6]; 12];
@@ -270,18 +270,21 @@ impl Recording {
 }
 
 impl Recording {
-    /// Raw axis `r`'s rest and dead zone, given the rest stage's: unchanged while every release
-    /// came back within the wander; otherwise the mean of the rest stage and every settled
-    /// reading, with a dead zone out to the furthest of them and the wander on top, since each was
-    /// one noisy reading.
+    /// Raw axis `r`'s rest and dead zone, given the rest stage's: unchanged while every reading
+    /// after a release stayed within the wander; otherwise the middle of everything read at rest
+    /// and after the releases, with a dead zone reaching every one of those readings.
     fn settled_rest(&self, r: usize, rest: f64, wander: f64) -> (f64, f64) {
-        let settled: Vec<f64> = self.settled.iter().flatten().filter_map(|raw| raw.get(r)).map(|&value| f64::from(value)).collect();
-        if settled.iter().all(|value| (value - rest).abs() <= wander) {
+        let (mut low, mut high) = (rest - wander, rest + wander);
+        for settled in self.settled.iter().filter(|settled| settled.count > 0) {
+            if let (Some(&min), Some(&max)) = (settled.min.get(r), settled.max.get(r)) {
+                (low, high) = (low.min(f64::from(min)), high.max(f64::from(max)));
+            }
+        }
+        if low >= rest - wander && high <= rest + wander {
             return (rest, wander);
         }
-        let middle = ((rest + settled.iter().sum::<f64>()) / (settled.len() + 1) as f64).round();
-        let furthest = settled.iter().chain([&rest]).map(|value| (value - middle).abs()).fold(0.0, f64::max);
-        (middle, furthest + wander)
+        let middle = ((low + high) / 2.0).round();
+        (middle, (high - middle).max(middle - low))
     }
 }
 
@@ -448,7 +451,12 @@ impl Wizard {
                         _ => raw,
                     };
                     if self.seconds >= HOLD_SECONDS {
-                        self.recording.settled(index, point);
+                        // Every reading of the steady run, so the dead zone covers all of them.
+                        if stopped {
+                            self.recording.settled[index] = self.run;
+                        } else {
+                            self.recording.settled(index, point);
+                        }
                         self.enter(if index + 1 < STEPS.len() { Stage::Step(index + 1) } else { Stage::Done });
                         self.settled = Some(point);
                     } else if self.seconds > 0.0 {
@@ -999,7 +1007,7 @@ mod tests {
         hold(&mut wizard, PRO[0], 0.5);
         cycle(&mut wizard, &[[37, 0, 0, 0, 0, 0], [40, 0, 0, 0, 0, 0], [43, 0, 0, 0, 0, 0]], SETTLE_SECONDS + 0.1);
         assert_eq!(wizard.stage(), Stage::Step(1));
-        assert_eq!(wizard.recording.settled[0], Some([40, 0, 0, 0, 0, 0]));
+        assert_eq!(wizard.recording.settled[0].mean().map(|mean| mean[0].round()), Some(40.0));
     }
 
     #[test]
@@ -1023,9 +1031,35 @@ mod tests {
         hold(&mut wizard, PRO[0], 0.5);
         hold(&mut wizard, low, SETTLE_SECONDS + 0.1);
         assert_eq!(wizard.stage(), Stage::Step(1));
-        assert_eq!(wizard.recording.settled[0], Some(low));
+        assert_eq!((wizard.recording.settled[0].min, wizard.recording.settled[0].max), (low, low));
+        // Coming back to its true rest afterwards doesn't undo that: the next step is waiting.
+        hold(&mut wizard, STILL[0], 0.5);
+        assert_eq!((wizard.stage(), wizard.progress()), (Stage::Step(1), 0.0));
         // No frame of where it settled went into the step as held.
         assert_eq!((wizard.recording.steps[0].min[0], wizard.recording.steps[0].max[4]), (PRO[0][0], PRO[0][4]));
+    }
+
+    #[test]
+    fn every_reading_of_a_release_that_was_let_go_falls_in_the_dead_zone() {
+        // Nula's case: X wanders -4..+4 at rest. Half the releases dither over +8..+16, the other
+        // half over -16..-8. Keeping one reading of each, padded by the wander, can miss the edges.
+        let wander = [[-4, 0, 0, 0, 0, 0], [4, 0, 0, 0, 0, 0]];
+        let x = |value: i16| [value, 0, 0, 0, 0, 0];
+        let (above, below) = ([x(16), x(12), x(8)], [x(-8), x(-12), x(-16)]);
+        let mut wizard = Wizard::default();
+        for _ in 0..40 {
+            hold(&mut wizard, wander[0], 0.02);
+            hold(&mut wizard, wander[1], 0.02);
+        }
+        for (index, reading) in PRO.into_iter().enumerate() {
+            assert_eq!(wizard.stage(), Stage::Step(index));
+            hold(&mut wizard, reading, 0.5);
+            cycle(&mut wizard, if index % 2 == 0 { &above } else { &below }, SETTLE_SECONDS + 0.1);
+        }
+        let calibration = wizard.result().unwrap().unwrap();
+        for still in above.iter().chain(&below).chain(&wander) {
+            assert_eq!(calibration.apply(*still), [0; 6], "{still:?} {calibration:?}");
+        }
     }
 
     #[test]
