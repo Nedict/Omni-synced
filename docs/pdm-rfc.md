@@ -4,6 +4,12 @@ Status: proposal; #2869. The accompanying `solidcraft-pdm` app is an experimenta
 loopback vertical slice, not a production vault. Research checked 2026-10-19.
 All behavior below is proposed unless listed under **Implemented slice**.
 
+The first-slice implementation section below records the historical #2870 baseline.
+The bounded follow-up #2996 adds mandatory local owner-token authentication and a
+native file workspace; its current behavior, protocol and limitations are documented
+in [Authenticated local PDM workspace](pdm-local-workspace.md). It adds no CAD GUI
+or remote transport and does not imply production readiness.
+
 ## Problem and scope
 
 Teams need reproducible assemblies, controlled edits and a durable record of what
@@ -166,7 +172,7 @@ and retention with the owner. Garbage collection must honor releases, legal hold
 and backup retention; perform mark/sweep against a consistent generation with a grace
 period. Cloud object versioning is useful but does not replace a tested restore.
 
-## Implemented slice
+## Implemented slice (#2870 historical baseline)
 
 `apps/solidcraft-pdm` is a native app with a library for storage/protocol tests and
 one server/client binary. It depends only on existing workspace serde, serde_json,

@@ -1,4 +1,4 @@
-use solidcraft_pdm::{Error, MAX_FRAME, Request, Response, Store, VersionRef, read_frame, serve_connection};
+use solidcraft_pdm::{AuthToken, AuthenticatedRequest, Error, MAX_FRAME, Request, Response, Store, VersionRef, read_frame, serve_connection};
 use std::{
     fs,
     io::Write,
@@ -111,18 +111,23 @@ fn actual_tcp_upload_download_and_malformed_request() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let server = std::thread::spawn(move || {
+        let token = AuthToken::parse("a1".repeat(32)).unwrap();
         for _ in 0..3 {
             let (stream, _) = listener.accept().unwrap();
-            serve_connection(&mut store, stream).unwrap();
+            serve_connection(&mut store, stream, &token).unwrap();
         }
     });
     let mut upload = TcpStream::connect(address).unwrap();
-    serde_json::to_writer(&mut upload, &Request::CheckIn { document: "toy".into(), parent: None, content: b"toy".to_vec(), dependencies: vec![] })
-        .unwrap();
+    let token = AuthToken::parse("a1".repeat(32)).unwrap();
+    serde_json::to_writer(
+        &mut upload,
+        &AuthenticatedRequest::new(&token, Request::CheckIn { document: "toy".into(), parent: None, content: b"toy".to_vec(), dependencies: vec![] }),
+    )
+    .unwrap();
     upload.write_all(b"\n").unwrap();
     assert!(matches!(serde_json::from_slice::<Response>(&read_frame(upload).unwrap()).unwrap(), Response::CheckedIn { .. }));
     let mut download = TcpStream::connect(address).unwrap();
-    serde_json::to_writer(&mut download, &Request::Download { reference: reference("toy", 1) }).unwrap();
+    serde_json::to_writer(&mut download, &AuthenticatedRequest::new(&token, Request::Download { reference: reference("toy", 1) })).unwrap();
     download.write_all(b"\n").unwrap();
     match serde_json::from_slice::<Response>(&read_frame(download).unwrap()).unwrap() {
         Response::Downloaded { content, .. } => assert_eq!(content, b"toy"),

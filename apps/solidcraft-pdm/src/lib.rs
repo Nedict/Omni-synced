@@ -12,6 +12,61 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub mod client;
+pub mod workspace;
+
+pub const PROTOCOL: &str = "solidcraft-pdm/2";
+pub const TOKEN_ENV: &str = "SOLIDCRAFT_PDM_TOKEN";
+
+/// A local owner credential. Never include its contents in Debug or error messages.
+#[derive(Clone)]
+pub struct AuthToken(String);
+
+impl std::fmt::Debug for AuthToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AuthToken([redacted])")
+    }
+}
+
+impl AuthToken {
+    pub fn parse(value: String) -> Result<Self, Error> {
+        if value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(Error::Invalid("owner token must contain 64 hexadecimal characters"));
+        }
+        Ok(Self(value))
+    }
+
+    pub fn from_env() -> Result<Self, Error> {
+        Self::parse(std::env::var(TOKEN_ENV).map_err(|_| Error::Invalid("SOLIDCRAFT_PDM_TOKEN is required"))?)
+    }
+
+    /// Explicit bootstrap command only: callers must capture stdout privately, never log it.
+    pub fn generate() -> Result<String, Error> {
+        let mut bytes = [0u8; 32];
+        getrandom::fill(&mut bytes).map_err(|_| Error::Invalid("OS randomness unavailable"))?;
+        Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+    }
+
+    fn matches(&self, provided: &str) -> bool {
+        use subtle::ConstantTimeEq;
+        provided.len() == 64 && bool::from(self.0.as_bytes().ct_eq(provided.as_bytes()))
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthenticatedRequest {
+    protocol: String,
+    token: String,
+    request: Request,
+}
+
+impl AuthenticatedRequest {
+    pub fn new(token: &AuthToken, request: Request) -> Self {
+        Self { protocol: PROTOCOL.into(), token: token.0.clone(), request }
+    }
+}
+
 pub const MAX_CONTENT: usize = 1024 * 1024;
 pub const MAX_FRAME: u64 = 8 * 1024 * 1024;
 const MAX_DEPENDENCIES: usize = 256;
@@ -25,6 +80,8 @@ pub fn bind_loopback(port: u16) -> Result<TcpListener, Error> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("server rejected the request: {0}")]
+    Server(String),
     #[error("invalid request: {0}")]
     Invalid(&'static str),
     #[error("version conflict")]
@@ -61,11 +118,13 @@ pub enum Request {
     CheckIn { document: String, parent: Option<u64>, content: Vec<u8>, dependencies: Vec<VersionRef> },
     Download { reference: VersionRef },
     WhereUsed { reference: VersionRef },
+    List { document: Option<String> },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum Response {
+    Listed { versions: Vec<Version> },
     CheckedIn { version: Version },
     Downloaded { version: Version, content: Vec<u8> },
     WhereUsed { versions: Vec<VersionRef> },
@@ -79,15 +138,37 @@ pub struct Store {
     _lock: File,
 }
 
-fn valid_id(id: &str) -> bool {
+pub(crate) fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
 }
 
-fn digest(content: &[u8]) -> String {
+pub(crate) fn digest(content: &[u8]) -> String {
     format!("{:x}", Sha256::digest(content))
 }
 
 impl Store {
+    pub fn list(&self, document: Option<&str>) -> Result<Vec<Version>, Error> {
+        let mut result = Vec::new();
+        if let Some(document) = document {
+            for version in self.versions(document)? {
+                result.push(self.download(&VersionRef { document: document.into(), version })?.0);
+            }
+        } else {
+            for entry in fs::read_dir(&self.root)? {
+                let entry = entry?;
+                if !entry.file_type()?.is_dir() {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if let Some(document) = name.strip_prefix("d-").filter(|id| valid_id(id)) {
+                    result.extend(self.list(Some(document))?);
+                }
+            }
+        }
+        result.sort_by(|a, b| a.reference.cmp(&b.reference));
+        Ok(result)
+    }
+
     fn check_quota(&self, incoming: usize) -> Result<(), Error> {
         let mut count = 0usize;
         let mut bytes = incoming as u64;
@@ -228,6 +309,7 @@ impl Store {
 
     pub fn execute(&mut self, request: Request) -> Response {
         let result = match request {
+            Request::List { document } => self.list(document.as_deref()).map(|versions| Response::Listed { versions }),
             Request::CheckIn { document, parent, content, dependencies } => {
                 self.check_in(document, parent, content, dependencies).map(|version| Response::CheckedIn { version })
             }
@@ -306,12 +388,15 @@ where
     read_frame(BudgetReader { reader, elapsed, budget })
 }
 
-pub fn serve_connection(store: &mut Store, mut stream: TcpStream) -> Result<(), Error> {
+pub fn serve_connection(store: &mut Store, mut stream: TcpStream, token: &AuthToken) -> Result<(), Error> {
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-    let response = match read_socket_frame(&stream, Duration::from_secs(5)).and_then(|bytes| Ok(serde_json::from_slice::<Request>(&bytes)?)) {
-        Ok(request) => store.execute(request),
-        Err(_) => Response::Error { code: "invalid_request".into() },
-    };
+    let response =
+        match read_socket_frame(&stream, Duration::from_secs(5)).and_then(|bytes| Ok(serde_json::from_slice::<AuthenticatedRequest>(&bytes)?)) {
+            Ok(envelope) if !token.matches(&envelope.token) => Response::Error { code: "unauthorized".into() },
+            Ok(envelope) if envelope.protocol != PROTOCOL => Response::Error { code: "unsupported_protocol".into() },
+            Ok(envelope) => store.execute(envelope.request),
+            Err(_) => Response::Error { code: "invalid_request".into() },
+        };
     let bytes = serde_json::to_vec(&response)?;
     write_socket_frame(&mut stream, &bytes, Duration::from_secs(5))?;
     Ok(())

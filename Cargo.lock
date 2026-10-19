@@ -4244,9 +4244,11 @@ dependencies = [
 name = "solidcraft-pdm"
 version = "0.16.2"
 dependencies = [
+ "getrandom 0.3.4",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "subtle",
  "thiserror 2.0.21",
 ]
 
