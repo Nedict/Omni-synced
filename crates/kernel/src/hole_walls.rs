@@ -240,7 +240,7 @@ fn wall(mesh: &Mesh, s: Surf, faces: &[u32]) -> Option<HoleWall> {
         let mid = (best_start as f64 + best as f64 / 2.0) / BINS as f64 * std::f64::consts::TAU;
         u * mid.cos() + v * mid.sin()
     });
-    Some(HoleWall { axis_point: p, axis, radius: r, start: lo, end: hi, sweep, opening })
+    Some(HoleWall { axis_point: p, axis: *axis, radius: r, start: lo, end: hi, sweep, opening })
 }
 
 #[cfg(test)]
