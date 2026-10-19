@@ -827,6 +827,8 @@
   "settings.msaa_unsupported": "Not supported by this graphics device",
   "settings.reset_intro": "These settings don't work on this computer and would keep SolidCraft from starting, so they were changed:",
   "settings.reset_title": "Settings were changed",
+  "settings.reference_geometry_through_bodies": "Show reference geometry through bodies",
+  "settings.reference_geometry_through_bodies_help": "Draw inactive sketch contours and datum planes over shaded bodies",
   "settings.supersampling_note": "Draws the view at a higher resolution and filters it down: smoother edges, lines and grid on screens below 4K. It costs GPU time: about 2.25× the pixels at 1.5× and 4× at 2×.",
   "sketch.degrees_of_freedom": "{count} degrees of freedom",
   "sketch.draw_curves": "Draw as {linetype}",
