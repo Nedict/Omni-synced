@@ -2225,11 +2225,11 @@ fn sew_connected_sections(
 
 #[cfg(test)]
 fn simple_prism_boolean(a: &Body, b: &Body, op: BoolOp) -> Option<Result<Option<Body>>> {
-    simple_prism_indexed(a, b, op, [&LazyIndex::new(a, 0), &LazyIndex::new(b, 1)])
+    simple_prism_indexed(a, b, op, [&LazyIndex::new(a, 0), &LazyIndex::new(b, 1)], 1.)
 }
 
 /// [`prism_boolean`] of single prisms, the operands' indexes given.
-fn simple_prism_indexed(a: &Body, b: &Body, op: BoolOp, [ia, ib]: [&LazyIndex; 2]) -> Option<Result<Option<Body>>> {
+fn simple_prism_indexed(a: &Body, b: &Body, op: BoolOp, [ia, ib]: [&LazyIndex; 2], construction_scale: f64) -> Option<Result<Option<Body>>> {
     let size = a.size().max(b.size());
     let tol = (size * 1e-7).max(1e-9) * 10.0;
     // Candidate directions (each line once, pointing up).
@@ -2240,7 +2240,6 @@ fn simple_prism_indexed(a: &Body, b: &Body, op: BoolOp, [ia, ib]: [&LazyIndex; 2
         let pb = prism_tagged(b, d, &plane, tol, ib)?;
         Some((d, plane, pa, pb))
     })?;
-    let history = lineage::Context::new(op, [a, b], [ia.get(), ib.get()], plane, tol, Some([(pa.lo, pa.hi), (pb.lo, pb.hi)]));
     let (blo, bhi) = heights_of(b, &plane);
     let spans = blo <= pa.lo + tol && bhi >= pa.hi - tol;
     let same = (pb.lo - pa.lo).abs() < tol && (pb.hi - pa.hi).abs() < tol;
@@ -2255,6 +2254,10 @@ fn simple_prism_indexed(a: &Body, b: &Body, op: BoolOp, [ia, ib]: [&LazyIndex; 2
     if !ok {
         return None;
     }
+    // Recognition keeps its tolerance for reading fitted support surfaces and cap levels.
+    // Arrangement and sewing can need finer resolution for distinct, nearly coincident arcs.
+    let tol = (tol * construction_scale).max(1e-9);
+    let history = lineage::Context::new(op, [a, b], [ia.get(), ib.get()], plane, tol, Some([(pa.lo, pa.hi), (pb.lo, pb.hi)]));
     let section = boolean2d_tagged(&pa.section, &pb.section, op, tol)?;
     let regions = &section.regions;
     if regions.is_empty() {
@@ -2457,13 +2460,20 @@ fn stack_tagged(b: &Body, d: Vec3, plane: &Plane, tol: f64, index: &LazyIndex) -
 
 #[cfg(test)]
 fn stack_boolean(a: &Body, b: &Body, op: BoolOp) -> Option<Result<Option<Body>>> {
-    stack_indexed(a, b, op, [&LazyIndex::new(a, 0), &LazyIndex::new(b, 1)], true)
+    stack_indexed(a, b, op, [&LazyIndex::new(a, 0), &LazyIndex::new(b, 1)], true, 1.)
 }
 
 /// [`prism_boolean`] of stepped prisms, the operands' indexes given. A union is taken of
 /// operands that end at a common level when `common_cap` is set, else of those that don't (see
 /// [`prism_union_between_caps`]).
-fn stack_indexed(a: &Body, b: &Body, op: BoolOp, [ia, ib]: [&LazyIndex; 2], common_cap: bool) -> Option<Result<Option<Body>>> {
+fn stack_indexed(
+    a: &Body,
+    b: &Body,
+    op: BoolOp,
+    [ia, ib]: [&LazyIndex; 2],
+    common_cap: bool,
+    construction_scale: f64,
+) -> Option<Result<Option<Body>>> {
     // Common-cap joins and overlapping partial-depth cuts of aligned stepped prisms can
     // retain their exact section boundaries instead of intersecting meshes.
     // Nonaligned bodies retain their existing B-rep path.
@@ -2497,6 +2507,8 @@ fn stack_indexed(a: &Body, b: &Body, op: BoolOp, [ia, ib]: [&LazyIndex; 2], comm
     let mut levels: Vec<f64> = pa.iter().chain(&pb).flat_map(|p| [p.lo, p.hi]).collect();
     levels.sort_by(f64::total_cmp);
     levels.dedup_by(|x, y| (*x - *y).abs() < tol);
+    let recognition_tol = tol;
+    let tol = (tol * construction_scale).max(1e-9);
     let mut slabs = Vec::new();
     let mut work = 0usize;
     let mut output_edges = 0usize;
@@ -2507,7 +2519,7 @@ fn stack_indexed(a: &Body, b: &Body, op: BoolOp, [ia, ib]: [&LazyIndex; 2], comm
     let edges = |regions: &[Region2]| regions.iter().flat_map(|r| std::iter::once(&r.outer).chain(&r.holes)).map(|l| l.segs.len()).sum::<usize>();
     for w in levels.windows(2) {
         let (lo, hi) = (*w.first()?, *w.get(1)?);
-        let (x, y) = (section(&pa, lo, hi, tol), section(&pb, lo, hi, tol));
+        let (x, y) = (section(&pa, lo, hi, recognition_tol), section(&pb, lo, hi, recognition_tol));
         let before = area(&x.regions);
         if op == BoolOp::Cut {
             let count = edges(&x.regions).saturating_add(edges(&y.regions));
@@ -2577,7 +2589,19 @@ pub(crate) fn prism_boolean_free_form(a: &Body, b: &Body, op: BoolOp) -> Option<
 pub(crate) fn prism_boolean(a: &Body, b: &Body, op: BoolOp) -> Option<Result<Option<Body>>> {
     // Each operand's index is built once, and only if it is read as a prism.
     let index = [&LazyIndex::new(a, 0), &LazyIndex::new(b, 1)];
-    crate::guard("prism boolean", || Ok(simple_prism_indexed(a, b, op, index).or_else(|| stack_indexed(a, b, op, index, true)))).ok().flatten()
+    crate::guard("prism boolean", || {
+        let build = |scale| simple_prism_indexed(a, b, op, index, scale).or_else(|| stack_indexed(a, b, op, index, true, scale));
+        let ordinary = build(1.);
+        if op != BoolOp::Union || matches!(ordinary, Some(Ok(_))) {
+            return Ok(ordinary);
+        }
+        // A cap-contact join can leave a real, narrow crescent between offset cylinders.
+        // The ordinary arrangement's chaining tolerance may close that crescent across
+        // another outline. Retry once with finer construction, preserving both operands.
+        Ok(build(1e-3).filter(|r| r.is_ok()).or(ordinary))
+    })
+    .ok()
+    .flatten()
 }
 
 /// [`prism_boolean`] of a union of stepped prisms along one direction that end at different
@@ -2589,12 +2613,93 @@ pub(crate) fn prism_union_between_caps(a: &Body, b: &Body, op: BoolOp) -> Option
         return None;
     }
     let index = [&LazyIndex::new(a, 0), &LazyIndex::new(b, 1)];
-    crate::guard("prism boolean", || Ok(stack_indexed(a, b, op, index, false))).ok().flatten()
+    crate::guard("prism boolean", || {
+        let ordinary = stack_indexed(a, b, op, index, false, 1.);
+        if matches!(ordinary, Some(Ok(_))) {
+            return Ok(ordinary);
+        }
+        Ok(stack_indexed(a, b, op, index, false, 1e-3).filter(|r| r.is_ok()).or(ordinary))
+    })
+    .ok()
+    .flatten()
 }
 
 #[cfg(test)]
 mod planar_tests {
     use super::*;
+
+    #[test]
+    fn cap_touching_open_capsule_lips_with_small_offset() {
+        let line = |a: (f64, f64), b: (f64, f64)| Seg2::Line { a: Vec2::new(a.0, a.1), b: Vec2::new(b.0, b.1) };
+        let arc = |center: (f64, f64), radius, start, sweep| Seg2::Arc { center: Vec2::new(center.0, center.1), radius, start, sweep };
+        let pi = std::f64::consts::PI;
+        let base = Region2 {
+            outer: Loop2 {
+                segs: vec![
+                    line((3., -10.), (3., 10.)),
+                    arc((0., 10.), 3., 0., pi),
+                    line((-3., 10.), (-5., 10.)),
+                    arc((0., 10.), 5., pi, -pi),
+                    line((5., 10.), (5., -10.)),
+                    arc((0., -10.), 5., 0., -pi),
+                    line((-5., -10.), (-3., -10.)),
+                    arc((0., -10.), 3., pi, pi),
+                ],
+            },
+            holes: vec![],
+        };
+        // Each lip stands on the base's cap. A small authored horizontal offset makes
+        // its outer arc cross the base's rather than lie on exactly the same cylinder.
+        let offset = 1e-4;
+        let lip = Region2 {
+            outer: Loop2 {
+                segs: vec![
+                    arc((offset, 10.), 5., 0., pi),
+                    line((offset - 5., 10.), (offset - 4., 10.)),
+                    arc((offset, 10.), 4., pi, -pi),
+                    line((offset + 4., 10.), (offset + 4., 6.)),
+                    line((offset + 4., 6.), (offset + 5., 6.)),
+                    line((offset + 5., 6.), (offset + 5., 10.)),
+                ],
+            },
+            holes: vec![],
+        };
+        let bottom = Region2 {
+            outer: Loop2 {
+                segs: lip
+                    .outer
+                    .segs
+                    .iter()
+                    .map(|s| match *s {
+                        Seg2::Line { a, b } => Seg2::Line { a: -a, b: -b },
+                        Seg2::Arc { center, radius, start, sweep } => Seg2::Arc { center: -center, radius, start: start + pi, sweep },
+                        _ => *s,
+                    })
+                    .collect(),
+            },
+            holes: vec![],
+        };
+        let target = crate::extrude(&Plane::XY, &[base], 0., 2.).unwrap().pop().unwrap();
+        let tools = crate::extrude(&Plane::XY, &[lip, bottom], 2., 20.).unwrap();
+        let tool = crate::join_apart(&tools).unwrap().unwrap();
+        for result in [prism_boolean(&target, &tool, BoolOp::Union), prism_union_between_caps(&target, &tool, BoolOp::Union)] {
+            let result = result.unwrap().unwrap().unwrap();
+            assert_eq!(result.shell_count(), 1);
+            assert!(result.validity().is_empty(), "{:?}", result.validity());
+            let mesh = result.tessellate(1e-6).unwrap();
+            let actual = mesh.measure().volume;
+            let expected = 224. + 194. * pi;
+            // Tessellation has a size-relative tolerance floor; it loses a few
+            // thousandths of a cubic millimetre to the circular chords.
+            assert!((actual - expected).abs() < 0.005, "{actual} vs {expected}");
+            let bounds = mesh.bounds();
+            assert!((bounds.max.x - (5. + offset)).abs() < 1e-8, "{bounds:?}");
+            assert!((bounds.min.x - (-5. - offset)).abs() < 1e-8, "{bounds:?}");
+            assert!(mesh.contains(Vec3::new(5. + offset * 0.75, 8., 10.)), "keep the real overhang");
+            assert!(!mesh.contains(Vec3::new(5. + offset * 0.75, 8., 1.)), "do not grow the base");
+        }
+    }
+
     #[test]
     fn shared_arc_line_endpoint_roundoff_does_not_open_a_union() {
         let a = Region2 { outer: Loop2::polygon(&[Vec2::new(-2., 0.), Vec2::new(2., 0.), Vec2::new(2., 2.), Vec2::new(-2., 2.)]), holes: vec![] };
