@@ -8,6 +8,10 @@ license.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Local developer tracing only; no exporter in normal builds or in the browser.
+telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "solidcraft-kernel/telemetry"]
+
 [dependencies]
 solidcraft-geom = { workspace = true }
 solidcraft-sketch = { workspace = true }
@@ -20,3 +24,8 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 web-time = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { version = "0.33.1", default-features = false, features = ["trace"], optional = true }
+opentelemetry-otlp = { version = "0.33.1", default-features = false, features = ["trace", "http-proto", "http-json", "reqwest-blocking-client"], optional = true }
