@@ -270,6 +270,9 @@ pub struct Prefs {
     pub zoom_reverse: bool,
     /// What an orbit turns around.
     pub orbit_around: OrbitAround,
+    /// Free orbit: orbiting carries on past straight up and down, turning the view upside down
+    /// (off: it stops there, the up axis upright).
+    pub free_orbit: bool,
     /// The cursor preference as releases before the origin option saved it (`true` = the point
     /// under the cursor). [`migrate`] folds it into `orbit_around` when saved preferences are
     /// read, so an existing choice survives the upgrade; this version only writes `false`.
@@ -430,6 +433,7 @@ impl Default for Prefs {
             radial_context_menu: false,
             zoom_reverse: false,
             orbit_around: OrbitAround::default(),
+            free_orbit: false,
             orbit_cursor: false,
             space_mouse_enabled: true,
             space_mouse_speed: 1.0,
@@ -744,6 +748,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.trackpad_pan = d.trackpad_pan;
             p.pan_reverse_x = d.pan_reverse_x;
             p.orbit_around = d.orbit_around;
+            p.free_orbit = d.free_orbit;
             p.orbit_cursor = d.orbit_cursor;
             p.space_mouse_enabled = d.space_mouse_enabled;
             p.space_mouse_speed = d.space_mouse_speed;
@@ -1310,6 +1315,11 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 ui.radio_value(&mut app.preferences.orbit_around, OrbitAround::ViewCentre, crate::i18n::tr_label("View centre"));
                 ui.radio_value(&mut app.preferences.orbit_around, OrbitAround::Cursor, crate::i18n::tr_label("Point under the cursor"));
             });
+            ui.end_row();
+            ui.label(crate::i18n::tr_label("Free orbit"));
+            ui.checkbox(&mut app.preferences.free_orbit, "").on_hover_text(crate::i18n::tr_label(
+                "Orbiting carries on past straight up and down, turning the view upside down; off, the up axis stays upright",
+            ));
             ui.end_row();
             ui.label(crate::i18n::tr_label("Middle double-click"));
             let current = MiddleDoubleClick::of(app);
@@ -2152,6 +2162,17 @@ mod tests {
         let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         other.load_prefs(&app.prefs());
         assert_eq!(other.preferences.nav, OPENSCAD_NAV);
+    }
+
+    #[test]
+    fn free_orbit_defaults_off_and_persists() {
+        assert!(!serde_json::from_value::<Prefs>(json!({})).unwrap().free_orbit);
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        set(&mut app, &json!({"free_orbit": true})).unwrap();
+        assert!(app.preferences.free_orbit);
+        let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        other.load_prefs(&app.prefs());
+        assert!(other.preferences.free_orbit);
     }
 
     #[test]
