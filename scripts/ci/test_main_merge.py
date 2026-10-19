@@ -39,6 +39,18 @@ class Repo:
 LINES = "".join(f"line {i}\n" for i in range(40))
 
 
+class SamePullRequest(unittest.TestCase):
+    def test_listed_pull_request_must_match(self):
+        self.assertTrue(main_merge.same_pull_request({"pull_requests": [{"number": 7}]}, 7, "x/y", "b"))
+        self.assertFalse(main_merge.same_pull_request({"pull_requests": [{"number": 8}]}, 7, "x/y", "b"))
+
+    def test_fork_run_matches_by_head_repository_and_branch(self):
+        run = {"pull_requests": [], "head_repository": {"full_name": "fork/solidcraft"}, "head_branch": "fix"}
+        self.assertTrue(main_merge.same_pull_request(run, 7, "fork/solidcraft", "fix"))
+        self.assertFalse(main_merge.same_pull_request(run, 7, "fork/solidcraft", "other"))
+        self.assertFalse(main_merge.same_pull_request(run, 7, "someone/solidcraft", "fix"))
+
+
 class MergeOfMain(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -96,6 +108,16 @@ class MergeOfMain(unittest.TestCase):
         # Main edits a context line of the pull request's hunk: the change's patch differs.
         base = self.main_commit(**{"a.txt": LINES.replace("line 7\n", "line seven\n")})
         head = self.merge_main()
+        self.assertIsNone(main_merge.merge_of_main(base, head))
+
+    def test_whitespace_change_in_the_change_is_not_carried(self):
+        # A conflict resolution that only respaces the change's own line still changes the change.
+        base = self.main_commit(**{"a.txt": LINES.replace("line 5\n", "line 5 on main\n")})
+        subprocess.run(["git", "merge", "-q", "main"], cwd=self.tmp.name, capture_output=True)
+        self.r.write("a.txt", LINES.replace("line 5\n", "line  five\n"))
+        self.r.git("add", "-A")
+        self.r.git("commit", "-q", "--no-edit")
+        head = self.r.git("rev-parse", "HEAD")
         self.assertIsNone(main_merge.merge_of_main(base, head))
 
     def test_ordinary_commit_is_not_carried(self):

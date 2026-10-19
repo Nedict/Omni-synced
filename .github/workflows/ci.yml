@@ -130,6 +130,9 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PUSH_SHA: ${{ github.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
           REPO: ${{ github.repository }}
           APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'approved-for-ci') }}
           GH_TOKEN: ${{ github.token }}
@@ -236,7 +239,8 @@ jobs:
           # touched the pull request's files, and each restarted the whole run.
           carried=
           if [ "$EVENT_NAME" = pull_request ] && [ "$native" = true ]; then
-            carried=$(python3 -I scripts/ci/main_merge.py --base "$BASE_SHA" --head "$HEAD_SHA" --repo "$REPO" | sed -n 's/^carried=//p')
+            carried=$(python3 -I scripts/ci/main_merge.py --base "$BASE_SHA" --head "$HEAD_SHA" --repo "$REPO" \
+              --pr "$PR_NUMBER" --head-repo "$HEAD_REPO" --head-ref "$HEAD_REF" | sed -n 's/^carried=//p')
             if [ -n "$carried" ]; then
               echo "Only a merge of main into a change that passed in $carried: repository checks only."
               native=false
