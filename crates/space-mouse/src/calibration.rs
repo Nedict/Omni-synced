@@ -469,8 +469,12 @@ impl Wizard {
                 let furthest = self.peaks.iter().copied().fold(0.0, f64::max);
                 let peaks = self.peaks;
                 // Close to rest is the cap settling, never held; it has let go once it's steady there.
+                // Every axis that moved about as far as the furthest has to be back by
+                // `RETURNED_SHARE` of its own peak too, or a lesser axis still held out would be
+                // missed while a larger cross-talk axis relaxes.
                 let settling = (0..6).any(|r| peaks[r] == furthest && offsets[r] <= RETURNED_SHARE * furthest)
-                    && (0..6).any(|r| peaks[r] >= 0.5 * furthest && offsets[r] <= SETTLED_SHARE * peaks[r]);
+                    && (0..6).any(|r| peaks[r] >= 0.5 * furthest && offsets[r] <= SETTLED_SHARE * peaks[r])
+                    && (0..6).all(|r| peaks[r] < 0.5 * furthest || offsets[r] <= RETURNED_SHARE * peaks[r]);
                 let stopped = settling && (self.steady >= SETTLE_SECONDS);
                 if away <= 0.5 || stopped {
                     // Where it settled: every reading of the steady run, or just this one.
@@ -1145,6 +1149,23 @@ mod tests {
         hold(&mut wizard, [100, 0, 0, 0, 0, 0], 0.5);
         hold(&mut wizard, [5, 30, 0, 0, 0, 0], SETTLE_SECONDS + 0.1);
         assert_eq!(wizard.stage(), Stage::Step(1));
+    }
+
+    #[test]
+    fn a_step_stays_held_when_the_lesser_axis_is_held_while_the_larger_one_relaxes() {
+        for held in [[100, 5, 0, 0, 0, 0], [100, 60, 0, 0, 0, 0], [100, 200, 0, 0, 0, 0]] {
+            let mut wizard = Wizard::default();
+            hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+            hold(&mut wizard, [100, 200, 0, 0, 0, 0], 0.5);
+            hold(&mut wizard, held, SETTLE_SECONDS + 0.1);
+            assert_eq!(wizard.stage(), Stage::Step(0), "{held:?}");
+        }
+        // A plain hold of a single axis.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        hold(&mut wizard, [100, 0, 0, 0, 0, 0], 0.5);
+        hold(&mut wizard, [100, 0, 0, 0, 0, 0], SETTLE_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(0));
     }
 
     #[test]
