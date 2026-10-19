@@ -1,5 +1,63 @@
 # Design loading
 
+## Shared intersection edges sampled once per pass (2026-10-19, #3035)
+
+`Shell::edge_iter()` yields face uses, so adjacent faces visit the same edge twice.
+Validation now samples each topology EdgeID at its first occurrence, retaining all
+33 parameters and the existing finite/projection checks. Exact line/arc fitting
+also remembers unsuccessful attempts: a shared intersection that cannot be made
+exact needs one 17-point fit, rather than another fit for its other face use.
+The input solid keeps these identities alive throughout each pass. Traversal order,
+absolute curves, tolerances, substitutions and provenance are unchanged.
+
+One sequential matched pair used a private periodic-spline through-cut workload:
+load the first fifteen cuts, then append cut sixteen in the same CLI session.
+Both binaries used base `1666ca7018b867b90c613e7b39830c89a7d2db82`, the same local
+opt-in diagnostics, Rust 1.99.1 / LLVM 23.1.1, release O3, 16 codegen units and LTO
+disabled. Only the two operation-local identity sets differ. Hardware: Windows 11
+x86_64, Intel i7-12700F, 12 cores / 20 logical processors. Other heavy jobs were
+paused and CPU/build preflights passed; system background work was not excluded.
+
+| Observed wall span | Baseline | With identity deduplication |
+|---|---:|---:|
+| Cold document evaluation, 57 features | 176.901 s | 103.987 s |
+| Appended cut command | 22.225 s | 12.900 s |
+| Intersection core | 0.671 s | 0.645 s |
+| Exact line/arc fitting | 6.066 s | 3.078 s |
+| Edge validation | 11.918 s | 5.721 s |
+
+These nested wall spans overlap and must not be added. Whole-process times,
+including loading and later measurement/reference inspection, were 204.187 s and
+122.380 s. They are not the appended cut's time. The observed cut reduction is
+about 42% in this pair; this is not a statistical benchmark or a general latency
+guarantee. Final integration and additional workload checks are separate from this
+base-head measurement.
+
+A subsequent baseline repeat reached its 240-second process cap during the new
+cut's edge validation, after completing the 57-feature load in 178.289 s. Healing
+took 52.538 s in that incomplete run despite unchanged surface-search counts;
+the cause of that slowdown was not established. The wrapper stopped the batch,
+so neither its candidate nor its planned STEP arm ran. This failed repeat supplies
+no additional speedup estimate and leaves repeatability unconfirmed.
+
+Validation visited 3,354 face-edge uses before and 1,677 distinct edges after.
+Its plane/B-spline intersection evaluations fell from 49,764 to 24,882; each unique
+intersection retained all 33 samples. Exact fitting's cold surface searches fell
+from 26,163 to 13,345. Unchanged first occurrences therefore do less repeated work
+within the same operation, without reusing results from previous operations.
+
+The pair's measurement output matched bit for bit: volume, area, centres, bounds
+and topology (one native body, one shell, 545 kernel faces and 1,677 edges).
+Document output matched except timeline milliseconds and source path, including
+all 144 public parameters and 36 fully constrained sketches. The names and data
+returned for all 545 faces and 1,677 edges also matched bit for bit.
+
+Deterministic regressions count actual validation samples and fitting attempts,
+including a shared curve whose projection fails at an interior sample, failed
+non-arc fits, successful substitutions with opposite orientations and provenance,
+and coincident curves with distinct topology IDs. They use independently
+constructed geometry and impose no wall-clock threshold.
+
 ## Edges made by booleans: each point evaluated once (2026-10-16)
 
 A boolean meshes both operands with truck-meshalgo, which first divides every edge into a

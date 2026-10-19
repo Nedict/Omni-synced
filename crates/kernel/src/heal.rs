@@ -1,7 +1,7 @@
 //! Clean-up after operations: coplanar neighbouring faces become one face, and two straight
 //! edges meeting in line at a vertex nothing else uses become one edge (they are kept as one).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use solidcraft_geom::Vec3;
 use truck_modeling::{self as mt, builder};
@@ -344,9 +344,16 @@ fn exact_curve(e: &mt::Edge, tol: f64) -> Option<mt::Edge> {
     fit_exact(e, tol)
 }
 
+#[cfg(test)]
+std::thread_local! {
+    static FIT_EXACT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// A line or circular arc through the edge's samples, if they all lie on one.
 fn fit_exact(e: &mt::Edge, tol: f64) -> Option<mt::Edge> {
     use mt::{BoundedCurve, ParametricCurve};
+    #[cfg(test)]
+    FIT_EXACT_CALLS.with(|count| count.set(count.get().saturating_add(1)));
     let c = e.curve();
     let (t0, t1) = c.range_tuple();
     let pts: Vec<Vec3> = (0..=16).map(|k| from_p3(c.subs(t0 + (t1 - t0) * k as f64 / 16.0))).collect();
@@ -379,8 +386,10 @@ fn fit_exact(e: &mt::Edge, tol: f64) -> Option<mt::Edge> {
 /// Replace approximate edges that are really lines or arcs with exact ones.
 fn exact_edges(shell: &mt::Shell, tol: f64, trace: &mut Trace) -> Option<mt::Shell> {
     let mut subst: HashMap<mt::EdgeID, mt::Edge> = HashMap::new();
+    // Unsuccessful fits also belong to the shared absolute edge, not each face use.
+    let mut seen = HashSet::new();
     for e in shell.edge_iter() {
-        if !subst.contains_key(&e.id())
+        if seen.insert(e.id())
             && let Some(x) = exact_curve(&e, tol)
         {
             trace.made(&x, [e.id()]);
@@ -726,5 +735,82 @@ mod tests {
         let (t0, t1) = c.range_tuple();
         let mid = c.subs((t0 + t1) / 2.0);
         assert!(((mid.x * mid.x + mid.y * mid.y).sqrt() - 10.0).abs() < 1e-9, "{mid:?}");
+    }
+    fn intersection_fixture(parabola: bool) -> mt::Edge {
+        let p = mt::Point3::new;
+        let plane = mt::Surface::Plane(mt::Plane::new(p(0., 0., 0.), p(1., 0., 0.), p(0., 1., 0.)));
+        let ys = if parabola { [0., 0., 1.] } else { [0., 0., 0.] };
+        // S(u,v)=(u,u*u,2*v-1), or (u,0,2*v-1): intersection with z=0.
+        let controls = (0..3).map(|i| vec![p(i as f64 / 2., ys[i], -1.), p(i as f64 / 2., ys[i], 1.)]).collect();
+        let surface = mt::Surface::BSplineSurface(mt::BSplineSurface::new((mt::KnotVec::bezier_knot(2), mt::KnotVec::bezier_knot(1)), controls));
+        let leader = mt::Leader::BSpline(mt::BSplineCurve::new(mt::KnotVec::bezier_knot(2), (0..3).map(|i| p(i as f64 / 2., ys[i], 0.)).collect()));
+        let curve = mt::Curve::IntersectionCurve(mt::IntersectionCurve::new_unchecked(Box::new(plane), Box::new(surface), leader, 1e-8));
+        mt::Edge::new(&builder::vertex(p(0., 0., 0.)), &builder::vertex(p(1., ys[2], 0.)), curve)
+    }
+
+    // Two faces use the same edge in opposite directions. This is an open topological
+    // shell fixture for private exact_edges, not a claim of closed-solid validity.
+    fn two_faces_sharing(edge: &mt::Edge) -> mt::Shell {
+        let plane = mt::Surface::Plane(mt::Plane::new(mt::Point3::new(0., 0., 0.), mt::Point3::new(1., 0., 0.), mt::Point3::new(0., 1., 0.)));
+        let c = builder::vertex(mt::Point3::new(0., 2., 0.));
+        let d = builder::vertex(mt::Point3::new(2., -1., 0.));
+        let a = edge.absolute_front();
+        let b = edge.absolute_back();
+        let first = mt::Face::try_new(vec![mt::Wire::from(vec![edge.clone(), builder::line(b, &c), builder::line(&c, a)])], plane.clone()).unwrap();
+        let second = mt::Face::try_new(vec![mt::Wire::from(vec![edge.inverse(), builder::line(a, &d), builder::line(&d, b)])], plane).unwrap();
+        vec![first, second].into()
+    }
+
+    fn edge_trace(edge: &mt::Edge) -> Trace {
+        Trace { on: true, input: [(edge.id(), 7)].into_iter().collect(), made: HashMap::new() }
+    }
+
+    #[test]
+    fn shared_nonarc_intersection_is_fitted_once_without_replacement() {
+        use mt::{BoundedCurve, ParametricCurve};
+        let e = intersection_fixture(true);
+        let curve = e.curve();
+        let (lo, hi) = curve.range_tuple();
+        let mid = curve.subs((lo + hi) / 2.);
+        assert!((mid.x - 0.5).abs() < 1e-8 && (mid.y - 0.25).abs() < 1e-8);
+        let shell = two_faces_sharing(&e);
+        assert_eq!(shell.edge_iter().filter(|x| x.id() == e.id()).count(), 2);
+        let mut trace = edge_trace(&e);
+        let before = FIT_EXACT_CALLS.with(std::cell::Cell::get);
+        assert!(exact_edges(&shell, 1e-7, &mut trace).is_none());
+        assert_eq!(FIT_EXACT_CALLS.with(std::cell::Cell::get) - before, 1);
+        assert!(trace.made.is_empty());
+    }
+
+    #[test]
+    fn shared_intersection_line_replacement_keeps_orientation_and_provenance() {
+        let e = intersection_fixture(false);
+        let shell = two_faces_sharing(&e);
+        let mut trace = edge_trace(&e);
+        let before = FIT_EXACT_CALLS.with(std::cell::Cell::get);
+        let out = exact_edges(&shell, 1e-7, &mut trace).unwrap();
+        assert_eq!(FIT_EXACT_CALLS.with(std::cell::Cell::get) - before, 1);
+        let replacements: Vec<_> = out.face_iter().flat_map(|f| f.edge_iter()).filter(|x| trace.made.contains_key(&x.id())).collect();
+        assert_eq!(replacements.len(), 2);
+        assert_eq!(replacements[0].id(), replacements[1].id());
+        assert_ne!(replacements[0].orientation(), replacements[1].orientation());
+        for replacement in replacements {
+            assert!(matches!(replacement.curve(), mt::Curve::Line(_)));
+            assert_eq!(trace.of(&replacement.id()), vec![7]);
+        }
+        assert_eq!(out.face_iter().count(), 2);
+    }
+
+    #[test]
+    fn coincident_distinct_intersection_edges_are_independently_fitted() {
+        let a = intersection_fixture(true);
+        let b = intersection_fixture(true);
+        assert_ne!(a.id(), b.id());
+        let faces: Vec<_> = two_faces_sharing(&a).face_iter().chain(two_faces_sharing(&b).face_iter()).cloned().collect();
+        let shell: mt::Shell = faces.into();
+        let mut trace = Trace { on: false, input: HashMap::new(), made: HashMap::new() };
+        let before = FIT_EXACT_CALLS.with(std::cell::Cell::get);
+        assert!(exact_edges(&shell, 1e-7, &mut trace).is_none());
+        assert_eq!(FIT_EXACT_CALLS.with(std::cell::Cell::get) - before, 2);
     }
 }
