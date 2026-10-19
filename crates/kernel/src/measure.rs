@@ -86,13 +86,20 @@ fn closed_sums(m: &Mesh, o: Vec3) -> (f64, f64, Vec3) {
 /// cone to the point they are taken about (a crack of 0.3 mm² moved a part ring's volume by 7 %
 /// 1000 mm from the origin; about the box's centre, by 0.1 %). When the gap could move the
 /// volume by more than 1e-5 of it within the body's size, and the display plan, which shares
-/// every edge's nodes between its faces, is closed, it is measured instead; otherwise the sums
-/// about the centre stand.
+/// every edge's nodes between its faces, is closed and agrees with the sums to within what the gap
+/// could move, it is measured instead; otherwise the sums about the centre stand.
 fn gap_closed((area, v6, mom, normal): (f64, f64, Vec3, Vec3), size: f64, plan: impl FnOnce() -> Option<Mesh>) -> (f64, f64, Vec3) {
-    if normal.len() * size * 2.0 > 1e-5 * v6.abs()
+    // The most the gap can move 6 × the volume: its area vector times twice the body's size.
+    let reach = normal.len() * size * 2.0;
+    if reach > 1e-5 * v6.abs()
         && let Some(plan) = plan().filter(|m| is_closed(m, (size * 1e-9).max(1e-12)))
     {
-        return closed_sums(&plan, plan.bounds().center());
+        // A plan that differs by more than the gap can account for is meshed less finely than
+        // the sums (its own chord error), not closing the gap: the sums stand.
+        let sums = closed_sums(&plan, plan.bounds().center());
+        if (sums.1 - v6).abs() <= reach {
+            return sums;
+        }
     }
     (area, v6, mom)
 }
@@ -263,5 +270,15 @@ mod tests {
         // No gap: the plan is not asked for.
         let (_, v, _) = gap_closed(sums(&closed, centre), size, || panic!("no gap, no plan"));
         assert!((v / 6.0 - 1000.0).abs() < 1e-6);
+        // A closed plan further off than the gap could move the volume (a cube 1 % smaller:
+        // 29.7 mm³ less, where the facet can account for at most 2.9 mm³) is a coarser mesh, not
+        // the gap closed: the sums about the centre stand.
+        let mut coarse = closed.clone();
+        for p in &mut coarse.positions {
+            *p = centre + (*p - centre) * 0.99;
+        }
+        assert!(is_closed(&coarse, quantum));
+        let (_, v, _) = gap_closed(about_centre, size, || Some(coarse));
+        assert!((v / 6.0 - off).abs() < 1e-6, "{}", v / 6.0);
     }
 }
