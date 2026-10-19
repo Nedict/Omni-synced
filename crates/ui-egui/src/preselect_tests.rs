@@ -1886,6 +1886,37 @@ fn every_construct_tool_opens_a_dialog_instead_of_failing() {
     }
 }
 
+/// #2167: Delete Face asks for its faces instead of failing with "`faces` must be a list of
+/// points or face names". Started with nothing selected it opens a dialog; with a face picked
+/// first it takes that face, and OK takes the fillet off.
+#[test]
+fn delete_face_asks_for_faces_and_takes_the_preselected_one() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("solid.box", json!({"length":40,"width":30,"height":20,"body_name":"B"})).unwrap();
+    h.app.run("solid.fillet", json!({"edges":[[40,15,20]],"radius":5})).unwrap();
+    let volume = |h: &crate::scenario::Harness| h.app.session.world_state().body("B").unwrap().mesh().measure().volume;
+    let filleted = volume(&h);
+
+    h.app.session.selection.clear();
+    h.app.start("face.delete");
+    h.frames(1);
+    let status = h.app.status.as_ref().map(|s| s.0.clone()).unwrap_or_default();
+    assert!(!status.contains("must be a list"), "{status}");
+    assert!(h.app.dialog.as_ref().is_some_and(|d| !d.inputs.is_empty()), "Delete Face opens a dialog that asks for faces");
+    crate::dialogs::cancel(&mut h.app);
+
+    // A point on the fillet's surface, 45 degrees round from its axis (35, y, 15).
+    let r = 5.0 * std::f64::consts::FRAC_1_SQRT_2;
+    let point = Vec3::new(35.0 + r, 15.0, 15.0 + r);
+    h.app.session.selection = vec![crate::dialogs::face_sel(&h.app.session, point).expect("the fillet face")];
+    h.app.start("face.delete");
+    h.frames(1);
+    assert_eq!(h.app.dialog.as_ref().unwrap().inputs[0].items.len(), 1, "the selected face fills the input");
+    h.step(&json!({"key":"Enter"})).unwrap();
+    assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().and_then(|d| d.error.clone()));
+    assert!(volume(&h) > filleted + 1.0, "the rounded edge is square again");
+}
+
 /// #2494: two planes selected first, Axis Through Two Planes takes both and makes the axis
 /// where they meet.
 #[test]
