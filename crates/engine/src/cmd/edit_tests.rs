@@ -544,3 +544,47 @@ fn edit_refuses_unknown_fields() {
     let def = run(&mut s, "timeline.inspect", json!({"feature": "Twin"}))["definition"].clone();
     assert_eq!(def["combine"], json!(true), "{def}");
 }
+
+/// #3044: renaming a feature labels it and builds nothing, so it, its undo and its redo evaluate
+/// nothing, and leave the model evaluating the renamed design gives (the result's, the sketch's
+/// and the construction plane's names). A rename other features follow is evaluated.
+#[test]
+fn renaming_a_feature_evaluates_nothing() {
+    let mut s = Session::default();
+    run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 5, "name": "Shelf"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Outline"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [10, 6]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 4, "name": "Plate"}));
+    let labels = |s: &Session| {
+        let st = s.model.state();
+        let results: Vec<String> = s.model.results.iter().map(|r| r.name.clone()).collect();
+        let sketches: Vec<String> = st.sketches.iter().map(|k| k.name.clone()).collect();
+        let planes: Vec<String> = st.construct.iter().map(|c| c.name.clone()).collect();
+        (results, sketches, planes)
+    };
+    for (feature, name) in [("Outline", "Profile"), ("Plate", "Base plate")] {
+        s.evaluations = 0;
+        run(&mut s, "timeline.rename", json!({"feature": feature, "name": name}));
+        assert_eq!(s.evaluations, 0, "renaming {feature} evaluates nothing");
+        let mut fresh = Session::new((*s.doc).clone());
+        fresh.refresh();
+        assert_eq!(labels(&s), labels(&fresh));
+        s.refresh();
+        assert_eq!(s.model.last_recomputed, 0, "the next evaluation reuses every result");
+    }
+    let renamed = labels(&s);
+    s.evaluations = 0;
+    run(&mut s, "edit.undo", json!({}));
+    assert!(labels(&s).0.contains(&"Profile".to_string()) && labels(&s).0.contains(&"Plate".to_string()));
+    run(&mut s, "edit.redo", json!({}));
+    assert_eq!(labels(&s), renamed);
+    assert_eq!(s.evaluations, 0, "undo and redo of a rename evaluate nothing");
+    // A sketch on the plane names it: renaming the plane renames it there too, which is evaluated.
+    run(&mut s, "sketch.create", json!({"plane": "Shelf", "name": "Top"}));
+    run(&mut s, "sketch.finish", json!({}));
+    s.evaluations = 0;
+    run(&mut s, "timeline.rename", json!({"feature": "Shelf", "name": "Ledge"}));
+    assert!(s.evaluations > 0);
+    assert!(labels(&s).2.contains(&"Ledge".to_string()));
+}
