@@ -2875,7 +2875,9 @@ impl SheetBody {
                     }
                 }
                 for p in &kept {
-                    self.cut_relief(p);
+                    if let Err(why) = self.cut_relief(p) {
+                        notes.push(format!("no corner relief at {}: {why}", self.shown(p.corner.c)));
+                    }
                 }
             }
             // A tear cuts to the flanges' closed ends, so a corner left open gets none.
@@ -3130,15 +3132,17 @@ impl SheetBody {
     /// both bends stop there, cut straight across (`zone_span`): their ends stay exact arcs, the
     /// round runs on into them tangentially, and the bend table gets the shorter bends. The
     /// flange panels keep the ends `close_corner` gave them.
-    fn cut_relief(&mut self, p: &PlannedRelief) {
+    fn cut_relief(&mut self, p: &PlannedRelief) -> std::result::Result<(), String> {
         let k = &p.corner;
         let segs = self.base.outer.ccw().segs;
         let n = segs.len();
         let at_corner =
             |i: usize| segs.get(i).is_some_and(|s| s.end().dist(k.c) < 1e-6) && segs.get((i + 1) % n).is_some_and(|s| s.start().dist(k.c) < 1e-6);
-        let Some(i) = (0..n).find(|&i| at_corner(i)) else { return };
+        let Some(i) = (0..n).find(|&i| at_corner(i)) else { return Err("the bends don't meet at a corner of the base".into()) };
         let j = (i + 1) % n;
-        let (Some(start), Some(end)) = (p.segs.first().map(Seg2::start), p.segs.last().map(Seg2::end)) else { return };
+        let (Some(start), Some(end)) = (p.segs.first().map(Seg2::start), p.segs.last().map(Seg2::end)) else {
+            return Err("the relief has no cut".into());
+        };
         let mut outer = Vec::with_capacity(n + p.segs.len());
         for (e, s) in segs.iter().enumerate() {
             if e == i {
@@ -3151,6 +3155,7 @@ impl SheetBody {
             }
         }
         self.base = Region2 { outer: Loop2 { segs: outer }, holes: self.base.holes.clone() };
+        Ok(())
     }
 
     /// A flat hem: a 180° bend with a tiny radius at the panel edge, `length` to its outer face.
