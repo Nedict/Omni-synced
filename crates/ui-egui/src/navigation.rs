@@ -569,13 +569,20 @@ pub(crate) fn snap_directions() -> impl Iterator<Item = Vec3> {
     })
 }
 
-/// Snap to the nearest standard or diagonal direction in the user's up-axis frame.
-pub(crate) fn snapped_axis_camera(cam: Camera) -> Camera {
+/// Snap to the nearest standard or diagonal direction in the user's up-axis frame. With
+/// `over_poles`, the picture keeps the square roll nearest the one it had, so a view turned
+/// upside down over a pole stays upside down.
+pub(crate) fn snapped_axis_camera(cam: Camera, over_poles: bool) -> Camera {
     let b = cam.to_frame(cam.back());
     let dir = snap_directions().max_by(|a, c| a.dot(b).total_cmp(&c.dot(b))).unwrap_or(Vec3::Z);
     let mut to = cam.looking_from(cam.from_frame(dir));
     if dir.x == 0.0 && dir.y == 0.0 {
         to.yaw = nearest_quarter_turn(cam.yaw);
+    }
+    if over_poles {
+        let (r0, u0, _) = to.basis();
+        let r = cam.basis().0;
+        to.roll = nearest_quarter_turn(r.dot(u0).atan2(r.dot(r0)));
     }
     to
 }
@@ -584,6 +591,8 @@ pub(crate) struct OrbitSnap {
     pub(crate) target: Camera,
     pub(crate) yaw_velocity: f64,
     pub(crate) pitch_velocity: f64,
+    /// Free orbit's turn rate, a world rotation vector (radians a second).
+    pub(crate) turn_velocity: Vec3,
     /// The pivot and where it lies in the camera's frame ([`Camera::frame_coords`]).
     pub(crate) pivot: Option<(Vec3, Vec3)>,
 }
@@ -597,18 +606,21 @@ pub(crate) fn orbit_drag(app: &mut SolveApp, rect: Rect, dx: f64, dy: f64, press
     }
     if around_cursor {
         orbit(app, rect, dx, dy, press);
+    } else if app.preferences.free_orbit {
+        free_turn(&mut app.cam, dx, dy, None);
     } else {
         app.cam.orbit(dx, dy);
     }
     let free = app.cam;
     app.viewport.orbit_free = Some(free);
     if snap || !around_cursor || app.viewport.orbit_snap.is_some() {
-        let mut target = if snap { snapped_axis_camera(free) } else { free };
+        let mut target = if snap { snapped_axis_camera(free, app.preferences.free_orbit) } else { free };
         if snap && let Some(previous) = app.viewport.orbit_snap.as_ref() {
             let b = free.back();
             if previous.target.back().dot(b) + 0.025 >= target.back().dot(b) {
                 target.yaw = previous.target.yaw;
                 target.pitch = previous.target.pitch;
+                target.roll = previous.target.roll;
             }
         }
         // The cursor and origin pivots stay still while a snap eases in; the axis gizmo has no
@@ -622,7 +634,8 @@ pub(crate) fn orbit_drag(app: &mut SolveApp, rect: Rect, dx: f64, dy: f64, press
             None
         }
         .map(|p| (p, displayed.frame_coords(p)));
-        let spring = app.viewport.orbit_snap.get_or_insert(OrbitSnap { target, yaw_velocity: 0.0, pitch_velocity: 0.0, pivot });
+        let spring =
+            app.viewport.orbit_snap.get_or_insert(OrbitSnap { target, yaw_velocity: 0.0, pitch_velocity: 0.0, turn_velocity: Vec3::ZERO, pivot });
         spring.target = target;
         spring.pivot = pivot;
         app.cam = displayed;
@@ -638,18 +651,31 @@ pub(crate) fn step_orbit_snap(app: &mut SolveApp, _rect: Rect, dt: f64) {
     let h = dt / steps as f64;
     let omega = 16.0;
     let damping = 0.82;
-    let yaw_error = |yaw: f64| (spring.target.yaw - yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
-    for _ in 0..steps.min(12) {
-        spring.yaw_velocity += (omega * omega * yaw_error(app.cam.yaw) - 2.0 * damping * omega * spring.yaw_velocity) * h;
-        spring.pitch_velocity += (omega * omega * (spring.target.pitch - app.cam.pitch) - 2.0 * damping * omega * spring.pitch_velocity) * h;
-        app.cam.yaw += spring.yaw_velocity * h;
-        app.cam.pitch = (app.cam.pitch + spring.pitch_velocity * h).clamp(-std::f64::consts::FRAC_PI_2, std::f64::consts::FRAC_PI_2);
-    }
-    app.cam.target = spring.target.target;
-    let done = yaw_error(app.cam.yaw).abs() < 1e-5
-        && (spring.target.pitch - app.cam.pitch).abs() < 1e-5
-        && spring.yaw_velocity.abs() < 1e-4
-        && spring.pitch_velocity.abs() < 1e-4;
+    let done = if app.preferences.free_orbit {
+        // Free orbit eases the orientation itself, about the axis that turns the view onto the
+        // target: yaw, pitch and roll jump at straight up and down (any heading will do there),
+        // and a spring on them would lag and spring back as the view crosses.
+        for _ in 0..steps.min(12) {
+            let error = app.cam.turn_to(&spring.target);
+            spring.turn_velocity = spring.turn_velocity + (error * (omega * omega) - spring.turn_velocity * (2.0 * damping * omega)) * h;
+            app.cam.turn_by(spring.turn_velocity * h);
+        }
+        app.cam.target = spring.target.target;
+        app.cam.turn_to(&spring.target).len() < 1e-5 && spring.turn_velocity.len() < 1e-4
+    } else {
+        let yaw_error = |yaw: f64| (spring.target.yaw - yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
+        for _ in 0..steps.min(12) {
+            spring.yaw_velocity += (omega * omega * yaw_error(app.cam.yaw) - 2.0 * damping * omega * spring.yaw_velocity) * h;
+            spring.pitch_velocity += (omega * omega * (spring.target.pitch - app.cam.pitch) - 2.0 * damping * omega * spring.pitch_velocity) * h;
+            app.cam.yaw += spring.yaw_velocity * h;
+            app.cam.pitch = (app.cam.pitch + spring.pitch_velocity * h).clamp(-std::f64::consts::FRAC_PI_2, std::f64::consts::FRAC_PI_2);
+        }
+        app.cam.target = spring.target.target;
+        yaw_error(app.cam.yaw).abs() < 1e-5
+            && (spring.target.pitch - app.cam.pitch).abs() < 1e-5
+            && spring.yaw_velocity.abs() < 1e-4
+            && spring.pitch_velocity.abs() < 1e-4
+    };
     if done {
         app.cam = spring.target;
     }

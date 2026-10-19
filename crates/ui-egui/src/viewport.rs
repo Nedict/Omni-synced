@@ -3374,7 +3374,8 @@ fn signed_axis_view(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
             if app.preferences.look_at_anim {
                 app.cancel_view_animation();
                 app.viewport.orbit_free = None;
-                app.viewport.orbit_snap = Some(OrbitSnap { target: to, yaw_velocity: 0.0, pitch_velocity: 0.0, pivot: None });
+                app.viewport.orbit_snap =
+                    Some(OrbitSnap { target: to, yaw_velocity: 0.0, pitch_velocity: 0.0, turn_velocity: Vec3::ZERO, pivot: None });
                 ui.ctx().request_repaint();
             } else {
                 app.animate_to(to);
@@ -5855,7 +5856,7 @@ mod tests {
             for d in snap_directions() {
                 let mut cam = Camera { up, ..Camera::default() };
                 cam = cam.looking_from(cam.from_frame(d + Vec3::new(0.05, 0.03, 0.02)));
-                let to = snapped_axis_camera(cam);
+                let to = snapped_axis_camera(cam, false);
                 assert!(to.back().dist(cam.from_frame(d)) < 1e-6);
                 assert_eq!(to.target, cam.target);
                 assert_eq!(to.distance, cam.distance);
@@ -5927,6 +5928,82 @@ mod tests {
             }
             assert!(crossed, "device {device}: the turn went over a pole");
         }
+    }
+
+    /// Dragging the axis view with Free orbit (eased by the snap spring, no Shift) over straight
+    /// up and down keeps turning the way it was: once the spring has caught up, every frame is
+    /// nearly the same turn in the view's frame, and no frame turns back.
+    #[test]
+    fn free_orbit_axis_view_drag_over_the_pole_does_not_bounce() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.preferences.free_orbit = true;
+        h.call("ui.view", json!({"view":"front"}));
+        let rect = h.app.viewport.rect.unwrap();
+        let in_view = |a: &Camera, b: &Camera| {
+            let (r, u, back) = a.basis();
+            let w = a.turn_to(b);
+            Vec3::new(w.dot(r), w.dot(u), w.dot(back))
+        };
+        let mut last: Option<Vec3> = None;
+        let mut crossed = false;
+        for i in 0..400 {
+            let prev = h.app.cam;
+            orbit_drag(&mut h.app, rect, 3.0, 4.0, None, false, false);
+            step_orbit_snap(&mut h.app, rect, 1.0 / 60.0);
+            crossed |= h.app.cam.upside_down();
+            let step = in_view(&prev, &h.app.cam);
+            if let Some(before) = last
+                && i > 40
+            {
+                assert!(step.dot(before) > 0.0, "frame {i}: turned back {before:?} -> {step:?} at {:?}", h.app.cam);
+                assert!(step.dist(before) < 0.05 * before.len(), "frame {i}: {before:?} -> {step:?} at {:?}", h.app.cam);
+            }
+            last = Some(step);
+        }
+        assert!(crossed, "the drag went over a pole");
+    }
+
+    /// A snap from upside down keeps the view upside down with Free orbit, and
+    /// levels it otherwise, as before.
+    #[test]
+    fn axis_snap_keeps_an_upside_down_view() {
+        let mut cam = Camera::default();
+        cam.set_view(solidcraft_engine::render::StandardView::Front);
+        cam.orbit_with(0.0, 2.3 / 0.008, true);
+        assert!(cam.upside_down());
+        for over_poles in [true, false] {
+            let to = snapped_axis_camera(cam, over_poles);
+            assert_eq!(to.upside_down(), over_poles);
+            let d = Vec3::new(0.0, 1.0, 1.0).normalized().unwrap();
+            assert!(to.back().dist(d) < 1e-6, "{to:?}");
+        }
+    }
+
+    /// A snap target over the pole from the view (the axis gizmo dragged past the top) eases
+    /// over the pole, not round the other side, and settles on the target exactly.
+    #[test]
+    fn axis_snap_spring_eases_over_the_pole() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.preferences.free_orbit = true;
+        h.call("ui.view", json!({"view":"front"}));
+        let rect = h.app.viewport.rect.unwrap();
+        orbit_drag(&mut h.app, rect, 0.0, 260.0, None, true, false);
+        let target = h.app.viewport.orbit_snap.as_ref().unwrap().target;
+        assert!(target.upside_down() && !h.app.cam.upside_down());
+        // The target is 135° over the top from the front; the spring's fastest frame turns about
+        // 0.26 rad of that. The other way round would be 225°, and a swing round turns the right.
+        let mut prev = h.app.cam;
+        let mut turned = 0.0;
+        for _ in 0..120 {
+            step_orbit_snap(&mut h.app, rect, 1.0 / 60.0);
+            assert!(h.app.cam.back().dist(prev.back()) < 0.3, "{prev:?} -> {:?}", h.app.cam);
+            assert!(h.app.cam.basis().0.dist(prev.basis().0) < 0.3, "no swing round: {prev:?} -> {:?}", h.app.cam);
+            turned += prev.turn_to(&h.app.cam).len();
+            prev = h.app.cam;
+        }
+        assert!(turned < 0.75 * std::f64::consts::PI * 1.2, "over the pole, the short way: turned {turned}");
+        assert!(h.app.viewport.orbit_snap.is_none());
+        assert_eq!(h.app.cam, target);
     }
 
     #[test]
