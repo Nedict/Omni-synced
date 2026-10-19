@@ -106,6 +106,7 @@
   "Export Current View as DXF": "将当前视图导出为DXF",
   "Export Current View as DXF…": "将当前视图导出为DXF…",
   "Export DXF…": "导出DXF…",
+  "Export Drawing Sheet as DXF": "将绘图图纸导出为DXF",
   "Export hidden edges as dashed lines": "以虚线导出隐藏线",
   "Extents": "范围",
   "Face": "面",
