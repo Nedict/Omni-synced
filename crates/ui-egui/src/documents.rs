@@ -120,6 +120,32 @@ fn swap_in(app: &mut SolveApp, slot: DocSlot) -> DocSlot {
     out
 }
 
+/// Move tab `from` to place `to`, the tabs between shifting over (#3187); each design keeps its
+/// state and the active one stays active. Not while a "save changes?" prompt is open (its tab
+/// numbers would change under it).
+pub fn move_tab(app: &mut SolveApp, from: usize, to: usize) {
+    let n = app.docs.slots.len();
+    if from >= n || to >= n || from == to || app.docs.closing.is_some() || app.docs.quitting.is_some() {
+        return;
+    }
+    let slot = app.docs.slots.remove(from);
+    app.docs.slots.insert(to, slot);
+    app.docs.active = moved_index(app.docs.active, from, to);
+}
+
+/// Where the tab at `i` ends up when the tab at `from` moves to `to`.
+pub fn moved_index(i: usize, from: usize, to: usize) -> usize {
+    if i == from {
+        to
+    } else if from < i && i <= to {
+        i - 1
+    } else if to <= i && i < from {
+        i + 1
+    } else {
+        i
+    }
+}
+
 /// Make tab `i` the active design.
 pub fn switch(app: &mut SolveApp, i: usize) {
     if app.file_picker_busy() {
@@ -337,13 +363,20 @@ pub fn tabs_info(app: &SolveApp) -> Vec<(String, bool)> {
 }
 
 /// The control channel's `ui.documents`: list, `new`, `switch`, `close` (by index; `force`
-/// closes without asking) or `quit`; `answer`: save | dont_save | cancel answers "save changes?".
+/// closes without asking), `move` (`from`, `to`) or `quit`; `answer`: save | dont_save | cancel
+/// answers "save changes?".
 pub fn control(app: &mut SolveApp, p: &Value) -> Value {
     let i = p.get("index").and_then(Value::as_u64).map(|x| x as usize);
     match p.get("action").and_then(Value::as_str) {
         Some("new") => new_design(app),
         Some("switch") => switch(app, i.unwrap_or(app.docs.active)),
         Some("close") => close(app, i.unwrap_or(app.docs.active), p.get("force").and_then(Value::as_bool).unwrap_or(false)),
+        Some("move") => {
+            let at = |k: &str| p.get(k).and_then(Value::as_u64).map(|x| x as usize);
+            if let (Some(from), Some(to)) = (at("from"), at("to")) {
+                move_tab(app, from, to);
+            }
+        }
         Some("quit") => request_quit(app),
         _ => {}
     }
@@ -360,8 +393,16 @@ pub fn control(app: &mut SolveApp, p: &Value) -> Value {
     json!({"documents": tabs, "active": app.docs.active, "closing": app.docs.closing, "quitting": app.docs.quitting.is_some()})
 }
 
+/// A design tab being dragged along the strip to a new place: its index, and where the pointer
+/// grabbed it (from the tab's left edge).
+#[derive(Clone, Copy, Debug)]
+struct TabDrag {
+    from: usize,
+    grab: f32,
+}
+
 /// The document tabs in the application bar, from `x0` to `x1`: click to switch, × to close,
-/// + for a new design.
+/// drag to reorder, + for a new design.
 pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
     let t = Tokens::get();
     let home = Rect::from_min_size(pos2(x0, r.top() + 5.0), vec2(66.0, r.height() - 5.0));
@@ -383,24 +424,57 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
     let info = tabs_info(app);
     let n = info.len();
     let (first, shown, w) = layout(n, app.docs.active, x1 - x0);
-    let mut x = x0;
+    let title_bar = app.custom_titlebar || app.integrated_titlebar;
+    // A tab being dragged to a new place follows the pointer and the others make room for it;
+    // Escape puts it back.
+    let drag_id = egui::Id::new("sc_doc_tab_drag");
+    let (held_down, released, escape) = ui.input(|i| (i.pointer.primary_down(), i.pointer.primary_released(), i.key_pressed(egui::Key::Escape)));
+    let mut drag =
+        ui.ctx().data(|d| d.get_temp::<TabDrag>(drag_id)).filter(|d| (held_down || released) && !escape && (first..first + shown).contains(&d.from));
+    let pointer = ui.ctx().pointer_latest_pos();
+    let held = drag.zip(pointer).map(|(d, p)| (d.from, (p.x - d.grab).clamp(x0, x0 + shown.saturating_sub(1) as f32 * w)));
+    let to = held.map(|(from, left)| (from, drop_slot(left, x0, w, first, shown)));
+    // The dragged tab is drawn last, over the others.
+    let mut order: Vec<usize> = (first..first + shown).filter(|&i| held.is_none_or(|(from, _)| from != i)).collect();
+    order.extend(held.map(|(from, _)| from));
     let mut pick: Option<usize> = None;
     let mut shut: Option<usize> = None;
-    for (i, (name, dirty)) in info.iter().enumerate().skip(first).take(shown) {
-        let tr = Rect::from_min_size(pos2(x, r.top() + 5.0), vec2(w - 2.0, r.height() - 5.0));
+    let mut dropped: Option<(usize, usize)> = None;
+    for i in order {
+        let Some((name, dirty)) = info.get(i) else { continue };
+        let left = match (held, to) {
+            (Some((from, left)), _) if from == i => left,
+            (_, Some((from, to))) => x0 + moved_index(i, from, to).saturating_sub(first) as f32 * w,
+            _ => x0 + (i - first) as f32 * w,
+        };
+        let tr = Rect::from_min_size(pos2(left, r.top() + 5.0), vec2(w - 2.0, r.height() - 5.0));
         let active = !app.home.open && (i == app.docs.active || app.docs.slots.is_empty());
         let resp = ui.interact(tr, ui.id().with(("doc_tab", i)), Sense::click_and_drag());
         crate::scenario::publish_handle(&format!("tab:design:{i}"), tr.center());
-        // The tabs are part of the title bar: dragging one moves the window, a double click
+        // Dragging a tab along the strip moves it. The tabs are also part of the title bar:
+        // dragging the only tab, or one mostly up or down, moves the window, and a double click
         // maximizes it.
-        if app.custom_titlebar || app.integrated_titlebar {
-            if resp.drag_started_by(egui::PointerButton::Primary) {
+        if resp.drag_started_by(egui::PointerButton::Primary) {
+            let origin = ui.input(|i| i.pointer.press_origin()).unwrap_or(tr.center());
+            let moved = pointer.unwrap_or(origin) - origin;
+            if n > 1 && (!title_bar || moved.x.abs() >= moved.y.abs()) {
+                drag = Some(TabDrag { from: i, grab: origin.x - tr.left() });
+            } else if title_bar {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-            } else if resp.double_clicked() {
-                crate::titlebar::toggle_maximize(ui.ctx());
             }
+        } else if title_bar && resp.double_clicked() {
+            crate::titlebar::toggle_maximize(ui.ctx());
         }
-        tab_shape(ui.painter(), &t, tr, active, resp.hovered());
+        if resp.drag_stopped() && drag.is_some_and(|d| d.from == i) {
+            // Released over the bar (not dropped somewhere down the window): the tab lands there.
+            if let Some((from, to)) = to
+                && pointer.is_some_and(|p| p.y < r.bottom() + r.height())
+            {
+                dropped = Some((from, to));
+            }
+            drag = None;
+        }
+        tab_shape(ui.painter(), &t, tr, active, resp.hovered() || held.is_some_and(|(from, _)| from == i));
         let ink = if active { t.text } else { t.app_bar_text };
         let label = format!("{}{}", crate::i18n::Locale::for_language(&app.preferences.language).given_name(name), if *dirty { " •" } else { "" });
         let g = ui.painter().layout_no_wrap(label, FontId::proportional(13.0), ink);
@@ -422,8 +496,14 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
         } else if resp.on_hover_text(name.as_str()).clicked() {
             pick = Some(i);
         }
-        x += w;
     }
+    ui.ctx().data_mut(|d| match drag {
+        Some(v) => {
+            d.insert_temp(drag_id, v);
+        }
+        None => d.remove::<TabDrag>(drag_id),
+    });
+    let mut x = x0 + shown as f32 * w;
     // More tabs than fit: a chevron lists them all.
     if shown < n {
         let mr = Rect::from_center_size(pos2(x + 12.0, r.center().y + 2.0), vec2(20.0, 22.0));
@@ -478,8 +558,19 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
         _ if !idle => {}
         (Some(i), _) => close(app, i, false),
         (None, Some(i)) => switch(app, i),
-        (None, None) => {}
+        (None, None) => {
+            if let Some((from, to)) = dropped {
+                move_tab(app, from, to);
+            }
+        }
     }
+}
+
+/// The place among the shown tabs (`first..first + shown`, each `w` wide from `x0`) for a
+/// dragged tab whose left edge is at `left`: the slot it covers most.
+pub fn drop_slot(left: f32, x0: f32, w: f32, first: usize, shown: usize) -> usize {
+    let k = ((left - x0) / w.max(1.0)).round().max(0.0) as usize;
+    first + k.min(shown.saturating_sub(1))
 }
 
 /// One tab of the strip: the active tab takes the toolbar's colour and runs into it; the others
@@ -687,6 +778,91 @@ mod tests {
                 assert!(rects.iter().all(|(rect, _)| rect.stroke.width == 0.0), "tabs have no outline (active: {active})");
             }
         }
+    }
+
+    /// #3187: a tab moved to another place keeps its design, and the active design stays
+    /// active wherever it ends up.
+    #[test]
+    fn a_moved_tab_keeps_its_design_and_the_active_one_stays_active() {
+        let mut a = app();
+        a.run("solid.box", json!({"length": 10, "width": 10, "height": 10})).unwrap();
+        for k in 1..3 {
+            open_tab(&mut a, Session::default()).unwrap();
+            for _ in 0..=k {
+                a.run("solid.sphere", json!({"diameter": 4})).unwrap();
+            }
+        }
+        // Tabs hold 1, 2 and 3 features; the third is active.
+        let features = |a: &mut SolveApp| {
+            let back = a.docs.active;
+            let v: Vec<usize> = (0..a.docs.count())
+                .map(|i| {
+                    switch(a, i);
+                    a.session.doc.features.len()
+                })
+                .collect();
+            switch(a, back);
+            v
+        };
+        assert_eq!(features(&mut a), [1, 2, 3]);
+        assert_eq!(a.docs.active, 2);
+        move_tab(&mut a, 0, 2);
+        assert_eq!(features(&mut a), [2, 3, 1]);
+        assert_eq!(a.docs.active, 1, "the active design moved over with the others");
+        assert_eq!(a.session.doc.features.len(), 3);
+        move_tab(&mut a, 1, 0);
+        assert_eq!(features(&mut a), [3, 2, 1]);
+        assert_eq!(a.docs.active, 0);
+        move_tab(&mut a, 0, 9);
+        assert_eq!(features(&mut a), [3, 2, 1], "out of range: nothing moves");
+        assert_eq!(moved_index(5, 5, 1), 1);
+        assert_eq!(drop_slot(0.0, 100.0, 90.0, 2, 4), 2);
+        assert_eq!(drop_slot(240.0, 100.0, 90.0, 2, 4), 4);
+        assert_eq!(drop_slot(9000.0, 100.0, 90.0, 2, 4), 5);
+    }
+
+    /// #3187: dragging a tab along the strip drops it where it is released; a drag mostly down
+    /// the window (it moves the window) or one Escape cancelled leaves the order as it was.
+    #[test]
+    fn dragging_a_tab_along_the_strip_moves_it() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.custom_titlebar = true;
+        h.call("ui.resize", json!({"width": 1400, "height": 720}));
+        h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10})).unwrap();
+        open_tab(&mut h.app, Session::default()).unwrap();
+        open_tab(&mut h.app, Session::default()).unwrap();
+        switch(&mut h.app, 0);
+        h.frames(3);
+        let at = |h: &mut crate::scenario::Harness, i: usize| {
+            let [x, y] = h.at(&json!({"handle": format!("tab:design:{i}")})).unwrap();
+            egui::pos2(x as f32, y as f32)
+        };
+        let button =
+            |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        let path = |a: egui::Pos2, b: egui::Pos2| (1..=8).map(move |k| egui::Event::PointerMoved(a + (b - a) * (k as f32 / 8.0)));
+        let (t0, t2) = (at(&mut h, 0), at(&mut h, 2));
+        // Down first: that moves the window, and coming back along the bar moves no tab.
+        let down = t0 + vec2(0.0, 20.0);
+        h.app.synthetic.extend([egui::Event::PointerMoved(t0), button(t0, true)]);
+        h.app.synthetic.extend(path(t0, down).chain(path(down, t2)));
+        h.app.synthetic.push(button(t2, false));
+        h.frames(24);
+        assert_eq!(h.app.docs.active, 0, "a drag down the window leaves the tabs");
+        assert_eq!(h.app.session.doc.features.len(), 1);
+        h.app.synthetic.extend([egui::Event::PointerMoved(t0), button(t0, true)]);
+        h.app.synthetic.extend(path(t0, t2));
+        h.app.synthetic.push(button(t2, false));
+        h.frames(16);
+        assert_eq!(h.app.docs.active, 2, "the dragged tab is now last");
+        assert_eq!(h.app.session.doc.features.len(), 1, "and still shows its design");
+        let (t2, t1) = (at(&mut h, 2), at(&mut h, 1));
+        let escape = egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        h.app.synthetic.extend([egui::Event::PointerMoved(t2), button(t2, true)]);
+        h.app.synthetic.extend(path(t2, t1));
+        h.app.synthetic.extend([escape, egui::Event::PointerMoved(t1), button(t1, false)]);
+        h.frames(16);
+        assert_eq!(h.app.docs.active, 2, "Escape put it back");
     }
 
     #[test]
