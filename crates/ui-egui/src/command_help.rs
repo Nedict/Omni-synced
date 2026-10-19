@@ -32,6 +32,15 @@ pub fn tooltip(response: egui::Response, command: &str, tip: String) -> egui::Re
     })
 }
 
+/// The tooltip text of a panel drop-down row: the reason when the command is disabled (as before),
+/// else its name and shortcut when it has help to show below, else nothing (no tooltip).
+pub fn row_tip(command: &str, label: &str, shortcut: Option<&str>, disabled_reason: Option<&str>) -> Option<String> {
+    match disabled_reason {
+        Some(why) => Some(why.to_owned()),
+        None => help(command).map(|_| format!("{label}{}", shortcut.map(|k| format!("  ({k})")).unwrap_or_default())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -84,5 +93,14 @@ mod tests {
             assert!(help(id).is_some_and(|text| !text.is_empty()), "{id}");
         }
         assert!(help("solid.pattern.rectangular").is_none());
+    }
+
+    #[test]
+    fn a_drop_down_row_has_a_tip_only_for_a_reason_or_help() {
+        assert_eq!(row_tip("solid.shell", "Shell", Some("S"), None).as_deref(), Some("Shell  (S)"));
+        assert_eq!(row_tip("solid.hole", "Hole", None, None).as_deref(), Some("Hole"));
+        assert_eq!(row_tip("solid.hole", "Hole", None, Some("Select a face")).as_deref(), Some("Select a face"));
+        assert_eq!(row_tip("solid.pattern.rectangular", "Pattern", None, None), None);
+        assert_eq!(row_tip("solid.pattern.rectangular", "Pattern", None, Some("No body")).as_deref(), Some("No body"));
     }
 }
