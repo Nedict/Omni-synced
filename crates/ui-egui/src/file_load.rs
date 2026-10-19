@@ -739,6 +739,10 @@ fn compute(
     let placement_ms = view_began.elapsed().as_secs_f64() * 1000.0;
     // The display meshes are made once the design is in the window, which shows its bodies as
     // they come ([`crate::open_meshing`]): framing, picking and drawing never mesh on the UI.
+    // Its outlines frame it in the window until it is meshed: measured here, not there.
+    solidcraft_engine::kernel::for_each_on_threads(&world.bodies, 16, |b| {
+        let _ = b.outline_bounds();
+    });
     drop(world);
     let tessellation_ms = 0.0;
     phase.store(2, Ordering::Relaxed);

@@ -117,7 +117,7 @@ pub fn visible_bounds(s: &Session, sketches: bool) -> Aabb3 {
 /// ([`solidcraft_kernel::Body::outline_bounds`]), which a face curving out past all of its edges
 /// can exceed. Frames a design whose bodies are still being meshed.
 pub fn unmeshed_bounds(s: &Session, sketches: bool) -> Aabb3 {
-    bounds_by(s, sketches, |body| body.cached_mesh().map(|m| m.bounds()).unwrap_or_else(|| body.body.outline_bounds()))
+    bounds_by(s, sketches, |body| body.cached_mesh().map(|m| m.bounds()).unwrap_or_else(|| body.outline_bounds()))
 }
 
 fn bounds_by(s: &Session, sketches: bool, of: impl Fn(&solidcraft_doc::ModelBody) -> Aabb3) -> Aabb3 {
