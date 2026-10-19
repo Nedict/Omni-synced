@@ -222,7 +222,10 @@ pub fn study_tracks(s: &Session, key: &str, id_first: bool) -> Result<(u64, Stri
             let joint = s.doc.assembly.joints.iter().position(|j| j.id == k.joint)?;
             let angle = s.doc.assembly.joints.get(joint)?.kind.is_angle(k.index);
             let value = |v: f64| {
-                let (x, unit) = if angle { (v.to_degrees(), "deg") } else { (v, "mm") };
+                if !angle {
+                    return crate::length_input::model(&s.doc, v);
+                }
+                let (x, unit) = (v.to_degrees(), "deg");
                 // Short where that keeps the value; else all its digits, so OK keeps the key.
                 let short = crate::dialogs_assembly::num(x, unit);
                 let kept = short.split(' ').next().and_then(|n| n.parse::<f64>().ok()).is_some_and(|y| (y - x).abs() <= 1e-9 * x.abs().max(1.0));
@@ -262,7 +265,9 @@ pub fn study_params(s: &Session, name: &str, study: Option<&str>, steps: &str, t
         .filter(|t| !t.points.is_empty())
         .map(|t| {
             let j = s.doc.assembly.joints.get(t.joint).ok_or("no such joint")?;
-            Ok(json!({"joint": j.id, "index": t.index, "points": t.points.iter().map(|(st, v)| json!([st, v])).collect::<Vec<_>>()}))
+            let kind = if j.kind.is_angle(t.index) { solidcraft_engine::doc::expr::Kind::Angle } else { solidcraft_engine::doc::expr::Kind::Length };
+            let points: Vec<_> = t.points.iter().map(|(st, v)| json!([st, crate::length_input::expression(&s.doc, v, kind)])).collect();
+            Ok(json!({"joint": j.id, "index": t.index, "points": points}))
         })
         .collect::<Result<_, &str>>()?;
     if keys.is_empty() {
@@ -660,8 +665,14 @@ fn motion_study_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, inputs: 
             if ui.small_button("Key here").on_hover_text("Add a key at this step with the joint's value now").clicked()
                 && !tr.points.iter().any(|(s, _)| *s == now)
             {
-                let unit =
-                    app.session.doc.assembly.joints.get(tr.joint).map(|j| if j.kind.is_angle(tr.index) { "deg" } else { "mm" }).unwrap_or("mm");
+                let unit = app
+                    .session
+                    .doc
+                    .assembly
+                    .joints
+                    .get(tr.joint)
+                    .map(|j| if j.kind.is_angle(tr.index) { "deg" } else { crate::length_input::unit(&app.session.doc) })
+                    .unwrap_or(crate::length_input::unit(&app.session.doc));
                 tr.points.push((now, format!("0 {unit}")));
                 tr.points.sort_by_key(|p| p.0);
             }
@@ -680,7 +691,7 @@ fn motion_study_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, inputs: 
         if ui.button(crate::i18n::tr_label("Add Key")).on_hover_text(crate::i18n::tr_label("Key a joint's value at this step")).clicked()
             && let Some((ji, _, kind)) = moving.first()
         {
-            let unit = if kind.is_angle(0) { "deg" } else { "mm" };
+            let unit = if kind.is_angle(0) { "deg" } else { crate::length_input::unit(&app.session.doc) };
             tracks.push(Track { joint: *ji, index: 0, points: vec![(now, format!("0 {unit}"))] });
         }
         export = ui
@@ -1206,7 +1217,7 @@ mod tests {
         click_rule_button(&mut h, "↑");
         h.step(&json!({"widget":"Preview Row"})).unwrap();
         assert_eq!(h.app.session.doc.configs.rules[0].id, "last");
-        assert!(h.widget("length = 10 mm").is_some());
+        assert!(h.widget("length = 10").is_some());
         assert_eq!(h.app.session.doc.param("length").unwrap().expr, "40 mm");
     }
 
@@ -1234,10 +1245,11 @@ mod tests {
         h.run(&json!([{"widget":"Preview Row"}])).unwrap();
         assert_eq!(h.app.session.doc, before);
         h.run(&json!([{"widget":"Apply"}])).unwrap();
-        assert_eq!(h.app.session.doc.param("length").unwrap().expr, "10 mm");
+        assert_eq!(h.app.session.doc.param("length").unwrap().expr, "10");
+        assert_eq!(h.app.session.doc.eval("length", solidcraft_engine::doc::expr::Kind::Length).unwrap(), 10.0);
         assert!(h.app.session.doc.configuration_matches());
         h.run(&json!([
-            {"widget":"10 mm","near":"Value"},{"key":"A","cmd":true},{"text":"20 mm"},{"widget":"Save Rule"},
+            {"widget":"10","near":"Value"},{"key":"A","cmd":true},{"text":"20 mm"},{"widget":"Save Rule"},
             {"widget":"Apply"}
         ]))
         .unwrap();
@@ -1246,7 +1258,7 @@ mod tests {
         let before = h.app.session.doc.clone();
         h.run(&json!([
             {"widget":"Drive parameter"},{"widget":"Range"},
-            {"widget":"0 mm","near":"Minimum"},{"key":"A","cmd":true},{"text":"100 mm"},{"widget":"Save Rule"}
+            {"widget":"0","near":"Minimum"},{"key":"A","cmd":true},{"text":"100 mm"},{"widget":"Save Rule"}
         ]))
         .unwrap();
         assert_eq!(h.app.session.doc, before, "failed rule edit is atomic");
