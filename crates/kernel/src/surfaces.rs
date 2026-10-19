@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use mt::{BoundedCurve, InnerSpace, MetricSpace, ParametricCurve, ParametricSurface3D, SearchNearestParameter};
-use solidcraft_geom::{Plane, Region2, Seg2, Vec2, Vec3};
+use solidcraft_geom::{Plane, Region2, Seg2, UnitVec3, Vec2, Vec3};
 use truck_modeling as mt;
 
 use crate::body::{Body, from_p3, p3};
@@ -48,7 +48,7 @@ fn surface_of(shell: mt::Shell) -> Body {
 
 /// A body from faces: a solid when they close, else a surface; with the history of the
 /// operation that made the faces from `operands` as `rec` records.
-fn body_of(faces: Vec<mt::Face>, operands: &[&mt::Solid], rec: &Rebuild) -> Result<Body> {
+pub(crate) fn body_of(faces: Vec<mt::Face>, operands: &[&mt::Solid], rec: &Rebuild) -> Result<Body> {
     let shell = mt::Shell::from(faces);
     if shell.shell_condition() == mt::ShellCondition::Closed {
         crate::record::rebuilt(mt::Solid::new_unchecked(vec![shell]), operands, rec)
@@ -706,7 +706,7 @@ pub fn stitch(bodies: &[&Body], tol: f64) -> Result<Body> {
 #[derive(Clone, Copy)]
 pub(crate) enum Offset {
     Plane { n: Vec3 },
-    Cylinder { o: Vec3, axis: Vec3, r: f64, out: f64 },
+    Cylinder { o: Vec3, axis: UnitVec3, r: f64, out: f64 },
 }
 
 impl Offset {
