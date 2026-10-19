@@ -321,7 +321,7 @@ and licence rules, and where help is wanted most.
 ## Licence
 
 MIT OR Apache-2.0, at your option. Developed under the
-[clean-room contribution rules](CLAUDE.md); third-party code and assets retain their
+[clean-room contribution rules](AGENTS.md); third-party code and assets retain their
 documented licences and attribution.
 
 SolidCraft is independent. Behaviour is designed from public documentation, general CAD
