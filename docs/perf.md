@@ -169,7 +169,9 @@ projection borrows its supports. A mutex admits cells, then releases its lock
 before a shared `OnceLock` prepares points on the bare original surface. Clones
 share cells and all state drops with that shell's temporary mapping.
 
-The table admits at most 512 distinct supports. Grid point/parameter data is
+The first revision retained the first 512 distinct supports for the entire shell.
+The figures in this section describe that retention policy; the recycling follow-up
+below keeps the same live-grid budget. Grid point/parameter data is
 bounded by 32,378,880 bytes, plus at most 4 MiB of stored key words, headers and
 allocator overhead. Each temporary key is at most 8 KiB. Curve/geometry/topology
 clones are additional transient storage, so this is not a process-memory limit.
@@ -231,10 +233,10 @@ active, no feature/parameter errors, 36 fully constrained sketches and all 144
 user parameters preserved. All 2,275 visible document parameter records remain
 unchanged; feature-definition fields are separate from that parameter table.
 The final inspection returned 1,207 named face and 3,705 named edge references.
-There is no completed matched original-model baseline for before/after reference
-or timing equivalence. The earlier original-model attempts reached their own caps
-and provide no additional completed comparison. The 201-second dependent suffix
-remains a substantial performance problem. This engine run does not measure the
+At that snapshot there was no completed earlier original-model baseline for
+before/after reference or timing equivalence. The earlier original-model attempts reached their own caps
+and provide no additional completed comparison. At that snapshot the 201-second dependent suffix
+remained a substantial performance problem. This engine run does not measure the
 public dialog preview/OK chain or establish near-instant editing.
 
 The implementation snapshot passed 778 native kernel tests, 28 ignored and the
@@ -254,6 +256,90 @@ The tested implementation is based on integrated upstream `b76302e8`. Later
 upstream integration and combined UI validation are separate. No private geometry,
 production diagnostic hooks or vendor source changes are included. The performance PR
 remains draft; full workspace/GitHub CI is not claimed by these scoped checks.
+
+## Recycle inactive meshing grids within the existing budget (2026-10-19, #3035)
+
+A one-shot diagnostic follow-up observed cache exhaustion in the actual dependent
+history, starting with a shell requesting 542 distinct keyed supports. Later shells
+requested up to 1,026 while the first 512 remained pinned by strong per-curve
+references. Denied admissions caused subsequent unhinted queries to repeat the
+original surface search. The diagnostic recorded a 20-worker pool; it supplied
+counts and selected late immutable B-reps, not clean timing comparisons.
+
+Per-curve references are now weak. The shell table can recycle an entry observed
+as inactive, choosing approximate least-recent use. Each entry owns a non-cloneable
+permit acquired by bounded compare-and-swap before initialization. An evicted
+entry that a racing weak upgrade keeps alive retains its permit. Its grid data is
+destroyed before the permit is returned; unavailable slots use the original search.
+Local and map locks are released before `OnceLock` initialization, geometry
+evaluation or the ordered seed scan. Full geometry keys, solver calls, hints,
+leader, trials, tolerances and failure ordering remain unchanged.
+
+The limit is still 512 total live entries per shell, including pending preparation
+and evicted strong references: at most 32,378,880 bytes of grid data and 4 MiB of
+map-resident key words. Each temporary key remains capped at 8 KiB. This is not a
+process-RAM limit. Expired weak references can retain allocation control blocks;
+headers, hash-table buckets, allocator retention, topology and concurrent temporary
+keys are additional. Recency is approximate under concurrent touches and counter
+wrap; the permit invariant does not depend on that ordering.
+
+One standalone prototype replay used a captured late operand with 1,001 keyed
+supports, chord 0.4148995256, a 20-degree angle bound and the same 512-entry limit.
+Raw, retained-grid and recycling meshes matched all fields bit for bit. Both
+adapters made exactly 170,876 intersection `try_subs` calls. This single sequential
+replay included diagnostic counters and concurrent system activity:
+
+| Captured-shell replay | Wall | Own process CPU |
+|---|---:|---:|
+| Raw | 16.599 s | 69.844 s |
+| Retain first 512 grids | 7.228 s | 29.000 s |
+| Recycle inactive grids | 1.173 s | 4.047 s |
+
+Recycling reached a peak of 512 live entries, with 3,765 evictions. A separate
+423-support prototype control did not exhaust the 512-entry limit and observed
+1.641 s CPU before versus 1.844 s with recycling. These individual samples do not
+establish a general speedup or regression estimate. Mutex, weak/strong-reference
+and recency-atomic work remains even without pressure; the no-pressure regression
+proves zero eviction, not zero overhead. The orphan race is covered by a simulated
+active-orphan test and scheduler-driven checks, not concurrency model checking.
+
+The clean release candidate and the preceding retained-grid implementation then
+completed the same saved-copy input and ten-command script: cold rolled-prefix
+load, the real 5 mm edit, first computation of 20 dependent cuts, measurements and
+reference inspections. Both used O3, 16 codegen units, LTO disabled and 20 requested
+workers. The clean binaries contain no experimental counters or geometry capture;
+actual pool size was not instrumented in these runs. Each version ran once under
+concurrent activity, without a quiet window or matched-load guarantee.
+
+| Clean original-copy scope | Retained grids: wall / CPU | Recycling: wall / CPU |
+|---|---:|---:|
+| Actual changed-feature edit | 2.642 s / 11.672 s | 2.574 s / 11.438 s |
+| First computation of 20 dependent cuts | 201.462 s / 1,194.594 s | 105.830 s / 476.688 s |
+| Whole process, including streamed output and inspections | 263.968 s / 1,491.516 s | 149.875 s / 637.984 s |
+
+Whole-process scope contains the other rows; command CPU/time excludes streamed
+output, while the whole includes it. Every field in all ten command results
+matched bit for bit except timeline milliseconds, including measurements, all
+2,275 visible parameters, 144 user parameters and all 1,207 face/3,705 edge
+reference records. The 5 mm floor, 36 solved sketches, active history, one body and
+shell and absence of errors were verified. The source copy's hash was unchanged.
+
+The new suffix profile still reports 83.179 s in Boolean calls, 19.271 s in
+standalone tessellation and 3.380 s elsewhere. Boolean time includes its nested
+meshing/checks; it is not an isolated intersection-core measurement. The remaining
+105.830 s is substantial. These single executions do not measure GUI preview/OK,
+a warm history cache or general near-instant editing.
+
+The candidate passed 21 focused mesher tests, 790 kernel tests (28 ignored and the
+same two existing upstream exclusions), the engine oblique-cut regression and
+all 16 Hole regressions, kernel all-target Clippy with warnings denied, wasm,
+formatting and an optimized CLI build. The separate native control retained every
+measurement and 545 face/1,677 edge reference field. A same-input public ten-command
+check matched the CLI and streaming runner except feature timing. Independent
+read-only static review found no actionable correctness issue; runtime checks were
+author-run. A fresh full workspace `xtask ci` attempt stops at the existing UI
+icon standards/hash check in this Windows CRLF checkout; it is not reported as
+passing. Combined desktop integration and a user trial remain separate.
 
 ## Edges made by booleans: each point evaluated once (2026-10-16)
 
