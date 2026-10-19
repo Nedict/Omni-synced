@@ -45,7 +45,7 @@ env:
 
 jobs:
   version:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       build: ${{ steps.changed.outputs.build }}
       version: ${{ steps.v.outputs.version }}
@@ -172,8 +172,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { arch: x86_64, runner: ubuntu-24.04 }
-          - { arch: aarch64, runner: ubuntu-24.04-arm }
+          - { arch: x86_64, runner: blacksmith-4vcpu-ubuntu-2404 }
+          - { arch: aarch64, runner: blacksmith-4vcpu-ubuntu-2404-arm }
     env:
       SOLIDCRAFT_VERSION: ${{ needs.version.outputs.version }}
       SOLIDCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
@@ -210,8 +210,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { arch: x86_64, runner: ubuntu-24.04 }
-          - { arch: aarch64, runner: ubuntu-24.04-arm }
+          - { arch: x86_64, runner: blacksmith-4vcpu-ubuntu-2404 }
+          - { arch: aarch64, runner: blacksmith-4vcpu-ubuntu-2404-arm }
     env:
       SOLIDCRAFT_VERSION: ${{ needs.version.outputs.version }}
       SOLIDCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
@@ -257,7 +257,7 @@ jobs:
     needs: version
     if: needs.version.outputs.build == 'true'
     # GitHub has no FreeBSD runners: build in a FreeBSD 14.3 VM.
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 180
     env:
       SOLIDCRAFT_VERSION: ${{ needs.version.outputs.version }}
@@ -297,7 +297,7 @@ jobs:
     name: macOS universal
     needs: version
     if: needs.version.outputs.build == 'true'
-    runs-on: macos-14
+    runs-on: blacksmith-6vcpu-macos-15
     env:
       SOLIDCRAFT_VERSION: ${{ needs.version.outputs.version }}
       SOLIDCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
@@ -364,7 +364,7 @@ jobs:
     name: Web (wasm)
     needs: version
     if: needs.version.outputs.build == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       SOLIDCRAFT_VERSION: ${{ needs.version.outputs.version }}
       TRUNK_VERSION: 0.21.14
@@ -392,7 +392,7 @@ jobs:
     name: GitHub Release or dry-run artifacts
     needs: [version, linux, flatpak, snap, freebsd, macos, windows, web]
     if: needs.version.outputs.build == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
     env:
