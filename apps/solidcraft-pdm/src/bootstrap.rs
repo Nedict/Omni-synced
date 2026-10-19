@@ -124,6 +124,91 @@ fn initialize_with_sink(
     let bytes = serde_json::to_vec(&credentials)?;
     let receipt = EnrollmentReceipt { administrator: administrator.into(), server_id: catalog.server_id };
     sink(&receipt, &secret.0)?;
+    publish_registry(root, &bytes)?;
+    Ok((receipt, secret))
+}
+
+/// Finish an interrupted trusted native installation using its already captured
+/// credential. `expected` must come from the installer's immutable validated
+/// enrollment intent, never a request body or caller-selected account label.
+///
+/// The server identity is checked against existing durable metadata. Before its
+/// first registry exists the archive has no administrator identity to compare;
+/// account binding is therefore the trusted installer's journal responsibility.
+/// No network route may expose this function. Existing or partial registries
+/// always refuse publication, and a failed attempt never rotates any credential.
+pub fn finalize_enrollment(root: &Path, expected: &EnrollmentReceipt, bearer: &str) -> Result<(), Error> {
+    if !crate::valid_id(&expected.administrator)
+        || expected.administrator == "owner"
+        || expected.server_id.len() != 64
+        || !expected.server_id.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(Error::Invalid("enrollment receipt"));
+    }
+    // This validates the random-bearer format, not a password or an entropy test.
+    if bearer.len() != 64 || !bearer.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(Error::Invalid("enrollment credential"));
+    }
+    validate_root(root)?;
+    if !fs::symlink_metadata(root)?.is_dir() {
+        return Err(Error::Invalid("existing enrollment store required"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut private_ancestor = false;
+        for ancestor in root.ancestors() {
+            if fs::metadata(ancestor)?.permissions().mode() & 0o077 == 0 {
+                private_ancestor = true;
+                break;
+            }
+        }
+        if !private_ancestor {
+            return Err(Error::Invalid("private enrollment directory required"));
+        }
+    }
+    for relative in ["managed", "managed/blobs", "managed/generations"] {
+        let path = root.join(relative);
+        validate_root(&path)?;
+        if !fs::symlink_metadata(path)?.is_dir() {
+            return Err(Error::Invalid("existing enrollment metadata required"));
+        }
+    }
+    for relative in ["writer.lock", "managed/generations/1/state.json"] {
+        let path = root.join(relative);
+        validate_root(&path)?;
+        if !fs::symlink_metadata(path)?.is_file() {
+            return Err(Error::Invalid("existing enrollment metadata required"));
+        }
+    }
+    let registry = root.join("managed-principals.json");
+    registry_absent(&registry)?;
+    let store = Store::open(root)?;
+    registry_absent(&registry)?;
+    let catalog = store.managed.catalog();
+    if catalog.server_id != expected.server_id {
+        return Err(Error::Invalid("enrollment server identity mismatch"));
+    }
+    if !catalog.entries.is_empty() || !store.list(None)?.is_empty() {
+        return Err(Error::Invalid("enrollment requires a store without documents"));
+    }
+    let bytes = serde_json::to_vec(&[PrincipalCredential {
+        principal: Principal { id: expected.administrator.clone(), role: Role::Administrator },
+        token_sha256: crate::digest(bearer.as_bytes()),
+    }])?;
+    publish_registry(root, &bytes)
+}
+
+fn registry_absent(registry: &Path) -> Result<(), Error> {
+    validate_root(registry)?;
+    match fs::symlink_metadata(registry) {
+        Ok(_) => Err(Error::Invalid("principal registry already exists")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn publish_registry(root: &Path, bytes: &[u8]) -> Result<(), Error> {
     // Reserve the final name before writing anything. A crash or I/O failure
     // cannot leave a missing registry that would reactivate legacy fallback.
     let mut options = fs::OpenOptions::new();
@@ -133,12 +218,12 @@ fn initialize_with_sink(
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options.open(&registry)?;
-    file.write_all(&bytes)?;
+    let mut file = options.open(root.join("managed-principals.json"))?;
+    file.write_all(bytes)?;
     file.sync_all()?;
     #[cfg(unix)]
     fs::File::open(root)?.sync_all()?;
-    Ok((receipt, secret))
+    Ok(())
 }
 
 #[cfg(test)]
@@ -155,6 +240,104 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    fn captured_enrollment() -> Result<(TestRoot, EnrollmentReceipt, String), Error> {
+        let root = TestRoot::new()?;
+        let builder = fs::DirBuilder::new();
+        #[cfg(unix)]
+        let builder = {
+            use std::os::unix::fs::DirBuilderExt;
+            let mut builder = builder;
+            builder.mode(0o700);
+            builder
+        };
+        builder.create(&root.0)?;
+        let mut captured = None;
+        let result = initialize_to(&root.0, "admin", |receipt, bearer| {
+            captured =
+                Some((EnrollmentReceipt { administrator: receipt.administrator.clone(), server_id: receipt.server_id.clone() }, bearer.to_owned()));
+            Err(Error::Invalid("test interrupted after capture"))
+        });
+        assert!(result.is_err());
+        let (receipt, bearer) = captured.ok_or(Error::Invalid("test capture missing"))?;
+        Ok((root, receipt, bearer))
+    }
+
+    #[test]
+    fn finalize_publishes_captured_credential_once_without_rotating_it() -> Result<(), Error> {
+        let (root, receipt, bearer) = captured_enrollment()?;
+        finalize_enrollment(&root.0, &receipt, &bearer)?;
+        let bytes = fs::read(root.0.join("managed-principals.json"))?;
+        assert!(!String::from_utf8_lossy(&bytes).contains(&bearer));
+        let store = Store::open(&root.0)?;
+        assert_eq!(store.managed.catalog().server_id, receipt.server_id);
+        assert_eq!(store.managed.authenticate(&bearer), Some(Principal { id: "admin".into(), role: Role::Administrator }));
+        drop(store);
+        assert!(finalize_enrollment(&root.0, &receipt, &bearer).is_err());
+        assert_eq!(fs::read(root.0.join("managed-principals.json"))?, bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn finalize_rejects_invalid_receipt_credential_missing_store_and_busy_writer() -> Result<(), Error> {
+        let (root, receipt, bearer) = captured_enrollment()?;
+        let state_path = root.0.join("managed/generations/1/state.json");
+        let before = fs::read(&state_path)?;
+        let missing = TestRoot::new()?;
+        assert!(finalize_enrollment(&missing.0, &receipt, &bearer).is_err());
+        assert!(!missing.0.try_exists()?);
+        let wrong_server = EnrollmentReceipt {
+            administrator: "admin".into(),
+            server_id: if receipt.server_id == "0".repeat(64) { "1".repeat(64) } else { "0".repeat(64) },
+        };
+        assert!(finalize_enrollment(&root.0, &wrong_server, &bearer).is_err());
+        for administrator in ["", "owner", "Admin", "../admin"] {
+            let invalid = EnrollmentReceipt { administrator: administrator.into(), server_id: receipt.server_id.clone() };
+            assert!(finalize_enrollment(&root.0, &invalid, &bearer).is_err());
+        }
+        for invalid in ["", "secret-sensitive", &"z".repeat(64)] {
+            let error = finalize_enrollment(&root.0, &receipt, invalid).err().ok_or(Error::Integrity)?;
+            assert!(!format!("{error:?}").contains("secret-sensitive"));
+        }
+        let running = Store::open(&root.0)?;
+        assert!(finalize_enrollment(&root.0, &receipt, &bearer).is_err());
+        drop(running);
+        assert!(!root.0.join("managed-principals.json").try_exists()?);
+        assert_eq!(fs::read(state_path)?, before);
+        Ok(())
+    }
+
+    #[test]
+    fn finalize_refuses_partial_registry_and_existing_managed_or_legacy_documents() -> Result<(), Error> {
+        let (root, receipt, bearer) = captured_enrollment()?;
+        let registry = root.0.join("managed-principals.json");
+        fs::write(&registry, b"[")?;
+        assert!(finalize_enrollment(&root.0, &receipt, &bearer).is_err());
+        assert_eq!(fs::read(&registry)?, b"[");
+        for managed in [true, false] {
+            let (documents, receipt, bearer) = captured_enrollment()?;
+            let mut store = Store::open(&documents.0)?;
+            if managed {
+                store.managed.create(&Principal { id: "existing".into(), role: Role::Administrator }, "existing.solidcraft".into())?;
+            } else {
+                assert!(matches!(
+                    store.execute(crate::Request::CheckIn {
+                        document: "legacy".into(),
+                        parent: None,
+                        content: b"legacy-data".to_vec(),
+                        dependencies: Vec::new()
+                    }),
+                    crate::Response::CheckedIn { .. }
+                ));
+            }
+            let before = serde_json::to_vec(&store.list(None)?)?;
+            drop(store);
+            assert!(finalize_enrollment(&documents.0, &receipt, &bearer).is_err());
+            assert!(!documents.0.join("managed-principals.json").try_exists()?);
+            assert_eq!(serde_json::to_vec(&Store::open(&documents.0)?.list(None)?)?, before);
+        }
+        Ok(())
     }
 
     #[test]

@@ -277,8 +277,7 @@ sink before publishing the principal registry. A failed sink permits retry; a
 failed registry publication retains the captured credential for recovery.
 Neither path resets an existing archive. These are native worker foundations:
 the current connection dialog still uses the delivered local workflow. A guided
-setup/login UI, persistent profile installation and external identity-provider
-login remain pending. Tests use an in-memory credential store and disposable
+setup/login UI and external identity-provider login remain pending. Tests use an in-memory credential store and disposable
 HTTPS services; they do not access the actual OS keyring.
 
 All 19 focused native PDM tests and strict native Clippy passed. Coverage includes
@@ -296,6 +295,44 @@ corrupt records, links, unknown files and quota violations fail closed. It store
 no bearer and never signs in as a side effect of listing or importing a profile.
 All 23 native PDM tests and strict native Clippy passed with this persistence
 boundary, including interrupted staging, corruption and capacity checks.
+
+### Recoverable private local setup
+
+The native `LocalSetup` worker creates a dedicated private installation with a
+new filesystem archive, public profile records and an original loopback TLS
+certificate. Its private key stays in that installation; certificate trust is
+explicit in the profile and never added to the operating system. The worker
+reserves a loopback socket before enrollment and retains that exact listener
+through service startup. It never selects, resets or migrates an existing archive.
+
+Setup captures the administrator bearer in the credential store, then publishes
+the public enrollment intent, before publishing server authority. A restart
+after capture can finish an absent principal registry using the same captured
+credential and existing server identity. Partial registries are preserved and
+rejected. The trusted native finalization helper has no RPC route; it requires
+validated installer intent and an empty existing archive under the writer lock.
+It does not infer a prior administrator identity from an unconfigured archive.
+
+Resume retains the recorded port, certificate, profile and server identity. An
+occupied port, changed trust, inconsistent journal or missing credential stops
+recovery. A prior verification receipt is public journal state only: each resume
+authenticates over HTTPS and verifies the current administrator role before
+returning an active service. Failed authentication releases its own listener and
+locks while preserving installation files. No retry rotates a captured credential
+after a committed enrollment intent. A crash before both TLS files and the
+prepared completion record leaves an incomplete installation for inspection;
+automatic repair of that earlier boundary is not implemented.
+
+This remains a native worker API. The guided setup dialog and connection to the
+application workspace are pending. Tests use only disposable installation roots
+and an in-memory credential store, with actual loopback TLS authentication.
+All 30 native PDM tests and 130 service tests passed, including recovery after
+credential capture and rejection of stale verification after account demotion
+or removal of the saved credential.
+Strict native/service Clippy, dependency-layer, sorted-list and resolved licence
+checks passed. The added `rcgen` dependency generates original private TLS
+material and uses its permissive MIT/Apache-2.0 licensing. Repository CI passed
+formatting/assets before the unchanged Windows accepted-icon hash failure.
 
 ## Verified offline backup and restore foundation
 
