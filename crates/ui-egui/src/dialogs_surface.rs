@@ -169,9 +169,9 @@ fn inputs(k: &Surf) -> Vec<SelInput> {
 }
 
 /// The dialog for a surface command.
-pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
+pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     let k = match id {
-        "surface.extrude" => Surf::Extrude { distance: "10 mm".into(), direction: 0 },
+        "surface.extrude" => Surf::Extrude { distance: crate::dialogs::length_default(&app.session, "10"), direction: 0 },
         "surface.revolve" => Surf::Revolve { angle: "360 deg".into(), symmetric: false, axis: None },
         "surface.sweep" => Surf::Sweep(crate::dialogs_sweep::SweepOpts::default()),
         "surface.loft" => Surf::Loft,
@@ -179,11 +179,13 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
         "surface.patch" => Surf::Patch { continuity: 0 },
         "surface.unstitch" => Surf::Unstitch,
         "surface.reverse_normal" => Surf::ReverseNormal,
-        "surface.offset" => Surf::Offset { distance: "2 mm".into(), chain: false },
-        "surface.ruled" => Surf::Ruled { distance: "10 mm".into(), mode: 0, angle: "5 deg".into(), flip: false, round: false },
+        "surface.offset" => Surf::Offset { distance: crate::dialogs::length_default(&app.session, "2"), chain: false },
+        "surface.ruled" => {
+            Surf::Ruled { distance: crate::dialogs::length_default(&app.session, "10"), mode: 0, angle: "5 deg".into(), flip: false, round: false }
+        }
         "surface.stitch" => Surf::Stitch { tolerance: String::new() },
-        "surface.thicken" => Surf::Thicken { thickness: "2 mm".into(), symmetric: false, operation: 0 },
-        "surface.extend" => Surf::Extend { distance: "10 mm".into() },
+        "surface.thicken" => Surf::Thicken { thickness: crate::dialogs::length_default(&app.session, "2"), symmetric: false, operation: 0 },
+        "surface.extend" => Surf::Extend { distance: crate::dialogs::length_default(&app.session, "10") },
         "surface.trim" => Surf::Trim { extend: false, stitch: false, direction: None },
         "surface.untrim" => Surf::Untrim { holes: 0, outer: false, in_place: false },
         "solid.split_face" => Surf::SplitFace,

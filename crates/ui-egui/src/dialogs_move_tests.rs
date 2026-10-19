@@ -13,7 +13,7 @@ fn move_dialog(mode: usize) -> Dialog {
     let mut app = SolveApp::new(s, Services::default());
     app.start("solid.move");
     let mut d = app.dialog.clone().unwrap();
-    d.kind = kind(mode);
+    d.kind = kind(mode, &app.session.doc);
     d.inputs = inputs(mode);
     if let Some(inp) = d.inputs.first_mut() {
         inp.items = vec![Sel::Body { name: "Body1".into() }];
@@ -67,5 +67,41 @@ fn every_move_type_has_somewhere_to_put_its_value_box() {
         assert_eq!(has_triad, matches!(mode, FREE | TRANSLATE), "{} triad", TYPES[mode]);
         let at = triad(&app, &d).map(|t| t.center).or_else(|| crate::canvas::anchor(&app, &d).map(|(base, _)| base));
         assert!(at.is_some(), "{} has nowhere to put its value box", TYPES[mode]);
+    }
+}
+
+/// The triad and the command must agree even when Free Move precomputes a pivoted rotation.
+#[test]
+fn inch_move_lengths_agree_in_the_triad_and_every_numeric_move_route() {
+    for mode in [FREE, TRANSLATE, POINT_TO_POSITION] {
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length":20,"width":20,"height":20})).unwrap();
+        s.execute("document.units", &json!({"units":"in"})).unwrap();
+        let mut app = SolveApp::new(s, Services::default());
+        let mut d = move_dialog(mode);
+        d.kind = kind(mode, &app.session.doc);
+        if let Kind::Move { x, y, z, rz, .. } = &mut d.kind {
+            *x = "0.25".into();
+            *y = "2 mm".into();
+            *z = "0".into();
+            if mode == FREE {
+                *rz = "90 deg".into();
+            }
+        }
+        if mode == POINT_TO_POSITION {
+            d.inputs[1].items = vec![Sel::Vertex { body: "Body1".into(), point: Vec3::new(10.0, 10.0, 10.0) }];
+        } else {
+            let center = triad(&app, &d).unwrap().center;
+            assert!(center.dist(Vec3::new(16.35, 12.0, 10.0)) < 1e-9, "{center:?}");
+        }
+        for (id, p) in crate::dialogs::apply_commands(&app, &d).unwrap() {
+            app.run(&id, p).unwrap();
+        }
+        let measured = app.session.execute("inspect.measure", &json!({})).unwrap();
+        let center: Vec<f64> = measured["bodies"][0]["center_of_mass"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+        let expected = if mode == POINT_TO_POSITION { [6.35, 2.0, 0.0] } else { [16.35, 12.0, 10.0] };
+        for (got, expected) in center.into_iter().zip(expected) {
+            assert!((got - expected).abs() < 1e-6, "mode {mode}: {got}, expected {expected}");
+        }
     }
 }

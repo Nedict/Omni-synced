@@ -88,47 +88,60 @@ impl Pl {
     }
 }
 
-fn boss() -> Pl {
+fn boss(app: &SolveApp) -> Pl {
     Pl::Boss {
-        diameter: "6 mm".into(),
-        height: "10 mm".into(),
-        hole_diameter: "3 mm".into(),
+        diameter: crate::dialogs::length_default(&app.session, "6"),
+        height: crate::dialogs::length_default(&app.session, "10"),
+        hole_diameter: crate::dialogs::length_default(&app.session, "3"),
         hole_depth: String::new(),
         draft: String::new(),
         fillet: String::new(),
         ribs: "0".into(),
-        rib_thickness: "1 mm".into(),
-        rib_length: "3 mm".into(),
-        rib_offset: "1 mm".into(),
+        rib_thickness: crate::dialogs::length_default(&app.session, "1"),
+        rib_length: crate::dialogs::length_default(&app.session, "3"),
+        rib_offset: crate::dialogs::length_default(&app.session, "1"),
     }
 }
 
-fn snap_fit() -> Pl {
+fn snap_fit(app: &SolveApp) -> Pl {
     Pl::SnapFit {
         hook: 0,
-        length: "10 mm".into(),
-        thickness: "1.5 mm".into(),
-        width: "5 mm".into(),
-        catch_depth: "1 mm".into(),
-        catch_length: "2 mm".into(),
+        length: crate::dialogs::length_default(&app.session, "10"),
+        thickness: crate::dialogs::length_default(&app.session, "1.5"),
+        width: crate::dialogs::length_default(&app.session, "5"),
+        catch_depth: crate::dialogs::length_default(&app.session, "1"),
+        catch_length: crate::dialogs::length_default(&app.session, "2"),
     }
 }
 
-fn rest() -> Pl {
-    Pl::Rest { round: true, width: "10 mm".into(), length: "15 mm".into(), height: "2 mm".into(), draft: String::new(), thickness: String::new() }
+fn rest(app: &SolveApp) -> Pl {
+    Pl::Rest {
+        round: true,
+        width: crate::dialogs::length_default(&app.session, "10"),
+        length: crate::dialogs::length_default(&app.session, "15"),
+        height: crate::dialogs::length_default(&app.session, "2"),
+        draft: String::new(),
+        thickness: String::new(),
+    }
 }
 
-fn lip(groove: bool) -> Pl {
-    Pl::Lip { groove, width: "1.5 mm".into(), height: "2 mm".into(), gap: String::new(), outside: false }
+fn lip(app: &SolveApp, groove: bool) -> Pl {
+    Pl::Lip {
+        groove,
+        width: crate::dialogs::length_default(&app.session, "1.5"),
+        height: crate::dialogs::length_default(&app.session, "2"),
+        gap: String::new(),
+        outside: false,
+    }
 }
 
 /// The dialog for a plastic command.
 pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     let (pl, inputs) = match id {
-        "plastic.boss" => (boss(), vec![SelInput::new("Position", PLANAR_FACES, false)]),
-        "plastic.lip" => (lip(false), vec![SelInput::new("Rim face", FACES, false)]),
-        "plastic.snap_fit" => (snap_fit(), vec![SelInput::new("Position", PLANAR_FACES, false)]),
-        "plastic.rest" => (rest(), vec![SelInput::new("Position", PLANAR_FACES, false)]),
+        "plastic.boss" => (boss(app), vec![SelInput::new("Position", PLANAR_FACES, false)]),
+        "plastic.lip" => (lip(app, false), vec![SelInput::new("Rim face", FACES, false)]),
+        "plastic.snap_fit" => (snap_fit(app), vec![SelInput::new("Position", PLANAR_FACES, false)]),
+        "plastic.rest" => (rest(app), vec![SelInput::new("Position", PLANAR_FACES, false)]),
         "plastic.manage_rules" => {
             let rules = app.session.doc.plastic_rules();
             let pick = app.session.doc.plastic.active.as_ref().and_then(|a| rules.iter().position(|r| &r.name == a)).unwrap_or(0);
@@ -185,10 +198,10 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pl, inputs: &[SelInpu
         Pl::Boss { diameter, height, hole_diameter, hole_depth, draft, fillet, ribs, rib_thickness, rib_length, rib_offset } => {
             enter |= value_row(ui, "Diameter", diameter);
             enter |= value_row(ui, "Height", height);
-            enter |= opt_field(ui, "Hole Diameter", hole_diameter, "mm", "no hole");
-            enter |= opt_field(ui, "Hole Depth", hole_depth, "mm", "to the face");
+            enter |= opt_field(ui, "Hole Diameter", hole_diameter, crate::length_input::unit(&app.session.doc), "no hole");
+            enter |= opt_field(ui, "Hole Depth", hole_depth, crate::length_input::unit(&app.session.doc), "to the face");
             enter |= opt_field(ui, "Draft Angle", draft, "deg", "from the rule");
-            enter |= opt_field(ui, "Root Fillet", fillet, "mm", "none");
+            enter |= opt_field(ui, "Root Fillet", fillet, crate::length_input::unit(&app.session.doc), "none");
             enter |= value_row(ui, "Ribs", ribs);
             if app.session.doc.eval(ribs, ValueKind::Unitless).is_ok_and(|n| n >= 1.0) {
                 enter |= value_row(ui, "  Rib Thickness", rib_thickness);
@@ -210,7 +223,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pl, inputs: &[SelInpu
             enter |= value_row(ui, "Width", width);
             enter |= value_row(ui, "Height", height);
             if *groove {
-                enter |= opt_field(ui, "Clearance", gap, "mm", "from the rule");
+                enter |= opt_field(ui, "Clearance", gap, crate::length_input::unit(&app.session.doc), "from the rule");
             }
         }
         Pl::SnapFit { hook, length, thickness, width, catch_depth, catch_length } => {
@@ -239,7 +252,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pl, inputs: &[SelInpu
             }
             enter |= value_row(ui, "Height", height);
             enter |= opt_field(ui, "Draft Angle", draft, "deg", "from the rule");
-            enter |= opt_field(ui, "Wall Thickness", thickness, "mm", "solid");
+            enter |= opt_field(ui, "Wall Thickness", thickness, crate::length_input::unit(&app.session.doc), "solid");
         }
         Pl::Rules { pick, name, values, active, loaded } => {
             let rules = app.session.doc.plastic_rules();
@@ -252,7 +265,15 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pl, inputs: &[SelInpu
             if *loaded != Some(*pick) {
                 let base = rules.get(*pick).or(rules.first()).cloned();
                 if let Some(b) = base {
-                    *values = std::iter::once(b.material.clone()).chain(b.fields().iter().map(|(_, e, _)| (*e).clone())).collect();
+                    *values = std::iter::once(b.material.clone())
+                        .chain(b.fields().iter().map(|(_, e, kind)| {
+                            if *kind == ValueKind::Length {
+                                crate::length_input::stored(&app.session.doc, e)
+                            } else {
+                                crate::dialogs::shown_expr(e, *kind)
+                            }
+                        }))
+                        .collect();
                     *active = app.session.doc.plastic.active.as_deref() == Some(b.name.as_str()) && *pick < rules.len();
                 }
                 if *pick >= rules.len() {
@@ -441,7 +462,7 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
             if let Some(b) = body {
                 extra.insert("body".into(), json!(b));
             }
-            let mut b = boss();
+            let mut b = boss(app);
             if let Pl::Boss {
                 diameter: d,
                 height: h,
@@ -516,7 +537,10 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
             let r = Pl::Rest {
                 round: length.is_none(),
                 width: shown_expr(width, ValueKind::Length),
-                length: length.as_deref().map(|l| shown_expr(l, ValueKind::Length)).unwrap_or_else(|| "15 mm".into()),
+                length: length
+                    .as_deref()
+                    .map(|l| shown_expr(l, ValueKind::Length))
+                    .unwrap_or_else(|| crate::dialogs::length_default(&app.session, "15")),
                 height: shown_expr(height, ValueKind::Length),
                 draft: shown_expr(&s(draft), ValueKind::Angle),
                 thickness: shown_expr(&s(thickness), ValueKind::Length),
