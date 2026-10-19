@@ -27,11 +27,6 @@ updating from inside SolidCraft works again ([details](https://docs.solidcraft.i
 Older versions, checksums and other formats are on the [releases page](https://github.com/tangency-labs/solidcraft/releases).
 Install details, upgrading from earlier builds and building from source are in
 
-[![Download for Windows][badge-windows]][windows-msi]
-[![Download for macOS][badge-macos]][macos-dmg]
-[![Download for Linux][badge-linux]][linux-appimage]
-[![Get it from the Snap Store][badge-snap]][snap-store]
-[![Try it in your browser][badge-web]][web-app]
 [Getting started](https://docs.solidcraft.io/guide/getting-started.html).
 [windows-msi]: https://github.com/tangency-labs/solidcraft/releases/latest/download/solidcraft-windows-x64.msi
 [windows-arm64-msi]: https://github.com/tangency-labs/solidcraft/releases/latest/download/solidcraft-windows-arm64.msi
@@ -47,6 +42,3 @@ Install details, upgrading from earlier builds and building from source are in
 [linux-snap]: https://github.com/tangency-labs/solidcraft/releases/latest/download/solidcraft-linux-x86_64.snap
 [snap-store]: https://snapcraft.io/solidcraft
 [web-app]: https://solidcraft.io/app
-[@0xlillith](https://github.com/0xlillith/solidcraft-rover): 3,323 editable timeline steps that
-[Full video](https://github.com/tangency-labs/solidcraft/raw/refs/heads/main/docs/screenshots/rover-build.mp4)
-[Getting started › 3D mouse in the browser](book/src/guide/getting-started.md#3d-mouse-in-the-browser)).
