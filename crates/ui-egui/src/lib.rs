@@ -75,6 +75,7 @@ mod material_card_review;
 mod measurement_ui_tests;
 #[cfg(test)]
 mod menu_tests;
+pub mod messages;
 #[cfg(test)]
 mod pattern_arrow_tests;
 #[cfg(test)]
@@ -332,6 +333,8 @@ pub struct SolveApp {
     pub keymap: keymap::Keymap,
     /// The Help menu and the About window.
     pub help: help::HelpState,
+    /// Every status message of this run, for the Messages window ([`messages`], #2763).
+    pub messages: messages::Messages,
     /// An editable local issue draft and optional captured app frame.
     pub issue_report: issue_report::ReportState,
     /// The Crash Reports window.
@@ -462,6 +465,7 @@ impl SolveApp {
             sbox: shortcut_box::ShortcutBox::default(),
             keymap: keymap::Keymap::default(),
             help: help::HelpState::default(),
+            messages: messages::Messages::default(),
             issue_report: issue_report::ReportState::default(),
             crashes: crash_ui::CrashUi::default(),
             updater: update::Updater::default(),
@@ -1077,7 +1081,9 @@ impl SolveApp {
     }
 
     pub fn set_status(&mut self, s: impl Into<String>, error: bool) {
-        self.status = Some((s.into(), now_ms(), error));
+        let (text, at) = (s.into(), now_ms());
+        self.messages.push(&text, error, at);
+        self.status = Some((text, at, error));
     }
 
     pub fn open_path(&mut self, path: &str) {
