@@ -3034,6 +3034,11 @@ fn corner_reliefs_of_the_rule_reach_the_part_the_flat_pattern_and_the_dxf() {
     }
 }
 
+/// The height of the rhombus of [`rhombus_sheet`]: 90 · sin 60°.
+const RHOMBUS_Y: f64 = 77.9422863406;
+/// Half of it, where the picks on the slanted sides lie.
+const RHOMBUS_Y_HALF: f64 = 38.9711431703;
+
 /// A base flange on a rhombus whose corners are 60° and 120°, with a flange on each of its
 /// four edges: the two flanges of a corner meet there, and their bends stop short of it.
 fn rhombus_sheet(s: &mut Session, rule: Value) {
@@ -3043,14 +3048,24 @@ fn rhombus_sheet(s: &mut Session, rule: Value) {
     }
     run(s, "sheet.manage_rules", r);
     run(s, "sketch.create", json!({"plane": "XY", "name": "Base"}));
-    run(s, "sketch.line", json!({"points": [[0, 0], [120, 0], [165, 77.94228634095945], [45, 77.94228634095945]], "closed": true}));
+    run(s, "sketch.line", json!({"points": [[0, 0], [120, 0], [165, RHOMBUS_Y], [45, RHOMBUS_Y]], "closed": true}));
     run(s, "sketch.finish", json!({}));
     run(s, "sheet.flange", json!({"sketch": "Base"}));
     run(
         s,
         "sheet.flange",
-        json!({"edges": [[60, 0, 2], [142.5, 38.97114317047972, 2], [105, 77.94228634095945, 2], [22.5, 38.97114317047972, 2]], "height": 38.6, "angle": "90 deg"}),
+        json!({"edges": [[60, 0, 2], [142.5, RHOMBUS_Y_HALF, 2], [105, RHOMBUS_Y, 2], [22.5, RHOMBUS_Y_HALF, 2]], "height": 38.6, "angle": "90 deg"}),
     );
+}
+
+/// The corner of the trimmed base at the corner `c` of the base, whose edges leave it in the
+/// directions `dirs`: the two bend lines, each `s0` in from its edge, meet there.
+fn trimmed_corner(c: (f64, f64), dirs: [(f64, f64); 2], s0: f64) -> (f64, f64) {
+    let (d0, d1) = (dirs[0], dirs[1]);
+    let alpha = (d0.0 * d1.1 - d0.1 * d1.0).atan2(d0.0 * d1.0 + d0.1 * d1.1).abs();
+    let (bx, by) = (d0.0 + d1.0, d0.1 + d1.1);
+    let k = s0 / (alpha / 2.0).sin() / (bx * bx + by * by).sqrt();
+    (c.0 + bx * k, c.1 + by * k)
 }
 
 /// The far corner of the square relief at a corner of the base: `4 / (1 + cos α)` from the
@@ -3066,12 +3081,13 @@ fn kite_vertex(c: (f64, f64), d1: (f64, f64), d2: (f64, f64)) -> (f64, f64) {
 #[test]
 fn corner_reliefs_at_non_orthogonal_corners_reach_the_flat_pattern_and_the_dxf() {
     // The corners of the trimmed base: the two at 60° (6 mm from their corner, on the bisector)
-    // and the two at 120° (3.464 mm from theirs).
+    // and the two at 120° (3.464 mm from theirs), with the directions their edges leave in.
+    let u = (0.5, RHOMBUS_Y / 90.0);
     let corners = [
-        ((5.196152422706632, 3.0), (1.0, 0.0), (0.5, 0.8660254037844387)),
-        ((118.26794919243112, 3.0), (-1.0, 0.0), (0.5, 0.8660254037844387)),
-        ((159.80384757729337, 74.94228634095945), (-0.5, -0.8660254037844387), (-1.0, 0.0)),
-        ((46.73205080756888, 74.94228634095945), (1.0, 0.0), (-0.5, -0.8660254037844387)),
+        (trimmed_corner((0.0, 0.0), [(1.0, 0.0), u], 3.0), [(1.0, 0.0), u]),
+        (trimmed_corner((120.0, 0.0), [(-1.0, 0.0), u], 3.0), [(-1.0, 0.0), u]),
+        (trimmed_corner((165.0, RHOMBUS_Y), [(-u.0, -u.1), (-1.0, 0.0)], 3.0), [(-u.0, -u.1), (-1.0, 0.0)]),
+        (trimmed_corner((45.0, RHOMBUS_Y), [(1.0, 0.0), (-u.0, -u.1)], 3.0), [(1.0, 0.0), (-u.0, -u.1)]),
     ];
     let mut notch = Session::default();
     rhombus_sheet(&mut notch, json!({}));
@@ -3107,7 +3123,7 @@ fn corner_reliefs_at_non_orthogonal_corners_reach_the_flat_pattern_and_the_dxf()
             "round" => {
                 // A round about each corner, of radius 4.
                 assert_eq!(arcs.len(), 4, "{shape}: {arcs:?}");
-                for (c, _, _) in corners {
+                for (c, _) in corners {
                     assert!(
                         arcs.iter().any(|(a, r)| (a.x - c.0).abs() < 1e-6 && (a.y - c.1).abs() < 1e-6 && (r - 4.0).abs() < 1e-6),
                         "{shape}: {arcs:?}"
@@ -3122,7 +3138,7 @@ fn corner_reliefs_at_non_orthogonal_corners_reach_the_flat_pattern_and_the_dxf()
             "rectangular" => {
                 // A kite at each corner, meeting 4 / cos(α / 2) from it on the bisector.
                 assert!(arcs.is_empty(), "{shape}: {arcs:?}");
-                for (c, d1, d2) in corners {
+                for (c, [d1, d2]) in corners {
                     let x = kite_vertex(c, d1, d2);
                     assert!(ends.iter().any(|p| (p.x - x.0).abs() < 1e-6 && (p.y - x.1).abs() < 1e-6), "{shape}: no kite at {c:?}: {ends:?}");
                 }

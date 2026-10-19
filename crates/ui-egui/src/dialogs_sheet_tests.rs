@@ -378,13 +378,13 @@ fn the_rule_manager_relieves_a_corner_that_is_not_square() {
         .unwrap();
     // A rhombus whose corners are 60° and 120°, with a flange on each of its four edges.
     h.app.run("sketch.create", json!({"plane": "XY", "name": "Base"})).unwrap();
-    h.app.run("sketch.line", json!({"points": [[0, 0], [120, 0], [165, 77.94228634095945], [45, 77.94228634095945]], "closed": true})).unwrap();
+    h.app.run("sketch.line", json!({"points": [[0, 0], [120, 0], [165, 77.9422863406], [45, 77.9422863406]], "closed": true})).unwrap();
     h.app.run("sketch.finish", json!({})).unwrap();
     h.app.run("sheet.flange", json!({"sketch": "Base"})).unwrap();
     h.app
         .run(
             "sheet.flange",
-            json!({"edges": [[60, 0, 2], [142.5, 38.97114317047972, 2], [105, 77.94228634095945, 2], [22.5, 38.97114317047972, 2]], "height": 38.6, "angle": "90 deg"}),
+            json!({"edges": [[60, 0, 2], [142.5, 38.9711431703, 2], [105, 77.9422863406, 2], [22.5, 38.9711431703, 2]], "height": 38.6, "angle": "90 deg"}),
         )
         .unwrap();
     // The base of the notch has its four corners, and the bends run the whole length of the edges.

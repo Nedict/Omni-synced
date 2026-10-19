@@ -5651,7 +5651,7 @@ mod tests {
         // A quadrilateral with a 120° corner at the origin and a 90° one 9 mm along the edge
         // between them, and flanges on the three edges that meet there. The two corners are
         // 4.27 mm apart in the trimmed base: a relief 4 mm across fits at both of them.
-        let pts = [Vec2::new(0.0, 0.0), Vec2::new(9.0, 0.0), Vec2::new(9.0, 40.0), Vec2::new(-20.0, 34.641016151377545)];
+        let pts = [Vec2::new(0.0, 0.0), Vec2::new(9.0, 0.0), Vec2::new(9.0, 40.0), Vec2::new(-20.0, 20.0 * 3.0f64.sqrt())];
         let base = || Region2 { outer: Loop2::polygon(&pts).ccw(), holes: vec![] };
         let picks = [Vec3::new(-10.0, 17.32, 2.0), Vec3::new(4.5, 0.0, 2.0), Vec3::new(9.0, 20.0, 2.0)];
         let flange = |i: usize| EdgeFlange { pick: picks[i], height: 38.6, angle: 90f64.to_radians() };
