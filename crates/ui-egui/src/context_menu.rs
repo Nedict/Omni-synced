@@ -1820,8 +1820,10 @@ fn show_rename(app: &mut SolveApp, ctx: &egui::Context) {
                 te.request_focus();
                 r.focused = true;
             }
+            // Leaving the box keeps the new name (Enter, Tab, as a click elsewhere does); only
+            // Escape, below, cancels. Tab dropped it (#3313).
             if te.lost_focus() {
-                done = Some(ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                done = Some(true);
             }
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 done = Some(false);
