@@ -493,7 +493,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
         ui.painter().line_segment([c - vec2(3.5, -3.5), c + vec2(3.5, -3.5)], s);
         if xresp.on_hover_text("Close").clicked() {
             shut = Some(i);
-        } else if resp.on_hover_text(name.as_str()).clicked() {
+        } else if (if held.is_some() { resp } else { resp.on_hover_text(name.as_str()) }).clicked() {
             pick = Some(i);
         }
     }
