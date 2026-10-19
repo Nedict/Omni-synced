@@ -27,8 +27,10 @@ new uses of it anywhere else. Public docs/web/Flatpak deployments use project Pa
 ## Never crash
 People trust SolidCraft with their designs; a crash loses their work. **This outranks feature work.**
 - **No panics in non-test code:** no `unwrap()`, `expect()`, `panic!`, `unreachable!`, `todo!`,
-  `unimplemented!`; no `unsafe` (`unsafe_code = "forbid"`). The three exceptions, in the app crate
-  (which denies it instead), have no safe API: two functions in
+  `unimplemented!`; no `unsafe` (`unsafe_code = "forbid"`). The exceptions, in the app crate and in
+  `crates/threedx-client` (which deny it instead), have no safe API: the macOS-only
+  `crates/threedx-client/src/macos.rs` (loads the 3Dconnexion driver's client framework at run time
+  and calls through its function pointers), two functions in
   `apps/solidcraft/src/open_documents.rs` (macOS hands Finder files only to an Objective-C
   method), the Windows-only `apps/solidcraft/src/native_crash.rs` (the exception filter that
   records crashes inside native code such as graphics drivers) and the Windows-only
@@ -48,6 +50,8 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
   `crashes replay <id>` (or the `diagnostics.crash_reports` command / MCP `crash_reports` tool).
 - **Prove it:** every crash fix lands with a regression test (see `hostile_params_never_panic`); a
   crash report's `design.solidcraft` + `replay.json` is the test's starting point.
+- **Where tests go:** a regression test goes into the existing test file for its area (booleans, blends,
+  shell, sweep, STEP, naming…), never a new file named after the bug (#3226).
 - Every production crate root carries
   `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]`.
 
@@ -132,10 +136,10 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
 - Before working on issue #N, check nobody has it: `gh pr list -R bherbruck/solidcraft --state open --search "#N"`.
 - If none, branch from the latest `origin/main`, `git commit --allow-empty -m "claim: #N"`, push,
   and open a **draft** PR titled `<summary> (#N)` right away. **The lowest-numbered open PR for an
-  issue wins**; if yours lost, close it. A comment or file edit alone does not replace the draft PR.
-- After opening the draft PR, comment `/claim` on the issue so the bot records the claimant and
-  adds the `in progress` label. **Do both:** the draft PR establishes ownership and `/claim` marks
-  the issue as taken. Reference `#N` in the PR so the bot can find it.
+  issue wins**; if yours lost, close it. Opening the PR is the claim: the bot assigns you and
+  labels the issue `in progress` (or says on your PR who holds it). Reference `#N` in the PR title
+  so the bot can find it. Don't claim by editing files; comment `/claim` on the issue only to stake
+  a claim before you have a branch.
 - Push work in progress at least daily. A draft with no pushes for 72 hours may be taken over:
   comment on it first, then open your own claim (you may start from its branch).
   This takeover policy is separate from the bot's automatic cleanup deadlines in CONTRIBUTING.md.

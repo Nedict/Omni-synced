@@ -4072,9 +4072,17 @@ fn path_segments(ps: &SolvedSketch, ids: &[String], start: Vec3) -> Result<Vec<k
 
 /// Where an extrude of distance `d` starts and ends along the sketch normal, before any start
 /// offset: one side, the other, both (symmetric), or a second distance on the other side.
+///
+/// A second distance (`distance2`) goes the other way from the first side, wherever that went:
+/// against the normal for `direction: negative` (#2700), and back along it when a negative
+/// distance or a To Object below the sketch sends the first side down.
 pub(crate) fn extent_sides(vals: &BTreeMap<String, Value>, extent: &crate::Extent, d: f64, direction: crate::Direction) -> Result<(f64, f64)> {
     Ok(match (&extent.distance2, direction) {
-        (Some(d2), _) => (-val(vals, d2, Kind::Length)?, d),
+        (Some(d2), _) => {
+            let first = if direction == crate::Direction::Negative { -d } else { d };
+            let d2 = val(vals, d2, Kind::Length)?;
+            (if first < 0.0 { d2 } else { -d2 }, first)
+        }
         (None, crate::Direction::Positive) => (0.0, d),
         (None, crate::Direction::Negative) => (-d, 0.0),
         (None, crate::Direction::Symmetric) => {
@@ -5019,7 +5027,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                     if curves.is_empty() {
                         return Err(DocError::Invalid(format!("sketch `{}` has no curves to split with", ss.name)));
                     }
-                    kernel::split_faces(&mb.body, &picked, &kernel::SplitTool::Curves { plane: ss.plane, curves })?
+                    kernel::split_faces(&mb.body, &picked, &kernel::SplitTool::Curves { plane: ss.plane, curves, along: None })?
                 }
                 (None, None) => {
                     let pl = doc.resolve_plane_in(vals, plane, 0, Some(st))?;
@@ -5765,21 +5773,39 @@ pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut 
         path
     };
     let mut out = ModelState { body_counter: st.body_counter, ..Default::default() };
-    for (comp, path, m) in doc.placements() {
+    let placements = doc.placements();
+    // A body moved in from another component keeps its place (its offset).
+    let body_matrix = |b: &ModelBody, m: &crate::Mat| doc.model_body_offset(b).map(|o| crate::mat_mul(m, o)).unwrap_or(*m);
+    // Every body placed elsewhere than its definition, placed on all cores: a large assembly
+    // places hundreds of parts, each a B-rep transform.
+    let mut jobs = Vec::new();
+    for (comp, path, m) in &placements {
+        for b in st.bodies.iter().filter(|b| doc.model_body_component(b) == *comp) {
+            let bm = body_matrix(b, m);
+            if !crate::is_identity(&bm) {
+                jobs.push((b, bm, doc.world_body_name(st, &b.name, *comp, path)));
+            }
+        }
+    }
+    let mut moved = kernel::map_on_threads(&jobs, 16, |(b, bm, name)| placed_before.placed(b, bm, name.clone())).into_iter().zip(&jobs);
+    for (comp, path, m) in placements {
         let primary = path == first_path(comp);
         let ident = crate::is_identity(&m);
         for b in st.bodies.iter().filter(|b| doc.model_body_component(b) == comp) {
-            let name = doc.world_body_name(st, &b.name, comp, &path);
-            // A body moved in from another component keeps its place (its offset).
-            let bm = doc.model_body_offset(b).map(|o| crate::mat_mul(&m, o)).unwrap_or(m);
+            let bm = body_matrix(b, &m);
             // Identical geometry also shares its display mesh cell with the definition.
             // A changed placement keeps a distinct mesh, at that placement's coordinates.
             let mut placed = if crate::is_identity(&bm) {
                 let mut placed = b.clone();
-                placed.name = name;
+                placed.name = doc.world_body_name(st, &b.name, comp, &path);
                 placed
             } else {
-                let placed = placed_before.placed(b, &bm, name);
+                // The same order as the jobs: this body's, made above (again here if it failed).
+                let placed = match moved.next() {
+                    Some((Some(placed), _)) => placed,
+                    Some((None, (_, _, name))) => placed_before.placed(b, &bm, name.clone()),
+                    None => placed_before.placed(b, &bm, doc.world_body_name(st, &b.name, comp, &path)),
+                };
                 placed_now.by_source.insert(placed_key(b, &bm), (b.clone(), placed.clone()));
                 placed
             };
