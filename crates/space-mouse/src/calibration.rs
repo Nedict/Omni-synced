@@ -90,6 +90,28 @@ impl Calibration {
         })
     }
 
+    /// How far each canonical axis is through its travel before any dead zone: ±1 at full
+    /// deflection either way, further past it. Where a reading sits on a picture of the axis.
+    pub fn travel(&self, raw: [i16; 6]) -> [f32; 6] {
+        self.axes.map(|axis| {
+            let Some(&value) = raw.get(axis.source) else { return 0.0 };
+            let offset = f32::from(value) - f32::from(axis.rest);
+            let share = offset / f32::from(axis.full[usize::from(offset > 0.0)]).max(1.0);
+            if axis.reversed { -share } else { share }
+        })
+    }
+
+    /// How much of each canonical axis's travel reads as no motion, `[negative, positive]` as
+    /// shares of it: the measured dead zone with the user's on top, as [`Calibration::apply`] has it.
+    pub fn dead_zone_shares(&self) -> [[f32; 2]; 6] {
+        let user = if self.dead_zone_share.is_finite() { self.dead_zone_share.clamp(0.0, MAX_DEAD_ZONE_SHARE) } else { 0.0 };
+        self.axes.map(|axis| {
+            let [below, above] = axis.full.map(|full| (f32::from(axis.dead_zone) / f32::from(full).max(1.0)).min(1.0));
+            let sides = if axis.reversed { [above, below] } else { [below, above] };
+            sides.map(|measured| measured + (1.0 - measured) * user)
+        })
+    }
+
     /// Each raw axis's value at rest, which calibrates to no motion: what an app reads a raw axis
     /// as while it has nothing fresh from it. A raw axis no canonical one reads rests at 0.
     pub fn raw_rest(&self) -> [i16; 6] {
@@ -173,11 +195,14 @@ impl Samples {
     }
 }
 
-/// What the device sent during calibration: readings at rest and during each of [`STEPS`].
+/// What the device sent during calibration: readings at rest, during each of [`STEPS`], and
+/// where the cap came back to after each one.
 #[derive(Clone, Debug, Default)]
 pub struct Recording {
     rest: Samples,
     steps: [Samples; 12],
+    /// The readings the cap settled on after step `n` was let go: all of a steady run.
+    settled: [Samples; 12],
 }
 
 impl Recording {
@@ -193,6 +218,13 @@ impl Recording {
         }
     }
 
+    /// One reading of where the cap settled after step `index` was let go; any other index is ignored.
+    pub fn settled(&mut self, index: usize, raw: [i16; 6]) {
+        if let Some(settled) = self.settled.get_mut(index) {
+            settled.add(raw);
+        }
+    }
+
     /// Whether step `index` has a reading yet.
     pub fn has_step(&self, index: usize) -> bool {
         self.steps.get(index).is_some_and(|samples| samples.count > 0)
@@ -203,6 +235,9 @@ impl Recording {
         if let Some(samples) = self.steps.get_mut(index) {
             *samples = Samples::default();
         }
+        if let Some(settled) = self.settled.get_mut(index) {
+            *settled = Samples::default();
+        }
     }
 
     /// The calibration the recording gives. Hands are never exact: sliding the cap tilts it a
@@ -212,6 +247,11 @@ impl Recording {
     /// raw axis moved between the step's two directions, as a share of the furthest it moved in
     /// any step: an axis with a wider range doesn't win through cross-talk alone. A raw axis that
     /// only wandered scores low, since its share is of at least four times its wander at rest.
+    ///
+    /// A device that doesn't come back to the same place after each release (a drifting stick, or
+    /// spacenavd keeping a relative-axis device's last small report, #2778) rests, here, at the
+    /// middle of everything it read at rest and after each release, and its dead zone covers all of
+    /// it, so where it stops doesn't creep.
     pub fn solve(&self) -> Result<Calibration, Problem> {
         let rest = self.rest.mean().ok_or(Problem::NoRest)?;
         let mut means = [[0.0; 6]; 12];
@@ -226,6 +266,7 @@ impl Recording {
         let mut axes = [AxisCalibration { source: 0, reversed: false, rest: 0, dead_zone: 0, full: [0; 2] }; 6];
         for (c, (axis, source)) in axes.iter_mut().zip(sources).enumerate() {
             let (rest_value, wander) = self.rest.rest_and_wander(source).unwrap_or((rest[source].round(), 0.0));
+            let (rest_value, wander) = self.settled_rest(source, rest_value, wander);
             let (positive, negative) = (&self.steps[2 * c], &self.steps[2 * c + 1]);
             let reversed = travel[c][source] < 0.0;
             // The steps that push the raw axis above and below rest, and how far each got.
@@ -247,6 +288,25 @@ impl Recording {
             return Err(Problem::NoResponse(c));
         }
         Ok(Calibration { dead_zone_share: 0.0, axes })
+    }
+}
+
+impl Recording {
+    /// Raw axis `r`'s rest and dead zone, given the rest stage's: unchanged while every reading
+    /// after a release stayed within the wander; otherwise the middle of everything read at rest
+    /// and after the releases, with a dead zone reaching every one of those readings.
+    fn settled_rest(&self, r: usize, rest: f64, wander: f64) -> (f64, f64) {
+        let (mut low, mut high) = (rest - wander, rest + wander);
+        for settled in self.settled.iter().filter(|settled| settled.count > 0) {
+            if let (Some(&min), Some(&max)) = (settled.min.get(r), settled.max.get(r)) {
+                (low, high) = (low.min(f64::from(min)), high.max(f64::from(max)));
+            }
+        }
+        if low >= rest - wander && high <= rest + wander {
+            return (rest, wander);
+        }
+        let middle = ((low + high) / 2.0).round();
+        (middle, (high - middle).max(middle - low))
     }
 }
 
@@ -283,6 +343,23 @@ pub const MIN_SHARE: f64 = 1.0 / 12.0;
 pub const REST_SECONDS: f64 = 1.5;
 /// Seconds the cap has to be held out in a step's direction before letting go finishes it.
 pub const HOLD_SECONDS: f64 = 0.4;
+/// Seconds the reading has to stay steady, back close to rest, to count as let go even outside the
+/// rest wander: the cap stopped short of rest, as a drifting stick does, or spacenavd with a
+/// relative-axis device (#2778). Back close to rest means the axis that went furthest this step is
+/// at least [`RETURNED_SHARE`] of the way back, and some axis that moved about as far (at least
+/// half as far) is within [`SETTLED_SHARE`] of its own peak: cross-talk can move another raw axis
+/// further than the one being asked for, and which raw axis that is isn't known yet. Steady means
+/// each raw axis's readings span no more than twice its rest wander, at least 4 units (±2) and
+/// [`STEADY_SHARE`] of the furthest that axis has gone in any step: an axis that read flat at rest
+/// may still dither once it's off-centre.
+pub const SETTLE_SECONDS: f64 = 0.5;
+/// How far from rest, as a share of its peak this step, an axis that moved has to be to count as let go.
+pub const SETTLED_SHARE: f64 = 0.25;
+/// How far from rest, as a share of its peak, the axis that went furthest may still be when the
+/// step counts as let go. A hand still holding the push keeps it out.
+pub const RETURNED_SHARE: f64 = 0.5;
+/// The least spread steady readings may have, as a share of the furthest the axis has gone.
+pub const STEADY_SHARE: f64 = 1.0 / 50.0;
 
 /// Where the guided calibration is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -302,7 +379,8 @@ pub enum Stage {
 /// wandered at rest, each axis measured against its own wander: the least [`Recording::solve`]
 /// accepts. So whatever the solver would accept can be recorded, a noisy axis doesn't hold up a
 /// quiet one, and the solver judges whether each direction went far enough. "Let go" means every
-/// raw axis is back within its rest wander.
+/// raw axis is back within its rest wander, or the reading has gone steady close to rest
+/// ([`SETTLE_SECONDS`], [`SETTLED_SHARE`]).
 #[derive(Clone, Debug)]
 pub struct Wizard {
     stage: Stage,
@@ -311,11 +389,30 @@ pub struct Wizard {
     seconds: f64,
     /// The dead zone the user set while calibrating, which the result carries.
     dead_zone_share: f32,
+    /// The readings since the reading went steady, and for how long.
+    run: Samples,
+    steady: f64,
+    /// How far each raw axis went from rest in this step, in raw units.
+    peaks: [f64; 6],
+    /// The furthest each raw axis went from rest in any step so far.
+    reach: [f64; 6],
+    /// The readings the previous step settled on: while a reading stays within their spread, nobody has touched the cap.
+    settled: Option<Samples>,
 }
 
 impl Default for Wizard {
     fn default() -> Self {
-        Self { stage: Stage::Rest, recording: Recording::default(), seconds: 0.0, dead_zone_share: 0.0 }
+        Self {
+            stage: Stage::Rest,
+            recording: Recording::default(),
+            seconds: 0.0,
+            dead_zone_share: 0.0,
+            run: Samples::default(),
+            steady: 0.0,
+            peaks: [0.0; 6],
+            reach: [0.0; 6],
+            settled: None,
+        }
     }
 }
 
@@ -337,6 +434,16 @@ impl Wizard {
     pub fn feed(&mut self, raw: [i16; 6], seconds: f64) {
         // A stalled frame shouldn't finish a stage on its own.
         let seconds = if seconds.is_finite() { seconds.clamp(0.0, 0.1) } else { 0.0 };
+        // Steady while every axis's readings since the run began stay within its noise.
+        let mut run = self.run;
+        run.add(raw);
+        if (0..6).all(|r| run.spread(r) <= self.tolerance(r)) {
+            self.steady += seconds;
+        } else {
+            (run, self.steady) = (Samples::default(), 0.0);
+            run.add(raw);
+        }
+        self.run = run;
         match self.stage {
             Stage::Rest => {
                 self.recording.rest(raw);
@@ -346,18 +453,54 @@ impl Wizard {
                 }
             }
             Stage::Step(index) => {
+                // Still where the last step settled: the cap hasn't been touched yet. Deliberately
+                // skips the peak and hold bookkeeping; a device that rests exactly there reads as
+                // untouched until it moves, which is what it is.
+                if self.settled.is_some_and(|settled| self.near(settled, raw)) {
+                    return;
+                }
+                self.settled = None;
                 let away = self.away(raw);
-                if away >= 1.0 {
-                    self.recording.step(index, raw);
-                    self.seconds += seconds;
-                } else if away <= 0.5 {
+                let offsets = self.offsets(raw);
+                for ((peak, reach), offset) in self.peaks.iter_mut().zip(&mut self.reach).zip(offsets) {
+                    *peak = peak.max(offset);
+                    *reach = reach.max(offset);
+                }
+                let furthest = self.peaks.iter().copied().fold(0.0, f64::max);
+                let peaks = self.peaks;
+                // Close to rest is the cap settling, never held; it has let go once it's steady there.
+                // Every axis that moved about as far as the furthest has to be back by
+                // `RETURNED_SHARE` of its own peak too, or a lesser axis still held out would be
+                // missed while a larger cross-talk axis relaxes.
+                let settling = (0..6).any(|r| peaks[r] == furthest && offsets[r] <= RETURNED_SHARE * furthest)
+                    && (0..6).any(|r| peaks[r] >= 0.5 * furthest && offsets[r] <= SETTLED_SHARE * peaks[r])
+                    && (0..6).all(|r| peaks[r] < 0.5 * furthest || offsets[r] <= RETURNED_SHARE * peaks[r]);
+                let stopped = settling && (self.steady >= SETTLE_SECONDS);
+                if away <= 0.5 || stopped {
+                    // Where it settled: every reading of the steady run, or just this one.
+                    let mut settled = Samples::default();
+                    settled.add(raw);
+                    if stopped {
+                        settled = self.run;
+                    }
                     if self.seconds >= HOLD_SECONDS {
+                        // Every reading of the steady run, so the dead zone covers all of them.
+                        if stopped {
+                            self.recording.settled[index] = self.run;
+                        } else {
+                            self.recording.settled(index, raw);
+                        }
                         self.enter(if index + 1 < STEPS.len() { Stage::Step(index + 1) } else { Stage::Done });
+                        self.settled = Some(settled);
                     } else if self.seconds > 0.0 {
                         // Let go too soon: the hold starts over, and only a whole one is kept.
                         self.recording.clear_step(index);
                         self.enter(Stage::Step(index));
+                        self.settled = Some(settled);
                     }
+                } else if away >= 1.0 && !settling {
+                    self.recording.step(index, raw);
+                    self.seconds += seconds;
                 }
             }
             Stage::Done => {}
@@ -400,6 +543,29 @@ impl Wizard {
     fn enter(&mut self, stage: Stage) {
         self.stage = stage;
         self.seconds = 0.0;
+        self.peaks = [0.0; 6];
+        // A new stage's steadiness starts with its own readings.
+        (self.run, self.steady) = (Samples::default(), 0.0);
+    }
+
+    /// How far each raw axis is from rest, in raw units.
+    fn offsets(&self, raw: [i16; 6]) -> [f64; 6] {
+        std::array::from_fn(|r| (f64::from(raw[r]) - self.recording.rest.rest_and_wander(r).map_or(0.0, |(rest, _)| rest)).abs())
+    }
+
+    /// How far apart raw axis `r`'s readings may be and still be one position: its noise's whole
+    /// spread (twice its rest wander), at least 4 units (±2) and [`STEADY_SHARE`] of the furthest it
+    /// has gone in any step.
+    fn tolerance(&self, r: usize) -> f64 {
+        let wander = self.recording.rest.rest_and_wander(r).map_or(0.0, |(_, wander)| wander);
+        (2.0 * wander).max(4.0).max(STEADY_SHARE * self.reach.get(r).copied().unwrap_or(0.0))
+    }
+
+    /// Whether `raw` is still where `settled` was: adding it keeps every axis within [`Self::tolerance`],
+    /// the same band the steadiness check accepts.
+    fn near(&self, mut settled: Samples, raw: [i16; 6]) -> bool {
+        settled.add(raw);
+        (0..6).all(|r| settled.spread(r) <= self.tolerance(r))
     }
 
     /// How far the reading is from rest, on the raw axis furthest out, as a share of what counts as
@@ -741,6 +907,405 @@ mod tests {
             hold(&mut wizard, rest[0], 0.1);
         }
         wizard
+    }
+
+    /// Where a relative-axis device read through spacenavd stops after each release: its last
+    /// small report, never zero (#2778). Ours, in the range that issue measured.
+    const STUCK: [[i16; 6]; 13] = [
+        [11, -34, -40, -5, -5, 15],
+        [0, 0, -60, 0, 0, 0],
+        [-8, 21, 13, 4, -9, -3],
+        [25, -6, 0, -12, 7, 2],
+        [-30, 12, 9, 0, 18, -7],
+        [4, 38, -15, 6, -2, 0],
+        [0, -17, 33, -20, 1, 9],
+        [9, 3, -4, 28, -11, 0],
+        [-2, -9, 6, -3, 24, -12],
+        [14, 0, -11, 7, -30, 5],
+        [-6, 10, 2, 0, 3, 31],
+        [3, -4, 0, 2, -6, -27],
+        [0, 0, 0, 0, 0, 0],
+    ];
+
+    #[test]
+    fn a_device_that_stops_short_of_rest_after_each_release_finishes_and_doesnt_creep() {
+        // Nothing arrives at rest, so the reading stays exactly where the last report left it:
+        // first wherever the cap was last let go, then after each step a different place.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, STUCK[0], REST_SECONDS + 0.1);
+        for (index, reading) in PRO.into_iter().enumerate() {
+            assert_eq!(wizard.stage(), Stage::Step(index));
+            // While the cap hasn't been touched, the last step's stuck reading isn't a hold.
+            hold(&mut wizard, STUCK[index], 1.0);
+            assert_eq!((wizard.stage(), wizard.progress()), (Stage::Step(index), 0.0));
+            hold(&mut wizard, reading, 0.5);
+            hold(&mut wizard, STUCK[index + 1], SETTLE_SECONDS + 0.1);
+        }
+        assert_eq!(wizard.stage(), Stage::Done);
+        let calibration = wizard.result().unwrap().unwrap();
+        assert!(calibration.axes.iter().enumerate().all(|(c, axis)| axis.source == c && !axis.reversed), "{calibration:?}");
+        for stuck in STUCK {
+            assert_eq!(calibration.apply(stuck), [0; 6], "{stuck:?} {calibration:?}");
+        }
+        // The cap still reaches full speed, and a push past the stuck range still moves.
+        assert!(calibration.apply(PRO[0])[0] >= FULL_SCALE - 1, "{calibration:?}");
+        assert!(calibration.apply([120, 0, 0, 0, 0, 0])[0] > 0);
+    }
+
+    #[test]
+    fn a_steady_hold_that_repeats_one_reading_is_still_a_hold() {
+        // spacenavd sends only on change, so a cap held still at full deflection repeats one
+        // reading for far longer than SETTLE_SECONDS; it is held, not let go.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, STUCK[0], REST_SECONDS + 0.1);
+        hold(&mut wizard, PRO[0], 1.0);
+        assert_eq!((wizard.stage(), wizard.progress()), (Stage::Step(0), 1.0));
+        hold(&mut wizard, STUCK[1], SETTLE_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(1));
+    }
+
+    /// `reading` and `reading + jitter` in turn, for `seconds`, a frame every 20 ms.
+    fn jitter(wizard: &mut Wizard, reading: [i16; 6], jitter: [i16; 6], seconds: f64) {
+        let shaken: [i16; 6] = std::array::from_fn(|r| reading[r] + jitter[r]);
+        for frame in 0..(seconds / 0.02).round() as usize {
+            wizard.feed(if frame % 2 == 0 { reading } else { shaken }, 0.02);
+        }
+    }
+
+    #[test]
+    fn a_drifting_device_that_settles_off_centre_after_each_release_finishes_and_doesnt_creep() {
+        // It keeps reporting, noisily, but after each release settles somewhere off its rest:
+        // a worn stick, not only spacenavd. The noise stays within its rest wander (`STILL`).
+        const NOISE: [i16; 6] = [3, -2, 0, 1, 2, 0];
+        let mut wizard = Wizard::default();
+        rest_then(&mut wizard);
+        for (index, reading) in PRO.into_iter().enumerate() {
+            assert_eq!(wizard.stage(), Stage::Step(index));
+            if index > 0 {
+                // Sitting where the last step settled isn't a hold.
+                jitter(&mut wizard, STUCK[index], NOISE, 1.0);
+                assert_eq!((wizard.stage(), wizard.progress()), (Stage::Step(index), 0.0));
+            }
+            hold(&mut wizard, reading, 0.5);
+            jitter(&mut wizard, STUCK[index + 1], NOISE, SETTLE_SECONDS + 0.1);
+        }
+        assert_eq!(wizard.stage(), Stage::Done);
+        let calibration = wizard.result().unwrap().unwrap();
+        assert!(calibration.axes.iter().enumerate().all(|(c, axis)| axis.source == c && !axis.reversed), "{calibration:?}");
+        for stuck in &STUCK[1..] {
+            let shaken: [i16; 6] = std::array::from_fn(|r| stuck[r] + NOISE[r]);
+            assert_eq!((calibration.apply(*stuck), calibration.apply(shaken)), ([0; 6], [0; 6]), "{stuck:?} {calibration:?}");
+        }
+        assert!(calibration.apply(PRO[0])[0] >= FULL_SCALE - 1, "{calibration:?}");
+    }
+
+    #[test]
+    fn both_ends_of_an_odd_width_settled_run_are_untouched_and_one_unit_beyond_is_movement() {
+        // Silent at rest (no wander) and a 250 push on X: tolerance is max(4, 250 / 50) = 5, odd.
+        // The release dithers over 10..15, as wide as that, so its middle rounds to 13 and 10 is
+        // 3 from it, more than half of 5.
+        let wizard = || {
+            let mut wizard = Wizard::default();
+            hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+            hold(&mut wizard, [250, 0, 0, 0, 0, 0], 0.5);
+            cycle(&mut wizard, &[[10, 0, 0, 0, 0, 0], [15, 0, 0, 0, 0, 0]], SETTLE_SECONDS + 0.1);
+            assert_eq!(wizard.stage(), Stage::Step(1));
+            wizard
+        };
+        for (x, touched) in [(10, false), (15, false), (9, true), (16, true)] {
+            let mut wizard = wizard();
+            assert_eq!(wizard.tolerance(0), 5.0);
+            wizard.feed([x, 0, 0, 0, 0, 0], 0.02);
+            assert_eq!(wizard.progress() > 0.0, touched, "{x}");
+        }
+    }
+
+    #[test]
+    fn a_reading_still_moving_close_to_rest_doesnt_end_a_step() {
+        // Past the peak and close to rest, but moving more than the noise: still on the way back.
+        let mut wizard = Wizard::default();
+        rest_then(&mut wizard);
+        hold(&mut wizard, PRO[0], 0.5);
+        jitter(&mut wizard, PRO[0].map(|value| value / 5), [20, 0, 0, 0, 0, 0], 1.0);
+        assert_eq!(wizard.stage(), Stage::Step(0));
+    }
+
+    /// `readings` in turn, from the first, for `seconds`, a frame every 20 ms.
+    fn cycle(wizard: &mut Wizard, readings: &[[i16; 6]], seconds: f64) {
+        for frame in 0..(seconds / 0.02).round() as usize {
+            wizard.feed(readings[frame % readings.len()], 0.02);
+        }
+    }
+
+    #[test]
+    fn an_axis_flat_at_rest_that_dithers_once_off_centre_still_settles() {
+        // Silent at rest, so no wander was measured, but ±2 around where each release stops.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        let dither = |at: [i16; 6]| [at.map(|value| value - 2), at, at.map(|value| value + 2)];
+        for (index, reading) in PRO.into_iter().enumerate() {
+            assert_eq!(wizard.stage(), Stage::Step(index));
+            if index > 0 {
+                // Dithering where the last step settled doesn't fill this one.
+                cycle(&mut wizard, &dither(STUCK[index]), 1.0);
+                assert_eq!((wizard.stage(), wizard.progress()), (Stage::Step(index), 0.0));
+            }
+            hold(&mut wizard, reading, 0.5);
+            cycle(&mut wizard, &dither(STUCK[index + 1]), SETTLE_SECONDS + 0.1);
+        }
+        assert_eq!(wizard.stage(), Stage::Done);
+        let calibration = wizard.result().unwrap().unwrap();
+        for at in &STUCK[1..] {
+            for still in dither(*at) {
+                assert_eq!(calibration.apply(still), [0; 6], "{still:?} {calibration:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn noise_that_starts_at_one_edge_of_its_spread_is_steady_and_settles_at_its_middle() {
+        // X wanders -3..+3 at rest; after the release it cycles -3, 0, +3 around +40.
+        let mut wizard = Wizard::default();
+        rest_then(&mut wizard);
+        hold(&mut wizard, PRO[0], 0.5);
+        cycle(&mut wizard, &[[37, 0, 0, 0, 0, 0], [40, 0, 0, 0, 0, 0], [43, 0, 0, 0, 0, 0]], SETTLE_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(1));
+        assert_eq!(wizard.recording.settled[0].mean().map(|mean| mean[0].round()), Some(40.0));
+    }
+
+    #[test]
+    fn the_four_unit_floor_alone_lets_a_two_unit_dither_settle_on_a_short_range() {
+        // Flat at rest, and the biggest push only reaches 100, so the reach share is 2 and only
+        // the floor (4, i.e. ±2) lets this ±2 dither count as steady.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        hold(&mut wizard, [100, 0, 0, 0, 0, 0], 0.5);
+        cycle(&mut wizard, &[[8, 0, 0, 0, 0, 0], [10, 0, 0, 0, 0, 0], [12, 0, 0, 0, 0, 0]], SETTLE_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(1));
+    }
+
+    #[test]
+    fn dither_the_steadiness_check_rejects_isnt_skipped_as_untouched_either() {
+        // Step 0 settles on a ±2 dither around 10. Sitting there is untouched; ±3 around it is wider
+        // than the steadiness check calls one position, so it is movement and starts a hold.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        hold(&mut wizard, [100, 0, 0, 0, 0, 0], 0.5);
+        cycle(&mut wizard, &[[8, 0, 0, 0, 0, 0], [10, 0, 0, 0, 0, 0], [12, 0, 0, 0, 0, 0]], SETTLE_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(1));
+        cycle(&mut wizard, &[[8, 0, 0, 0, 0, 0], [10, 0, 0, 0, 0, 0], [12, 0, 0, 0, 0, 0]], 0.2);
+        assert_eq!(wizard.progress(), 0.0);
+        cycle(&mut wizard, &[[7, 0, 0, 0, 0, 0], [10, 0, 0, 0, 0, 0], [13, 0, 0, 0, 0, 0]], 0.2);
+        assert!(wizard.progress() > 0.0);
+    }
+
+    #[test]
+    fn a_push_after_a_single_reading_settle_starts_a_hold() {
+        // One reading back at rest, not a steady run, is all the settle stores; a full push after
+        // it is still movement.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        hold(&mut wizard, [100, 0, 0, 0, 0, 0], 0.5);
+        wizard.feed([0; 6], 0.02);
+        assert_eq!(wizard.stage(), Stage::Step(1));
+        assert_eq!(wizard.settled.map(|settled| settled.count), Some(1));
+        hold(&mut wizard, [-100, 0, 0, 0, 0, 0], 0.2);
+        assert_eq!((wizard.stage(), wizard.progress() > 0.0), (Stage::Step(1), true));
+    }
+
+    #[test]
+    fn a_narrow_settled_run_skips_a_whole_tolerance_either_side_and_the_band_stays_anchored() {
+        // Flat at rest and a 100 push: tolerance is exactly 4. The release settles flat at 10, so a
+        // reading 4 either side (6, 14) is untouched, repeated or not; one more unit is movement.
+        let wizard = || {
+            let mut wizard = Wizard::default();
+            hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+            hold(&mut wizard, [100, 0, 0, 0, 0, 0], 0.5);
+            hold(&mut wizard, [10, 0, 0, 0, 0, 0], SETTLE_SECONDS + 0.1);
+            assert_eq!(wizard.stage(), Stage::Step(1));
+            assert_eq!(wizard.tolerance(0), 4.0);
+            wizard
+        };
+        let mut edges = wizard();
+        cycle(&mut edges, &[[6, 0, 0, 0, 0, 0], [14, 0, 0, 0, 0, 0]], 0.2);
+        hold(&mut edges, [14, 0, 0, 0, 0, 0], 0.2);
+        assert_eq!(edges.progress(), 0.0);
+        // Skipped readings don't widen the band: after all those 14s, 15 is still movement.
+        edges.feed([15, 0, 0, 0, 0, 0], 0.02);
+        assert!(edges.progress() > 0.0);
+        for x in [5, 15] {
+            let mut wizard = wizard();
+            wizard.feed([x, 0, 0, 0, 0, 0], 0.02);
+            assert!(wizard.progress() > 0.0, "{x}");
+        }
+    }
+
+    #[test]
+    fn a_step_settles_on_its_own_axis_when_another_with_a_wider_range_stays_out() {
+        // The step's own axis only goes to 100; another axis stays 30 out after the release,
+        // more than a quarter of 100, which mustn't hold the step up.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        hold(&mut wizard, [100, 0, 0, 0, 0, 0], 0.5);
+        hold(&mut wizard, [5, 30, 0, 0, 0, 0], SETTLE_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(1));
+    }
+
+    #[test]
+    fn a_step_stays_held_when_the_lesser_axis_is_held_while_the_larger_one_relaxes() {
+        for held in [[100, 5, 0, 0, 0, 0], [100, 60, 0, 0, 0, 0], [100, 200, 0, 0, 0, 0]] {
+            let mut wizard = Wizard::default();
+            hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+            hold(&mut wizard, [100, 200, 0, 0, 0, 0], 0.5);
+            hold(&mut wizard, held, SETTLE_SECONDS + 0.1);
+            assert_eq!(wizard.stage(), Stage::Step(0), "{held:?}");
+        }
+        // A plain hold of a single axis.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        hold(&mut wizard, [100, 0, 0, 0, 0, 0], 0.5);
+        hold(&mut wizard, [100, 0, 0, 0, 0, 0], SETTLE_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(0));
+    }
+
+    #[test]
+    fn a_step_settles_when_cross_talk_moved_another_axis_further_than_its_own() {
+        // Nula's case: the push moves raw 1 twice as far as raw 0, which may be the one asked
+        // for. Raw 0 comes back to 5 % and raw 1 stays at 30 %: let go, both steady.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        hold(&mut wizard, [100, 200, 0, 0, 0, 0], 0.5);
+        hold(&mut wizard, [5, 60, 0, 0, 0, 0], SETTLE_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(1));
+        // Still holding the push, with only the lesser axis back, isn't let go.
+        let mut holding = Wizard::default();
+        hold(&mut holding, [0; 6], REST_SECONDS + 0.1);
+        hold(&mut holding, [100, 200, 0, 0, 0, 0], 0.5);
+        hold(&mut holding, [5, 200, 0, 0, 0, 0], 1.0);
+        assert_eq!(holding.stage(), Stage::Step(0));
+    }
+
+    #[test]
+    fn a_lopsided_dither_that_settled_a_step_isnt_movement_in_the_next() {
+        // Mostly 10 with an occasional 14: spread 4, so steady, but the mean sits near 11 and the 14
+        // is the far edge. Sitting there stays untouched; 15 is wider than the steadiness check allows.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        hold(&mut wizard, [100, 0, 0, 0, 0, 0], 0.5);
+        let lopsided = [[10, 0, 0, 0, 0, 0], [10, 0, 0, 0, 0, 0], [10, 0, 0, 0, 0, 0], [14, 0, 0, 0, 0, 0]];
+        cycle(&mut wizard, &lopsided, SETTLE_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(1));
+        cycle(&mut wizard, &lopsided, 1.0);
+        assert_eq!((wizard.stage(), wizard.progress()), (Stage::Step(1), 0.0));
+        hold(&mut wizard, [16, 0, 0, 0, 0, 0], 0.2);
+        assert!(wizard.progress() > 0.0);
+    }
+
+    #[test]
+    fn cross_talk_that_leaves_the_bigger_axis_well_out_keeps_the_step_open() {
+        // The documented limit (Grok's case): raw 0 moved less than half as far as raw 1, so it
+        // never qualifies, and raw 1 at 90 is above a quarter of its 300 peak.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        hold(&mut wizard, [100, 300, 0, 0, 0, 0], 0.5);
+        hold(&mut wizard, [5, 90, 0, 0, 0, 0], SETTLE_SECONDS + 1.0);
+        assert_eq!(wizard.stage(), Stage::Step(0));
+    }
+
+    #[test]
+    fn a_hand_held_still_close_to_rest_after_the_push_counts_as_let_go() {
+        // The known limit: held exactly still at a fifth of the way out, on any device, ends the
+        // step there, and that axis's dead zone widens to cover it.
+        let low = PRO[0].map(|value| value / 5);
+        let mut wizard = Wizard::default();
+        rest_then(&mut wizard);
+        hold(&mut wizard, PRO[0], 0.5);
+        hold(&mut wizard, low, SETTLE_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(1));
+        assert_eq!((wizard.recording.settled[0].min, wizard.recording.settled[0].max), (low, low));
+        // Coming back to its true rest afterwards doesn't undo that: the next step is waiting.
+        hold(&mut wizard, STILL[0], 0.5);
+        assert_eq!((wizard.stage(), wizard.progress()), (Stage::Step(1), 0.0));
+        // No frame of where it settled went into the step as held.
+        assert_eq!((wizard.recording.steps[0].min[0], wizard.recording.steps[0].max[4]), (PRO[0][0], PRO[0][4]));
+    }
+
+    #[test]
+    fn every_reading_of_a_release_that_was_let_go_falls_in_the_dead_zone() {
+        // Nula's case: X wanders -4..+4 at rest. Half the releases dither over +8..+16, the other
+        // half over -16..-8. Keeping one reading of each, padded by the wander, can miss the edges.
+        let wander = [[-4, 0, 0, 0, 0, 0], [4, 0, 0, 0, 0, 0]];
+        let x = |value: i16| [value, 0, 0, 0, 0, 0];
+        let (above, below) = ([x(16), x(12), x(8)], [x(-8), x(-12), x(-16)]);
+        let mut wizard = Wizard::default();
+        for _ in 0..40 {
+            hold(&mut wizard, wander[0], 0.02);
+            hold(&mut wizard, wander[1], 0.02);
+        }
+        for (index, reading) in PRO.into_iter().enumerate() {
+            assert_eq!(wizard.stage(), Stage::Step(index));
+            hold(&mut wizard, reading, 0.5);
+            cycle(&mut wizard, if index % 2 == 0 { &above } else { &below }, SETTLE_SECONDS + 0.1);
+        }
+        let calibration = wizard.result().unwrap().unwrap();
+        for still in above.iter().chain(&below).chain(&wander) {
+            assert_eq!(calibration.apply(*still), [0; 6], "{still:?} {calibration:?}");
+        }
+    }
+
+    #[test]
+    fn two_steps_in_a_row_that_stop_at_the_same_place_both_finish() {
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, STUCK[0], REST_SECONDS + 0.1);
+        for reading in &PRO[..2] {
+            hold(&mut wizard, *reading, 0.5);
+            hold(&mut wizard, STUCK[1], SETTLE_SECONDS + 0.1);
+        }
+        assert_eq!(wizard.stage(), Stage::Step(2));
+    }
+
+    #[test]
+    fn recentring_on_where_the_cap_settled_keeps_the_whole_rest_wander_inside_the_dead_zone() {
+        // X wanders -4..+4 at rest, and every release settles at +12.
+        let wander = [[-4, 0, 0, 0, 0, 0], [4, 0, 0, 0, 0, 0]];
+        let mut recording = record(PRO, wander);
+        for index in 0..12 {
+            recording.settled(index, [12, 0, 0, 0, 0, 0]);
+        }
+        let calibration = recording.solve().unwrap();
+        for still in [wander[0], wander[1], [12, 0, 0, 0, 0, 0]] {
+            assert_eq!(calibration.apply(still), [0; 6], "{still:?} {calibration:?}");
+        }
+    }
+
+    #[test]
+    fn the_dead_zone_shares_are_where_apply_starts_moving() {
+        // A lopsided, reversed axis with the user's dead zone on top.
+        let mut calibration = walk(STILL, PRO).result().unwrap().unwrap();
+        calibration.axes[0] = AxisCalibration { source: 0, reversed: true, rest: 10, dead_zone: 20, full: [100, 400] };
+        calibration.dead_zone_share = 0.1;
+        let [negative, positive] = calibration.dead_zone_shares()[0];
+        // Canonical negative is raw above rest here: 400 of travel, 20 measured.
+        assert!((negative - (0.05 + 0.95 * 0.1)).abs() < 1e-6 && (positive - (0.2 + 0.8 * 0.1)).abs() < 1e-6);
+        let at = |raw: i16| [raw, 0, 0, 0, 0, 0];
+        let inside = |share: f32, full: f32| (share * full).floor() as i16 - 1;
+        assert_eq!(calibration.apply(at(10 + inside(negative, 400.0)))[0], 0);
+        assert!(calibration.apply(at(10 + inside(negative, 400.0) + 3))[0] < 0);
+        assert_eq!(calibration.apply(at(10 - inside(positive, 100.0)))[0], 0);
+        assert!(calibration.apply(at(10 - inside(positive, 100.0) - 3))[0] > 0);
+        // Full deflection is ±1 of travel, the reversed way round.
+        assert_eq!(calibration.travel(at(410))[0], -1.0);
+        assert_eq!(calibration.travel(at(-90))[0], 1.0);
+    }
+
+    #[test]
+    fn a_device_that_comes_back_to_rest_keeps_its_measured_rest_and_dead_zone() {
+        let mut settled = record(PRO, STILL);
+        let plain = settled.solve().unwrap();
+        for index in 0..12 {
+            settled.settled(index, STILL[index % 2]);
+        }
+        assert_eq!(settled.solve().unwrap(), plain);
     }
 
     #[test]
