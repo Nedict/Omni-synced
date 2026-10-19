@@ -10,31 +10,6 @@ use std::{
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 #[test]
-fn dripping_bytes_cannot_extend_the_absolute_frame_budget() {
-    use std::{sync::mpsc, time::Duration};
-    let listener = solidcraft_pdm::bind_loopback(0).unwrap();
-    let address = listener.local_addr().unwrap();
-    let (send, receive) = mpsc::channel();
-    let reader = std::thread::spawn(move || {
-        let (stream, _) = listener.accept().unwrap();
-        let result = solidcraft_pdm::read_socket_frame(&stream, Duration::from_millis(100));
-        send.send(result.is_err()).unwrap();
-    });
-    let mut stream = TcpStream::connect(address).unwrap();
-    let writer = std::thread::spawn(move || {
-        for _ in 0..100 {
-            if stream.write_all(b" ").is_err() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    });
-    assert!(receive.recv_timeout(Duration::from_secs(1)).unwrap());
-    reader.join().unwrap();
-    writer.join().unwrap();
-}
-
-#[test]
 fn listener_is_loopback_and_external_bind_arguments_are_rejected() {
     let listener = solidcraft_pdm::bind_loopback(0).unwrap();
     assert_eq!(listener.local_addr().unwrap().ip(), std::net::Ipv4Addr::LOCALHOST);

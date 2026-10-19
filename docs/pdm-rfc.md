@@ -201,7 +201,8 @@ Any local process can read/write while it runs; loopback is not an authorization
 boundary. Use public-safe toy documents only and stop it after experiments.
 Content is limited to 1 MiB, request frames to 8 MiB, direct dependencies to 256,
 with a five-second absolute socket frame-read budget (remaining time recomputed on
-each read) and five-second per-write inactivity timeouts. The store admits at most 256 versions
+each read) and a separate five-second absolute response-write budget. Responses
+are serialized once before bounded socket writes. The store admits at most 256 versions
 and 64 MiB of total committed content; metadata is bounded by version/dependency
 limits. Unpublished stages can temporarily add one upload. Historical scans remain
 linear within those caps; repeated connections can still monopolize the single server, so
@@ -209,6 +210,13 @@ this is not hardened against denial of service. The protocol is
 experimental and not a compatibility promise. Both hosting modes will use the same
 versioned service contract after security/transport work; this slice cannot yet be
 deployed safely in cloud or used remotely.
+
+Budgets apply separately to reading and writing, not end-to-end execution or disk
+I/O. Response frames, including the newline, must fit the same 8 MiB cap. Private
+clock/I/O seams used by the socket adapters test five successful partial reads and
+writes with residual budgets of 100, 80, 60, 40 and 20 ms, followed by timeout;
+these regressions do not depend on thread scheduling. Real TCP remains an
+additional integration check.
 
 ## Reproduction and validation
 

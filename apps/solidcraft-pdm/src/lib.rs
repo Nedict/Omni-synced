@@ -266,23 +266,44 @@ pub fn read_frame(reader: impl Read) -> Result<Vec<u8>, Error> {
 
 /// An absolute frame budget is recomputed before every underlying socket read.
 pub fn read_socket_frame(stream: &TcpStream, budget: Duration) -> Result<Vec<u8>, Error> {
-    struct BudgetReader<'a> {
-        stream: &'a TcpStream,
-        started: Instant,
+    let started = Instant::now();
+    let mut stream = stream;
+    read_budgeted_frame(
+        |buffer, remaining| {
+            stream.set_read_timeout(Some(remaining))?;
+            stream.read(buffer)
+        },
+        || started.elapsed(),
+        budget,
+    )
+}
+
+// Clock and I/O seams keep the repeated-read regression independent of thread scheduling.
+fn read_budgeted_frame<R, C>(reader: R, elapsed: C, budget: Duration) -> Result<Vec<u8>, Error>
+where
+    R: FnMut(&mut [u8], Duration) -> std::io::Result<usize>,
+    C: FnMut() -> Duration,
+{
+    struct BudgetReader<R, C> {
+        reader: R,
+        elapsed: C,
         budget: Duration,
     }
-    impl Read for BudgetReader<'_> {
+    impl<R, C> Read for BudgetReader<R, C>
+    where
+        R: FnMut(&mut [u8], Duration) -> std::io::Result<usize>,
+        C: FnMut() -> Duration,
+    {
         fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
             let remaining = self
                 .budget
-                .checked_sub(self.started.elapsed())
+                .checked_sub((self.elapsed)())
                 .filter(|duration| !duration.is_zero())
                 .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::TimedOut, "frame deadline exceeded"))?;
-            self.stream.set_read_timeout(Some(remaining))?;
-            self.stream.read(buffer)
+            (self.reader)(buffer, remaining)
         }
     }
-    read_frame(BudgetReader { stream, started: Instant::now(), budget })
+    read_frame(BudgetReader { reader, elapsed, budget })
 }
 
 pub fn serve_connection(store: &mut Store, mut stream: TcpStream) -> Result<(), Error> {
@@ -291,7 +312,136 @@ pub fn serve_connection(store: &mut Store, mut stream: TcpStream) -> Result<(), 
         Ok(request) => store.execute(request),
         Err(_) => Response::Error { code: "invalid_request".into() },
     };
-    serde_json::to_writer(&mut stream, &response)?;
-    stream.write_all(b"\n")?;
+    let bytes = serde_json::to_vec(&response)?;
+    write_socket_frame(&mut stream, &bytes, Duration::from_secs(5))?;
     Ok(())
+}
+
+/// Serialize before entering this function so tiny JSON writes cannot extend a connection.
+pub fn write_socket_frame(stream: &mut TcpStream, bytes: &[u8], budget: Duration) -> Result<(), Error> {
+    let started = Instant::now();
+    write_budgeted_frame(
+        |bytes, remaining| {
+            stream.set_write_timeout(Some(remaining))?;
+            stream.write(bytes)
+        },
+        || started.elapsed(),
+        bytes,
+        budget,
+    )
+}
+
+fn write_budgeted_frame<W, C>(writer: W, elapsed: C, bytes: &[u8], budget: Duration) -> Result<(), Error>
+where
+    W: FnMut(&[u8], Duration) -> std::io::Result<usize>,
+    C: FnMut() -> Duration,
+{
+    if bytes.len() as u64 >= MAX_FRAME {
+        return Err(Error::Invalid("response frame size"));
+    }
+    struct BudgetWriter<W, C> {
+        writer: W,
+        elapsed: C,
+        budget: Duration,
+    }
+    impl<W, C> Write for BudgetWriter<W, C>
+    where
+        W: FnMut(&[u8], Duration) -> std::io::Result<usize>,
+        C: FnMut() -> Duration,
+    {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            let remaining = self
+                .budget
+                .checked_sub((self.elapsed)())
+                .filter(|duration| !duration.is_zero())
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::TimedOut, "response deadline exceeded"))?;
+            (self.writer)(bytes, remaining)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut writer = BudgetWriter { writer, elapsed, budget };
+    writer.write_all(bytes)?;
+    writer.write_all(b"\n")?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn interrupted_write_retries_with_remaining_budget_and_preserves_bytes() {
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let mut attempts = 0;
+        let mut output = Vec::new();
+        let mut budgets = Vec::new();
+        let result = write_budgeted_frame(
+            |bytes, remaining| {
+                attempts += 1;
+                budgets.push(remaining.as_millis());
+                elapsed.set(elapsed.get() + Duration::from_millis(10));
+                if attempts == 2 {
+                    return Err(std::io::Error::from(std::io::ErrorKind::Interrupted));
+                }
+                if let Some(byte) = bytes.first() {
+                    output.push(*byte);
+                    Ok(1)
+                } else {
+                    Err(std::io::Error::other("empty write"))
+                }
+            },
+            || elapsed.get(),
+            b"ab",
+            Duration::from_millis(100),
+        );
+        assert!(result.is_ok());
+        assert_eq!(attempts, 4);
+        assert_eq!(output, b"ab\n");
+        assert_eq!(budgets, vec![100, 90, 80, 70]);
+    }
+
+    #[test]
+    fn repeated_partial_writes_do_not_reset_the_response_deadline() {
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let mut written = 0;
+        let mut budgets = Vec::new();
+        let result = write_budgeted_frame(
+            |bytes, remaining| {
+                assert!(!bytes.is_empty());
+                written += 1;
+                budgets.push(remaining.as_millis());
+                elapsed.set(elapsed.get() + Duration::from_millis(20));
+                Ok(1)
+            },
+            || elapsed.get(),
+            b"123456",
+            Duration::from_millis(100),
+        );
+        assert!(matches!(result, Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::TimedOut));
+        assert_eq!(written, 5);
+        assert_eq!(budgets, vec![100, 80, 60, 40, 20]);
+    }
+
+    #[test]
+    fn repeated_reads_do_not_reset_the_frame_deadline() {
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let mut reads = 0;
+        let mut budgets = Vec::new();
+        let result = read_budgeted_frame(
+            |buffer, remaining| {
+                let byte = buffer.first_mut().ok_or_else(|| std::io::Error::other("empty read buffer"))?;
+                *byte = b' ';
+                reads += 1;
+                budgets.push(remaining.as_millis());
+                elapsed.set(elapsed.get() + Duration::from_millis(20));
+                Ok(1)
+            },
+            || elapsed.get(),
+            Duration::from_millis(100),
+        );
+        assert!(matches!(result, Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::TimedOut));
+        assert_eq!(reads, 5);
+        assert_eq!(budgets, vec![100, 80, 60, 40, 20]);
+    }
 }
