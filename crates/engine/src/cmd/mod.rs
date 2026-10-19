@@ -39,6 +39,7 @@ pub use features::{auto_operation, extrude_reach};
 mod component_link;
 mod config;
 mod file;
+mod hole_stacks;
 mod inspect;
 mod interference;
 pub(crate) mod joints;
@@ -272,6 +273,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(file::COMMANDS.iter());
     v.extend(metadata::COMMANDS.iter());
     v.extend(inspect::COMMANDS.iter());
+    v.extend(hole_stacks::COMMANDS.iter());
     v.extend(compare::COMMANDS.iter());
     v.extend(silhouette::COMMANDS.iter());
     v.extend(materials::COMMANDS.iter());
