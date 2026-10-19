@@ -362,6 +362,13 @@ pub enum Kind {
 /// Holes go on any face (flat or curved; the engine drills against the face's normal there).
 const HOLE_FACES: Accept = PLANAR_FACES | FACES | selection::POINTS;
 
+/// The Single hole placement's inputs: the face, then up to two reference edges (#37).
+fn single_hole_inputs() -> Vec<SelInput> {
+    let mut v = vec![SelInput::new("Face", HOLE_FACES, true)];
+    v.extend(crate::hole_refs::inputs());
+    v
+}
+
 /// The rest of the Hole dialog: placement, extents, tap type and drill point.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HoleOpts {
@@ -375,11 +382,21 @@ pub struct HoleOpts {
     /// Tap type: tapped (a cosmetic thread) instead of simple.
     pub tapped: bool,
     pub thread: String,
+    /// The Single hole's reference edge distances (`hole_refs`, #37).
+    pub refs: crate::hole_refs::Refs,
 }
 
 impl Default for HoleOpts {
     fn default() -> Self {
-        HoleOpts { multiple: false, all: false, angled: true, tip_angle: "118 deg".into(), tapped: false, thread: "M5".into() }
+        HoleOpts {
+            multiple: false,
+            all: false,
+            angled: true,
+            tip_angle: "118 deg".into(),
+            tapped: false,
+            thread: "M5".into(),
+            refs: Default::default(),
+        }
     }
 }
 
@@ -656,7 +673,7 @@ impl Dialog {
                 ]
             }),
             "solid.move" => Dialog::new(crate::dialogs_move::kind(0), crate::dialogs_move::inputs(0)),
-            "solid.hole" => Dialog::new(hole_defaults(), vec![SelInput::new("Face", HOLE_FACES, true)]),
+            "solid.hole" => Dialog::new(hole_defaults(), single_hole_inputs()),
             "solid.box" => Dialog::new(
                 Kind::Primitive {
                     cmd: "solid.box",
@@ -1376,7 +1393,7 @@ pub fn planar_face(s: &Session, body: &str, face: usize) -> Option<(Vec3, Vec3)>
     Some((f.centroid, f.plane_normal?))
 }
 
-fn polyline_mid(pts: &[Vec3]) -> Vec3 {
+pub(crate) fn polyline_mid(pts: &[Vec3]) -> Vec3 {
     let len: f64 = pts.windows(2).map(|w| w[0].dist(w[1])).sum();
     let mut acc = 0.0;
     for w in pts.windows(2) {
@@ -1735,7 +1752,7 @@ fn placement_row(d: &mut Dialog, ui: &mut egui::Ui) {
     ui.end_row();
     if (m == 1) != opts.multiple {
         opts.multiple = m == 1;
-        d.inputs = vec![if opts.multiple { SelInput::new("Points", selection::POINTS, true) } else { SelInput::new("Face", HOLE_FACES, true) }];
+        d.inputs = if opts.multiple { vec![SelInput::new("Points", selection::POINTS, true)] } else { single_hole_inputs() };
         d.active = 0;
         d.extra.remove("direction");
     }
@@ -1777,7 +1794,7 @@ fn feature_pattern_reference_key(d: &Dialog, index: usize) -> Option<&'static st
     }
 }
 
-fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::ops::Range<usize>) {
+pub(crate) fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::ops::Range<usize>) {
     // Edit Text shows its Path input among its own rows.
     if matches!(d.kind, Kind::Text(_)) {
         return;
@@ -2422,7 +2439,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     ui.label(tr("dialog.selection_guidance"));
                     ui.end_row();
                 }
-                input_rows(&mut d, ui, &app.session);
+                if matches!(&d.kind, Kind::Hole { opts, .. } if !opts.multiple) {
+                    // Each reference edge with its distance (#37).
+                    enter |= crate::hole_refs::input_rows(&mut d, ui, &app.session);
+                } else {
+                    input_rows(&mut d, ui, &app.session);
+                }
                 match &mut d.kind {
                     Kind::Sketch => {
                         if d.error.is_some()
@@ -4392,6 +4414,16 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                         None => json!({ "position": kept.unwrap_or(p) }),
                     }));
                 }
+                // Reference edges (#37) place the one hole by its distances from them, from where
+                // it was picked.
+                let references = crate::hole_refs::params(d);
+                if !references.is_empty() {
+                    let at = sels(d, 0).iter().find_map(face_point);
+                    match (places.as_mut_slice(), at) {
+                        ([place], Some(at)) => *place = json!({"position": at, "references": references}),
+                        _ => return Err("reference edges place one hole: pick one place on the face".into()),
+                    }
+                }
             }
             let mut out = Vec::new();
             for place in places {
@@ -5093,7 +5125,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             d.extra.insert("pull".into(), pt3(pull.0));
             d
         }
-        FeatureKind::Hole { position, at, direction, diameter, depth, hole, points, thread, to } => {
+        FeatureKind::Hole { position, at, direction, diameter, depth, hole, points, thread, to, references } => {
             let mut d = start("solid.hole")?;
             let mut k = hole_defaults();
             if let Kind::Hole { diameter: dia, depth: dep, kind, cb_diameter, cb_depth, cs_diameter, cs_angle, opts } = &mut k {
@@ -5161,6 +5193,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                         let exprs: Vec<&str> = at.iter().map(|e| e.as_str()).collect();
                         d.extra.insert("position_exprs".into(), json!({"at": exprs, "point": pt3(position.0)}));
                     }
+                    crate::hole_refs::restore(s, &mut d, references, &f.edge_names);
                 }
             }
             if to.is_some() {

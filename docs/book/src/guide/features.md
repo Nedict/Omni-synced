@@ -7,7 +7,7 @@ it.
 
 | Panel | Features |
 |---|---|
-| Create | extrude (one side, two sides, symmetric, taper, start offset, to a distance or through all; new body, join, cut, intersect; thin walls along curves), revolve, sweep, loft, box, cylinder, sphere, torus, coil, pipe, rib, web, emboss, hole (simple, counterbore, countersink, tapped; on faces or at sketch points), thread, rectangular/circular/path patterns, mirror |
+| Create | extrude (one side, two sides, symmetric, taper, start offset, to a distance or through all; new body, join, cut, intersect; thin walls along curves), revolve, sweep, loft, box, cylinder, sphere, torus, coil, pipe, rib, web, emboss, hole (simple, counterbore, countersink, tapped; on faces, at distances from edges, or at sketch points), thread, rectangular/circular/path patterns, mirror |
 | Modify | press pull, fillet, chamfer, shell, draft, scale, combine, split body, offset face, replace face, move/copy, align, remove |
 | Construct | offset plane, plane at angle, plane along path |
 | Inspect | measure, section analysis, interference, compare bodies, curvature comb and map, zebra, draft, minimum radius, isocurves, centre of mass |
@@ -90,6 +90,14 @@ exactly at that point, as **Multiple** placement picks it; **Select Other** (pre
 offers the face where you clicked. The corners of text outlines don't count, nor do projected
 points while the sketch hides projected geometry. The hole keeps that place on the face; to have
 holes follow later edits of the sketch, place them with **Multiple**.
+
+A Single hole can also be placed by its distances from up to two straight edges of its face.
+After picking the face, click **Reference 1** and pick an edge, then pick a second one into
+**Reference 2**. Each edge gets a **Distance** row, measured from where you picked; the canvas
+shows each one as a dimension from the edge to the hole's centre, with a box beside it. Type a
+distance in either place and the hole moves so its centre is that far from the edge, measured in
+the face's plane. Moving the hole measures the distances again. The hole keeps its distances when
+the part changes: it follows its edges, and the distances are parameters like its diameter.
 
 Fillets and chamfers handle straight edges between planar faces, whole smooth loops, runs of
 neighbouring edges with mitred or spherical corners, and closed chains of curved edges (a rolling
@@ -194,7 +202,7 @@ still be added through `set`. The fields of the common features:
 | Chamfer | `distance`, `distance2` or `angle`, `flip`, `edges`, `body` |
 | Box | `length`, `width`, `height`, `corner`, `operation` |
 | Cylinder | `radius`, `height`, `base`, `axis`, `operation` |
-| Hole | `diameter`, `depth`, `position`, `direction`, `hole` (simple, drilled, counterbore, countersink), `thread`, `to` |
+| Hole | `diameter`, `depth`, `position`, `direction`, `hole` (simple, drilled, counterbore, countersink), `thread`, `to`, `references` (an `edge` point and a `distance` each) |
 | Shell | `thickness`, `faces`, `direction`, `body`, `tangent_chain` |
 | Draft | `angle`, `faces`, `neutral`, `pull`, `body` |
 | Offset face | `distance`, `faces`, `body` |

@@ -1435,11 +1435,17 @@
   "ui.rectangle": "矩形",
   "ui.rectangular_pattern": "矩形阵列",
   "ui.redo": "重做",
+<<<<<<< HEAD
   "ui.relink_design_changed": "选择源文件时装配已更改。请重新开始链接。",
   "ui.relink_done": "已为所有实例重新链接源文件。",
   "ui.relink_not_linked": "此组件未链接到源设计。",
   "ui.relink_select_one": "请先选择一个链接组件或其实例。",
   "ui.relink_source_all": "重新链接源文件（所有实例）…",
+=======
+  "ui.reference_1": "参考 1",
+  "ui.reference_2": "参考 2",
+  "ui.reference_distance": "参考距离",
+>>>>>>> 780b9da2 (Hole: place a Single hole by distances from reference edges (#37))
   "ui.removeFromToolbar": "从工具栏移除",
   "ui.removeSection": "移除剖面",
   "ui.render": "渲染",
