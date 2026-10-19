@@ -571,23 +571,24 @@ fn draw(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj,
 /// text (e.g. "4 mm" -> "15 mm") would leave the stale, shorter selection from the pick in place,
 /// covering only part of the new text.
 fn value_box(ui: &mut egui::Ui, label: &str, value: &mut String, at: Pos2, select_all: bool) {
-    value_box_with(ui, egui::Id::new("sc_canvas_area"), egui::Id::new("sc_canvas_value"), label, value, at, select_all);
+    value_box_with(ui, egui::Id::new("sc_canvas_area"), egui::Id::new("sc_canvas_value"), label, value, (at, egui::Align2::LEFT_TOP), select_all);
 }
 
 /// [`value_box`] under its own ids (its area's and its field's), for a value beside the main one
-/// (a hole's reference distances). Returns where the field is.
+/// (a hole's reference distances), with the point of the box that sits at `at`. Returns where the
+/// field is.
 pub(crate) fn value_box_with(
     ui: &mut egui::Ui,
     area: egui::Id,
     id: egui::Id,
     label: &str,
     value: &mut String,
-    at: Pos2,
+    (at, pivot): (Pos2, egui::Align2),
     select_all: bool,
 ) -> Option<egui::Rect> {
     let t = Tokens::get();
     let mut field = None;
-    crate::frame::area(area).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+    crate::frame::area(area).fixed_pos(at).pivot(pivot).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(crate::i18n::tr_label(label)).color(t.text_dim).size(11.5));

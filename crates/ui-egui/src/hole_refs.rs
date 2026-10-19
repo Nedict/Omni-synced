@@ -300,7 +300,7 @@ pub(crate) fn canvas(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Painter,
             took = true;
         }
         let Some(value) = opts.refs.distance.get_mut(*k) else { continue };
-        let at = a + (b - a) * 0.5 + vec2(8.0, -12.0);
+        let at = box_beyond(a, b);
         let r =
             crate::canvas::value_box_with(ui, egui::Id::new(("sc_hole_ref_area", *k)), egui::Id::new(("sc_hole_ref", *k)), label, value, at, focus);
         if let Some(r) = r {
@@ -308,6 +308,22 @@ pub(crate) fn canvas(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Painter,
         }
     }
     took
+}
+
+/// Where a distance's box goes: just past its edge (at `a`, the hole's centre at `b`), on the side
+/// away from the hole, so it stays clear of the hole's own value box at its centre. The box's side
+/// toward the edge sits there.
+fn box_beyond(a: Pos2, b: Pos2) -> (Pos2, egui::Align2) {
+    const GAP: f32 = 10.0;
+    let v = a - b;
+    let out = if v.length() < 1.0 { vec2(1.0, 0.0) } else { v / v.length() };
+    if out.x.abs() >= out.y.abs() {
+        if out.x > 0.0 { (a + vec2(GAP, 0.0), egui::Align2::LEFT_CENTER) } else { (a - vec2(GAP, 0.0), egui::Align2::RIGHT_CENTER) }
+    } else if out.y > 0.0 {
+        (a + vec2(0.0, GAP), egui::Align2::CENTER_TOP)
+    } else {
+        (a - vec2(0.0, GAP), egui::Align2::CENTER_BOTTOM)
+    }
 }
 
 /// A dimension line from `a` to `b`, an arrowhead at each end.
