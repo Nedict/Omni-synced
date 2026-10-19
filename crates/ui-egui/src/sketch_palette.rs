@@ -591,6 +591,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         } else {
             set_mode(app, k);
         }
+        // The button click would otherwise leave the shape's dimension box without the keyboard.
+        crate::sketch_dims::restore_box_focus(app, ctx);
     }
     if let Some(id) = start {
         // The same path a toolbar click takes. It drops the half-drawn shape and starts the
