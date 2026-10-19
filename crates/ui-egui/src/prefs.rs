@@ -373,6 +373,10 @@ pub struct Prefs {
     pub ai_features: bool,
     /// The AI button at the toolbar row's right end (the shortcut and View menu entry stay).
     pub ai_toolbar_button: bool,
+    /// An agent's slow commands over the control channel (MCP) compute off the window thread,
+    /// so the window stays live while they run (#1989, [`crate::control_job`]). Off: they run on
+    /// the window thread, and the window waits for each, as before.
+    pub agent_off_thread: bool,
     /// Agents the user added (the installed ones are found by themselves). API keys are never
     /// here: they live in the system keychain.
     pub agents: Vec<crate::agent_chat::agents::AgentConfig>,
@@ -491,6 +495,7 @@ impl Default for Prefs {
             custom_slicers: Vec::new(),
             ai_features: true,
             ai_toolbar_button: true,
+            agent_off_thread: true,
             agents: Vec::new(),
             agent_default: String::new(),
             ai_permissions: crate::agent_chat::agents::Mode::Edits,
@@ -744,6 +749,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
             // The agents the user added and their "always allow" answers stay.
             p.ai_features = d.ai_features;
             p.ai_toolbar_button = d.ai_toolbar_button;
+            p.agent_off_thread = d.agent_off_thread;
             p.ai_permissions = d.ai_permissions;
             p.agent_permissions = d.agent_permissions;
             p.agent_chat_side = d.agent_chat_side;
