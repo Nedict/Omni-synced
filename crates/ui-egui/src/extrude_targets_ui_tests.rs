@@ -140,6 +140,78 @@ fn bodies_of_other_components_are_listed_only_from_the_design() {
     assert_eq!(h.app.session.model.state().bodies.len(), 2);
 }
 
+/// A box named `body` in a new component `name` (made under the active one, and left active).
+fn part(h: &mut Harness, name: &str, body: &str, x: f64) {
+    h.app.run("component.create", json!({"name":name})).unwrap();
+    h.app.run("solid.box", json!({"corner":[x,0,0],"length":20,"width":20,"height":5,"body_name":body})).unwrap();
+}
+
+/// A rectangle sketched on a plane at height `z`, from `p0` to `p1`, picked as the profile.
+fn sketch_profile(h: &mut Harness, z: f64, p0: [f64; 2], p1: [f64; 2]) {
+    h.app.run("sketch.create", json!({"plane":{"origin":[0,0,z],"x_dir":[1,0,0],"y_dir":[0,1,0]},"name":"Pick"})).unwrap();
+    h.app.run("sketch.rectangle.two_point", json!({"p0":p0,"p1":p1})).unwrap();
+    h.app.run("sketch.finish", json!({})).unwrap();
+    let st = h.app.session.world_state();
+    let sketch = st.sketches.iter().find(|ss| ss.name == "Pick").unwrap().feature;
+    h.app.session.selection = vec![Sel::Profile { sketch, index: 0 }];
+}
+
+/// The window's Auto on what is selected: the operation it lands on and the targets it sends.
+fn auto(h: &mut Harness) -> (String, Value) {
+    h.app.start("solid.extrude");
+    h.frames(3);
+    let p = params(h);
+    (p["operation"].as_str().unwrap_or_default().to_string(), p.get("targets").cloned().unwrap_or(Value::Null))
+}
+
+/// What the window starts with is what the command takes on its own, less hidden bodies: from
+/// the design with parts in two components a new body, not a lump in one of them; a face of
+/// another component's body picked in an empty component a new body; with hidden bodies only a
+/// new body, not a refusal; a Cut from an empty component every shown body.
+#[test]
+fn the_default_is_what_the_command_takes() {
+    let mut h = Harness::new();
+    part(&mut h, "A", "ABox", 0.0);
+    h.app.run("component.activate", json!({"component":0})).unwrap();
+    part(&mut h, "B", "BBox", 40.0);
+    h.app.run("component.activate", json!({"component":0})).unwrap();
+    sketch_profile(&mut h, 0.0, [100.0, 100.0], [110.0, 110.0]);
+    assert_eq!(auto(&mut h), ("new".to_string(), Value::Null), "two components: a new body at the design");
+    h.app.dialog = None;
+
+    let mut h = Harness::new();
+    part(&mut h, "Base", "Plate", 0.0);
+    h.app.run("component.activate", json!({"component":0})).unwrap();
+    h.app.run("component.create", json!({"name":"Lid"})).unwrap();
+    let st = h.app.session.world_state();
+    let top = st.body("Plate").unwrap().body.faces(0.01).unwrap().into_iter().find(|f| f.plane_normal.is_some_and(|n| n.z > 0.99)).unwrap();
+    h.app.session.selection = vec![Sel::Face { body: "Plate".into(), index: top.index, point: top.centroid }];
+    assert_eq!(auto(&mut h).0, "new", "a face of another component's body, from an empty component");
+    h.app.dialog = None;
+
+    let mut h = Harness::new();
+    h.app.run("solid.box", json!({"length":20,"width":20,"height":5,"body_name":"Hidden"})).unwrap();
+    hide(&mut h, "Hidden");
+    sketch_profile(&mut h, 5.0, [2.0, 2.0], [8.0, 8.0]);
+    assert_eq!(auto(&mut h), ("new".to_string(), Value::Null), "hidden bodies only");
+    h.step(&json!({"key":"Enter"})).unwrap();
+    assert_eq!(h.app.session.model.state().bodies.len(), 2, "OK makes the new body");
+
+    let mut h = Harness::new();
+    h.app.run("component.create", json!({"name":"Sub"})).unwrap();
+    part(&mut h, "A", "ABox", 0.0);
+    h.app.run("component.activate", json!({"component":"Sub"})).unwrap();
+    part(&mut h, "B", "BBox", 30.0);
+    h.app.run("component.activate", json!({"component":"Sub"})).unwrap();
+    sketch_profile(&mut h, 5.0, [10.0, 5.0], [40.0, 15.0]);
+    h.app.start("solid.extrude");
+    if let Kind::Extrude { operation, auto_op, distance, .. } = &mut h.app.dialog.as_mut().unwrap().kind {
+        (*operation, *auto_op, *distance) = (2, false, "-2 mm".into());
+    }
+    h.frames(3);
+    assert_eq!(params(&h)["targets"], json!(["ABox", "BBox"]), "a Cut from an empty component takes every body");
+}
+
 /// Showing or hiding a body while the window is open changes the list, until a pill is removed
 /// by hand: then it stays as edited.
 #[test]
