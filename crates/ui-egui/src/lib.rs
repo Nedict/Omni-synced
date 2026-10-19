@@ -71,6 +71,7 @@ pub mod joint_drag;
 pub mod keymap;
 mod linked_source;
 mod material_card_review;
+
 #[cfg(test)]
 mod measurement_ui_tests;
 #[cfg(test)]
@@ -121,6 +122,7 @@ pub(crate) mod display_lod;
 mod file_load_ui_tests;
 #[cfg(test)]
 mod fillet_spline_handle_tests;
+pub mod mouse_gesture;
 pub(crate) mod navigation;
 pub mod palette;
 pub mod params_dialog;
@@ -319,6 +321,8 @@ pub struct SolveApp {
     pub palette: palette::Palette,
     /// Context menus, rename box and Properties window.
     pub menu: context_menu::MenuState,
+    /// Mouse gestures: the ring of tools and its customization window.
+    pub gesture: mouse_gesture::State,
     /// Browser tree state (reveal, groups being edited, occurrence moves).
     pub tree: browser::TreeState,
     /// The S box (command search at the cursor): recent and pinned commands.
@@ -451,6 +455,7 @@ impl SolveApp {
             material_card_review: None,
             palette: palette::Palette::default(),
             menu: context_menu::MenuState::default(),
+            gesture: mouse_gesture::State::default(),
             tree: browser::TreeState::default(),
             sbox: shortcut_box::ShortcutBox::default(),
             keymap: keymap::Keymap::default(),
@@ -1452,6 +1457,7 @@ impl SolveApp {
         stand_up::show(self, ui.ctx());
         prefs::show_reset_notice(self, ui.ctx());
         context_menu::show(self, ui.ctx());
+        mouse_gesture::show(self, ui.ctx());
         delete::show(self, ui.ctx());
         shortcut_box::show(self, ui.ctx());
         prefs::show(self, ui.ctx());
