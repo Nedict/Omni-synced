@@ -2,11 +2,21 @@
 use super::CommandSpec;
 use crate::{
     EngineError, Result, Session,
-    pdm::{Reference, Task, valid_document},
+    pdm::{ManagedTask, Reference, Task, valid_document},
 };
 use serde_json::{Value, json};
 
 pub static COMMANDS: &[CommandSpec] = &[
+    CommandSpec::new("pdm.restore_version", "Restore Archived Version", restore_version).noundo().doc_only().params("document,version,restore:true; publish historical content as a new head version and restore the clean normal working copy"),
+    CommandSpec::new("pdm.recover_workspace", "Recover PDM Workspace", recover_workspace).noundo().doc_only().params("port,root,restore:true; explicitly recover an interrupted local update after server verification, preserving recovery copies"),
+    CommandSpec::new("pdm.preview", "PDM Preview", preview).noundo().doc_only().params("document,version; retrieves the embedded thumbnail for that exact version, if available"),
+    CommandSpec::new("pdm.archive", "Check In", archive).at("PDM", "WORKSPACE").icon("save").noundo().doc_only().params("logical_path?: path relative to the managed workspace; automatically discovers document identity and native dependencies"),
+    CommandSpec::new("pdm.checkout", "Check Out", checkout).at("PDM", "WORKSPACE").icon("open").noundo().doc_only().params("document?: selected stable identity; otherwise active managed design"),
+    CommandSpec::new("pdm.cancel_checkout", "Undo Check Out", cancel_checkout).at("PDM", "WORKSPACE").icon("undo").noundo().doc_only().params("document?: selected stable identity; discard:true explicitly restores archived content, preserving a recovery copy"),
+    CommandSpec::new("pdm.get_latest", "Get Latest", get_latest).at("PDM", "WORKSPACE").icon("update").noundo().doc_only().params("document?: selected stable identity; refuses unsaved local edits"),
+    CommandSpec::new("pdm.open_document", "Open from Archive", open_document).at("PDM", "ARCHIVE").icon("open").noundo().doc_only().params("document: selected stable identity; opens its normal workspace path"),
+    CommandSpec::new("pdm.open_archived", "Open As Archived", retrieve).at("PDM", "ARCHIVE").icon("open").noundo().doc_only().params("document,version; opens a separate read-only historical snapshot"),
+    CommandSpec::new("pdm.history", "PDM History", history).noundo().doc_only().params("document: stable identity; loads version history and where-used metadata"),
     CommandSpec::new("pdm.panel", "Local PDM", status).icon("library").noundo().doc_only().params("none; programmatic calls return status, only interactive start opens the panel"),
     CommandSpec::new("pdm.status", "Local PDM Status", status).icon("library").noundo().doc_only().params("none; host-only connection/job/version state, never credentials"),
     CommandSpec::new("pdm.connect", "Connect Local PDM", connect).icon("library").noundo().doc_only().params("port: local TCP port; credential comes from the native host, never params"),
@@ -22,9 +32,16 @@ fn err(message: impl Into<String>) -> EngineError {
 /// In particular, accidental token/credential fields must never enter the crash journal.
 pub(crate) fn validate_params(id: &str, p: &Value) -> Result<()> {
     let keys: &[&str] = match id {
-        "pdm.connect" => &["port"],
+        "pdm.connect" => &["port", "root"],
+        "pdm.recover_workspace" => &["port", "root", "restore"],
+        "pdm.archive" => &["logical_path"],
+        "pdm.checkout" | "pdm.get_latest" => &["document"],
+        "pdm.cancel_checkout" => &["document", "discard"],
+        "pdm.open_document" | "pdm.history" => &["document"],
         "pdm.check_in" => &["document", "parent", "dependencies"],
-        "pdm.retrieve" => &["document", "version", "open"],
+        "pdm.retrieve" | "pdm.open_archived" => &["document", "version", "open"],
+        "pdm.preview" => &["document", "version"],
+        "pdm.restore_version" => &["document", "version", "restore"],
         _ => &[],
     };
     if !p.is_null() && !p.is_object() {
@@ -34,9 +51,17 @@ pub(crate) fn validate_params(id: &str, p: &Value) -> Result<()> {
         return Err(err("Unsupported local PDM parameter; credentials belong only to the native host"));
     }
     match id {
-        "pdm.connect" => {
+        "pdm.connect" | "pdm.recover_workspace" => {
             if p.get("port").and_then(Value::as_u64).filter(|v| *v > 0 && *v <= u16::MAX as u64).is_none() {
                 return Err(err("A valid local PDM port is required"));
+            }
+            if p.get("root").is_some_and(|v| !v.is_string() || v.as_str().is_some_and(|s| s.is_empty() || s.len() > 4096)) {
+                return Err(err("A valid working folder is required"));
+            }
+            if id == "pdm.recover_workspace"
+                && (p.get("root").and_then(Value::as_str).is_none() || p.get("restore").and_then(Value::as_bool) != Some(true))
+            {
+                return Err(err("Recovery requires an explicit root and restore:true"));
             }
         }
         "pdm.check_in" => {
@@ -54,13 +79,32 @@ pub(crate) fn validate_params(id: &str, p: &Value) -> Result<()> {
                 }
             }
         }
-        "pdm.retrieve" => {
+        "pdm.retrieve" | "pdm.open_archived" | "pdm.preview" | "pdm.restore_version" => {
             document(p)?;
             if p.get("version").and_then(Value::as_u64).filter(|v| *v > 0).is_none() {
                 return Err(err("A positive PDM version is required"));
             }
+            if id == "pdm.restore_version" && p.get("restore").and_then(Value::as_bool) != Some(true) {
+                return Err(err("Restore requires explicit restore:true; a new head version will be published"));
+            }
             if p.get("open").is_some_and(|v| !v.is_boolean()) {
                 return Err(err("open must be boolean"));
+            }
+        }
+        "pdm.checkout" | "pdm.get_latest" | "pdm.cancel_checkout" => {
+            if p.get("document").is_some() {
+                document(p)?;
+            }
+            if id == "pdm.cancel_checkout" && p.get("discard").and_then(Value::as_bool) != Some(true) {
+                return Err(err("Undo Check Out requires explicit discard:true; local edits will be restored from the archive"));
+            }
+        }
+        "pdm.open_document" | "pdm.history" => {
+            document(p)?;
+        }
+        "pdm.archive" => {
+            if p.get("logical_path").is_some_and(|v| v.as_str().is_none_or(|s| s.is_empty() || s.len() > 1024)) {
+                return Err(err("Invalid logical archive path"));
             }
         }
         _ => {}
@@ -80,7 +124,93 @@ fn connect(s: &mut Session, p: &Value) -> Result<Value> {
         .and_then(|p| u16::try_from(p).ok())
         .filter(|p| *p > 0)
         .ok_or_else(|| err("A valid local PDM port is required"))?;
-    enqueue(s, Task::Connect { port })
+    // Existing script callers retain their old connection task. The native adapter
+    // initializes managed state for both forms; an explicit root is host-only.
+    match p.get("root").and_then(Value::as_str) {
+        Some(root) => enqueue(s, Task::Managed(ManagedTask::Connect { port, root: Some(root.into()) })),
+        None => enqueue(s, Task::Connect { port }),
+    }
+}
+
+fn saved_path(s: &Session) -> Result<String> {
+    if s.is_dirty() || s.active_sketch.is_some() || !s.pending_moves.is_empty() {
+        return Err(err("Finish edits and save the active design first"));
+    }
+    s.path.clone().filter(|p| solidcraft_io::is_design_path(p)).ok_or_else(|| err("Save a native design in the working folder first"))
+}
+fn archive(s: &mut Session, p: &Value) -> Result<Value> {
+    enqueue(
+        s,
+        Task::Managed(ManagedTask::Archive {
+            path: saved_path(s)?,
+            logical_path: p.get("logical_path").and_then(Value::as_str).map(str::to_string),
+            saved: s.doc.clone(),
+            visibility: Box::new(s.visibility.clone()),
+        }),
+    )
+}
+fn target(s: &Session, p: &Value) -> Result<(Option<String>, Option<String>)> {
+    if s.is_dirty() || s.active_sketch.is_some() || !s.pending_moves.is_empty() {
+        return Err(err("Finish and save or explicitly discard current edits before replacing a managed copy"));
+    }
+    let document = p.get("document").map(|_| document(p)).transpose()?;
+    if document.is_none() && s.path.is_none() {
+        return Err(err("Select an archived document first"));
+    }
+    Ok((document, s.path.clone()))
+}
+fn checkout(s: &mut Session, p: &Value) -> Result<Value> {
+    let (document, path) = target(s, p)?;
+    enqueue(s, Task::Managed(ManagedTask::Checkout { document, path }))
+}
+fn cancel_checkout(s: &mut Session, p: &Value) -> Result<Value> {
+    // Preserve unsaved RAM separately before any destructive disk operation.
+    if s.is_dirty() || s.active_sketch.is_some() || !s.pending_moves.is_empty() {
+        return Err(err("Save or Save As current edits before undoing checkout; archived bytes will replace the local copy"));
+    }
+    let document = p.get("document").map(|_| document(p)).transpose()?;
+    enqueue(s, Task::Managed(ManagedTask::CancelCheckout { document, path: s.path.clone() }))
+}
+fn get_latest(s: &mut Session, p: &Value) -> Result<Value> {
+    let (document, path) = target(s, p)?;
+    enqueue(s, Task::Managed(ManagedTask::GetLatest { document, path }))
+}
+fn open_document(s: &mut Session, p: &Value) -> Result<Value> {
+    enqueue(s, Task::Managed(ManagedTask::Open { document: document(p)? }))
+}
+fn history(s: &mut Session, p: &Value) -> Result<Value> {
+    enqueue(s, Task::Managed(ManagedTask::History { document: document(p)? }))
+}
+fn preview(s: &mut Session, p: &Value) -> Result<Value> {
+    enqueue(
+        s,
+        Task::Managed(ManagedTask::Preview {
+            reference: Reference {
+                document: document(p)?,
+                version: p.get("version").and_then(Value::as_u64).filter(|v| *v > 0).ok_or_else(|| err("A positive version is required"))?,
+            },
+        }),
+    )
+}
+fn restore_version(s: &mut Session, p: &Value) -> Result<Value> {
+    target(s, p)?;
+    if p.get("restore").and_then(Value::as_bool) != Some(true) {
+        return Err(err("Restore requires explicit restore:true"));
+    }
+    enqueue(
+        s,
+        Task::Managed(ManagedTask::Restore {
+            reference: Reference {
+                document: document(p)?,
+                version: p.get("version").and_then(Value::as_u64).filter(|v| *v > 0).ok_or_else(|| err("A positive version is required"))?,
+            },
+        }),
+    )
+}
+fn recover_workspace(s: &mut Session, p: &Value) -> Result<Value> {
+    let port = p.get("port").and_then(Value::as_u64).and_then(|v| u16::try_from(v).ok()).ok_or_else(|| err("Invalid recovery port"))?;
+    let root = p.get("root").and_then(Value::as_str).ok_or_else(|| err("Explicit recovery folder required"))?;
+    enqueue(s, Task::Managed(ManagedTask::Recover { port, root: root.into() }))
 }
 fn disconnect(s: &mut Session, _: &Value) -> Result<Value> {
     enqueue(s, Task::Disconnect)
@@ -131,4 +261,25 @@ fn retrieve(s: &mut Session, p: &Value) -> Result<Value> {
         None => true,
     };
     enqueue(s, Task::Retrieve { reference, open })
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+    #[test]
+    fn restore_requires_strict_explicit_confirmation_before_enqueueing() {
+        for params in [
+            json!({"document":"part","version":1}),
+            json!({"document":"part","version":1,"restore":false}),
+            json!({"document":"part","version":0,"restore":true}),
+            json!({"document":"part","version":1,"restore":true,"token":"secret"}),
+            json!({"document":"part","version":1,"restore":true,"open":true}),
+        ] {
+            assert!(validate_params("pdm.restore_version", &params).is_err());
+        }
+        assert!(validate_params("pdm.restore_version", &json!({"document":"part","version":1,"restore":true})).is_ok());
+        let mut session = Session::default();
+        session.execute("solid.box", &json!({"length":1,"width":1,"height":1})).unwrap();
+        assert!(restore_version(&mut session, &json!({"document":"part","version":1,"restore":true})).is_err());
+    }
 }

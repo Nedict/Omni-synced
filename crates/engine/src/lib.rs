@@ -208,6 +208,8 @@ impl WorldCache {
 pub struct Session {
     /// Host-only PDM connection and operation queue; never part of the design or undo history.
     pub pdm: pdm::Runtime,
+    /// Host-only historical snapshot guard; never serialized into a design.
+    pub pdm_read_only: bool,
     pub doc: Arc<Document>,
     pub model: Model,
     pub undo: Vec<Snapshot>,
@@ -356,6 +358,7 @@ impl Session {
         model.evaluate(&doc);
         Session {
             pdm: pdm::Runtime::default(),
+            pdm_read_only: false,
             saved: doc.clone(),
             doc,
             model,
@@ -667,6 +670,9 @@ impl Session {
     /// the model up to date before anything reads it.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
+        if spec.undoable && self.path.as_deref().is_some_and(|path| self.pdm.blocks_path(path)) {
+            return Err(EngineError::Other("Wait for the managed operation before editing this file".into()));
+        }
         if id.starts_with("pdm.") {
             cmd::validate_pdm_params(id, params)?;
         }
@@ -831,6 +837,7 @@ impl Session {
         Session {
             doc: self.doc.clone(),
             pdm: pdm::Runtime::default(),
+            pdm_read_only: false,
             model: self.model.clone(),
             undo: Vec::new(),
             redo: Vec::new(),

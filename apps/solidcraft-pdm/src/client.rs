@@ -39,6 +39,54 @@ impl Client {
         }
     }
 
+    pub fn managed_catalog(&self) -> Result<crate::managed::ManagedCatalog, Error> {
+        match self.request(Request::ManagedCatalog)? {
+            Response::ManagedCatalog { catalog } => Ok(catalog),
+            _ => Err(Error::Invalid("unexpected managed catalog response")),
+        }
+    }
+
+    pub fn managed_create(&self, logical_path: String) -> Result<crate::managed::CatalogEntry, Error> {
+        match self.request(Request::ManagedCreate { logical_path })? {
+            Response::ManagedDocument { entry } => Ok(entry),
+            _ => Err(Error::Invalid("unexpected managed create response")),
+        }
+    }
+
+    pub fn managed_checkout(&self, document: String, workspace: String, machine: String) -> Result<crate::managed::CheckoutGrant, Error> {
+        match self.request(Request::ManagedCheckout { document, workspace, machine })? {
+            Response::ManagedCheckout { grant } => Ok(grant),
+            _ => Err(Error::Invalid("unexpected managed checkout response")),
+        }
+    }
+
+    pub fn managed_cancel_checkout(
+        &self,
+        document: String,
+        workspace: String,
+        machine: String,
+        checkout_token: String,
+    ) -> Result<crate::managed::CatalogEntry, Error> {
+        match self.request(Request::ManagedCancelCheckout { document, workspace, machine, checkout_token })? {
+            Response::ManagedDocument { entry } => Ok(entry),
+            _ => Err(Error::Invalid("unexpected managed cancel response")),
+        }
+    }
+
+    pub fn managed_check_in(&self, input: crate::managed::ManagedCheckIn) -> Result<crate::managed::ManagedVersion, Error> {
+        match self.request(Request::ManagedCheckIn { input })? {
+            Response::ManagedCheckedIn { version } => Ok(version),
+            _ => Err(Error::Invalid("unexpected managed check-in response")),
+        }
+    }
+
+    pub fn managed_history(&self, document: String) -> Result<Vec<crate::managed::ManagedVersion>, Error> {
+        match self.request(Request::ManagedHistory { document })? {
+            Response::ManagedHistory { versions } => Ok(versions),
+            _ => Err(Error::Invalid("unexpected managed history response")),
+        }
+    }
+
     pub fn list(&self, document: Option<String>) -> Result<Vec<Version>, Error> {
         match self.request(Request::List { document })? {
             Response::Listed { versions } => Ok(versions),

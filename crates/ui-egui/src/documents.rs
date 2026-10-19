@@ -180,6 +180,48 @@ pub fn adopt(app: &mut SolveApp, session: Session) {
     }
 }
 
+fn same_managed_path(candidate: Option<&String>, path: &str) -> bool {
+    candidate.is_some_and(|candidate| solidcraft_engine::pdm::cached_path_key(candidate) == solidcraft_engine::pdm::cached_path_key(path))
+}
+
+/// Check every open editor before a managed transfer can touch its local path.
+pub fn managed_target_dirty(app: &SolveApp, document: Option<&str>) -> bool {
+    let path = if let Some(document) = document {
+        app.pdm.runtime.status().ok().and_then(|s| s.managed.local.into_iter().find(|v| v.document == document).map(|v| v.path))
+    } else {
+        app.session.path.clone()
+    };
+    let Some(path) = path else { return false };
+    (same_managed_path(app.session.path.as_ref(), &path) && app.session.is_dirty())
+        || app.docs.slots.iter().flatten().any(|s| same_managed_path(s.session.path.as_ref(), &path) && s.session.is_dirty())
+}
+
+/// Refresh a managed path in its existing tab. Never discard an unsaved editor.
+pub fn apply_managed(app: &mut SolveApp, mut session: Session) -> Result<(), String> {
+    let Some(path) = session.path.as_ref() else { return open_tab(app, session) };
+    if same_managed_path(app.session.path.as_ref(), path) {
+        if app.session.is_dirty() {
+            return Err("Managed refresh cannot replace unsaved changes".into());
+        }
+        session.pdm = app.pdm.runtime.clone();
+        app.session.replace_design(session);
+        crate::render_workspace::reset_document(app);
+        app.preview.reset();
+        return Ok(());
+    }
+    for slot in app.docs.slots.iter_mut().flatten() {
+        if same_managed_path(slot.session.path.as_ref(), path) {
+            if slot.session.is_dirty() {
+                return Err("Managed refresh cannot replace unsaved changes in another tab".into());
+            }
+            session.pdm = app.pdm.runtime.clone();
+            slot.session = session;
+            return Ok(());
+        }
+    }
+    open_tab(app, session)
+}
+
 /// A new, empty design in its own tab. One that is already empty keeps its tab and still
 /// takes Units of new designs (#1205): a launch starts on that empty design, so returning
 /// here used to leave it in millimetres.

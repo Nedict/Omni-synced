@@ -646,6 +646,17 @@ impl SolveApp {
     /// Run a command programmatically (JSON parameters, no dialogs).
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
         self.session.pdm = self.pdm.runtime.clone();
+        if matches!(id, "pdm.checkout" | "pdm.get_latest" | "pdm.cancel_checkout" | "pdm.open_document" | "pdm.restore_version")
+            && documents::managed_target_dirty(self, params.get("document").and_then(Value::as_str))
+        {
+            return Err("Save or Save As the unsaved editor before replacing its managed working copy".into());
+        }
+        if !id.starts_with("pdm.")
+            && solidcraft_engine::find_command(id).is_some_and(|c| c.undoable)
+            && self.session.path.as_ref().is_some_and(|p| self.pdm.runtime.blocks_path(p))
+        {
+            return Err("Wait for the PDM operation before editing this managed document".into());
+        }
         if id == "pdm.check_in" && (self.dialog.is_some() || self.tool.is_some() || self.applying.is_some() || self.deferred.is_some()) {
             return Err("Finish or cancel interactive edits before checking in the saved design".into());
         }
@@ -738,6 +749,23 @@ impl SolveApp {
     /// Start a command the way a toolbar click does: interactive tools and dialogs for commands
     /// that have them, otherwise run it with defaults.
     pub fn start(&mut self, id: &str) {
+        if solidcraft_engine::find_command(id).is_some_and(|c| c.undoable)
+            && let Some(path) = &self.session.path
+        {
+            let managed = self.pdm.runtime.managed_for_path(path);
+            if self.pdm.runtime.blocks_path(path) {
+                self.set_status("Wait for the PDM operation before editing this managed document", true);
+                return;
+            }
+            if (self.session.pdm_read_only || managed.is_some_and(|entry| !entry.checked_out))
+                && !self.pdm.ram_paths.contains(&solidcraft_engine::pdm::cached_path_key(path))
+            {
+                self.pdm.pending_edit_path = Some(solidcraft_engine::pdm::cached_path_key(path));
+                self.pdm.pending_edit = Some(id.to_string());
+                return;
+            }
+        }
+
         // A file is loading: the design waits for it.
         if self.file_load.busy() || self.file_picker.is_some() {
             return;
@@ -758,8 +786,19 @@ impl SolveApp {
             return;
         }
         if id.starts_with("pdm.") {
-            self.pdm.open = true;
-            if matches!(id, "pdm.refresh" | "pdm.disconnect")
+            if id == "pdm.panel" {
+                if let Err(error) = pdm_panel::enter(self) {
+                    self.set_status(error, true);
+                }
+                self.pdm.open = true;
+            }
+            if id == "pdm.connect" {
+                self.pdm.open = true;
+            }
+            if id == "pdm.cancel_checkout" {
+                self.pdm.cancel_confirmation = true;
+            }
+            if matches!(id, "pdm.refresh" | "pdm.disconnect" | "pdm.archive" | "pdm.checkout" | "pdm.get_latest")
                 && let Err(error) = self.run(id, json!({}))
             {
                 self.set_status(error, true);
@@ -1425,15 +1464,15 @@ impl SolveApp {
             }
         }
         toolbar::toolbar(self, ui);
-        let show_timeline = self.ui.show_timeline && !render_workspace::active(self);
+        let show_timeline = self.ui.show_timeline && !render_workspace::active(self) && !self.pdm.workspace_active;
         let left_timeline = show_timeline && self.preferences.timeline_left;
         if show_timeline && !left_timeline {
             timeline::timeline(self, ui);
         }
         palette::palette_bar(self, ui);
         // A floating browser keeps the workspace the whole width: it is drawn over the view below.
-        let browser_float = self.ui.show_browser && self.preferences.browser_float;
-        if self.ui.show_browser && !browser_float {
+        let browser_float = self.ui.show_browser && self.preferences.browser_float && !self.pdm.workspace_active;
+        if self.ui.show_browser && !browser_float && !self.pdm.workspace_active {
             if left_timeline {
                 browser::browser_below_timeline(self, ui);
             } else {
@@ -1453,7 +1492,9 @@ impl SolveApp {
             browser::floating(self, ui, viewport);
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
-            if render_workspace::active(self) {
+            if self.pdm.workspace_active {
+                pdm_panel::workspace(self, ui);
+            } else if render_workspace::active(self) {
                 render_workspace::show(self, ui);
             } else {
                 viewport::show(self, ui);

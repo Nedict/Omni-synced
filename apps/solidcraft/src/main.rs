@@ -26,6 +26,7 @@ mod native_frame;
 #[cfg(target_os = "macos")]
 mod open_documents;
 mod pdm;
+mod pdm_managed;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 mod space_mouse;
 mod startup;

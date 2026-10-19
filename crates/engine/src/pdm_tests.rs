@@ -2,6 +2,84 @@ use super::*;
 use crate::Session;
 use serde_json::json;
 
+#[test]
+fn first_archive_blocks_concurrent_edits_and_save_before_manifest_registration() {
+    let mut session = connected();
+    let folder = std::env::temp_dir().join(format!("solidcraft-first-archive-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("first.solidcraft");
+    session.execute("file.save", &json!({"path":path})).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let request = session.execute("pdm.archive", &json!({})).unwrap()["request"].as_u64().unwrap();
+    assert!(session.pdm.managed_for_path(path.to_str().unwrap()).is_none());
+    assert!(session.pdm.blocks_path(path.to_str().unwrap()));
+    assert!(session.execute("file.save", &json!({})).is_err());
+    assert!(session.execute("solid.box", &json!({"length":2,"width":3,"height":4})).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    session.pdm.finish(request, Err(Failure { message: "offline".into(), disconnect: false })).unwrap();
+    assert!(!session.pdm.blocks_path(path.to_str().unwrap()));
+    session.execute("file.save", &json!({})).unwrap();
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn managed_save_guard_is_independent_of_os_readonly_and_allows_a_separate_copy() {
+    let mut session = Session::default();
+    let folder = std::env::temp_dir().join(format!("solidcraft-managed-save-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("managed.solidcraft");
+    session.execute("file.save", &json!({"path":path})).unwrap();
+    session.pdm.set_available(true).unwrap();
+    let id = session.pdm.enqueue(Task::Connect { port: 48231 }).unwrap();
+    session
+        .pdm
+        .finish(
+            id,
+            Ok(Outcome::Managed {
+                port: 48231,
+                state: ManagedState {
+                    local: vec![LocalEntry {
+                        document: "doc".into(),
+                        path: path.to_string_lossy().into_owned(),
+                        relative_path: "managed.solidcraft".into(),
+                        base_version: 1,
+                        sha256: "ab".repeat(32),
+                        checked_out: false,
+                        modified: false,
+                        present: true,
+                    }],
+                    ..ManagedState::default()
+                },
+            }),
+        )
+        .unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    session.execute("solid.box", &json!({"length":2,"width":3,"height":4})).unwrap();
+    assert!(session.execute("file.save", &json!({})).is_err());
+    assert!(session.execute("file.save_as", &json!({"path":folder.join(".").join("managed.solidcraft")})).is_err());
+    assert!(session.execute("file.export", &json!({"path":folder.join(".").join("managed.solidcraft"),"format":"design"})).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    session.execute("file.save_as", &json!({"path":folder.join("copy.solidcraft")})).unwrap();
+    session.execute("file.save", &json!({})).unwrap();
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn historical_guard_survives_edits_but_save_as_detaches_the_copy() {
+    let mut session = Session::default();
+    let folder = std::env::temp_dir().join(format!("solidcraft-history-save-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    session.execute("file.save", &json!({"path":folder.join("history.solidcraft")})).unwrap();
+    session.pdm_read_only = true;
+    session.execute("solid.box", &json!({"length":2,"width":3,"height":4})).unwrap();
+    assert!(session.execute("file.save", &json!({})).is_err());
+    assert!(session.execute("file.save_as", &json!({"path":folder.join(".").join("history.solidcraft")})).is_err());
+    session.execute("file.save_as", &json!({"path":folder.join("copy.solidcraft")})).unwrap();
+    assert!(!session.pdm_read_only);
+    session.execute("file.save", &json!({})).unwrap();
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
 fn connected() -> Session {
     let mut session = Session::default();
     session.pdm.set_available(true).unwrap();

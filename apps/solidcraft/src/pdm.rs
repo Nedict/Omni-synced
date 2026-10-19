@@ -15,9 +15,14 @@ use std::{
 fn failure(message: &str, disconnect: bool) -> Failure {
     Failure { message: message.into(), disconnect }
 }
-fn map_error(error: Error) -> Failure {
+pub(crate) fn map_error(error: Error) -> Failure {
     match error {
-        Error::Server(code) if code == "conflict" => failure("Version conflict. Refresh versions and choose an explicit base.", false),
+        Error::Server(code) if code == "conflict" => {
+            failure("The file changed or is checked out elsewhere. Refresh status and review the checkout owner before retrying.", false)
+        }
+        Error::Server(code) if code == "forbidden" => {
+            failure("The server did not authorize this action. Confirm your account, role and checkout.", false)
+        }
         Error::Server(code) if code == "unauthorized" => {
             failure("Local PDM authentication failed. Restart the app with the updated local credential.", true)
         }
@@ -26,6 +31,9 @@ fn map_error(error: Error) -> Failure {
         Error::Io(_) => failure("Could not read or write the private PDM working files. The connection remains available.", false),
         Error::Network(_) => {
             failure("Local PDM connection failed. A write may have completed; reconnect and refresh versions before retrying.", true)
+        }
+        Error::Invalid("workspace recovery required") => {
+            failure("An interrupted workspace update needs explicit recovery. Open connection settings and choose Recover Workspace.", false)
         }
         Error::Invalid(_) => failure("Local PDM input or credential is unavailable or invalid. Check the local setup instructions.", false),
         _ => failure("Local PDM operation failed. Check the service and private workspace directory.", true),
@@ -64,15 +72,36 @@ fn client(holder: &Mutex<Option<Client>>) -> Result<Client, Failure> {
 
 pub fn service(workspace_root: Option<PathBuf>) -> Start {
     let holder = Arc::new(Mutex::new(None::<Client>));
+    let managed = Arc::new(Mutex::new(super::pdm_managed::Host::default()));
     Arc::new(move |job: Job| {
         let (sender, receiver) = mpsc::channel();
         let holder = holder.clone();
         let root = workspace_root.clone();
+        let managed = managed.clone();
         let fallback = sender.clone();
         if std::thread::Builder::new()
             .name("solidcraft-pdm".into())
             .spawn(move || {
-                let result = execute(job.task, &holder, root.as_deref());
+                let result = (|| {
+                    let mut host = managed.lock().map_err(|_| failure("Managed workspace state unavailable", false))?;
+                    let result = match job.task {
+                        Task::Managed(task) => host.execute(task, root.as_deref()),
+                        Task::Connect { port } => host.execute(solidcraft_engine::pdm::ManagedTask::Connect { port, root: None }, root.as_deref()),
+                        Task::Refresh if host.connected() => host.refresh(),
+                        Task::Retrieve { reference, open: true } if host.connected() => {
+                            host.execute(solidcraft_engine::pdm::ManagedTask::OpenArchived { reference }, root.as_deref())
+                        }
+                        Task::Disconnect => {
+                            host.disconnect();
+                            execute(Task::Disconnect, &holder, root.as_deref())
+                        }
+                        task => execute(task, &holder, root.as_deref()),
+                    };
+                    if result.is_ok() && host.connected() {
+                        *holder.lock().map_err(|_| failure("Local PDM connection unavailable", true))? = Some(host.client()?);
+                    }
+                    result
+                })();
                 let completion = match result {
                     Ok((outcome, open)) => Completion { result: Ok(outcome), open },
                     Err(error) => {
@@ -96,6 +125,7 @@ pub fn service(workspace_root: Option<PathBuf>) -> Start {
 
 fn execute(task: Task, holder: &Mutex<Option<Client>>, workspace_root: Option<&Path>) -> Result<(Outcome, Option<Box<Session>>), Failure> {
     let outcome = match task {
+        Task::Managed(_) => return Err(failure("Managed tasks require the managed native adapter", false)),
         Task::Connect { port } => {
             // The environment is read only here, never into a command, preferences or a design.
             let connected = Client::new(port, AuthToken::from_env().map_err(map_error)?);
@@ -111,14 +141,7 @@ fn execute(task: Task, holder: &Mutex<Option<Client>>, workspace_root: Option<&P
         Task::CheckIn { document, parent, path, dependencies, saved, visibility } => {
             let bytes = solidcraft_pdm::client::read_file(Path::new(&path), solidcraft_pdm::MAX_CONTENT)
                 .map_err(|_| failure("Could not read the saved design. Check its path, file type and 1 MiB size limit.", false))?;
-            let mut disk = solidcraft_engine::io::read_design(&bytes).map_err(|_| failure("The saved file is not a readable CAD design.", false))?;
-            if disk.visibility != *visibility {
-                return Err(failure("The saved file changed outside this design. Reopen or save explicitly before check-in.", false));
-            }
-            disk.visibility = saved.visibility.clone();
-            if disk != *saved {
-                return Err(failure("The saved file changed outside this design. Reopen or save explicitly before check-in.", false));
-            }
+            validate_saved(&bytes, &saved, &visibility)?;
             let dependencies = dependencies.into_iter().map(|r| solidcraft_pdm::VersionRef { document: r.document, version: r.version }).collect();
             let response =
                 client(holder)?.request(solidcraft_pdm::Request::CheckIn { document, parent, content: bytes, dependencies }).map_err(map_error)?;
@@ -164,6 +187,22 @@ fn execute(task: Task, holder: &Mutex<Option<Client>>, workspace_root: Option<&P
         }
     };
     Ok((outcome, None))
+}
+
+pub(crate) fn validate_saved(
+    bytes: &[u8],
+    saved: &solidcraft_engine::doc::Document,
+    visibility: &solidcraft_engine::Visibility,
+) -> Result<(), Failure> {
+    let mut disk = solidcraft_engine::io::read_design(bytes).map_err(|_| failure("The saved file is not a readable CAD design.", false))?;
+    if disk.visibility != *visibility {
+        return Err(failure("The saved file changed outside this design. Reopen or save explicitly before check-in.", false));
+    }
+    disk.visibility = saved.visibility.clone();
+    if disk != *saved {
+        return Err(failure("The saved file changed outside this design. Reopen or save explicitly before check-in.", false));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

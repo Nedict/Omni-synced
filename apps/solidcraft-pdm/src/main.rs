@@ -12,6 +12,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     let argument = |index| args.get(index).map(String::as_str).ok_or(Error::Invalid("missing argument"));
     match args.get(1).map(String::as_str) {
+        Some("backup") if args.len() == 4 => {
+            let store = Store::open(Path::new(argument(2)?))?;
+            let receipt = store.backup(Path::new(argument(3)?))?;
+            serde_json::to_writer_pretty(io::stdout().lock(), &receipt)?;
+            println!();
+        }
+        Some("restore") if args.len() == 4 => {
+            let receipt = solidcraft_pdm::backup_restore::restore_backup(Path::new(argument(2)?), Path::new(argument(3)?))?;
+            serde_json::to_writer_pretty(io::stdout().lock(), &receipt)?;
+            println!();
+        }
+        Some("verify-backup") if args.len() == 3 => {
+            let receipt = solidcraft_pdm::backup_restore::verify_backup(Path::new(argument(2)?))?;
+            serde_json::to_writer_pretty(io::stdout().lock(), &receipt)?;
+            println!();
+        }
         Some("token") if args.len() == 2 => {
             // Intentional credential output only for this explicitly invoked bootstrap command.
             println!("{}", AuthToken::generate()?);
@@ -59,7 +75,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             serde_json::to_writer_pretty(io::stdout().lock(), &snapshot)?;
             println!();
         }
-        _ => return Err("usage: solidcraft-pdm token | serve STORE PORT | request PORT | list PORT [DOCUMENT] | check-in PORT DOCUMENT PARENT_OR_- FILE [DEPENDENCIES_JSON] | retrieve PORT DOCUMENT VERSION NEW_DIRECTORY".into()),
+        _ => return Err("usage: solidcraft-pdm token | serve STORE PORT | backup STORE NEW_BACKUP | restore BACKUP NEW_STORE | verify-backup BACKUP | request PORT | list PORT [DOCUMENT] | check-in PORT DOCUMENT PARENT_OR_- FILE [DEPENDENCIES_JSON] | retrieve PORT DOCUMENT VERSION NEW_DIRECTORY".into()),
     }
     Ok(())
 }

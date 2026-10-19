@@ -12,7 +12,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub mod backup_restore;
 pub mod client;
+pub mod managed;
+pub mod managed_workspace;
 pub mod workspace;
 
 pub const PROTOCOL: &str = "solidcraft-pdm/2";
@@ -86,6 +89,8 @@ pub enum Error {
     Server(String),
     #[error("invalid request: {0}")]
     Invalid(&'static str),
+    #[error("operation forbidden")]
+    Forbidden,
     #[error("version conflict")]
     Conflict,
     #[error("version not found")]
@@ -114,18 +119,47 @@ pub struct Version {
     pub dependencies: Vec<VersionRef>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    ManagedCatalog,
+    ManagedCreate { logical_path: String },
+    ManagedCheckout { document: String, workspace: String, machine: String },
+    ManagedCancelCheckout { document: String, workspace: String, machine: String, checkout_token: String },
+    ManagedCheckIn { input: managed::ManagedCheckIn },
+    ManagedHistory { document: String },
     CheckIn { document: String, parent: Option<u64>, content: Vec<u8>, dependencies: Vec<VersionRef> },
     Download { reference: VersionRef },
     WhereUsed { reference: VersionRef },
     List { document: Option<String> },
 }
 
+impl std::fmt::Debug for Request {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let operation = match self {
+            Self::ManagedCatalog => "ManagedCatalog",
+            Self::ManagedCreate { .. } => "ManagedCreate",
+            Self::ManagedCheckout { .. } => "ManagedCheckout",
+            Self::ManagedCancelCheckout { .. } => "ManagedCancelCheckout",
+            Self::ManagedCheckIn { .. } => "ManagedCheckIn",
+            Self::ManagedHistory { .. } => "ManagedHistory",
+            Self::CheckIn { .. } => "CheckIn",
+            Self::Download { .. } => "Download",
+            Self::WhereUsed { .. } => "WhereUsed",
+            Self::List { .. } => "List",
+        };
+        formatter.write_str(operation)
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum Response {
+    ManagedCatalog { catalog: managed::ManagedCatalog },
+    ManagedDocument { entry: managed::CatalogEntry },
+    ManagedCheckout { grant: managed::CheckoutGrant },
+    ManagedCheckedIn { version: managed::ManagedVersion },
+    ManagedHistory { versions: Vec<managed::ManagedVersion> },
     Listed { versions: Vec<Version> },
     CheckedIn { version: Version },
     Downloaded { version: Version, content: Vec<u8> },
@@ -138,6 +172,7 @@ pub enum Response {
 pub struct Store {
     root: PathBuf,
     _lock: File,
+    managed: managed::ManagedStore,
 }
 
 pub(crate) fn valid_id(id: &str) -> bool {
@@ -167,7 +202,9 @@ impl Store {
                 }
             }
         }
+        result.extend(self.managed.versions().into_iter().filter(|v| document.is_none_or(|d| v.reference.document == d)));
         result.sort_by(|a, b| a.reference.cmp(&b.reference));
+        result.dedup_by(|a, b| a.reference == b.reference);
         Ok(result)
     }
 
@@ -199,10 +236,15 @@ impl Store {
     }
 
     pub fn open(root: &Path) -> Result<Self, Error> {
+        reject_symlink_ancestors(root)?;
         fs::create_dir_all(root)?;
         let lock = OpenOptions::new().create(true).truncate(false).read(true).write(true).open(root.join("writer.lock"))?;
         lock.try_lock().map_err(|_| Error::Invalid("store is already open"))?;
-        Ok(Self { root: root.to_path_buf(), _lock: lock })
+        if root.join("restore.pending").try_exists()? {
+            return Err(Error::Invalid("interrupted restore; preserve this directory and restore to a new destination"));
+        }
+        let managed = managed::ManagedStore::open(root)?;
+        Ok(Self { root: root.to_path_buf(), _lock: lock, managed })
     }
 
     fn document_path(&self, document: &str) -> Result<PathBuf, Error> {
@@ -238,6 +280,9 @@ impl Store {
     }
 
     pub fn download(&self, reference: &VersionRef) -> Result<(Version, Vec<u8>), Error> {
+        if self.managed.contains(&reference.document) {
+            return self.managed.download(reference);
+        }
         let path = self.version_path(reference)?;
         if !path.is_dir() {
             return Err(Error::NotFound);
@@ -251,6 +296,9 @@ impl Store {
     }
 
     pub fn check_in(&mut self, document: String, parent: Option<u64>, content: Vec<u8>, dependencies: Vec<VersionRef>) -> Result<Version, Error> {
+        if self.managed.contains(&document) || document.starts_with("m-") {
+            return Err(Error::Forbidden);
+        }
         let path = self.document_path(&document)?;
         if content.len() > MAX_CONTENT || dependencies.len() > MAX_DEPENDENCIES {
             return Err(Error::Invalid("size limit"));
@@ -305,21 +353,42 @@ impl Store {
                 }
             }
         }
+        result.extend(self.managed.where_used(reference));
         result.sort();
+        result.dedup();
         Ok(result)
     }
 
     pub fn execute(&mut self, request: Request) -> Response {
+        self.execute_as(request, &managed::Principal { id: "owner".into(), role: managed::Role::Administrator })
+    }
+
+    pub fn execute_as(&mut self, request: Request, principal: &managed::Principal) -> Response {
         let result = match request {
+            Request::ManagedCatalog => Ok(Response::ManagedCatalog { catalog: self.managed.catalog() }),
+            Request::ManagedCreate { logical_path } => self.managed.create(principal, logical_path).map(|entry| Response::ManagedDocument { entry }),
+            Request::ManagedCheckout { document, workspace, machine } => {
+                self.managed.checkout(principal, &document, workspace, machine).map(|grant| Response::ManagedCheckout { grant })
+            }
+            Request::ManagedCancelCheckout { document, workspace, machine, checkout_token } => {
+                self.managed.cancel(principal, &document, &workspace, &machine, &checkout_token).map(|entry| Response::ManagedDocument { entry })
+            }
+            Request::ManagedCheckIn { input } => self.managed.check_in(principal, input).map(|version| Response::ManagedCheckedIn { version }),
+            Request::ManagedHistory { document } => self.managed.history(&document).map(|versions| Response::ManagedHistory { versions }),
             Request::List { document } => self.list(document.as_deref()).map(|versions| Response::Listed { versions }),
             Request::CheckIn { document, parent, content, dependencies } => {
-                self.check_in(document, parent, content, dependencies).map(|version| Response::CheckedIn { version })
+                if principal.role == managed::Role::Viewer {
+                    Err(Error::Forbidden)
+                } else {
+                    self.check_in(document, parent, content, dependencies).map(|version| Response::CheckedIn { version })
+                }
             }
             Request::Download { reference } => self.download(&reference).map(|(version, content)| Response::Downloaded { version, content }),
             Request::WhereUsed { reference } => self.where_used(&reference).map(|versions| Response::WhereUsed { versions }),
         };
         result.unwrap_or_else(|error| Response::Error {
             code: match error {
+                Error::Forbidden => "forbidden",
                 Error::Conflict => "conflict",
                 Error::NotFound => "not_found",
                 Error::Invalid(_) => "invalid_request",
@@ -329,6 +398,20 @@ impl Store {
             .into(),
         })
     }
+}
+
+// Fail closed for pre-existing symlink/junction store paths. The store directory
+// remains trusted local state: this does not defend against concurrent host tampering.
+pub(crate) fn reject_symlink_ancestors(path: &Path) -> Result<(), Error> {
+    for ancestor in path.ancestors() {
+        match fs::symlink_metadata(ancestor) {
+            Ok(metadata) if metadata.file_type().is_symlink() => return Err(Error::Invalid("symlink store path")),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
 }
 
 fn write_synced(path: &Path, content: &[u8]) -> Result<(), Error> {
@@ -394,9 +477,18 @@ pub fn serve_connection(store: &mut Store, mut stream: TcpStream, token: &AuthTo
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
     let response =
         match read_socket_frame(&stream, Duration::from_secs(5)).and_then(|bytes| Ok(serde_json::from_slice::<AuthenticatedRequest>(&bytes)?)) {
-            Ok(envelope) if !token.matches(&envelope.token) => Response::Error { code: "unauthorized".into() },
             Ok(envelope) if envelope.protocol != PROTOCOL => Response::Error { code: "unsupported_protocol".into() },
-            Ok(envelope) => store.execute(envelope.request),
+            Ok(envelope) => {
+                let principal = if token.matches(&envelope.token) {
+                    Some(managed::Principal { id: "owner".into(), role: managed::Role::Administrator })
+                } else {
+                    store.managed.authenticate(&envelope.token)
+                };
+                match principal {
+                    Some(principal) => store.execute_as(envelope.request, &principal),
+                    None => Response::Error { code: "unauthorized".into() },
+                }
+            }
             Err(_) => Response::Error { code: "invalid_request".into() },
         };
     let bytes = serde_json::to_vec(&response)?;

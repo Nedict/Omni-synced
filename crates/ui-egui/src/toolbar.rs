@@ -8,7 +8,7 @@ use serde_json::json;
 use crate::theme::Tokens;
 use crate::{SolveApp, icons};
 
-pub const TABS: &[&str] = &["SOLID", "SURFACE", "MESH", "SHEET METAL", "PLASTIC", "UTILITIES"];
+pub const TABS: &[&str] = &["SOLID", "SURFACE", "MESH", "PDM", "SHEET METAL", "PLASTIC", "UTILITIES"];
 
 /// Legacy paint arguments and non-SVG affordances follow the same semantic palette as the icon.
 /// The requested icon id determines its meaning on ribbons, menus and drag previews alike.
@@ -659,18 +659,26 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let wresp = ui.interact(ws, ui.id().with("workspace_switcher"), Sense::click());
         painter.rect(ws, 4.0, if wresp.hovered() { t.hover } else { t.field }, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
         let workspace_icon = if crate::render_workspace::active(app) { "ws_render" } else { "ws_design" };
-        icons::paint(
-            &painter,
-            Rect::from_center_size(pos2(ws.center().x, ws.top() + 24.0), vec2(26.0, 26.0)),
-            workspace_icon,
-            t.icon,
-            t.icon_fill,
-            t.accent,
-        );
+        if !app.pdm.workspace_active {
+            icons::paint(
+                &painter,
+                Rect::from_center_size(pos2(ws.center().x, ws.top() + 24.0), vec2(26.0, 26.0)),
+                workspace_icon,
+                t.icon,
+                t.icon_fill,
+                t.accent,
+            );
+        }
         painter.text(
             pos2(ws.center().x - 5.0, ws.top() + 52.0),
             Align2::CENTER_CENTER,
-            app.tr_label(if crate::render_workspace::active(app) { "RENDER" } else { crate::toolbar_custom::WORKSPACE }),
+            app.tr_label(if app.pdm.workspace_active {
+                "PDM"
+            } else if crate::render_workspace::active(app) {
+                "RENDER"
+            } else {
+                crate::toolbar_custom::WORKSPACE
+            }),
             FontId::proportional(12.0),
             t.text,
         );
@@ -686,7 +694,9 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         if sketching {
             tabs.push("SKETCH");
         }
-        if crate::render_workspace::active(app) {
+        if app.pdm.workspace_active {
+            tabs.push("PDM");
+        } else if crate::render_workspace::active(app) {
             tabs.push("RENDER");
         } else {
             tabs.extend(TABS.iter());
@@ -717,6 +727,11 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 app.ui.tab = tab.to_string();
             }
             x += w + 4.0;
+        }
+        if app.ui.tab == "PDM" {
+            let rect = Rect::from_min_max(pos2(r.left() + 112.0, r.top() + 30.0), r.right_bottom());
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| crate::pdm_panel::actions(app, ui));
+            return;
         }
         // Panels.
         let tab = app.ui.tab.clone();

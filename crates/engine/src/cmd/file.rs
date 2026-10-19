@@ -327,6 +327,11 @@ fn rename_design(s: &mut Session, from: &str, to: &str) {
 }
 
 fn write(s: &mut Session, path: &str, format: &str, compression: &str, preview: bool, cache: bool) -> Result<Value> {
+    s.pdm.may_save(path).map_err(EngineError::Other)?;
+    if s.pdm_read_only && s.path.as_deref().is_some_and(|original| crate::pdm::same_file_path(original, path)) {
+        return Err(EngineError::Other("Historical copies are read-only; Save As a separate design".into()));
+    }
+    let historical_copy = s.pdm_read_only;
     solidcraft_io::vfs::check(path).map_err(|e| EngineError::Other(e.to_string()))?;
     // Saving an unnamed design, or one named after the file it was saved as, names it after its
     // file (not an undoable edit).
@@ -335,6 +340,9 @@ fn write(s: &mut Session, path: &str, format: &str, compression: &str, preview: 
         rename_design(s, from, to);
     }
     let r = write_file(s, path, format, compression, preview, cache);
+    if r.is_ok() && historical_copy {
+        s.pdm_read_only = false;
+    }
     if r.is_err()
         && let Some((from, to)) = &renamed
     {
@@ -466,6 +474,10 @@ fn save_as(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn export_to(s: &Session, path: &str, format: Format, bodies: &[String]) -> Result<Value> {
+    s.pdm.may_save(path).map_err(EngineError::Other)?;
+    if s.pdm_read_only && s.path.as_deref().is_some_and(|original| crate::pdm::same_file_path(original, path)) {
+        return Err(EngineError::Other("Historical copies are read-only; export to a separate file".into()));
+    }
     let name = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| s.doc.name.clone());
     // A design with components exports as a STEP assembly; otherwise bodies as placed.
     let bytes = if format == Format::Design {

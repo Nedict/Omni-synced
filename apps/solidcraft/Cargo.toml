@@ -28,6 +28,8 @@ solidcraft-pdm = { path = "../solidcraft-pdm" }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11", "links"] }
 egui = { workspace = true }
 serde_json = { workspace = true }
+serde = { workspace = true }
+sha2 = { workspace = true }
 log = { workspace = true }
 rfd = { workspace = true }
 # Checks eframe's settings file (app.ron) before eframe reads it (src/startup.rs).
