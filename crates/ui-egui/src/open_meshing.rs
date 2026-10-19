@@ -32,6 +32,11 @@ pub(crate) struct Meshing {
     shown_at: f64,
     /// The camera the outline framing left (a refit at the end only replaces that one).
     framed: Option<crate::Camera>,
+    /// Draw the design's Home picture when all is meshed.
+    remember: bool,
+    /// When it started, and whether the first bodies have been shown (`SOLIDCRAFT_PROFILE_OPEN`).
+    began: Option<f64>,
+    first_shown: bool,
 }
 
 impl Meshing {
@@ -70,7 +75,7 @@ impl Meshing {
             // No thread: the viewport meshes as it draws, as before.
             done.store(n, Ordering::Release);
         }
-        Meshing { world, ready, done, stop, shown: None, shown_at: f64::NEG_INFINITY, framed: None }
+        Meshing { world, ready, done, stop, shown: None, shown_at: f64::NEG_INFINITY, framed: None, remember: false, began: None, first_shown: false }
     }
 
     fn finished(&self) -> bool {
@@ -85,18 +90,15 @@ impl Drop for Meshing {
 }
 
 /// Start meshing the session's world off the UI thread (an opened design), framing the view from
-/// the bodies' outlines.
-pub(crate) fn start(app: &mut SolveApp) {
+/// the bodies' outlines; `remember`: then draw its Home picture.
+pub(crate) fn start(app: &mut SolveApp, remember: bool) {
     let plans = app.viewport.gpu.is_some_and(|g| g.tess);
-    let meshing = Meshing::start(app.session.world_state(), plans);
-    let done = meshing.finished();
+    let mut meshing = Meshing::start(app.session.world_state(), plans);
+    meshing.remember = remember;
     app.open_meshing = Some(meshing);
     app.fit_view();
     if let Some(m) = app.open_meshing.as_mut() {
         m.framed = Some(app.cam);
-    }
-    if done {
-        app.open_meshing = None;
     }
 }
 
@@ -112,18 +114,25 @@ pub(crate) fn tick(app: &mut SolveApp, ctx: &egui::Context) {
     let world = app.session.world_state();
     if !Arc::ptr_eq(&world, &m.world) {
         // The design changed (an edit, an undo): mesh the new world; what is made is kept.
-        let framed = m.framed;
+        let (framed, remember) = (m.framed, m.remember);
         let plans = app.viewport.gpu.is_some_and(|g| g.tess);
         let mut next = Meshing::start(world, plans);
-        next.framed = framed;
+        (next.framed, next.remember) = (framed, remember);
         app.open_meshing = Some(next);
     }
     let finished = app.open_meshing.as_ref().is_some_and(Meshing::finished);
     if finished {
-        let framed = app.open_meshing.take().and_then(|m| m.framed);
+        let Some(m) = app.open_meshing.take() else { return };
+        if profiling() {
+            let ms = m.began.map_or(0.0, |t| (ctx.input(|i| i.time) - t) * 1000.0);
+            eprintln!("SolidCraft open meshing: all {} bodies shown after {ms:.0} ms", m.world.bodies.len());
+        }
         // Framed from outlines and not moved since: frame the meshes.
-        if framed == Some(app.cam) {
+        if m.framed == Some(app.cam) {
             app.fit_view();
+        }
+        if m.remember {
+            crate::home::remember_session(&mut app.home, &app.session);
         }
     }
     ctx.request_repaint();
@@ -153,6 +162,17 @@ pub(crate) fn refresh(app: &mut SolveApp, now: f64) {
         i += 1;
         keep
     });
+    let began = *m.began.get_or_insert(now);
+    if !m.first_shown && !st.bodies.is_empty() {
+        m.first_shown = true;
+        if profiling() {
+            eprintln!("SolidCraft open meshing: first {} bodies shown after {:.0} ms", st.bodies.len(), (now - began) * 1000.0);
+        }
+    }
     m.shown = Some((done, Arc::new(st)));
     m.shown_at = now;
+}
+
+fn profiling() -> bool {
+    solidcraft_engine::geom::env::var_os("PROFILE_OPEN").is_some()
 }

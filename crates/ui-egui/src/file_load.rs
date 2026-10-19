@@ -798,14 +798,12 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
                     crate::documents::adopt(app, made.session);
                     if request.kind == Kind::Open {
                         app.home.add_recent(&request.path);
-                        if made.thumbnail {
-                            crate::home::remember_session(&mut app.home, &app.session);
-                        }
                     }
                 }
                 app.home.open = false;
-                // Shown as its bodies are meshed, framed from their outlines meanwhile.
-                crate::open_meshing::start(app);
+                // Shown as its bodies are meshed, framed from their outlines meanwhile; its Home
+                // picture is drawn once they all are.
+                crate::open_meshing::start(app, request.kind == Kind::Open && made.thumbnail);
                 // A caller that said which way is up has been answered: no offer to stand the part up.
                 if (request.kind == Kind::Open || request.insert()) && !request.options.contains_key("up") {
                     crate::stand_up::offer(app, &request.path, &running.before, Some(&made.result));

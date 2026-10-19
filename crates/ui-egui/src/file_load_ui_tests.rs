@@ -211,7 +211,10 @@ fn a_control_open_answers_after_loading_without_freezing_the_window() {
     assert_eq!(reply["ok"], true, "{reply}");
     assert_eq!(reply["result"], expected);
     assert!(count_rx.try_recv().is_ok(), "inspection answered while the file loaded");
-    // Its Home picture is drawn after it opened, not before.
+    // Its bodies are meshed after it opened, and its Home picture drawn then, off the UI thread.
+    while crate::open_meshing::active(&w.app) {
+        w.frame(vec![]);
+    }
     assert!(crate::home::remembering(&w.app.home), "the Home picture is drawn off the UI thread");
     for _ in 0..3 {
         w.frame(vec![]);
@@ -265,5 +268,78 @@ fn a_control_import_passes_up_and_names_on() {
     // Z up said by the caller: kept as it is, and not asked about either.
     let (_, size, offered) = import(json!({"path": path, "up": "z"}));
     assert!(size[1] > 39.9 && !offered, "{size:?} {offered}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An opened design is in the window before its bodies are meshed: the view draws the bodies
+/// meshed so far (never meshing one itself), framed from their outlines, until all are.
+#[test]
+fn an_opened_design_shows_its_bodies_as_they_are_meshed() {
+    let dir = scratch("progressive");
+    let path = large_design(&dir, 24);
+    let mut w = Win::new();
+    let (tx, rx) = std::sync::mpsc::channel();
+    w.app.control_rx = Some(rx);
+    let (open, open_rx) = crate::control::ControlRequest::new("engine.execute", json!({"command": "doc.open", "params": {"path": path}}));
+    tx.send(open).unwrap();
+    let mut frames = 0;
+    while open_rx.try_recv().is_err() {
+        w.frame(vec![]);
+        frames += 1;
+        assert!(frames < 100_000);
+    }
+    let mut seen = Vec::new();
+    while crate::open_meshing::active(&w.app) {
+        let shown = crate::open_meshing::shown_world(&w.app);
+        assert!(shown.bodies.iter().all(|b| b.cached_mesh().is_some()), "only meshed bodies are drawn");
+        seen.push(shown.bodies.len());
+        w.frame(vec![]);
+    }
+    assert!(seen.windows(2).all(|p| p[0] <= p[1]), "the picture only grows: {seen:?}");
+    let world = w.app.session.world_state();
+    assert!(std::sync::Arc::ptr_eq(&crate::open_meshing::shown_world(&w.app), &world), "then the whole design");
+    assert!(world.bodies.iter().all(|b| b.cached_mesh().is_some()));
+    // Framed from the meshes now, as a synchronous open frames it.
+    let framed = w.app.cam;
+    w.app.fit_view();
+    assert_eq!(w.app.cam, framed);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A screenshot asked for right after an open shows the whole design: it waits for the meshing,
+/// and what was asked after it waits for it.
+#[test]
+fn a_screenshot_after_an_open_waits_for_the_whole_design() {
+    let dir = scratch("progressive-shot");
+    let path = large_design(&dir, 24);
+    let mut w = Win::new();
+    let (tx, rx) = std::sync::mpsc::channel();
+    w.app.control_rx = Some(rx);
+    let (open, open_rx) = crate::control::ControlRequest::new("engine.execute", json!({"command": "doc.open", "params": {"path": path}}));
+    tx.send(open).unwrap();
+    let mut frames = 0;
+    while open_rx.try_recv().is_err() {
+        w.frame(vec![]);
+        frames += 1;
+        assert!(frames < 100_000);
+    }
+    if !crate::open_meshing::active(&w.app) {
+        return; // Meshed already: nothing to wait for on this machine.
+    }
+    let (shot, _shot_rx) = crate::control::ControlRequest::new("ui.screenshot", json!({}));
+    let (count, count_rx) = crate::control::ControlRequest::new("document.inspect", json!({}));
+    tx.send(shot).unwrap();
+    tx.send(count).unwrap();
+    w.frame(vec![]);
+    if crate::open_meshing::active(&w.app) {
+        assert!(count_rx.try_recv().is_err(), "a request after the screenshot waits for it");
+    }
+    while crate::open_meshing::active(&w.app) {
+        w.frame(vec![]);
+    }
+    for _ in 0..3 {
+        w.frame(vec![]);
+    }
+    assert!(count_rx.try_recv().is_ok(), "answered once the design is meshed");
     let _ = std::fs::remove_dir_all(&dir);
 }
