@@ -99,9 +99,21 @@ pub struct PreviewState {
     /// The radius splines the previewed fillet tapered its edges with.
     pub tapered: Vec<(Vec3, solidcraft_engine::kernel::Taper)>,
     straight: crate::extrude_preview::StraightPreview,
+    /// PreviewReselect: Primary held - hide the preview and restore replaced bodies for picks.
+    pub rolled_back: bool,
 }
 
 impl PreviewState {
+    /// Bodies the model scene should hide for the preview (empty while rolled back).
+    pub fn effective_replaced(&self) -> &[String] {
+        if self.rolled_back { &[] } else { &self.replaced }
+    }
+
+    /// Whether the preview scene should be drawn.
+    pub fn draw_active(&self) -> bool {
+        self.active && !self.rolled_back
+    }
+
     fn clear(&mut self) {
         self.straight.clear();
         self.running = None;
@@ -114,6 +126,7 @@ impl PreviewState {
         self.tapered.clear();
         self.sketches.clear();
         self.busy = false;
+        self.rolled_back = false;
         if self.active || !self.replaced.is_empty() {
             self.active = false;
             self.bounds = Aabb3::EMPTY;
@@ -351,8 +364,18 @@ fn spawn(pv: &mut PreviewState, key: u64, scratch: Session, cmds: Vec<(String, V
 /// kernel can't do yet), the tool body is still shown, with the error.
 pub fn compute(s: &Session, cmds: &[(String, Value)], colors: Colors) -> Job {
     if cmds.iter().any(|(command, params)| {
-        matches!(command.as_str(), "sketch.redefine" | "sketch.mirror" | "sketch.pattern.rectangular" | "sketch.pattern.circular" | "sketch.offset")
-            || command == "construct.plane.along_path"
+        matches!(
+            command.as_str(),
+            "sketch.redefine"
+                | "sketch.mirror"
+                | "sketch.pattern.rectangular"
+                | "sketch.pattern.circular"
+                | "sketch.offset"
+                | "sketch.fillet"
+                | "sketch.chamfer.equal_distance"
+                | "sketch.chamfer.two_distance"
+                | "sketch.chamfer.distance_angle"
+        ) || command == "construct.plane.along_path"
             || params.get("command").and_then(Value::as_str) == Some("construct.plane.along_path")
     }) {
         let preview = s.preview_visible_world(cmds).map_err(|error| error.to_string())?;
@@ -751,6 +774,9 @@ pub fn point_triangle_dist(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f64 {
 
 /// The same computed sketch preview is drawn over both native GPU and CPU viewports.
 pub fn paint_sketches(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
+    if app.preview.rolled_back {
+        return;
+    }
     if !app.dialog.as_ref().is_some_and(|d| matches!(d.kind, crate::dialogs::Kind::SketchModify(_)) && d.previews()) {
         return;
     }
