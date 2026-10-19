@@ -325,3 +325,45 @@ fn crossing_cylinders_union_moved_far() {
     let there = run(&mv(&a), &mv(&b), BoolOp::Union).unwrap();
     assert!(close(here, there, s), "union at origin {here:.4}, moved by 1000 gives {there:.4}");
 }
+
+// Deterministic U1 witness. No Proptest generation/persistence or baseline write.
+#[test]
+fn u1_labelled_union_orders() {
+    fn observed(order: &str, a: &Body, b: &Body) -> Result<f64, TestCaseError> {
+        // Keep the actual run() call and its boolean -> validity -> measure order.
+        // In particular, do not pre-tessellate or measure an invalid result.
+        let (result, diagnostics) = solidcraft_kernel::capture_boolean_diagnostics(|| run(a, b, BoolOp::Union));
+        let error = result.as_ref().err().map(ToString::to_string);
+        let phase = match (&result, error.as_deref()) {
+            (Ok(v), _) if v.is_finite() && *v > 0.0 => "validity-and-measure-pass",
+            (Ok(_), _) => "empty-or-zero-or-nonfinite",
+            (_, Some(e)) if e.contains("not a sound solid") => "validity-failure",
+            (_, Some(e)) if e.contains("returned an error:") => "boolean-error",
+            (_, Some(e)) if e.contains("measure:") => "measure-error",
+            _ => "unclassified-error",
+        };
+        let volume = result.as_ref().ok().copied();
+        eprintln!(
+            "U1 {}",
+            serde_json::json!({
+                "order": order, "phase": phase, "error": error,
+                "volume": volume, "volume_bits": volume.map(|v| format!("{:016x}", v.to_bits())),
+                "boolean_diagnostics": diagnostics,
+            })
+        );
+        result
+    }
+    let pa = Prim::Sph { at: [20.0, 10.0, 27.5], r: 3.75 };
+    let pb = Prim::Box { at: [15.0, 0.0, 22.5], size: [7.5, 20.0, 5.0] };
+    let (a, b) = (pa.body(), pb.body());
+    let (va, vb) = (vol(&a), vol(&b));
+    eprintln!("U1 inputs A={pa:?}; B={pb:?}; primitive_volumes={va:.17},{vb:.17}; primitive_bits={},{}", va.to_bits(), vb.to_bits());
+    // Report both complete Results before either can panic or propagate an error.
+    // As in commutative(), run A,B then B,A on these same operands.
+    let ab = observed("A_union_B", &a, &b);
+    let ba = observed("B_union_A", &b, &a);
+    assert!(ab.is_ok() && ba.is_ok(), "U1 soundness/measure failure: A,B={ab:?}; B,A={ba:?}");
+    let (ab, ba) = (ab.unwrap(), ba.unwrap());
+    assert!(ab.is_finite() && ba.is_finite() && ab > 0.0 && ba > 0.0, "positive-overlap U1 cannot have empty/invalid volume");
+    assert!(close(ab, ba, va + vb), "U1 commutativity: A,B={ab:.17}; B,A={ba:.17}; primitive_sum={:.17}", va + vb);
+}

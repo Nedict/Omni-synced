@@ -164,6 +164,37 @@ labels; `prefs:measure_axis_distances` identifies the checkbox.
 Entering Render requires finishing the current modelling operation; returning restores
 the Design camera. See [the integrated Render workspace](render-workspace.md).
 
+### Render Image inspection
+
+`ui.inspect` includes an additive `render_image` object with `schema_version: 1`:
+
+- `draft_request` is the current Render Image command input, or null with a
+  `draft_error` string when the host or draft is unavailable. It is not a submitted job
+  or a fresh preflight acceptance; Check and Start perform their normal validation.
+- `checked` is null unless the last successful **Check Render Request** still matches
+  the document, revision, visibility, camera, options and installed host. When current,
+  it contains `params` (the original input) and `result` (the actual preflight reply,
+  including the resolved typed `request` and `scene_generation`).
+- `active_job` is the ID returned by the UI's last successful **Start Render**;
+  `completed_job` is the older or current completed candidate used by **Export PNG**.
+  Each is null before it exists. A draft edit does not rewrite a captured request or
+  discard the previous completed candidate. Failed/cancelled work can leave that
+  candidate available; terminal metadata alone does not guarantee retained image bytes.
+
+Inspection does not capture a scene, preflight, reserve work, pump jobs, read pixels or
+change the editor. To observe a UI-created job, pass its returned ID to the existing
+`render.status` command through `engine.execute`; its typed request, captured revision,
+progress and frame metadata describe that job rather than the current draft. Use the
+returned completed ID with `render.export` for a scoped automation export. Ownership,
+retention, path scope and overwrite checks still apply. This command export does not
+exercise the native **Export PNG** file picker. No job ID should be inferred from counters
+or from another session. New/opened documents do not inherit the old session's jobs.
+
+The panel publishes `render:check`, `render:start`, `render:cancel` (while busy) and
+`render:export` handles for its existing buttons, alongside `render:method` and
+`render:aa` with their options. Handles locate controls; they do not bypass disabled
+buttons or supply native file-picker answers. Re-read handles after layout changes.
+
 ### Continuous camera motion
 
 Continuous camera motion is also available through `engine.execute` with command

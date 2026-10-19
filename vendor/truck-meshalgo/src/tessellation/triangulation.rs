@@ -6,6 +6,7 @@ use crate::Point2;
 use array_macro::array;
 use itertools::Itertools;
 use rustc_hash::FxHashMap as HashMap;
+use rustc_hash::FxHashSet as HashSet;
 
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
@@ -200,6 +201,24 @@ fn bounded_projection<S: ParametricSurface3D>(surface: &S, point: Point3, start:
     (error.is_finite() && in_domain(surface, uv)).then_some((uv, error))
 }
 
+// SolidCraft: a two-edge trim can lose its area when both curves become endpoint chords.
+// Mark the original edge IDs, so every incident face uses the same interior witness.
+fn two_edge_wire_edges<C: PolylineableCurve, S>(shell: &Shell<Point3, C, S>) -> HashSet<EdgeID<C>> {
+    let mut edges = HashSet::default();
+    for face in shell.face_iter() {
+        let boundaries = face.absolute_boundaries();
+        if boundaries.len() != 1 {
+            continue;
+        }
+        for wire in boundaries {
+            if wire.len() == 2 {
+                edges.extend(wire.edge_iter().map(|edge| edge.id()));
+            }
+        }
+    }
+    edges
+}
+
 /// Tessellates faces
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn shell_tessellation<'a, C, S>(
@@ -212,6 +231,7 @@ where
     S: PreMeshableSurface + 'a,
 {
     let cap = face_cap(shell.len());
+    let two_edge = two_edge_wire_edges(shell);
     let vmap: HashMap<_, _> = shell
         .vertex_par_iter()
         .map(|v| (v.id(), v.mapped(Point3::clone)))
@@ -223,10 +243,10 @@ where
         .par_iter()
         .map(|(id, edge)| {
             let curve = edge.curve();
-            (*id, (bounded_polyline(&curve, curve.range_tuple(), tol), 0))
+            (*id, (bounded_polyline_impl(&curve, curve.range_tuple(), tol, two_edge.contains(id)), 0))
         })
         .collect();
-    relax_crowded_faces(shell, &mut polys, tol);
+    relax_crowded_faces(shell, &mut polys, tol, &two_edge);
     let edge_map: HashMap<_, _> = eset
         .into_par_iter()
         .map(move |(id, edge)| {
@@ -282,6 +302,7 @@ fn relax_crowded_faces<C, S>(
     shell: &Shell<Point3, C, S>,
     polys: &mut HashMap<EdgeID<C>, (PolylineCurve, u8)>,
     tol: Deflection,
+    two_edge: &HashSet<EdgeID<C>>,
 ) where
     C: PolylineableCurve,
 {
@@ -318,7 +339,7 @@ fn relax_crowded_faces<C, S>(
         for edge in crowded {
             if let Some(slot) = polys.get_mut(&edge.id()).filter(|(_, done)| *done < level) {
                 let curve = edge.curve();
-                *slot = (bounded_polyline(&curve, curve.range_tuple(), relaxed), level);
+                *slot = (bounded_polyline_impl(&curve, curve.range_tuple(), relaxed, two_edge.contains(&edge.id())), level);
             }
         }
     }
@@ -338,15 +359,16 @@ where
     use truck_base::entry_map::FxEntryMap as EntryMap;
     use truck_topology::Vertex as TVertex;
     let cap = face_cap(shell.len());
+    let two_edge = two_edge_wire_edges(shell);
     // SolidCraft: the polylines first (see `shell_tessellation`).
     let mut polys: HashMap<_, _> = shell
         .edge_iter()
         .map(|edge| {
             let curve = edge.curve();
-            (edge.id(), (bounded_polyline(&curve, curve.range_tuple(), tol), 0))
+            (edge.id(), (bounded_polyline_impl(&curve, curve.range_tuple(), tol, two_edge.contains(&edge.id())), 0))
         })
         .collect();
-    relax_crowded_faces(shell, &mut polys, tol);
+    relax_crowded_faces(shell, &mut polys, tol, &two_edge);
     let polys = &polys;
     let mut vmap = EntryMap::new(
         move |v: &TVertex<Point3>| v.id(),
@@ -1171,6 +1193,12 @@ pub(super) fn face_cap(faces: usize) -> usize {
 /// version recursed on it 100 levels deep, which never finishes). A piece within the chord
 /// tolerance is still halved while it turns more than the deflection's angle.
 pub(super) fn bounded_polyline<C: PolylineableCurve>(curve: &C, range: (f64, f64), d: Deflection) -> PolylineCurve {
+    bounded_polyline_impl(curve, range, d, false)
+}
+
+// SolidCraft: preserve a finite root midpoint only for shared edges of two-edge wires.
+// The default sampler and every branch keep their original single stack and point/depth caps.
+fn bounded_polyline_impl<C: PolylineableCurve>(curve: &C, range: (f64, f64), d: Deflection, keep_root_midpoint: bool) -> PolylineCurve {
     let (tol, turn2) = (d.chord, d.turn2());
     // A sample that does not evaluate (an intersection curve whose projection fails): an interval
     // end falls back to the curve's approximation so the polyline stays finite; an interior probe
@@ -1191,7 +1219,9 @@ pub(super) fn bounded_polyline<C: PolylineableCurve>(curve: &C, range: (f64, f64
         let dm = sm.unwrap_or(nan).distance2(pa.midpoint(pb));
         let flat = !(d2 >= tol * tol || dm >= tol * tol);
         let flat = flat && !d.turns(turn2, d2.max(dm), pa.distance2(pb));
-        if flat || depth >= 24 || out.len() + stack.len() >= MAX_EDGE_POINTS {
+        let keep_midpoint = keep_root_midpoint && depth == 0 && flat
+            && sm.is_some_and(|p| p.x.is_finite() && p.y.is_finite() && p.z.is_finite());
+        if (flat && !keep_midpoint) || depth >= 24 || out.len() + stack.len() >= MAX_EDGE_POINTS {
             out.push(pb);
         } else {
             let pm = sm.unwrap_or_else(|| curve.approx_subs(tm));

@@ -117,3 +117,44 @@ durable background service. In a browser, leave the app running so frames can pu
 
 Validation evidence and responsiveness measurements are recorded in the R4a issue/PR;
 passing native tests or a wasm compile does not establish browser visual performance.
+
+
+## Completed PNG content identity
+
+Completed `frame` metadata in `render.status` and the existing `render.export`
+reply includes `png_bytes` (the exact encoded byte length) and `png_sha256`
+(64 lowercase hexadecimal characters). They identify the immutable encoded PNG,
+not raw pixels, a GPU texture, geometry, a license or a security signature. Use
+all fields of the returned job ID and `scene_generation` alongside the digest.
+A metadata snapshot does not promise that bytes remain retained: eviction and
+foreign/old session IDs still refuse export rather than substituting a newer image.
+
+The host computes the digest exactly once before publishing `completed`. After
+its integrator finishes encoding, it releases the integrator's captured/scratch
+state and moves the sole PNG into a bounded completion state. It keeps the original
+work reservation until hashing completes. This remains the `encoding` phase;
+its final substage reports hashed bytes in `done/total`, restarting the previous
+row-based count. There is no additional phase, image copy, task protocol or pool.
+Each host advance scans at most four 16 KiB chunks (one chunk with a one-unit
+advance; zero units scan no bytes), with cancellation checks between chunks. These are bounded work units,
+not measured latency or a throughput guarantee.
+
+Hash updates and finalization occur outside the job-status mutex. A final
+cancellation check under the publication lock precedes installing the frame and
+shrinking the same lease to the retained PNG capacity plus the existing 1024-byte
+metadata allowance. A pre-publication bound checks the fixed digest/offset/Vec state,
+frame layout and actual cached hex-string capacity; source tests require them
+and the original admission to remain
+bounded. Cancellation/failure during this completion work cannot publish a frame.
+Status/inspection/export copy only cached metadata; they do not scan or rehash PNG
+bytes. Export still writes the same retained byte slice through its existing path
+scope and atomic file writer.
+
+This is additive JSON and a public Rust `FrameInfo` source change: downstream
+struct literals must supply both new fields. There is one in-tree producer, in
+the shared host; no `TaskPoll::Complete` signature, persisted render setup or
+document-format descriptor changes. Existing consumers reading older fields
+retain their values. The source regressions cover incremental/multichunk work,
+late cancellation and host disposal, lease lifetime, actual cooperative/native
+PNG identity and command export of retained bytes. These regressions support validation; a metadata snapshot by itself does not
+establish production UI or native file-picker acceptance.

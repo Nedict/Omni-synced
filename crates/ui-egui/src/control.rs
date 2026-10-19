@@ -240,7 +240,10 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
 }
 
 fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) -> Outcome {
-    crate::render_workspace::sync_backend(app);
+    // Inspection observes the installed host; only commands/frame setup synchronize it.
+    if method != "ui.inspect" {
+        crate::render_workspace::sync_backend(app);
+    }
     let s = |k: &str| p.get(k).and_then(Value::as_str);
     let f = |k: &str| p.get(k).and_then(Value::as_f64).filter(|x| x.is_finite());
     let b = |k: &str| p.get(k).and_then(Value::as_bool).unwrap_or(false);
@@ -285,6 +288,7 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
         "engine.commands" => wrap(app.session.execute("engine.commands", &json!({})).map_err(|e| e.to_string())),
         "document.inspect" => wrap(app.session.execute("document.inspect", p).map_err(|e| e.to_string())),
         "ui.inspect" => ok(json!({
+            "render_image": crate::render_workspace::inspect_image(app),
             "ui": serde_json::to_value(&app.ui).unwrap_or_default(),
             "visibility": app.session.visibility,
             "viewport": app.viewport.rect.map(|r| json!([r.left(), r.top(), r.width(), r.height()])),
