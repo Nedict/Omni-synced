@@ -345,6 +345,9 @@ pub struct Prefs {
     pub up_axis: String,
     /// After a STEP or IGES file opens, offer to stand a Y-up part up (`stand_up`).
     pub offer_stand_up: bool,
+    /// Extrude: with a profile picked, a face, vertex or parallel plane picked off its plane
+    /// switches the extent to To Object (off: picks only add profiles, as before).
+    pub extrude_auto_to_object: bool,
     /// What a middle-button double-click in the view does: `home`, `fit` or `off`.
     pub middle_double_click: String,
     /// Colour vision mode (#778): `off`, `protan`, `deutan` or `tritan`.
@@ -463,6 +466,7 @@ impl Default for Prefs {
             look_at_speed: 1.0,
             up_axis: "z".into(),
             offer_stand_up: true,
+            extrude_auto_to_object: false,
             middle_double_click: "home".into(),
             color_vision: crate::theme::ColorVision::Off,
             check_updates: true,
@@ -757,6 +761,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
         PAGE_DESIGN => {
             p.up_axis = d.up_axis;
             p.offer_stand_up = d.offer_stand_up;
+            p.extrude_auto_to_object = d.extrude_auto_to_object;
         }
         PAGE_GRAPHICS => {
             let msaa = p.msaa != d.msaa;
@@ -1368,6 +1373,11 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.label(crate::i18n::tr_label("Offer to stand up Y-up files"));
             ui.checkbox(&mut app.preferences.offer_stand_up, "")
                 .on_hover_text(crate::i18n::tr_label("After a STEP or IGES file opens with Z up, offer a quarter turn about X"));
+            ui.end_row();
+            ui.label(crate::i18n::tr_label("Extrude to a picked target"));
+            ui.checkbox(&mut app.preferences.extrude_auto_to_object, "").on_hover_text(crate::i18n::tr_label(
+                "In Extrude, with a profile picked, picking a face, vertex or parallel plane off its plane switches the extent to To Object",
+            ));
             ui.end_row();
         }
         4 => {

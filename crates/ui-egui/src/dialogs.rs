@@ -467,7 +467,7 @@ impl Dialog {
                     direction: 0,
                     operation: usize::from(has_bodies),
                     auto_op: true,
-                    smart: Default::default(),
+                    smart: crate::smart_extrude::Smart { auto_to_object: app.preferences.extrude_auto_to_object, ..Default::default() },
                     distance2: "10 mm".into(),
                     taper: "0 deg".into(),
                     taper_present: false,
@@ -962,7 +962,7 @@ impl Dialog {
     /// a plane parallel to it, is the object to extrude to rather than another profile. While the
     /// To Object input is active, a parallel plane is taken too (as a place on it).
     fn extrude_target(&self, s: &Session, h: &Hit) -> Option<Sel> {
-        if !matches!(self.kind, Kind::Extrude { thin: false, .. }) {
+        if !matches!(self.kind, Kind::Extrude { thin: false, smart: crate::smart_extrude::Smart { auto_to_object: true, .. }, .. }) {
             return None;
         }
         let to_active = self.active_input().is_some_and(|i| i.label == TO_OBJECT);
@@ -990,7 +990,9 @@ impl Dialog {
     /// Take a pick as the extrude's To Object (see [`Dialog::extrude_target`]): the extent turns to
     /// To Object with it. False when the pick is not one.
     fn take_extrude_target(&mut self, s: &Session, sel: &Sel) -> bool {
-        if self.active != 0 || !matches!(self.kind, Kind::Extrude { thin: false, .. }) {
+        if self.active != 0
+            || !matches!(self.kind, Kind::Extrude { thin: false, smart: crate::smart_extrude::Smart { auto_to_object: true, .. }, .. })
+        {
             return false;
         }
         let Some(reference) = self.inputs.first().and_then(|i| i.items.first()).and_then(|first| profile_plane(s, first)) else { return false };
@@ -2182,6 +2184,9 @@ fn measure_rows(app: &SolveApp, ui: &mut egui::Ui, r: Option<&Value>, show: &mut
 /// shows and stays when the extent goes back to Distance.
 fn sync_reach(app: &SolveApp, d: &mut Dialog) {
     let Kind::Extrude { smart, start, to_offset, .. } = &d.kind else { return };
+    if !smart.auto_to_object {
+        return;
+    }
     let target = d.inputs.iter().find(|i| i.label == TO_OBJECT).and_then(|i| i.items.first()).cloned();
     if smart.target == target {
         return;
@@ -4923,7 +4928,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 },
                 operation: op_index(operation),
                 auto_op: false,
-                smart: crate::smart_extrude::Smart { manual_dir: true, ..Default::default() },
+                smart: crate::smart_extrude::Smart { manual_dir: true, auto_to_object: app.preferences.extrude_auto_to_object, ..Default::default() },
                 distance2: extent.distance2.as_deref().map(str::to_string).unwrap_or_else(|| "10 mm".into()),
                 taper: extent.taper.as_deref().map(str::to_string).unwrap_or_else(|| "0 deg".into()),
                 taper_present: extent.taper.is_some(),

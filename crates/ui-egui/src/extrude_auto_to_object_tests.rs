@@ -10,9 +10,14 @@ use crate::viewport::Hit;
 
 /// A 10 x 10 profile on XY, a 20 mm box beside it (x 30..50), a cylinder further on (x 65..75)
 /// and construction planes 25 mm above and 12.345678 mm below XY; the Extrude dialog open with
-/// the profile picked.
+/// the profile picked and the automatic To Object preference on.
 fn scene() -> Harness {
+    scene_with(true)
+}
+
+fn scene_with(auto_to_object: bool) -> Harness {
     let mut h = Harness::new();
+    h.app.preferences.extrude_auto_to_object = auto_to_object;
     h.app.run("solid.box", json!({"length": 20, "width": 20, "height": 20, "corner": [30, 0, 0]})).unwrap();
     h.app.run("solid.cylinder", json!({"radius": 5, "height": 30, "base": [70, 10, 0], "operation": "new_body"})).unwrap();
     h.app.run("construct.plane.offset", json!({"base": "XY", "offset": 25, "name": "Lid"})).unwrap();
@@ -172,4 +177,20 @@ fn target_below_keeps_its_side_and_exact_length() {
     assert!(matches!(to_object(d), Some(Sel::Vertex { point, .. }) if (point.z + 12.345678).abs() < 1e-9));
     assert_eq!(distance(d), "12.345678 mm");
     assert!(matches!(d.kind, Kind::Extrude { direction: 1, .. }), "the target is below the profile");
+}
+
+#[test]
+fn off_by_default_a_face_off_the_profile_plane_joins_the_profiles() {
+    let h = Harness::new();
+    assert!(!h.app.preferences.extrude_auto_to_object, "the preference starts off");
+    let mut h = scene_with(false);
+    assert!(click(&mut h, |h| face_hit(h, Vec3::new(40.0, 10.0, 20.0))));
+    let d = dialog(&h);
+    assert!(to_object(d).is_none(), "the extent stays Distance");
+    assert_eq!(d.inputs[0].items.len(), 2, "the top face joins the profiles, as before");
+    assert_eq!(distance(d), "10 mm");
+    // A parallel construction plane is not taken as a target either.
+    let mut h = scene_with(false);
+    assert!(!click(&mut h, |_| Hit::Plane { name: "Lid".into(), point: Vec3::new(5.0, 5.0, 25.0) }));
+    assert!(to_object(dialog(&h)).is_none());
 }
