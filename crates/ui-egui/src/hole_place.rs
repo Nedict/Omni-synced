@@ -1,15 +1,16 @@
-//! Placing a Single hole on the canvas (#2171, #1047).
+//! Placing a Single hole on the canvas (#2171, #1047). Both behaviours are Preferences › Design
+//! settings, off by default, so a hole goes where it is clicked and a second pick on its face
+//! takes it out, as it always did.
 //!
-//! With Preferences › Design › Hole placement snaps on (off by default, so a hole goes where it
-//! is clicked): the planar face under the cursor offers snap points, the middle of the face and
-//! the centres of its round edges (a boss standing on it, a rounded corner, a hole already in
-//! it). While the cursor is over the face they show as small marks; a pick within reach of one,
-//! or on one of those round edges, is taken at that point, and the mark it takes is named.
-//! Sketch points on the face (#657) still come first. Ctrl or Alt held: no snap. A pick elsewhere
-//! on a face that already has a hole moves the hole there (off: it takes the hole out).
+//! Hole placement snaps (`hole_snaps`): the planar face under the cursor offers snap points, the
+//! middle of the face and the centres of its round edges (a boss standing on it, a rounded
+//! corner, a hole already in it). While the cursor is over the face they show as small marks; a
+//! pick within reach of one, or on one of those round edges, is taken at that point, and the mark
+//! it takes is named. Sketch points on the face (#657) still come first. Ctrl or Alt held: no snap.
 //!
-//! Either way, every placed hole has a handle at its centre: dragging it moves the hole across
-//! the model (snapping as a pick would), and clicking it takes the hole out.
+//! Move holes by clicking or dragging (`hole_moves`): every placed hole has a handle at its
+//! centre that drags it across the model (snapping as a pick would) and takes it out when
+//! clicked, and a pick elsewhere on a face that already has a hole moves the hole there.
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -238,8 +239,8 @@ pub(crate) fn move_place(d: &mut Dialog, s: &Session, i: usize, to: Sel) -> bool
 }
 
 /// A Single hole's face place picked on a face that already has a hole moves that hole there
-/// (true), when hole snaps are on. A pick on the hole itself (within its radius) is left to take
-/// it out, as before.
+/// (true), when holes move by clicking. A pick on the hole itself (within its radius) is left to
+/// take it out, as before.
 pub(crate) fn pick_moves(d: &mut Dialog, s: &Session, sel: &Sel) -> bool {
     let Kind::Hole { opts, diameter, .. } = &d.kind else { return false };
     let Sel::Face { point, .. } = sel else { return false };
@@ -257,8 +258,9 @@ pub(crate) fn pick_moves(d: &mut Dialog, s: &Session, sel: &Sel) -> bool {
     move_place(d, s, i, sel.clone())
 }
 
-/// The face places' handles and the hovered face's snap marks. Called after the canvas draws
-/// the dialog's arrows, so a press on a hole's centre takes the hole, not the depth arrow.
+/// The hovered face's snap marks, and the face places' handles when holes move by dragging.
+/// Called after the canvas draws the dialog's arrows, so a press on a hole's centre takes the
+/// hole, not the depth arrow.
 pub(crate) fn show(app: &mut SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj) {
     let Some(d) = app.dialog.as_ref() else { return };
     if !matches!(&d.kind, Kind::Hole { opts, .. } if !opts.multiple) || app.applying.is_some() {
@@ -266,6 +268,9 @@ pub(crate) fn show(app: &mut SolveApp, ui: &mut egui::Ui, painter: &egui::Painte
     }
     let t = Tokens::get();
     marks(app, painter, proj);
+    if !app.preferences.hole_moves {
+        return;
+    }
     let places = places(&app.session, d);
     let mut moved: Option<(usize, Sel)> = None;
     let mut removed: Option<usize> = None;

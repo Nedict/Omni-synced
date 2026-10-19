@@ -1758,8 +1758,8 @@ pub(crate) fn dialog_pick(app: &mut SolveApp, hit: &Hit, sel: Sel) {
         return;
     }
     let Some(mut d) = app.dialog.take() else { return };
-    // With hole snaps on (Preferences), a Single hole picked again on its face moves there.
-    if app.preferences.hole_snaps && crate::hole_place::pick_moves(&mut d, &app.session, &sel) {
+    // With holes moving by clicking (Preferences), a Single hole picked again on its face moves there.
+    if app.preferences.hole_moves && crate::hole_place::pick_moves(&mut d, &app.session, &sel) {
         d.focus = true;
     } else {
         d.pick(&app.session, sel);

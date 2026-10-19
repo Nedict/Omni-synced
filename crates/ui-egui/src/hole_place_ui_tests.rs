@@ -1,8 +1,9 @@
 //! Placing a Single hole (#2171, #1047). With Hole placement snaps on (Preferences, off by
-//! default): a pick near the middle of a face or on a round edge snaps there, Alt held places it
-//! where it was clicked, and a second pick on its face moves it. Off, picks behave as before.
-//! Either way the handle drags a placed hole (also one being edited), and the dialog shows the
-//! hole's sizes beside a section of it.
+//! default), a pick near the middle of a face or on a round edge snaps there, and Alt held places
+//! it where it was clicked. With Move holes by clicking or dragging on (also off by default), the
+//! handle drags a placed hole (also one being edited) and a second pick on its face moves it.
+//! Both off, picks behave as before. Either way the dialog shows the hole's sizes beside a
+//! section of it.
 
 use serde_json::json;
 use solidcraft_engine::Sel;
@@ -14,11 +15,11 @@ use crate::scenario::{Harness, handle_at, rect_of};
 use crate::viewport::Hit;
 
 /// A 40 × 30 × 20 block seen from the top, with a 10 mm hole through it at (10, 10), and hole
-/// snaps turned on as the Preferences dialog (or `ui.prefs`) turns them on.
+/// snaps and moves turned on as the Preferences dialog (or `ui.prefs`) turns them on.
 fn block() -> Harness {
     let mut h = block_as_installed();
-    crate::prefs::set(&mut h.app, &json!({"hole_snaps": true})).unwrap();
-    assert!(h.app.preferences.hole_snaps);
+    crate::prefs::set(&mut h.app, &json!({"hole_snaps": true, "hole_moves": true})).unwrap();
+    assert!(h.app.preferences.hole_snaps && h.app.preferences.hole_moves);
     h
 }
 
@@ -203,9 +204,9 @@ fn editing_a_hole_drags_it_to_a_new_place() {
 }
 
 #[test]
-fn hole_snaps_are_off_by_default_and_picks_behave_as_before() {
+fn snaps_and_moves_are_off_by_default_and_picks_behave_as_before() {
     let mut h = block_as_installed();
-    assert!(!h.app.preferences.hole_snaps, "a new installation places holes where they are clicked");
+    assert!(!h.app.preferences.hole_snaps && !h.app.preferences.hole_moves, "a new installation places holes as it always did");
     h.step(&json!({"start": "solid.hole"})).unwrap();
     // Beside the middle: no snap.
     let at = off(&mut h, MIDDLE, 5.0, -4.0);
@@ -216,17 +217,43 @@ fn hole_snaps_are_off_by_default_and_picks_behave_as_before() {
     }
     h.step(&json!({"click": at})).unwrap();
     assert!(matches!(places(&h).as_slice(), [p] if p.dist(MIDDLE) > 0.1 && (p.z - 20.0).abs() < 1e-9), "{:?}", places(&h));
+    h.frames(2);
+    assert!(handle_at("hole:0").is_none(), "no drag handle");
     // A second pick on the face takes the hole out, as it always did.
     let elsewhere = screen(&mut h, Vec3::new(32.0, 24.0, 20.0));
     h.step(&json!({"click": elsewhere})).unwrap();
     assert!(places(&h).is_empty(), "{:?}", places(&h));
-    // The handle still drags a placed hole, to where it is let go.
+}
+
+#[test]
+fn moving_holes_is_its_own_setting() {
+    // Moves on, snaps off: the handle drags a hole to where it is let go, and a second pick on
+    // its face moves it; neither snaps.
+    let mut h = block_as_installed();
+    crate::prefs::set(&mut h.app, &json!({"hole_moves": true})).unwrap();
+    h.step(&json!({"start": "solid.hole"})).unwrap();
     let start = screen(&mut h, Vec3::new(30.0, 8.0, 20.0));
     h.step(&json!({"click": start})).unwrap();
     h.frames(2);
     let to = off(&mut h, MIDDLE, 5.0, -4.0);
     h.step(&json!({"drag": [{"handle": "hole:0"}, to]})).unwrap();
-    assert!(matches!(places(&h).as_slice(), [p] if p.dist(MIDDLE) > 0.1 && p.dist(MIDDLE) < 2.0), "{:?}", places(&h));
+    assert!(matches!(places(&h).as_slice(), [p] if p.dist(MIDDLE) > 0.1 && p.dist(MIDDLE) < 2.0), "dragged, not snapped: {:?}", places(&h));
+    let elsewhere = Vec3::new(32.0, 24.0, 20.0);
+    let at = screen(&mut h, elsewhere);
+    h.step(&json!({"click": at})).unwrap();
+    assert!(matches!(places(&h).as_slice(), [p] if p.dist(elsewhere) < 0.2), "moved, not taken out: {:?}", places(&h));
+    // Snaps on, moves off: a pick snaps, and a second pick on the face takes the hole out.
+    h.step(&json!({"key": "Escape"})).unwrap();
+    crate::prefs::set(&mut h.app, &json!({"hole_snaps": true, "hole_moves": false})).unwrap();
+    h.step(&json!({"start": "solid.hole"})).unwrap();
+    let at = off(&mut h, MIDDLE, 5.0, -4.0);
+    h.step(&json!({"click": at})).unwrap();
+    assert!(matches!(places(&h).as_slice(), [p] if p.dist(MIDDLE) < 1e-9), "{:?}", places(&h));
+    h.frames(2);
+    assert!(handle_at("hole:0").is_none(), "no drag handle");
+    let at = screen(&mut h, elsewhere);
+    h.step(&json!({"click": at})).unwrap();
+    assert!(places(&h).is_empty(), "{:?}", places(&h));
 }
 
 #[test]
