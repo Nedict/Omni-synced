@@ -5424,6 +5424,52 @@ mod tests {
         assert_eq!(h.app.cam, after);
     }
 
+    /// #3049: with Shift held, a two-finger scroll orbits in a preset whose Shift + middle drag
+    /// orbits (the default one), keeping the target; without Shift it pans. A preset whose
+    /// middle drag needs no Shift to orbit keeps Shift + two fingers a pan.
+    #[test]
+    fn trackpad_two_finger_scroll_with_shift_orbits_where_shift_middle_drag_does() {
+        let gesture = |phase, shift| egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(60.0, -40.0),
+            modifiers: egui::Modifiers { shift, ..Default::default() },
+            phase,
+        };
+        let swipe = |h: &mut crate::scenario::Harness, shift: bool| {
+            let mods = egui::Modifiers { shift, ..Default::default() };
+            h.app.synthetic.push(egui::Event::ModifiersChanged(mods));
+            for phase in [egui::TouchPhase::Start, egui::TouchPhase::Move, egui::TouchPhase::Move, egui::TouchPhase::End] {
+                h.app.synthetic.push(gesture(phase, shift));
+            }
+            h.frames(8);
+            h.app.synthetic.push(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+            h.frames(2);
+        };
+        let mut h = crate::scenario::Harness::new();
+        h.app.preferences.zoom_to_cursor = false;
+        assert_eq!(crate::prefs::nav_mode(&h.app, crate::prefs::NavButton::Middle, egui::Modifiers::SHIFT), Some(NavMode::Orbit));
+        h.call("ui.move", json!({"x":800,"y":500}));
+        let before = h.app.cam;
+        swipe(&mut h, true);
+        assert!((h.app.cam.yaw - before.yaw).abs() > 1e-3 || (h.app.cam.pitch - before.pitch).abs() > 1e-3, "Shift + two fingers orbits");
+        assert!((h.app.cam.target - before.target).len() < 1e-9, "and doesn't pan");
+        let turned = h.app.cam;
+        swipe(&mut h, false);
+        assert_eq!((h.app.cam.yaw, h.app.cam.pitch), (turned.yaw, turned.pitch), "two fingers alone don't orbit");
+        assert!((h.app.cam.target - turned.target).len() > 1e-6, "they pan");
+        // A preset where Shift + middle drag doesn't orbit: Shift + two fingers still pans.
+        let other = ["fusion", "solidworks", "inventor", "alias", "blender", "tinkercad"]
+            .into_iter()
+            .find(|n| crate::prefs::nav_preset(n).mode(crate::prefs::NavButton::Middle, egui::Modifiers::SHIFT) != Some(NavMode::Orbit));
+        let name = other.expect("a preset where Shift + middle drag doesn't orbit");
+        {
+            h.app.preferences.nav = name.into();
+            let before = h.app.cam;
+            swipe(&mut h, true);
+            assert_eq!((h.app.cam.yaw, h.app.cam.pitch), (before.yaw, before.pitch), "{name}: Shift + two fingers doesn't orbit");
+        }
+    }
+
     #[test]
     fn trackpad_two_finger_scroll_pans_without_zooming() {
         let mut h = crate::scenario::Harness::new();

@@ -307,7 +307,14 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
         // (its End was lost); a stuck flag would pan future mouse input.
         app.viewport.trackpad_gesture = false;
     }
-    let mut pan = if trackpad_pan { raw.pan } else { egui::Vec2::ZERO } + raw.mouse_pan;
+    // Two-finger scroll stands in for the middle button: with the keys that make the preset's
+    // middle drag orbit (Shift in the default preset), it orbits instead of panning (#3049).
+    let trackpad_orbit = caps.orbit
+        && trackpad_pan
+        && raw.pan != egui::Vec2::ZERO
+        && mods.any()
+        && crate::prefs::nav_mode(app, crate::prefs::NavButton::Middle, mods) == Some(NavMode::Orbit);
+    let mut pan = if trackpad_pan && !trackpad_orbit { raw.pan } else { egui::Vec2::ZERO } + raw.mouse_pan;
     pan.x *= crate::prefs::pan_sign_x(app);
     let scroll = if app.viewport.wheel_zoom_raw_until_idle || (trackpad_pan && app.viewport.trackpad_until_idle) {
         raw.zoom + if trackpad_pan { 0.0 } else { raw.point_zoom }
@@ -349,6 +356,10 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
             app.cancel_view_animation();
             app.cam.zoom_at(f, anchor);
         }
+    }
+    if inside && trackpad_orbit {
+        app.cancel_view_animation();
+        orbit_drag(app, rect, f64::from(raw.pan.x), f64::from(raw.pan.y), hover, false, true);
     }
     // Two-finger scroll pans the model with the fingers.
     if inside && pan != egui::Vec2::ZERO {
