@@ -26,25 +26,26 @@
 # GitHub cannot filter `labeled` events by label name, so any other label starts a run whose jobs
 # are all skipped; it gets its own concurrency group (below) so it never cancels the real run.
 # Cross-compilation is opt-in through Run workflow; release builds remain in release.yml.
-# Trusted runs use both pools: pushes to main, merge-queue groups and pull requests from a branch
-# of this repository (people with write access; fork pull requests never run on this machine).
-# There, Select checks and ci run on the self-hosted light runner (`self-hosted-light`, quick
-# jobs, so they never wait behind a build). For pushes to main and the merge queue only, the
-# repository checks, Clippy, the doc tests, the reference tests and all four test shards run on the
-# self-hosted runners (`self-hosted-fast`, warm build directories via scripts/ci/warm-target.sh);
-# a pull request runs them on GitHub's runners, so it never holds up the queue. Fork PRs run
-# there too: the runners are ephemeral and fork runs get no secrets.
+# Trusted runs use both pools: pushes to main and pull requests from a branch of this repository
+# (people with write access; fork pull requests never run on this machine). There, Select checks
+# and ci run on the self-hosted light runner (`self-hosted-light`, quick jobs, so they never wait
+# behind a build). For pushes to main only, the repository checks, Clippy, the doc tests, the
+# reference tests and all four test shards run on the self-hosted runners (`self-hosted-fast`,
+# warm build directories via scripts/ci/warm-target.sh); a pull request runs them on GitHub's
+# runners. Fork PRs run there too: the runners are ephemeral and fork runs get no secrets.
+# Merge-queue groups run entirely on GitHub's runners, test shards on 16 vCPU, so the queue can
+# build several groups at once instead of waiting for the one self-hosted machine.
 # Where the test shards run on GitHub's runners, the test archive is built there too: the
 # self-hosted machine has a newer glibc, so its binaries wouldn't start on ubuntu-24.04, while the
 # archive runs there unchanged (same /home/runner/work checkout path). The self-hosted shards
-# (main and the merge queue) skip the archive and build the tests in their warm build directories.
+# (pushes to main) skip the archive and build the tests in their warm build directories.
 # Fork pull requests, the nightly run and Run workflow never use our self-hosted runners; the
 # self-hosted runners refuse any other job.
 # "GitHub's runners" above means Blacksmith's Ubuntu 24.04 runners (blacksmith-<N>vcpu-ubuntu-2404,
-# sized per job: 16 vCPU for Build tests and Clippy, 8 for compiles, test shards, doc and
-# reference tests, 4 for the light checks, 2 for Select checks and ci). Same image family as
-# ubuntu-24.04, so the test archive and recorded goldens behave the same. Windows jobs stay on
-# windows-latest. Blacksmith runners report runner.environment == 'self-hosted' as well, so steps
+# sized per job: 16 vCPU for Build tests, Clippy and merge-group test shards, 8 for compiles,
+# other test shards, doc and reference tests, 4 for the light checks, 2 for Select checks and
+# ci). Same image family as ubuntu-24.04, so the test archive and recorded goldens behave the
+# same. Windows jobs stay on windows-latest. Blacksmith runners report runner.environment == 'self-hosted' as well, so steps
 # don't ask the runner where they run: they read the routing that chose it (Select checks' `local`
 # output, or the trusted-run condition in jobs that don't need Select checks).
 name: CI
@@ -103,7 +104,7 @@ jobs:
     # approved-for-ci either (the same skip, for the same reason).
     if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event.action != 'labeled' || github.event.label.name == 'approved-for-ci')
     # Trusted runs (see the top of this file) use the self-hosted runners.
-    runs-on: ${{ (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && 'self-hosted-light' || 'blacksmith-2vcpu-ubuntu-2404' }}
+    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && 'self-hosted-light' || 'blacksmith-2vcpu-ubuntu-2404' }}
     permissions:
       contents: read
       # To ask whether the merge queue already tested a commit pushed to main.
@@ -121,10 +122,10 @@ jobs:
       doctests: ${{ steps.paths.outputs.doctests }}
       # The passing run a merge of main carries forward (its URL), when this push is only that.
       carried: ${{ steps.paths.outputs.carried }}
-      # The fast self-hosted runners are kept for main and the merge queue (the pre-merge gate);
-      # pull requests, same-repo ones included, run on GitHub's runners. Steps read this to know
+      # The fast self-hosted runners are kept for pushes to main; pull requests (same-repo ones
+      # included) and merge-queue groups run on GitHub's runners. Steps read this to know
       # where their job runs (see the top of this file).
-      local: ${{ github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+      local: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -269,19 +270,19 @@ jobs:
   checks:
     name: Format and repository checks
     if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event.action != 'labeled' || github.event.label.name == 'approved-for-ci')
-    runs-on: ${{ (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && 'self-hosted-fast' || 'blacksmith-4vcpu-ubuntu-2404' }}
+    runs-on: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'self-hosted-fast' || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm build directory (self-hosted runner)
-        if: github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: scripts/ci/warm-target.sh checks
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       # The self-hosted runners keep their build directory and Cargo home instead; everything
       # else restores main's cache (read-only off main).
-      - if: ${{ !(github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+      - if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: repo-checks
@@ -367,7 +368,7 @@ jobs:
     # format check. Main, nightly and Run workflow build regardless, so the action matrix and the
     # property tests that hang off this job keep their signal.
     needs: [changes, checks]
-    # The self-hosted shards (main and the merge queue) build from their warm build directories
+    # The self-hosted shards (pushes to main) build from their warm build directories
     # instead: downloading the 3 GB archive took them longer than building.
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.native == 'true' && needs.changes.outputs.local != 'true' && (github.event_name != 'pull_request' || needs.checks.result == 'success') }}
     runs-on: blacksmith-16vcpu-ubuntu-2404
@@ -417,7 +418,7 @@ jobs:
     name: Native Linux tests (${{ matrix.shard }}/4)
     needs: [changes, checks, build-tests]
     if: ${{ !cancelled() && needs.changes.outputs.native == 'true' && (github.event_name != 'pull_request' || needs.checks.result == 'success') && (needs.changes.outputs.local == 'true' || needs.build-tests.result == 'success') }}
-    runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-fast' || 'blacksmith-8vcpu-ubuntu-2404' }}
+    runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-fast' || (github.event_name == 'merge_group' && 'blacksmith-16vcpu-ubuntu-2404' || 'blacksmith-8vcpu-ubuntu-2404') }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
