@@ -189,12 +189,12 @@ pub(crate) fn copy_targets(app: &SolveApp, id: u64) -> Vec<u64> {
 
 /// Copy and Paste in a feature's timeline menu. Paste puts the copies at the history marker.
 pub(crate) fn clipboard_buttons(app: &mut SolveApp, ui: &mut egui::Ui, id: u64) {
-    if ui.button(crate::i18n::tr_label("Copy")).clicked() {
+    if crate::context_menu::button(ui, crate::i18n::tr_label("Copy"), "copy").clicked() {
         let features = copy_targets(app, id);
         let _ = app.run("timeline.copy", json!({ "features": features }));
         ui.close();
     }
-    if ui.add_enabled(!app.session.clipboard.is_empty(), egui::Button::new(crate::i18n::tr_label("Paste"))).clicked() {
+    if crate::context_menu::button_enabled(ui, crate::i18n::tr_label("Paste"), "paste", !app.session.clipboard.is_empty()).clicked() {
         let _ = app.run("timeline.paste", json!({}));
         ui.close();
     }
@@ -223,7 +223,7 @@ pub(crate) fn message_button(app: &SolveApp, ui: &mut egui::Ui, id: u64) {
     let Some(text) = feature_message(app, id) else { return };
     let failed = app.session.model.result(id).is_some_and(|r| r.error.is_some());
     let label = if failed { "Copy Error Message" } else { "Copy Warning Message" };
-    if ui.button(crate::i18n::tr_label(label)).clicked() {
+    if crate::context_menu::button(ui, crate::i18n::tr_label(label), "copy").clicked() {
         ui.ctx().copy_text(text);
         ui.close();
     }
@@ -439,29 +439,29 @@ fn timeline_contents(app: &mut SolveApp, ui: &mut egui::Ui, floating: bool) {
                 }
                 let sketch_of = kind.profile_sketch();
                 resp.context_menu(|ui| {
-                    if ui.button(crate::i18n::tr_label("Edit Feature")).clicked() {
+                    if crate::context_menu::button(ui, crate::i18n::tr_label("Edit Feature"), "edit").clicked() {
                         edit = Some(*id);
                         ui.close();
                     }
                     if let Some(sk) = sketch_of
-                        && ui.button(crate::i18n::tr_label("Edit Profile Sketch")).clicked()
+                        && crate::context_menu::button(ui, crate::i18n::tr_label("Edit Profile Sketch"), "sketch").clicked()
                     {
                         app.edit_sketch(sk.0);
                         ui.close();
                     }
-                    if ui.button(crate::i18n::tr_label("Rename")).clicked() {
+                    if crate::context_menu::button(ui, crate::i18n::tr_label("Rename"), "rename").clicked() {
                         app.dialog = Some(crate::dialogs::Dialog::rename(*id, name));
                         ui.close();
                     }
-                    if ui.button(if *suppressed { "Unsuppress Features" } else { "Suppress Features" }).clicked() {
+                    if crate::context_menu::button(ui, if *suppressed { "Unsuppress Features" } else { "Suppress Features" }, "suppress").clicked() {
                         let _ = app.run_heavy("timeline.suppress", json!({"feature": id}));
                         ui.close();
                     }
-                    if ui.button(crate::i18n::tr_label("Roll History Marker Here")).clicked() {
+                    if crate::context_menu::button(ui, crate::i18n::tr_label("Roll History Marker Here"), "rollback").clicked() {
                         let _ = app.run_heavy("timeline.roll_to", json!({ "feature": id }));
                         ui.close();
                     }
-                    if ui.button(crate::i18n::tr_label("Find in Browser")).clicked() {
+                    if crate::context_menu::button(ui, crate::i18n::tr_label("Find in Browser"), "list").clicked() {
                         find_in_browser(app, *id);
                         ui.close();
                     }
@@ -469,7 +469,7 @@ fn timeline_contents(app: &mut SolveApp, ui: &mut egui::Ui, floating: bool) {
                     clipboard_buttons(app, ui, *id);
                     message_button(app, ui, *id);
                     ui.separator();
-                    if ui.button("Delete").clicked() {
+                    if crate::context_menu::button(ui, "Delete", "delete").clicked() {
                         delete_feature(app, *id);
                         ui.close();
                     }
@@ -799,7 +799,7 @@ mod tests {
         h.app.ui.tab = "SURFACE".into();
         let t = crate::theme::Tokens::get();
         let accent = crate::theme::TabAccent::for_tab(&t, "SURFACE");
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let mut out = ctx.run_ui(egui::RawInput::default(), |ui| super::timeline(&mut h.app, ui));
         out.textures_delta.clear();
         let texts: Vec<_> = out

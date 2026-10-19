@@ -1,5 +1,6 @@
 //! Autosave ticks and the "Recover unsaved design?" window shown at launch.
 
+use crate::fonts::RichTextExt as _;
 use egui::RichText;
 use serde_json::json;
 use solidcraft_engine::recovery::{self, Autosaver, Entry};
@@ -57,34 +58,41 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let dir = app.autosave.as_ref().map(|a| a.dir.clone()).or_else(recovery::default_dir);
     let mut act: Option<(Entry, bool)> = None;
     let mut later = false;
-    crate::frame::window(ctx, RichText::new(crate::i18n::tr_label("Recover unsaved design?")).strong().size(13.0), crate::frame::Width::Normal)
-        .collapsible(false)
-        .resizable(false)
-        .min_width(420.0)
-        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-        .show(ctx, |ui| {
-            ui.label(crate::i18n::tr_label("SolidCraft closed before these designs were saved. Their last autosave can be opened."));
-            ui.add_space(6.0);
-            for e in app.recoverable.iter().take(20) {
-                ui.label(RichText::new(&e.name).strong());
-                let file = e.path.clone().unwrap_or_else(|| "never saved".into());
-                ui.label(RichText::new(format!("{file} · {} features · autosaved {}", e.features, ago(e.saved_at))).small().weak());
-                ui.horizontal(|ui| {
-                    if ui.button(crate::i18n::tr_label("Recover")).clicked() {
-                        act = Some((e.clone(), true));
-                    }
-                    if ui.button(crate::i18n::tr_label("Discard")).clicked() {
-                        act = Some((e.clone(), false));
-                    }
-                });
-                ui.separator();
-            }
+    crate::frame::window(
+        ctx,
+        RichText::new(crate::i18n::tr_label("Recover unsaved design?"))
+            .semibold()
+            .color(crate::theme::Tokens::get().text)
+            .size(crate::theme::Tokens::get().font_button),
+        crate::frame::Width::Normal,
+    )
+    .collapsible(false)
+    .resizable(false)
+    .min_width(420.0)
+    .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+    .show(ctx, |ui| {
+        ui.label(crate::i18n::tr_label("SolidCraft closed before these designs were saved. Their last autosave can be opened."));
+        ui.add_space(6.0);
+        for e in app.recoverable.iter().take(20) {
+            ui.label(RichText::new(&e.name).semibold().color(crate::theme::Tokens::get().text));
+            let file = e.path.clone().unwrap_or_else(|| "never saved".into());
+            ui.label(RichText::new(format!("{file} · {} features · autosaved {}", e.features, ago(e.saved_at))).small().weak());
             ui.horizontal(|ui| {
-                if ui.button(crate::i18n::tr_label("Later")).on_hover_text("Keep them; ask again next launch").clicked() {
-                    later = true;
+                if ui.button(crate::i18n::tr_label("Recover")).clicked() {
+                    act = Some((e.clone(), true));
+                }
+                if ui.button(crate::i18n::tr_label("Discard")).clicked() {
+                    act = Some((e.clone(), false));
                 }
             });
+            ui.separator();
+        }
+        ui.horizontal(|ui| {
+            if ui.button(crate::i18n::tr_label("Later")).on_hover_text("Keep them; ask again next launch").clicked() {
+                later = true;
+            }
         });
+    });
     let dir_s = dir.map(|d| d.to_string_lossy().to_string());
     if let Some((e, recover)) = act {
         app.recoverable.retain(|x| x.id != e.id);

@@ -1,6 +1,6 @@
 //! Navigation drawing definitions. Camera projection and picking remain in the UI widgets.
 use crate::theme::Tokens;
-use egui::{Align2, Color32, FontId, Pos2, Rect, Shape, Stroke, pos2, vec2};
+use egui::{Color32, FontId, Pos2, Rect, Shape, Stroke, pos2, vec2};
 use solidcraft_engine::geom::Vec3;
 pub(crate) struct Facet {
     pub(crate) direction: Vec3,
@@ -120,7 +120,7 @@ pub(crate) fn paint_cube(painter: &egui::Painter, faces: &[Facet], hovered: Opti
     }
     if labels {
         for face in faces {
-            face_text(painter, face, t.cube_text, 14.0 * scale);
+            face_text(painter, face, t.cube_text, t.font_heading * scale);
         }
     }
 }
@@ -187,13 +187,14 @@ pub(crate) fn axis_tip(painter: &egui::Painter, c: Pos2, name: &str, d: &Vec3, a
         }
     }
     if positive {
-        // The letters are heavy: egui's regular face gets a small overstrike for weight. On a
-        // hovered (white) disc the letter takes the axis colour.
+        // On a hovered (white) disc the letter takes the axis colour.
         let letter = if hovered { col } else { t.on_accent };
         let label = name.to_uppercase();
-        for dx in [-0.45, 0.45] {
-            painter.text(at + vec2(dx, 0.0), Align2::CENTER_CENTER, &label, FontId::proportional(13.5), letter);
-        }
+        let galley = painter.layout_no_wrap(label, crate::fonts::bold(crate::theme::Tokens::get().font_compass), letter);
+        let origin = at - galley.size() / 2.0;
+        let ppp = painter.ctx().pixels_per_point().max(0.5);
+        let origin = pos2((origin.x * ppp).round() / ppp, (origin.y * ppp).round() / ppp);
+        painter.galley(origin, galley, letter);
     }
     if !positive {
         painter.circle_stroke(

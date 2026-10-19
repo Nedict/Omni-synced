@@ -3,6 +3,7 @@
 //! and the panel. Plus the Add agent dialog: an installed ACP agent, a custom command, or an
 //! OpenAI-compatible endpoint (whose key goes to the system keychain).
 
+use crate::fonts::RichTextExt as _;
 use egui::{RichText, Stroke};
 
 use super::agents::{self, AgentConfig, Kind, Mode};
@@ -92,13 +93,13 @@ fn test_line(ui: &mut egui::Ui, t: &Option<&Test>) {
     let tk = Tokens::get();
     match t {
         Some(Test::Running(_)) => {
-            ui.label(RichText::new(tr("ui.ai_testing")).color(tk.text_dim).size(11.0));
+            ui.label(RichText::new(tr("ui.ai_testing")).color(tk.text_dim).size(crate::theme::Tokens::get().font_small));
         }
         Some(Test::Done(Ok(m))) => {
-            ui.label(RichText::new(m.clone()).color(tk.accent).size(11.0));
+            ui.label(RichText::new(m.clone()).color(tk.accent).size(crate::theme::Tokens::get().font_small));
         }
         Some(Test::Done(Err(e))) => {
-            ui.add(egui::Label::new(RichText::new(e).color(tk.error).size(11.0)).wrap());
+            ui.add(egui::Label::new(RichText::new(e).color(tk.error).size(crate::theme::Tokens::get().font_small)).wrap());
         }
         None => {}
     }
@@ -106,19 +107,20 @@ fn test_line(ui: &mut egui::Ui, t: &Option<&Test>) {
 
 fn section(ui: &mut egui::Ui, title: &str) {
     ui.add_space(10.0);
-    ui.label(RichText::new(title).strong().size(13.0));
+    ui.label(RichText::new(title).semibold().color(crate::theme::Tokens::get().text).size(crate::theme::Tokens::get().font_button));
     ui.separator();
 }
 
 fn note(ui: &mut egui::Ui, text: &str) {
     let t = Tokens::get();
-    ui.add(egui::Label::new(RichText::new(text).size(11.0).color(t.text_dim)).wrap());
+    ui.add(egui::Label::new(RichText::new(text).size(crate::theme::Tokens::get().font_small).color(t.text_dim)).wrap());
 }
 
 /// The AI page of Settings.
 pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
-    let r = ui.checkbox(&mut app.preferences.ai_features, RichText::new(tr("ui.ai_show_features")).strong());
+    let r =
+        ui.checkbox(&mut app.preferences.ai_features, RichText::new(tr("ui.ai_show_features")).semibold().color(crate::theme::Tokens::get().text));
     crate::scenario::publish_handle("prefs:ai_features", r.rect.center());
     note(ui, tr("ui.ai_show_features_note"));
     if cfg!(target_arch = "wasm32") {
@@ -163,7 +165,7 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
     let remembered: Vec<(String, Vec<String>)> =
         app.preferences.agent_always_allow.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone())).collect();
     ui.add_space(4.0);
-    ui.label(RichText::new(tr("ui.ai_always_allowed")).strong());
+    ui.label(RichText::new(tr("ui.ai_always_allowed")).semibold().color(crate::theme::Tokens::get().text));
     if remembered.is_empty() {
         note(ui, tr("ui.ai_always_allowed_none"));
     }
@@ -172,7 +174,7 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             ui.label(names.get(&agent).cloned().unwrap_or_else(|| agent.clone()));
             for tool in &tools {
-                ui.label(RichText::new(tool).monospace().size(11.0).color(t.text_dim));
+                ui.label(RichText::new(tool).monospace().size(crate::theme::Tokens::get().font_small).color(t.text_dim));
             }
             if ui.small_button(tr("ui.ai_reset")).clicked() {
                 app.preferences.agent_always_allow.remove(&agent);
@@ -230,11 +232,11 @@ fn agents_section(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 super::panel::kind_icon(ui, e.kind);
-                ui.label(RichText::new(&e.name).strong());
-                ui.label(RichText::new(e.detail()).color(t.text_dim).size(11.0));
+                ui.label(RichText::new(&e.name).semibold().color(crate::theme::Tokens::get().text));
+                ui.label(RichText::new(e.detail()).color(t.text_dim).size(crate::theme::Tokens::get().font_small));
                 super::panel::login_chip(ui, e.login);
                 if !e.found {
-                    ui.label(RichText::new(tr("ui.ai_added")).color(t.text_dim).size(11.0));
+                    ui.label(RichText::new(tr("ui.ai_added")).color(t.text_dim).size(crate::theme::Tokens::get().font_small));
                 }
             });
             ui.horizontal(|ui| {
@@ -388,7 +390,12 @@ pub fn dialog(app: &mut SolveApp, ctx: &egui::Context) {
                     ui.add(egui::TextEdit::singleline(&mut s.command).desired_width(300.0));
                     ui.end_row();
                     ui.label("");
-                    ui.add(egui::Label::new(RichText::new(tr("ui.ai_add_installed_note")).size(11.0).color(t.text_dim)).wrap());
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(tr("ui.ai_add_installed_note")).size(crate::theme::Tokens::get().font_small).color(t.text_dim),
+                        )
+                        .wrap(),
+                    );
                     ui.end_row();
                 }
                 AddKind::Custom => {
@@ -399,7 +406,12 @@ pub fn dialog(app: &mut SolveApp, ctx: &egui::Context) {
                     ui.add(egui::TextEdit::singleline(&mut s.command).hint_text("my-agent --acp").desired_width(300.0));
                     ui.end_row();
                     ui.label("");
-                    ui.add(egui::Label::new(RichText::new(tr("ui.agent_chat_custom_hint")).size(11.0).color(t.text_dim)).wrap());
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(tr("ui.agent_chat_custom_hint")).size(crate::theme::Tokens::get().font_small).color(t.text_dim),
+                        )
+                        .wrap(),
+                    );
                     ui.end_row();
                 }
                 AddKind::Api => {
@@ -437,7 +449,7 @@ pub fn dialog(app: &mut SolveApp, ctx: &egui::Context) {
                     ui.end_row();
                     ui.label("");
                     let note = if has_keychain { tr("ui.ai_key_note") } else { tr("ui.ai_no_keychain") };
-                    ui.add(egui::Label::new(RichText::new(note).size(11.0).color(t.text_dim)).wrap());
+                    ui.add(egui::Label::new(RichText::new(note).size(crate::theme::Tokens::get().font_small).color(t.text_dim)).wrap());
                     ui.end_row();
                     ui.label("");
                     ui.horizontal(|ui| {

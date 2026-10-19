@@ -62,7 +62,7 @@ fn compass_negative_ends_are_hollow_and_positive_ends_are_chunkier() {
     for dark in [false, true] {
         let t = Tokens::themed(dark, crate::theme::ColorVision::Off);
         for (name, direction, positive) in [("x", Vec3::X, true), ("-x", -Vec3::X, false)] {
-            let ctx = egui::Context::default();
+            let ctx = crate::fonts::test_context();
             let c = pos2(100.0, 100.0);
             let original = c + vec2(38.0, 0.0);
             let painted = c + (original - c) * 0.84;
@@ -74,7 +74,19 @@ fn compass_negative_ends_are_hollow_and_positive_ends_are_chunkier() {
             if positive {
                 assert_eq!(end.fill, t.triad[0]);
                 assert_eq!(end.radius, 11.0);
-                assert!(output.shapes.iter().any(|s| matches!(&s.shape, Shape::Text(text) if text.galley.text() == "X")));
+                let letters: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|s| match &s.shape {
+                        Shape::Text(text) if text.galley.text() == "X" => Some(text),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(letters.len(), 1, "each axis letter is painted once");
+                let letter = letters[0];
+                assert_eq!(letter.galley.job.sections[0].format.font_id, crate::fonts::bold(Tokens::get().font_compass));
+                assert_eq!(letter.pos.x.fract(), 0.0);
+                assert_eq!(letter.pos.y.fract(), 0.0);
             } else {
                 assert_eq!(end.fill, Color32::TRANSPARENT);
                 assert_eq!(end.stroke.width, 2.4);
@@ -167,7 +179,7 @@ fn toast_stays_in_free_content_above_history_and_navigation() {
 
 #[test]
 fn toast_card_uses_shell_tokens_wraps_and_rejects_hostile_rects() {
-    let ctx = egui::Context::default();
+    let ctx = crate::fonts::test_context();
     let t = Tokens::get();
     let free = Rect::from_min_size(pos2(30.0, 30.0), vec2(200.0, 200.0));
     for (error, computing) in [(false, false), (true, false), (false, true)] {
@@ -293,7 +305,7 @@ fn a_hovered_compass_end_turns_white_and_its_letter_takes_the_axis_colour() {
     for dark in [false, true] {
         let t = Tokens::themed(dark, crate::theme::ColorVision::Off);
         for (name, direction, positive) in [("x", Vec3::X, true), ("-x", -Vec3::X, false)] {
-            let ctx = egui::Context::default();
+            let ctx = crate::fonts::test_context();
             let c = pos2(100.0, 100.0);
             let original = c + vec2(38.0, 0.0);
             let painted = c + (original - c) * 0.84;

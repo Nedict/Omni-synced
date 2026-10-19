@@ -11,6 +11,7 @@
 //! state; [`items`] lists them and [`run_item`] runs one, so the control channel (`ui.menu`,
 //! `ui.menuPick`) and tests reach everything a click does.
 
+use crate::fonts::RichTextExt as _;
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -395,7 +396,7 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
     }
     // Everything under the cursor, for what lies beneath something else.
     if app.menu.over_geometry {
-        v.push(act("ui.selectOther", "Select Other…", "").key("Hold click"));
+        v.push(act("ui.selectOther", "Select Other…", "select").key("Hold click"));
         v.push(Item::sep());
     }
     if app.session.active_sketch.is_some() {
@@ -427,7 +428,7 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
         v.push(cmd(app, "solid.extrude", "Extrude"));
         v.push(cmd(app, "construct.plane.offset", "Offset Plane"));
         v.push(cmd(app, "solid.shell", "Shell"));
-        v.push(act("ui.editFeature", "Edit Feature", "").with(json!({ "feature": feature })).on(feature.is_some()));
+        v.push(act("ui.editFeature", "Edit Feature", "edit").with(json!({ "feature": feature })).on(feature.is_some()));
         v.push(act("ui.editSketch", "Edit Profile Sketch", "sketch").with(json!({ "sketch": sketch })).on(sketch.is_some()));
         v.push(Item::sep());
         v.push(act("ui.appearance", "Appearance", "appearance").key("A"));
@@ -437,8 +438,8 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
         v.push(act("ui.delete", "Delete", "delete").key("Del"));
         v.push(act(if hidden { "ui.show" } else { "ui.hide" }, "Show/Hide", "eye").key("V").with(json!({ "bodies": [face] })));
         v.push(Item::sep());
-        v.push(act("ui.findBrowser", "Find in Browser", "").with(json!({ "body": face })));
-        v.push(act("ui.findTimeline", "Find in Timeline", "").with(json!({ "body": face })));
+        v.push(act("ui.findBrowser", "Find in Browser", "list").with(json!({ "body": face })));
+        v.push(act("ui.findTimeline", "Find in Timeline", "rollback").with(json!({ "body": face })));
         v.push(Item::sep());
         v.push(cmd(app, "solid.press_pull", "Press Pull"));
         v.push(cmd(app, "inspect.measure", "Measure"));
@@ -451,10 +452,10 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
         v.push(act("ui.delete", "Delete", "delete").key("Del"));
         v.push(act(if hidden { "ui.show" } else { "ui.hide" }, "Show/Hide", "eye").key("V").with(json!({ "bodies": [body] })));
         v.push(Item::sep());
-        v.push(act("ui.findBrowser", "Find in Browser", "").with(json!({ "body": body })));
+        v.push(act("ui.findBrowser", "Find in Browser", "list").with(json!({ "body": body })));
         v.push(act("ui.saveMesh", "Save As Mesh", "export").with(json!({ "bodies": [body] })));
         v.push(Item::sep());
-        v.push(act("ui.tangentChain", "Select Tangent Chain", ""));
+        v.push(act("ui.tangentChain", "Select Tangent Chain", "chain"));
         v.push(cmd(app, "inspect.measure", "Measure"));
     } else if has(|s| matches!(s, Sel::Body { .. })) {
         v.extend(body_items(app, &sel_bodies(app), false));
@@ -477,7 +478,7 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
             || !app.session.visibility.hidden_sketches.is_empty()
             || !app.session.visibility.hidden_folders.is_empty();
         v.push(act("ui.showAll", "Show All", "eye").on(anything_hidden));
-        v.push(act("ui.showAll", "Unisolate", "").on(!app.session.visibility.hidden_bodies.is_empty()));
+        v.push(act("ui.showAll", "Unisolate", "eye").on(!app.session.visibility.hidden_bodies.is_empty()));
         v.push(Item::sep());
         v.push(cmd(app, "solid.extrude", "Extrude"));
         v.push(cmd(app, "solid.fillet", "Fillet"));
@@ -493,7 +494,7 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
     }
     if !sel.is_empty() {
         v.push(Item::sep());
-        v.push(act("ui.clear", "Clear Selection", "").key("Esc"));
+        v.push(act("ui.clear", "Clear Selection", "close").key("Esc"));
     }
     v
 }
@@ -508,7 +509,7 @@ fn body_items(app: &SolveApp, bodies: &[String], browser: bool) -> Vec<Item> {
         act("ui.moveBodies", "Move/Copy", "move").key("M").with(json!({ "bodies": names })).on(!locked),
         cmd(app, "component.from_bodies", "Create Components from Bodies").with(json!({ "bodies": names })),
         Item::sep(),
-        act("ui.material", "Physical Material", "").with(json!({ "bodies": names })),
+        act("ui.material", "Physical Material", "material").with(json!({ "bodies": names })),
         act("ui.appearance", "Appearance", "appearance").key("A").with(json!({ "bodies": names })),
         act("ui.properties", "Properties", "measure").with(json!({ "bodies": names })),
         Item::sep(),
@@ -517,19 +518,19 @@ fn body_items(app: &SolveApp, bodies: &[String], browser: bool) -> Vec<Item> {
         Item::sep(),
         act("ui.delete", "Delete", "delete").key("Del").with(json!({ "items": items })).on(!locked),
         cmd(app, "solid.remove", "Remove").with(json!({ "bodies": names })).on(!locked),
-        act("ui.rename", "Rename", "").with(json!({ "body": bodies.first() })).on(one),
+        act("ui.rename", "Rename", "rename").with(json!({ "body": bodies.first() })).on(one),
         Item::sep(),
         act(if all_hidden { "ui.show" } else { "ui.hide" }, "Show/Hide", "eye").key("V").with(json!({ "bodies": names })),
-        act("ui.lock", if locked { "Unlock" } else { "Lock" }, "").with(json!({ "bodies": names })),
-        act("ui.isolate", "Isolate", "").with(json!({ "bodies": names })),
+        act("ui.lock", if locked { "Unlock" } else { "Lock" }, "ground").with(json!({ "bodies": names })),
+        act("ui.isolate", "Isolate", "body").with(json!({ "bodies": names })),
     ];
     if one {
         let b = bodies.first().cloned().unwrap_or_default();
         v.push(Item::sep());
         if !browser {
-            v.push(act("ui.findBrowser", "Find in Browser", "").with(json!({ "body": b })));
+            v.push(act("ui.findBrowser", "Find in Browser", "list").with(json!({ "body": b })));
         }
-        v.push(act("ui.findTimeline", "Find in Timeline", "").with(json!({ "body": b })));
+        v.push(act("ui.findTimeline", "Find in Timeline", "rollback").with(json!({ "body": b })));
     }
     v
 }
@@ -548,14 +549,14 @@ fn sketch_items(app: &SolveApp, id: u64) -> Vec<Item> {
         act("ui.exportDxf", "Export DXF…", "export").with(json!({ "sketch": id })),
         Item::sep(),
         act("ui.delete", "Delete", "delete").key("Del").with(json!({ "items": [{"type": "feature", "id": id}] })),
-        act("ui.rename", "Rename", "").with(json!({ "feature": id })),
+        act("ui.rename", "Rename", "rename").with(json!({ "feature": id })),
         Item::sep(),
-        act("ui.lookAt", "Look At", "").with(json!({ "sketch": id })),
-        act("ui.sketchProfile", if profiles { "Hide Profile" } else { "Show Profile" }, "").with(json!({ "sketch": id })),
+        act("ui.lookAt", "Look At", "lookat").with(json!({ "sketch": id })),
+        act("ui.sketchProfile", if profiles { "Hide Profile" } else { "Show Profile" }, "sketch").with(json!({ "sketch": id })),
         act("ui.sketchDims", if dims { "Hide Dimension" } else { "Show Dimension" }, "dimension").with(json!({ "sketch": id })),
         act(if visible { "ui.hideSketch" } else { "ui.showSketch" }, "Show/Hide", "eye").key("V").with(json!({ "sketch": id })),
         Item::sep(),
-        act("ui.findTimeline", "Find in Timeline", "").with(json!({ "feature": id })),
+        act("ui.findTimeline", "Find in Timeline", "rollback").with(json!({ "feature": id })),
     ]
 }
 
@@ -569,11 +570,11 @@ fn plane_items(app: &SolveApp, id: u64) -> Vec<Item> {
         act("ui.editFeature", "Edit Feature", "plane").with(json!({ "feature": id })),
         Item::sep(),
         act("ui.delete", "Delete", "delete").key("Del").with(json!({ "items": [{"type": "feature", "id": id}] })),
-        act("ui.rename", "Rename", "").with(json!({ "feature": id })),
+        act("ui.rename", "Rename", "rename").with(json!({ "feature": id })),
         Item::sep(),
         act("ui.originPart", "Show/Hide", "eye").key("V").with(json!({ "keys": [f.name], "show": !visible })),
         Item::sep(),
-        act("ui.findTimeline", "Find in Timeline", "").with(json!({ "feature": id })),
+        act("ui.findTimeline", "Find in Timeline", "rollback").with(json!({ "feature": id })),
     ]
 }
 
@@ -599,14 +600,14 @@ fn joint_items(app: &SolveApp, id: u64) -> Vec<Item> {
     let hidden = !joints.iter().any(|j| app.session.joint_visible(*j));
     vec![
         act("ui.editJoint", "Edit Joint", "joint").with(json!({ "joint": id })),
-        act("ui.editJoint", "Edit Joint Limits", "").with(json!({ "joint": id })).on(!rigid),
-        act("ui.driveJoint", "Drive Joint", "").with(json!({ "joint": id })).on(!rigid),
-        act("ui.animateJoint", "Animate Joint", "").with(json!({ "joint": id })).on(!rigid && !j.suppressed),
-        act("ui.findJoint", "Find in Window", "").with(json!({ "joint": id })),
+        act("ui.editJoint", "Edit Joint Limits", "joint").with(json!({ "joint": id })).on(!rigid),
+        act("ui.driveJoint", "Drive Joint", "drive").with(json!({ "joint": id })).on(!rigid),
+        act("ui.animateJoint", "Animate Joint", "play").with(json!({ "joint": id })).on(!rigid && !j.suppressed),
+        act("ui.findJoint", "Find in Window", "fit").with(json!({ "joint": id })),
         cmd(app, "joint.edit", if j.suppressed { "Unsuppress" } else { "Suppress" }).with(json!({ "joint": id, "suppressed": !j.suppressed })),
         Item::sep(),
         cmd(app, "joint.delete", "Delete").key("Del").with(json!({ "joint": id })),
-        act("ui.rename", "Rename", "").with(json!({ "joint": id })),
+        act("ui.rename", "Rename", "rename").with(json!({ "joint": id })),
         Item::sep(),
         // Hiding a joint hides only its glyph: it still constrains and moves the parts.
         act("browser.visibility", "Show/Hide", "eye").key("V").with(json!({ "joints": joints, "visible": hidden })),
@@ -695,7 +696,7 @@ fn component_items(app: &SolveApp, id: u64) -> Vec<Item> {
         v.push(cmd(app, "component.from_bodies", "Create Components from Bodies").with(json!({ "bodies": names })).on(!bodies.is_empty()));
     }
     v.push(Item::sep());
-    v.push(act("ui.material", "Physical Material", "").with(json!({ "bodies": names })).on(!bodies.is_empty()));
+    v.push(act("ui.material", "Physical Material", "material").with(json!({ "bodies": names })).on(!bodies.is_empty()));
     v.push(
         act("ui.appearance", "Appearance", "appearance")
             .key("A")
@@ -718,11 +719,11 @@ fn component_items(app: &SolveApp, id: u64) -> Vec<Item> {
         v.push(cmd(app, "component.paste_new", "Paste New").with(json!({ "component": id, "translate": [10, 10, 0] })));
         v.push(act("ui.delete", "Delete", "delete").key("Del").with(json!({ "occurrences": [occ.map(|o| o.id)] })).on(occ.is_some()));
     }
-    v.push(act("ui.rename", "Rename", "").with(json!({ "component": id })));
+    v.push(act("ui.rename", "Rename", "rename").with(json!({ "component": id })));
     v.push(Item::sep());
     v.push(act(if hidden { "ui.show" } else { "ui.hide" }, "Show/Hide", "eye").key("V").with(json!({ "bodies": names })).on(!bodies.is_empty()));
     v.push(act("ui.showAll", "Show All Bodies", "eye"));
-    v.push(act("ui.isolate", "Isolate", "").with(json!({ "bodies": names })).on(!bodies.is_empty() && id != 0));
+    v.push(act("ui.isolate", "Isolate", "body").with(json!({ "bodies": names })).on(!bodies.is_empty() && id != 0));
     v.push(act("ui.newGroup", "New Group", "folder").with(json!({ "component": id })));
     v
 }
@@ -776,7 +777,7 @@ fn sketch_entity_items(app: &SolveApp) -> Vec<Item> {
         v.push(cmd(app, "sketch.circle.center", "Circle"));
         v.push(cmd(app, "sketch.dimension", "Sketch Dimension"));
         v.push(Item::sep());
-        v.push(act("ui.paste", "Paste", "").key("Ctrl+V").on(app.session.sketch_clipboard.is_some()));
+        v.push(act("ui.paste", "Paste", "paste").key("Ctrl+V").on(app.session.sketch_clipboard.is_some()));
         return v;
     }
     let ents: Vec<String> = curves.iter().chain(points.iter()).cloned().collect();
@@ -792,9 +793,9 @@ fn sketch_entity_items(app: &SolveApp) -> Vec<Item> {
         v.extend(explode_text(app));
     }
     v.push(cmd(app, "sketch.move", "Move/Copy").key("M"));
-    v.push(act("ui.cut", "Cut", "").key("Ctrl+X"));
-    v.push(act("ui.copy", "Copy", "").key("Ctrl+C"));
-    v.push(act("ui.paste", "Paste", "").key("Ctrl+V").on(app.session.sketch_clipboard.is_some()));
+    v.push(act("ui.cut", "Cut", "cut").key("Ctrl+X"));
+    v.push(act("ui.copy", "Copy", "copy").key("Ctrl+C"));
+    v.push(act("ui.paste", "Paste", "paste").key("Ctrl+V").on(app.session.sketch_clipboard.is_some()));
     if !curves.is_empty() {
         v.push(cmd(app, "sketch.construction", "Normal / Construction").with(json!({ "curves": curves })));
     }
@@ -1424,12 +1425,23 @@ pub fn describe(app: &SolveApp) -> Value {
         return json!({ "open": false, "pending": app.menu.pending.is_some() });
     };
     let radial = if app.menu.radial { radial_items(app) } else { Vec::new() };
+    let describe_items = |items: Vec<Item>| {
+        items
+            .into_iter()
+            .map(|item| {
+                let placeholder = !item.icon.is_empty() && crate::icon_svg::resolve(&item.icon).placeholder;
+                let mut value = json!(item);
+                value["placeholder"] = json!(placeholder);
+                value
+            })
+            .collect::<Vec<_>>()
+    };
     json!({
         "open": true,
         "at": [at.x, at.y],
         "target": app.menu.target,
-        "radial": radial,
-        "items": items(app, &app.menu.target),
+        "radial": describe_items(radial),
+        "items": describe_items(items(app, &app.menu.target)),
         "rename": app.menu.rename.as_ref().map(|r| r.text.clone()),
     })
 }
@@ -1625,7 +1637,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         let resp = crate::frame::area(egui::Id::new("sc_marking_menu")).fixed_pos(area.min).order(egui::Order::Foreground).show(ctx, |ui| {
             let (r, _) = ui.allocate_exact_size(area.size(), Sense::hover());
             let painter = ui.painter_at(r.expand(4.0));
-            let font = FontId::proportional(13.0);
+            let font = FontId::proportional(crate::theme::Tokens::get().font_button);
             // Centre: a ring with a pointer toward the hot direction.
             let direction = hot.zip(pointer).map(|(k, p)| ((p - c).normalized(), radial.get(k).is_some_and(|i| i.enabled)));
             crate::icons::glyphs::radial_centre(&painter, c, direction, t);
@@ -1724,7 +1736,12 @@ fn workspace_menu(ui: &mut egui::Ui, items: &[Item], key_row: Option<usize>, hei
         ui.set_width(450.0);
         ui.spacing_mut().item_spacing.y = 0.0;
         ui.add_space(4.0);
-        ui.label(egui::RichText::new(crate::i18n::tr("ui.ribbon_workspace").to_uppercase()).size(11.0).strong().color(t.text_dim));
+        ui.label(
+            egui::RichText::new(crate::i18n::tr("ui.ribbon_workspace").to_uppercase())
+                .size(crate::theme::Tokens::get().font_small)
+                .semibold()
+                .color(t.text_dim),
+        );
         ui.add_space(8.0);
         egui::ScrollArea::vertical().id_salt("workspace_menu_rows").max_height((height - 116.0).max(60.0)).show(ui, |ui| {
             for (k, item) in items.iter().enumerate() {
@@ -1766,16 +1783,13 @@ fn workspace_menu(ui: &mut egui::Ui, items: &[Item], key_row: Option<usize>, hei
                 let name = crate::i18n::tr_label(&item.label);
                 let x = r.left() + 74.0;
                 let y = r.top() + 17.0;
-                let galley = egui::WidgetText::from(egui::RichText::new(name).strong().size(14.0).color(text)).into_galley(
-                    ui,
-                    Some(egui::TextWrapMode::Extend),
-                    f32::INFINITY,
-                    egui::TextStyle::Button,
-                );
+                let galley = egui::WidgetText::from(egui::RichText::new(name).semibold().size(crate::theme::Tokens::get().font_heading).color(text))
+                    .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Button);
                 let badge_x = x + galley.size().x + 9.0;
                 let origin = pos2(x, y - galley.size().y / 2.0);
-                ui.painter().galley(origin - vec2(0.2, 0.0), galley.clone(), text);
-                ui.painter().galley(origin + vec2(0.2, 0.0), galley, text);
+                let ppp = ui.ctx().pixels_per_point().max(0.5);
+                let origin = pos2((origin.x * ppp).round() / ppp, (origin.y * ppp).round() / ppp);
+                ui.painter().galley(origin, galley, text);
                 let badge = crate::i18n::tr(if planned {
                     "ui.workspace_planned"
                 } else if current {
@@ -1783,24 +1797,28 @@ fn workspace_menu(ui: &mut egui::Ui, items: &[Item], key_row: Option<usize>, hei
                 } else {
                     "ui.workspace_available"
                 });
-                let badge = ui.painter().layout_no_wrap(badge.to_string(), FontId::proportional(11.0), if current { t.on_accent } else { accent });
+                let badge = ui.painter().layout_no_wrap(
+                    badge.to_string(),
+                    FontId::proportional(crate::theme::Tokens::get().font_small),
+                    if current { t.on_accent } else { accent },
+                );
                 let badge_rect = Rect::from_min_size(pos2(badge_x, y - 8.0), badge.size() + vec2(12.0, 3.0));
                 ui.painter().rect_filled(badge_rect, 8.0, if current { accent } else { soft });
                 ui.painter().galley(badge_rect.min + vec2(6.0, 1.5), badge, accent);
-                let line = |label: &str, y: f32| {
-                    let mut job = egui::text::LayoutJob::simple_singleline(label.to_string(), FontId::proportional(12.0), text);
+                let line = |content: String, y: f32| {
+                    let mut job =
+                        egui::text::LayoutJob::simple_singleline(content, FontId::proportional(crate::theme::Tokens::get().font_body), text);
                     job.wrap.max_width = r.right() - x - 6.0;
                     job.wrap.max_rows = 1;
                     job.wrap.break_anywhere = false;
                     let galley = ui.painter().layout_job(job);
                     ui.painter().galley(pos2(x, y), galley, text);
                 };
-                line(crate::i18n::tr(description), r.top() + 29.0);
+                line(crate::i18n::tr(description).to_string(), r.top() + 29.0);
                 if let Some(tabs) = tabs {
-                    // Reuse existing tab-name translations when a partial catalog falls back
-                    // to the English summary; complete catalogs keep their translated summary.
+                    // Translate each tab even when this composed message falls back to English.
                     let labels = crate::i18n::tr(tabs).split('·').map(|label| crate::i18n::tr_label(label.trim())).collect::<Vec<_>>().join(" · ");
-                    line(&labels, r.top() + 47.0);
+                    line(labels, r.top() + 47.0);
                 }
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, item.enabled, name));
                 if resp.clicked() && item.enabled {
@@ -1811,7 +1829,12 @@ fn workspace_menu(ui: &mut egui::Ui, items: &[Item], key_row: Option<usize>, hei
         ui.add_space(6.0);
         ui.separator();
         ui.add_space(6.0);
-        ui.add(egui::Label::new(egui::RichText::new(crate::i18n::tr("ui.workspace_footer")).size(11.0).color(t.text_dim)).wrap());
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(crate::i18n::tr("ui.workspace_footer")).size(crate::theme::Tokens::get().font_small).color(t.text_dim),
+            )
+            .wrap(),
+        );
         ui.add_space(4.0);
     });
     picked
@@ -1839,6 +1862,27 @@ pub fn menu_frame<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) ->
         .inner
 }
 
+/// A compact menu button with an explicit semantic icon, for native egui popup menus.
+pub fn button(ui: &mut egui::Ui, label: &str, icon: &str) -> egui::Response {
+    button_enabled(ui, label, icon, true)
+}
+
+/// The disabled form keeps its icon visible and dims it with the menu row.
+pub fn button_enabled(ui: &mut egui::Ui, label: &str, icon: &str, enabled: bool) -> egui::Response {
+    let response = ui
+        .add_enabled_ui(enabled, |ui| {
+            let icon_id = ui.id().with(("menu_icon", label));
+            let row = egui::Button::new((egui::Atom::custom(icon_id, vec2(16.0, 16.0)), label)).min_size(vec2(180.0, 22.0)).atom_ui(ui);
+            if let Some(rect) = row.rect(icon_id) {
+                icons::paint_icon(ui.painter(), rect, icon, if enabled { 1.0 } else { 0.35 });
+            }
+            row.response
+        })
+        .inner;
+    crate::scenario::publish_handle(&format!("menu:{label}"), response.rect.center());
+    response
+}
+
 /// One list row; the item when it was clicked.
 pub fn list_row(ui: &mut egui::Ui, item: &Item) -> Option<Item> {
     list_row_lit(ui, item, false)
@@ -1854,7 +1898,12 @@ pub fn list_row_lit(ui: &mut egui::Ui, item: &Item, lit: bool) -> Option<Item> {
         return None;
     }
     if item.is_heading() {
-        let text = ui.painter().layout(crate::i18n::tr_label(&item.label).to_uppercase(), FontId::proportional(10.5), t.text_dim, w - 16.0);
+        let text = ui.painter().layout(
+            crate::i18n::tr_label(&item.label).to_uppercase(),
+            FontId::proportional(crate::theme::Tokens::get().font_panel),
+            t.text_dim,
+            w - 16.0,
+        );
         let (r, _) = ui.allocate_exact_size(vec2(w, (text.size().y + 8.0).max(20.0)), Sense::hover());
         ui.painter().galley(pos2(r.left() + 8.0, r.top() + 4.0), text, t.text_dim);
         return None;
@@ -1877,10 +1926,23 @@ pub fn list_row_lit(ui: &mut egui::Ui, item: &Item, lit: bool) -> Option<Item> {
     }
     let text = if item.enabled { t.text } else { t.text_dim.gamma_multiply(0.75) };
     let display_label = crate::i18n::tr_label(&item.label);
-    ui.painter().text(pos2(r.left() + 32.0, r.center().y), Align2::LEFT_CENTER, display_label, FontId::proportional(13.0), text);
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, item.enabled, display_label));
+    ui.painter().text(
+        pos2(r.left() + 32.0, r.center().y),
+        Align2::LEFT_CENTER,
+        display_label,
+        FontId::proportional(crate::theme::Tokens::get().font_button),
+        text,
+    );
     if !item.shortcut.is_empty() {
         let display_shortcut = crate::i18n::tr_label(&item.shortcut);
-        ui.painter().text(pos2(r.right() - 10.0, r.center().y), Align2::RIGHT_CENTER, display_shortcut, FontId::proportional(11.5), t.text_dim);
+        ui.painter().text(
+            pos2(r.right() - 10.0, r.center().y),
+            Align2::RIGHT_CENTER,
+            display_shortcut,
+            FontId::proportional(crate::theme::Tokens::get().font_caption),
+            t.text_dim,
+        );
     }
     (item.enabled && resp.clicked()).then(|| item.clone())
 }
@@ -1897,7 +1959,7 @@ fn show_rename(app: &mut SolveApp, ctx: &egui::Context) {
     let resp = crate::frame::area(egui::Id::new("sc_rename")).fixed_pos(r.at).constrain(true).order(egui::Order::Foreground).show(ctx, |ui| {
         menu_frame(ui, |ui| {
             ui.add_space(2.0);
-            ui.label(egui::RichText::new(crate::i18n::tr_label("Rename")).size(11.0).color(t.text_dim));
+            ui.label(egui::RichText::new(crate::i18n::tr_label("Rename")).size(crate::theme::Tokens::get().font_small).color(t.text_dim));
             let te = ui.add(egui::TextEdit::singleline(&mut r.text).desired_width(200.0).id(egui::Id::new("sc_rename_text")));
             if !r.focused {
                 // Start with the whole name selected, ready to type over.
@@ -2027,7 +2089,7 @@ mod tests {
     #[test]
     fn disabled_radial_menu_does_not_capture_right_button_hold() {
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let point = pos2(600.0, 400.0);
         app.viewport.mouse = Some(point);
         for (time, events) in [
@@ -2106,6 +2168,27 @@ mod tests {
 mod workspace_menu_tests {
     use super::*;
     use crate::scenario::{Harness, rect_of};
+
+    #[test]
+    fn workspace_titles_use_one_semibold_text_run() {
+        let ctx = crate::fonts::test_context();
+        let app = SolveApp::new(Default::default(), Default::default());
+        let list = items(&app, &Target::Workspace);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            workspace_menu(ui, &list, None, 1000.0);
+        });
+        output.textures_delta.clear();
+        let titles: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Text(text) if text.galley.text() == "Design" => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(titles.len(), 1, "workspace titles must never be drawn twice");
+        assert_eq!(titles[0].galley.job.sections[0].format.font_id, crate::fonts::semibold(14.0));
+    }
 
     #[test]
     fn workspace_rows_keep_switching_handles_and_disabled_render_behavior() {

@@ -318,6 +318,10 @@
    ]
   }
  },
+ {"note": "Close the already checked upper folders so the component rows fit in the Browser without scrolling."},
+ {"click": {"handle": "fold:Document Settings"}},
+ {"click": {"handle": "fold:Named Views"}},
+ {"click": {"handle": "fold:Origin"}},
  {
   "note": "Expanded rows now scroll within the floating card, above the History strip."
  },

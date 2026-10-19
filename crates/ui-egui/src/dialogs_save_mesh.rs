@@ -126,7 +126,13 @@ fn paint_icon(ui: &egui::Ui, rect: egui::Rect, tex: Option<egui::TextureId>, nam
             let t = Tokens::get();
             ui.painter().rect_filled(rect, 3.0, t.chip);
             let letter = name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
-            ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, letter, egui::FontId::proportional(11.0), t.text);
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                letter,
+                egui::FontId::proportional(crate::theme::Tokens::get().font_small),
+                t.text,
+            );
         }
     }
 }
@@ -196,7 +202,7 @@ fn slicer_combo(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut SaveMesh) {
                 rect.left_center() + vec2(ICON + 9.0, 0.0),
                 egui::Align2::LEFT_CENTER,
                 &e.slicer.name,
-                egui::FontId::proportional(13.0),
+                egui::FontId::proportional(crate::theme::Tokens::get().font_button),
                 ui.visuals().text_color(),
             );
             crate::scenario::publish_handle(&format!("dialog:Slicer:{}", e.slicer.name), rect.center());
@@ -223,7 +229,7 @@ fn slicer_combo(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut SaveMesh) {
             rect.left_center() + vec2(ICON + 9.0, 0.0),
             egui::Align2::LEFT_CENTER,
             crate::i18n::tr_label("Custom…"),
-            egui::FontId::proportional(13.0),
+            egui::FontId::proportional(crate::theme::Tokens::get().font_button),
             Tokens::get().text,
         );
         crate::scenario::publish_handle("dialog:Slicer:Custom", rect.center());

@@ -3,6 +3,7 @@
 //! (read only), Messages (every status message of the run, #2763), and Report an Issue, which
 //! opens a local editable report draft.
 
+use crate::fonts::RichTextExt as _;
 use egui::{RichText, vec2};
 
 use crate::SolveApp;
@@ -72,15 +73,15 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context, anchor: egui::Pos2) {
         let resp =
             crate::frame::area(egui::Id::new("sc_help_menu")).fixed_pos(anchor).constrain(true).order(egui::Order::Foreground).show(ctx, |ui| {
                 crate::context_menu::menu_frame(ui, |ui| {
-                    for (id, label) in [
-                        ("docs", "Documentation"),
-                        ("about", "About SolidCraft"),
-                        ("shortcuts", "Keyboard Shortcuts"),
-                        ("messages", "Messages…"),
-                        ("report", "Report an Issue…"),
-                        ("crashes", "Crash Reports…"),
+                    for (id, label, icon) in [
+                        ("docs", "Documentation", "library"),
+                        ("about", "About SolidCraft", "help"),
+                        ("shortcuts", "Keyboard Shortcuts", "list"),
+                        ("messages", "Messages…", "list"),
+                        ("report", "Report an Issue…", "bug_report"),
+                        ("crashes", "Crash Reports…", "status_error"),
                     ] {
-                        if crate::context_menu::list_row(ui, &crate::context_menu::Item::action(id, label, "")).is_some() {
+                        if crate::context_menu::list_row(ui, &crate::context_menu::Item::action(id, label, icon)).is_some() {
                             pick = Some(id);
                         }
                     }
@@ -112,7 +113,7 @@ fn about(app: &mut SolveApp, ctx: &egui::Context) {
         .open(&mut open)
         .default_size(vec2(440.0, 560.0))
         .show(ctx, |ui| {
-            ui.label(RichText::new("SolidCraft").size(22.0).strong());
+            ui.label(RichText::new("SolidCraft").size(crate::theme::Tokens::get().font_title).semibold().color(crate::theme::Tokens::get().text));
             ui.label(format!("Version {VERSION} · commit {COMMIT} · built {BUILD_DATE}"));
             ui.label(RichText::new(crate::i18n::tr_label("Open-source parametric 3D CAD in Rust. Licensed MIT OR Apache-2.0.")).color(t.text_dim));
             ui.add_space(6.0);
@@ -124,20 +125,20 @@ fn about(app: &mut SolveApp, ctx: &egui::Context) {
             ui.separator();
             egui::ScrollArea::vertical().show(ui, |ui| {
                 egui::CollapsingHeader::new("Attributions (ATTRIBUTION.md)").show(ui, |ui| {
-                    ui.label(RichText::new(ATTRIBUTION).monospace().size(11.0));
+                    ui.label(RichText::new(ATTRIBUTION).monospace().size(crate::theme::Tokens::get().font_small));
                 });
                 egui::CollapsingHeader::new("Fonts").show(ui, |ui| {
                     ui.label(FONTS);
                 });
                 egui::CollapsingHeader::new("Licences").show(ui, |ui| {
                     egui::CollapsingHeader::new("NOTICE").show(ui, |ui| {
-                        ui.label(RichText::new(NOTICE).monospace().size(11.0));
+                        ui.label(RichText::new(NOTICE).monospace().size(crate::theme::Tokens::get().font_small));
                     });
                     egui::CollapsingHeader::new("MIT licence").show(ui, |ui| {
-                        ui.label(RichText::new(LICENSE_MIT).monospace().size(11.0));
+                        ui.label(RichText::new(LICENSE_MIT).monospace().size(crate::theme::Tokens::get().font_small));
                     });
                     egui::CollapsingHeader::new("Apache licence 2.0").show(ui, |ui| {
-                        ui.label(RichText::new(LICENSE_APACHE).monospace().size(11.0));
+                        ui.label(RichText::new(LICENSE_APACHE).monospace().size(crate::theme::Tokens::get().font_small));
                     });
                     egui::CollapsingHeader::new("Third-party licences").show(ui, |ui| {
                         if ui.button(crate::i18n::tr_label("Copy all licences")).clicked() {
@@ -156,7 +157,7 @@ fn about(app: &mut SolveApp, ctx: &egui::Context) {
 /// THIRD-PARTY-LICENSES.txt (over 10 000 lines): only the lines in view are laid out.
 fn third_party(ui: &mut egui::Ui) {
     let lines: Vec<&str> = THIRD_PARTY.lines().collect();
-    let font = egui::FontId::monospace(11.0);
+    let font = egui::FontId::monospace(crate::theme::Tokens::get().font_small);
     let row_h = ui.fonts_mut(|f| f.row_height(&font));
     egui::ScrollArea::both().id_salt("sc_third_party").max_height(360.0).show_rows(ui, row_h, lines.len(), |ui, rows| {
         for line in lines.get(rows).unwrap_or_default() {

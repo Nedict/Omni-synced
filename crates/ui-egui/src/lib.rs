@@ -45,6 +45,8 @@ mod dimension_create_ui_tests;
 pub mod documents;
 pub mod drag_snap;
 pub mod edit_clipboard;
+#[cfg(test)]
+mod font_literals_tests;
 pub mod fonts;
 pub mod frame;
 pub mod frame_rate;
@@ -193,6 +195,9 @@ pub mod tool_modifiers;
 pub mod toolbar;
 pub mod toolbar_custom;
 pub mod tools;
+pub mod ui_kit;
+#[cfg(test)]
+mod ui_kit_guard_tests;
 pub mod update;
 pub mod viewport;
 mod viewport_layout;

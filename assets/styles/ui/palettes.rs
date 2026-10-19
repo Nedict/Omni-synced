@@ -31,6 +31,35 @@ impl Tokens {
             font_label: 12.5,
             font_button: 13.0,
             font_heading: 14.0,
+            font_triad: 8.0,
+            font_compass: 13.5,
+            font_subtitle: 15.0,
+            font_intro: 16.0,
+            font_article_heading: 17.0,
+            font_title: 22.0,
+            font_display: 26.0,
+            control_height: 24.0,
+            control_radius: 5,
+            form_label_width: 70.0,
+            form_gap_y: 5.0,
+            form_footer_height: 38.0,
+            form_header_height: 30.0,
+            form_card_width: 264.0,
+            form_icon_size: 18.0,
+            form_close_size: 22.0,
+            form_inset: 7.0,
+            form_icon_inset: 4.5,
+            form_section_icon_size: 11.0,
+            form_checkbox_height: 22.0,
+            form_button_height: 26.0,
+            sketch_palette_width: 232.0,
+            sketch_mode_size: 36.0,
+            sketch_mode_radius: 7,
+            sketch_mode_border: 1.5,
+            sketch_palette_alpha: 0.96,
+            sketch_mode_tint: 0.12,
+            sketch_footer_icon_size: 15.0,
+            font_section_tracking: 0.04,
             app_bar: Color32::from_rgb(52, 56, 64),
             app_bar_separator: Color32::from_rgb(136, 145, 160),
             toolbar: Color32::from_rgb(246, 247, 249),
@@ -117,6 +146,14 @@ impl Tokens {
             app_bar_hover_button: Color32::from_rgba_unmultiplied_const(255, 255, 255, 30),
             app_bar_hover_strong: Color32::from_rgba_unmultiplied_const(255, 255, 255, 40),
             app_bar_tab_active: Color32::from_rgb(53, 59, 71),
+            dialog_body: Color32::from_rgb(255, 255, 255),
+            dialog_footer: Color32::from_rgb(246, 248, 250),
+            dialog_rule: Color32::from_rgb(230, 234, 240),
+            control_fill: Color32::from_rgb(255, 255, 255),
+            control_border: Color32::from_rgb(195, 203, 214),
+            dialog_label: Color32::from_rgb(58, 70, 86),
+            selected_ink: Color32::from_rgb(26, 80, 127),
+            selected_bg: Color32::from_rgb(227, 240, 251),
             timeline_item: Color32::WHITE,
             timeline_item_error: Color32::from_rgb(250, 220, 220),
             timeline_marker: Color32::from_rgb(70, 76, 88),
@@ -170,6 +207,36 @@ impl Tokens {
     }
     pub const fn dark() -> Tokens {
         let mut t = Tokens::light();
+        // Shared typography and dense form dimensions stay identical in both palettes.
+        t.font_triad = 8.0;
+        t.font_compass = 13.5;
+        t.font_subtitle = 15.0;
+        t.font_intro = 16.0;
+        t.font_article_heading = 17.0;
+        t.font_title = 22.0;
+        t.font_display = 26.0;
+        t.control_height = 24.0;
+        t.control_radius = 5;
+        t.form_label_width = 70.0;
+        t.form_gap_y = 5.0;
+        t.form_footer_height = 38.0;
+        t.form_header_height = 30.0;
+        t.form_card_width = 264.0;
+        t.form_icon_size = 18.0;
+        t.form_close_size = 22.0;
+        t.form_inset = 7.0;
+        t.form_icon_inset = 4.5;
+        t.form_section_icon_size = 11.0;
+        t.form_checkbox_height = 22.0;
+        t.form_button_height = 26.0;
+        t.sketch_palette_width = 232.0;
+        t.sketch_mode_size = 36.0;
+        t.sketch_mode_radius = 7;
+        t.sketch_mode_border = 1.5;
+        t.sketch_palette_alpha = 0.96;
+        t.sketch_mode_tint = 0.12;
+        t.sketch_footer_icon_size = 15.0;
+        t.font_section_tracking = 0.04;
         t.app_bar = Color32::from_rgb(28, 31, 38);
         t.toolbar = Color32::from_rgb(39, 43, 52);
         t.panel = Color32::from_rgb(39, 43, 52);
@@ -184,6 +251,14 @@ impl Tokens {
         t.mesh_accent = Color32::from_rgb(133, 113, 0);
         t.form_accent = Color32::from_rgb(123, 99, 166);
         t.render_accent = Color32::from_rgb(224, 116, 174);
+        t.dialog_body = Color32::from_rgb(59, 68, 83);
+        t.dialog_footer = Color32::from_rgb(47, 52, 62);
+        t.dialog_rule = Color32::from_rgb(53, 59, 71);
+        t.control_fill = Color32::from_rgb(39, 43, 52);
+        t.control_border = Color32::from_rgb(74, 82, 98);
+        t.dialog_label = Color32::from_rgb(180, 187, 200);
+        t.selected_ink = Color32::from_rgb(156, 199, 245);
+        t.selected_bg = Color32::from_rgb(42, 70, 110);
         t.construction_geom = icon_primary(crate::icon_svg::CONSTRUCTION_PRIMARY[1]);
         t.error = Color32::from_rgb(240, 100, 96);
         t.warning = Color32::from_rgb(236, 170, 70);
@@ -249,6 +324,7 @@ impl Tokens {
         t.icons.axes[1] = t.triad[1];
         t.icons.access = [good, Color32::from_rgb(217, 102, 13)];
         t.construction_geom = icon_primary(crate::icon_svg::CONSTRUCTION_RED_GREEN[dark as usize]);
+        t.glyph_text = icon_primary(crate::icon_svg::CONSTRAINT_RED_GREEN[dark as usize]);
         t.icons.draft = [good, Color32::from_rgb(242, 230, 153)];
         t.surface_accent = if dark { Color32::from_rgb(200, 135, 55) } else { Color32::from_rgb(164, 80, 0) };
         t.mesh_accent = if dark { Color32::from_rgb(190, 175, 70) } else { Color32::from_rgb(130, 103, 0) };

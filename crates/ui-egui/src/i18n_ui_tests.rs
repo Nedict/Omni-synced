@@ -53,6 +53,8 @@ fn sketch_palette_profile_and_points_rows_show_their_own_translation() {
         h.app.home.open = false;
         h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
         h.frames(3);
+        let at = scenario::handle_at("sketch_palette:options_fold").unwrap();
+        h.call("ui.click", json!({"x":at.x,"y":at.y}));
         assert!(h.widget(profile).is_some(), "{lang}: the Profile row must show {profile:?}");
         assert!(h.widget(points).is_some(), "{lang}: the Points row must show {points:?}");
         assert!(h.widget("Profile").is_none(), "{lang}: must not silently fall back to English");
@@ -227,10 +229,14 @@ fn translated_dialog_buttons_do_not_wrap() {
     h.app.preferences.language = "ja".into();
     h.app.home.open = false;
     h.call("ui.start", json!({"command":"solid.extrude"}));
-    let mut out = h.ctx.run_ui(
-        egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))), ..Default::default() },
-        |ui| h.app.ui(ui),
-    );
+    // A few frames: the card sizes itself from its content over the first passes.
+    let mut out = egui::FullOutput::default();
+    for _ in 0..5 {
+        out = h.ctx.run_ui(
+            egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))), ..Default::default() },
+            |ui| h.app.ui(ui),
+        );
+    }
     assert_eq!(out.shapes.iter().find_map(|shape| cancel_rows(&shape.shape)), Some(1));
     out.textures_delta.clear();
 }

@@ -96,7 +96,7 @@ mod tests {
     fn assistant_pixels_use_the_application_bar_text_token() {
         let previous = theme::is_dark();
         for dark in [false, true] {
-            let ctx = egui::Context::default();
+            let ctx = crate::fonts::test_context();
             theme::set_dark(dark);
             let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                 paint_app_bar(ui.painter(), Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(32.0, 32.0)), "assistant", 1.0);
@@ -112,17 +112,17 @@ mod tests {
 
     #[test]
     fn actual_uploaded_icon_pixels_follow_semantics_and_vision_cache_changes() {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let previous = theme::vision();
         for dark in [false, true] {
             for vision in [ColorVision::Off, ColorVision::Protan, ColorVision::Tritan] {
                 theme::set_vision(vision);
-                for icon in ["line", "c_parallel", "construction", "centerline", "surface_extrude", "mesh_export", "contact_new"] {
-                    let expected = if icon == "construction" {
-                        icon_svg::role_colour("guide", Look { dark, accent: None, vision })
-                    } else {
-                        icon_svg::primary(icon, dark, vision)
-                    };
+                // The line types: Normal in the base blue, and Construction, Centerline and Infinite
+                // in the construction accent, as the sketch canvas draws them.
+                for icon in
+                    ["line", "c_parallel", "normal", "construction", "centerline", "infinite", "surface_extrude", "mesh_export", "contact_new"]
+                {
+                    let expected = icon_svg::primary(icon, dark, vision);
                     let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                         let r = Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(64.0, 64.0));
                         paint_on(ui.painter(), r, icon, Some(dark), 1.0);

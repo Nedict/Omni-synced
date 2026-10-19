@@ -8,7 +8,7 @@ use solidcraft_engine::doc::{Expr, Mat, RailFit, SweepOrientation, SweepRail};
 use solidcraft_engine::geom::Vec3;
 
 use crate::SolveApp;
-use crate::dialogs::{combo, field, row_label};
+use crate::dialogs::{combo, field, form_row};
 use crate::selection::{AXES, CURVES, EDGES, SelInput};
 
 /// The orientation choices, in combo order: perpendicular, parallel, a direction.
@@ -100,19 +100,28 @@ pub fn rail_sels(rails: &[SweepRail]) -> [Vec<Sel>; 2] {
 
 /// The option rows; true when Enter was pressed in a field.
 pub fn rows(ui: &mut egui::Ui, o: &mut SweepOpts, id: &str) -> bool {
+    rows_with(ui, o, id, |_| {})
+}
+
+/// [`rows`] with extra rows between the orientation and the collapsed Advanced section, so the
+/// feature's own rows (such as its operation) stay above the section.
+pub fn rows_with(ui: &mut egui::Ui, o: &mut SweepOpts, id: &str, between: impl FnOnce(&mut egui::Ui)) -> bool {
     let mut enter = false;
-    row_label(ui, "Orientation");
-    combo(ui, &format!("{id}_orient"), &ORIENTATIONS, &mut o.orientation);
-    ui.end_row();
-    row_label(ui, "Twist");
-    enter |= field(ui, &mut o.twist);
-    ui.end_row();
-    row_label(ui, "End Scale");
-    enter |= field(ui, &mut o.scale);
-    ui.end_row();
-    row_label(ui, "Rail Fit");
-    combo(ui, &format!("{id}_rail_fit"), &RAIL_FITS, &mut o.rail_fit);
-    ui.end_row();
+    form_row(ui, "Orientation", |ui| {
+        combo(ui, &format!("{id}_orient"), &ORIENTATIONS, &mut o.orientation);
+    });
+    between(ui);
+    crate::ui_kit::section(ui, id, "Advanced", false, |ui| {
+        form_row(ui, "Twist", |ui| {
+            enter |= field(ui, &mut o.twist);
+        });
+        form_row(ui, "End Scale", |ui| {
+            enter |= field(ui, &mut o.scale);
+        });
+        form_row(ui, "Rail Fit", |ui| {
+            combo(ui, &format!("{id}_rail_fit"), &RAIL_FITS, &mut o.rail_fit);
+        });
+    });
     enter
 }
 

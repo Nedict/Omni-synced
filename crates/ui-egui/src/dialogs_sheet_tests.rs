@@ -126,9 +126,9 @@ fn flat_exports_use_the_save_picker() {
             Box::pin(std::future::ready(None))
         }));
         assert_eq!(export_flat(&mut app, "Base", "csv"), "Choose an export file…");
-        crate::file_picker::tick(&mut app, &egui::Context::default());
+        crate::file_picker::tick(&mut app, &crate::fonts::test_context());
         assert_eq!(export_flat(&mut app, "Base", "dxf"), "Choose an export file…");
-        crate::file_picker::tick(&mut app, &egui::Context::default());
+        crate::file_picker::tick(&mut app, &crate::fonts::test_context());
         let picks = picks.lock().unwrap();
         assert!(picks[0].0.ends_with("-Base.csv"));
         assert_eq!(picks[0].1, vec!["csv"]);
@@ -153,7 +153,7 @@ fn shallow_pocket_overlay_labels_depth_without_drawing_a_through_void() {
         let mut dialog = app.dialog.clone().unwrap();
         let Kind::Sheet(Sm::FlatPattern { data, .. }) = &mut dialog.kind else { panic!("flat dialog") };
         *data = Some(Ok(flat));
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("flat-pocket-test")));
             assert!(overlay(&mut app, &painter, Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0)), &dialog));
@@ -211,7 +211,7 @@ fn flat_pattern_islands_fit_before_the_actual_command_panel() {
         if mode == crate::shell::LayoutMode::Floating {
             app.shell.content = Some(Rect::from_min_max(pos2(browser.right(), viewport.top()), pos2(viewport.right(), history.top())));
         }
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let id = egui::Id::new(("sc_dialog", "FLAT PATTERN"));
         let mut output = egui::FullOutput::default();
         for _ in 0..3 {
@@ -273,7 +273,7 @@ fn coincident_top_and_bottom_pocket_depths_share_a_readable_annotation() {
         let mut dialog = app.dialog.clone().unwrap();
         let Kind::Sheet(Sm::FlatPattern { data, .. }) = &mut dialog.kind else { panic!("flat dialog") };
         *data = Some(Ok(flat));
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("coincident-pocket-test")));
             assert!(overlay(&mut app, &painter, Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0)), &dialog));
@@ -348,7 +348,7 @@ fn bend_table_picker_writes_the_current_body() {
         }));
         let undo = app.session.undo.len();
         assert_eq!(export_flat(&mut app, &body, "csv"), "Choose an export file…");
-        crate::file_picker::tick(&mut app, &egui::Context::default());
+        crate::file_picker::tick(&mut app, &crate::fonts::test_context());
         assert_eq!(app.status.as_ref().map(|s| &s.0), Some(&format!("Exported {output}")));
         let contents = std::fs::read_to_string(&path).unwrap();
         std::fs::remove_file(&path).unwrap();
@@ -447,6 +447,8 @@ fn flange_dialog_picks_a_corner_relief_of_its_own() {
         let d = h.app.dialog.clone().unwrap();
         let c = apply_commands(&h.app, &d).unwrap();
         assert!(c[0].1.get("corner_relief_shape").is_none() && c[0].1.get("corner_relief").is_none(), "{}", c[0].1);
+        // The optional overrides live in the collapsed Advanced group.
+        h.step(&json!({"click": {"handle": "dialog:section:Advanced"}})).unwrap();
         // Round from the selector, 6 mm in the size row.
         h.step(&json!({"click": {"handle": "dialog:Corner Relief Shape"}})).unwrap();
         h.step(&json!({"click": {"handle": "dialog:Corner Relief Shape:Round"}})).unwrap();
@@ -648,7 +650,7 @@ fn flat_pattern_pans_and_zooms_like_the_design_viewport() {
         let chords = [none, Modifiers::SHIFT, Modifiers::CTRL, Modifiers::ALT, Modifiers::SHIFT | Modifiers::ALT];
         for preset in crate::prefs::NAV_PRESETS.iter().map(|p| p.id) {
             for (reverse, to_cursor) in [(false, true), (true, true), (false, false)] {
-                let (flat_ctx, design_ctx) = (egui::Context::default(), egui::Context::default());
+                let (flat_ctx, design_ctx) = (crate::fonts::test_context(), crate::fonts::test_context());
                 let mut flat = flat_app(preset, mode);
                 let mut design = flat_app(preset, mode);
                 design.dialog = None;
@@ -746,7 +748,7 @@ fn design_camera_is_unchanged_while_the_flat_pattern_has_focus() {
         use egui::{Event, Modifiers, PointerButton};
         let none = Modifiers::NONE;
         for preset in crate::prefs::NAV_PRESETS.iter().map(|p| p.id) {
-            let ctx = egui::Context::default();
+            let ctx = crate::fonts::test_context();
             let mut app = flat_app(preset, mode);
             let mut t = 0.0;
             frame(&mut app, &ctx, &mut t, none, vec![]);
@@ -779,7 +781,7 @@ fn design_camera_is_unchanged_while_the_flat_pattern_has_focus() {
 #[test]
 fn fit_and_home_frame_the_flat_pattern() {
     for mode in [crate::shell::LayoutMode::Floating, crate::shell::LayoutMode::Docked] {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let mut app = flat_app("fusion", mode);
         let mut t = 0.0;
         let none = egui::Modifiers::NONE;

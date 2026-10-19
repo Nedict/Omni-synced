@@ -3,6 +3,7 @@
 //! show while open (a study's pose, an explosion) is display only: pending occurrence moves,
 //! computed on a scratch copy of the design and put back when the dialog closes.
 
+use crate::fonts::RichTextExt as _;
 use std::collections::BTreeMap;
 
 use egui::{Color32, Pos2, RichText, Sense, Stroke, pos2, vec2};
@@ -765,7 +766,7 @@ fn configurations_rows(
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
         egui::Grid::new("configuration_table").num_columns(2).min_col_width(210.0).spacing(vec2(10.0, 8.0)).show(ui, |ui| {
             // Header.
-            ui.label(RichText::new(crate::i18n::tr_label("Configuration")).strong());
+            ui.label(RichText::new(crate::i18n::tr_label("Configuration")).semibold().color(crate::theme::Tokens::get().text));
             ui.horizontal(|ui| {
                 for c in &tb.columns {
                     ui.allocate_ui_with_layout(vec2(190.0, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -783,7 +784,11 @@ fn configurations_rows(
                             .filter(|_| matches!(kind, "component_appearance" | "face_appearance"))
                             .map(str::to_string)
                             .unwrap_or(label);
-                        ui.add_sized(vec2(156.0, 22.0), egui::Label::new(RichText::new(label).strong()).truncate()).on_hover_text(c);
+                        ui.add_sized(
+                            vec2(156.0, 22.0),
+                            egui::Label::new(RichText::new(label).semibold().color(crate::theme::Tokens::get().text)).truncate(),
+                        )
+                        .on_hover_text(c);
                         if ui.small_button("×").on_hover_text(crate::i18n::tr_label("Remove the column")).clicked() {
                             let key = if kind == "suppress" { "feature" } else { kind };
                             run(app, error, "config.column", json!({ key: if kind == "face_appearance" {c.as_str()} else {n}, "delete": true }));
@@ -797,7 +802,12 @@ fn configurations_rows(
                 ui.horizontal(|ui| {
                     ui.add_sized(
                         vec2(100.0, 22.0),
-                        egui::Label::new(if active { RichText::new(name).strong() } else { RichText::new(name) }).truncate(),
+                        egui::Label::new(if active {
+                            RichText::new(name).semibold().color(crate::theme::Tokens::get().text)
+                        } else {
+                            RichText::new(name)
+                        })
+                        .truncate(),
                     )
                     .on_hover_text(name);
                     if active {

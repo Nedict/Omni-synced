@@ -1,5 +1,6 @@
 //! The left feature-history panel: named rows, folders, rollback and drag-and-drop.
 
+use crate::fonts::RichTextExt as _;
 use egui::{Color32, Rect, RichText, Sense, Stroke, pos2, vec2};
 use serde_json::json;
 
@@ -73,8 +74,11 @@ pub fn left_timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let groups = app.session.doc.timeline_groups.clone();
     ui.horizontal(|ui| {
-        ui.set_min_height(22.0);
-        ui.label(RichText::new("FEATURE HISTORY").size(11.0).strong().color(t.text_dim));
+        // Reserve the selection menu's measured height even when no features are selected.
+        let font = egui::TextStyle::Button.resolve(ui.style());
+        let menu_height = ui.fonts_mut(|fonts| fonts.row_height(&font)) + 2.0 * ui.spacing().button_padding.y;
+        ui.set_min_height(menu_height.ceil().max(22.0));
+        ui.label(RichText::new("FEATURE HISTORY").size(crate::theme::Tokens::get().font_small).semibold().color(t.text_dim));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let count = selected_feature_ids(app).len() + app.tree.picked_timeline_groups.len();
             if count > 0 {
@@ -310,7 +314,7 @@ fn selection_actions(app: &mut SolveApp, ui: &mut egui::Ui, groups: &[solidcraft
     let selected_groups = app.tree.picked_timeline_groups.clone();
     let has_selection = !features.is_empty() || !selected_groups.is_empty();
     if has_selection {
-        if ui.button("Add to New Folder").clicked() {
+        if crate::context_menu::button(ui, "Add to New Folder", "folder").clicked() {
             let result = app.run("timeline.group", json!({"features": features, "groups": selected_groups}));
             if let Ok(result) = result
                 && let Some(group) = result.get("group").and_then(serde_json::Value::as_u64)
@@ -321,7 +325,7 @@ fn selection_actions(app: &mut SolveApp, ui: &mut egui::Ui, groups: &[solidcraft
             ui.close();
         }
         let grouped = features.iter().any(|feature| group_for(groups, *feature).is_some()) || !selected_groups.is_empty();
-        if grouped && ui.button("Remove from Folder").clicked() {
+        if grouped && crate::context_menu::button(ui, "Remove from Folder", "folder").clicked() {
             let mut params = json!({"group": null});
             if !features.is_empty() {
                 params["features"] = json!(features);
@@ -337,7 +341,10 @@ fn selection_actions(app: &mut SolveApp, ui: &mut egui::Ui, groups: &[solidcraft
         if !features.is_empty() || !selected_groups.is_empty() {
             ui.separator();
         }
-        if ui.button("Delete Selected Folders").on_hover_text("Keep their features and nested folders in the history").clicked() {
+        if crate::context_menu::button(ui, "Delete Selected Folders", "delete")
+            .on_hover_text("Keep their features and nested folders in the history")
+            .clicked()
+        {
             let ids = app.tree.picked_timeline_groups.clone();
             let _ = app.run("timeline.ungroup", json!({"groups": ids}));
             app.tree.picked_timeline_groups.clear();
@@ -346,7 +353,7 @@ fn selection_actions(app: &mut SolveApp, ui: &mut egui::Ui, groups: &[solidcraft
     }
     if !features.is_empty() {
         ui.separator();
-        if ui.button("Delete Selected Features…").clicked() {
+        if crate::context_menu::button(ui, "Delete Selected Features…", "delete").clicked() {
             delete_features(app, features);
             ui.close();
         }
@@ -494,7 +501,7 @@ fn timeline_group_name(
             pos2(rect.left() + 40.0 + offset, rect.center().y),
             egui::Align2::LEFT_CENTER,
             &group.name,
-            egui::FontId::proportional(12.0),
+            egui::FontId::proportional(crate::theme::Tokens::get().font_body),
             t.text,
         );
         return false;
@@ -598,7 +605,7 @@ fn vertical_group_row(
         select_only(app, TimelineItem::Group(group.id));
     }
     response.context_menu(|ui| {
-        if ui.button("Rename Folder").clicked() {
+        if crate::context_menu::button(ui, "Rename Folder", "rename").clicked() {
             crate::context_menu::start_rename(app, crate::context_menu::RenameWhat::TimelineGroup(group.id), rect.center());
             ui.close();
         }
@@ -729,7 +736,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             pos2(icon_rect.right() + 7.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             name,
-            egui::FontId::proportional(12.0),
+            egui::FontId::proportional(crate::theme::Tokens::get().font_body),
             text_colour,
         );
         // A failed feature has a mark of its own, not only its colour (#972).
@@ -779,25 +786,25 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             select_only(app, TimelineItem::Feature(*id));
         }
         response.context_menu(|ui| {
-            if ui.button("Edit Feature").clicked() {
+            if crate::context_menu::button(ui, "Edit Feature", "edit").clicked() {
                 edit = Some(*id);
                 ui.close();
             }
             if let Some(sketch) = sketch
-                && ui.button("Edit Profile Sketch").clicked()
+                && crate::context_menu::button(ui, "Edit Profile Sketch", "sketch").clicked()
             {
                 app.edit_sketch(sketch.0);
                 ui.close();
             }
-            if ui.button("Rename Feature").clicked() {
+            if crate::context_menu::button(ui, "Rename Feature", "rename").clicked() {
                 crate::context_menu::start_rename(app, crate::context_menu::RenameWhat::Feature(*id), rect.center());
                 ui.close();
             }
-            if ui.button(if *suppressed { "Unsuppress Feature" } else { "Suppress Feature" }).clicked() {
+            if crate::context_menu::button(ui, if *suppressed { "Unsuppress Feature" } else { "Suppress Feature" }, "suppress").clicked() {
                 let _ = app.run_heavy("timeline.suppress", json!({"feature": id}));
                 ui.close();
             }
-            if ui.button("Roll Back Here").clicked() {
+            if crate::context_menu::button(ui, "Roll Back Here", "rollback").clicked() {
                 let _ = app.run_heavy("timeline.roll_to", json!({"feature": id}));
                 ui.close();
             }
@@ -807,7 +814,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.separator();
             selection_actions(app, ui, &groups);
             ui.separator();
-            if ui.button("Delete").clicked() {
+            if crate::context_menu::button(ui, "Delete", "delete").clicked() {
                 delete_feature(app, *id);
                 ui.close();
             }

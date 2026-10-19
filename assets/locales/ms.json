@@ -1060,6 +1060,7 @@
   "ui.combine": "Gabung",
   "ui.coming_later": "akan datang",
   "ui.command_done": "{command} selesai",
+  "ui.command_palette_hint": "Taip arahan, cth. {example} — atau tekan S untuk mencari",
   "ui.concentric": "Sepusat",
   "ui.configurations": "Konfigurasi",
   "ui.conic_curve": "Lengkung Kon",

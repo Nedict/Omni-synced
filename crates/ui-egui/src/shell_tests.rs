@@ -106,7 +106,7 @@ fn floating_sketch_palette_and_compass_share_measured_clearance() {
             let palette = h.app.viewport.palette_rect.unwrap();
             assert!(palette.top() >= layout.axis_view.bottom(), "{style:?} {palette:?} {layout:?}");
             assert!(layout.viewport.expand(1.0).contains_rect(palette), "{palette:?} {layout:?}");
-            assert!(palette.contains(crate::scenario::handle_at("sketch_palette:finish").unwrap()));
+            assert!(palette.contains(crate::scenario::handle_at("sketch_palette:look_at").unwrap()));
             let proj = crate::viewport::projection(&h.app, layout.viewport);
             for point in [solidcraft_engine::geom::Vec3::ZERO, solidcraft_engine::geom::Vec3::new(20.0, 0.0, 0.0)] {
                 assert!(layout.drawable.contains(proj.to_screen(point).unwrap()), "{layout:?}");
@@ -154,14 +154,15 @@ fn short_floating_palette_stays_in_viewport() {
             if compass.is_positive() {
                 assert!(palette.top() < compass.bottom(), "short panels reclaim compass space");
             }
-            let finish = crate::scenario::handle_at("sketch_palette:finish").unwrap();
-            if !palette.contains(finish) {
-                // Once reclaiming is insufficient, the whole palette must scroll to Finish.
+            let action = crate::scenario::handle_at("sketch_palette:look_at").unwrap();
+            if !palette.contains(action) {
+                // Once reclaiming is insufficient, the whole palette scrolls to its footer.
                 h.call("ui.scroll", json!({"x":palette.center().x,"y":palette.center().y,"delta":-1200}));
                 h.frames(20);
             }
+            let action = crate::scenario::handle_at("sketch_palette:look_at").unwrap();
+            assert!(palette.contains(action), "footer must be reachable: {style:?}, height={height}, {action:?} in {palette:?}");
             let finish = crate::scenario::handle_at("sketch_palette:finish").unwrap();
-            assert!(palette.contains(finish), "Finish Sketch must be reachable: {style:?}, height={height}, {finish:?} in {palette:?}");
             h.call("ui.click", json!({"x":finish.x,"y":finish.y}));
             assert!(h.app.session.active_sketch.is_none(), "Finish Sketch must work after scrolling");
         }

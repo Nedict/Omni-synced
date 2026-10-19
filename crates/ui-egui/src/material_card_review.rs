@@ -1,4 +1,5 @@
 //! Candidate review through the existing validator, independent of assigned-card persistence.
+use crate::fonts::RichTextExt as _;
 use egui::RichText;
 use serde_json::{Value, json};
 use solidcraft_engine::doc::physical_material::{Family, MaterialCard, PropertyData, admit_card};
@@ -106,7 +107,7 @@ fn show_card(ui: &mut egui::Ui, card: &MaterialCard, report: &Value) {
     // Schema identifiers are inert metadata, not translated source claims or assigned body axes.
     let family = serde_json::to_value(card.family).unwrap_or(Value::Null);
     value(ui, "family", family.as_str().map(str::to_string), "");
-    ui.strong(tr("ui.material_review.properties"));
+    ui.label(egui::RichText::new(tr("ui.material_review.properties")).semibold().color(crate::theme::Tokens::get().text));
     for kind in KINDS {
         let label = format!("ui.material_review.{kind}");
         let Some(property) = card.properties.iter().find(|p| p.data.kind() == kind) else {
@@ -123,7 +124,7 @@ fn show_card(ui: &mut egui::Ui, card: &MaterialCard, report: &Value) {
                 value(ui, "axes", Some(axes), "");
                 ui.label(tr("ui.material_review.axes"));
             }
-            ui.strong(tr("ui.material_review.conditions"));
+            ui.label(egui::RichText::new(tr("ui.material_review.conditions")).semibold().color(crate::theme::Tokens::get().text));
             let c = &property.conditions;
             value(ui, "temperature_k", c.temperature_k.map(|v| v.to_string()), "K");
             value(ui, "state", c.state.clone(), "");
@@ -133,7 +134,7 @@ fn show_card(ui: &mut egui::Ui, card: &MaterialCard, report: &Value) {
             if card.family == Family::Polymer || c.strain_rate_per_s.is_some() {
                 value(ui, "strain_rate_per_s", c.strain_rate_per_s.map(|v| v.to_string()), "s⁻¹");
             }
-            ui.strong(tr("ui.material_review.source"));
+            ui.label(egui::RichText::new(tr("ui.material_review.source")).semibold().color(crate::theme::Tokens::get().text));
             if let Some(source) = card.sources.iter().find(|s| s.id == property.source_id) {
                 ui.label(&source.title);
                 value(ui, "source_id", Some(source.id.clone()), "");
@@ -144,7 +145,7 @@ fn show_card(ui: &mut egui::Ui, card: &MaterialCard, report: &Value) {
         });
     }
     if let Some(moduli) = report.get("validation").and_then(|v| v.get("isotropic_moduli")).filter(|v| v.is_object()) {
-        ui.strong(tr("ui.material_review.derived"));
+        ui.label(egui::RichText::new(tr("ui.material_review.derived")).semibold().color(crate::theme::Tokens::get().text));
         for field in ["shear_pa", "bulk_pa"] {
             value(ui, field, moduli.get(field).and_then(Value::as_f64).map(|v| format!("{v:e}")), "Pa");
         }

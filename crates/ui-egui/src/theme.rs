@@ -48,6 +48,18 @@ pub(crate) struct TabAccent {
     pub soft: Color32,
 }
 
+/// The foreground of a selected element on its tinted background: light blue in the dark theme,
+/// a darker blue in the light theme. Other accents (Sketch green…) get the same treatment.
+pub(crate) fn selected_ink(t: &Tokens, accent: Color32) -> Color32 {
+    if accent == t.accent {
+        t.selected_ink
+    } else if is_dark() {
+        accent.lerp_to_gamma(t.on_accent, 0.5)
+    } else {
+        accent.lerp_to_gamma(Color32::BLACK, 0.3)
+    }
+}
+
 impl TabAccent {
     pub fn for_tab(t: &Tokens, tab: &str) -> Self {
         let color = match tab {
@@ -242,6 +254,61 @@ pub struct Tokens {
     pub font_label: f32,
     pub font_button: f32,
     pub font_heading: f32,
+    /// Tiny world-axis triad letters.
+    pub font_triad: f32,
+    /// Bold letters on the navigation compass discs.
+    pub font_compass: f32,
+    /// Home section titles, home actions and update titles.
+    pub font_subtitle: f32,
+    /// Introductory text on the home page.
+    pub font_intro: f32,
+    /// Top-level headings in assistant Markdown.
+    pub font_article_heading: f32,
+    /// Application title in the About dialog.
+    pub font_title: f32,
+    /// Application name on the home page.
+    pub font_display: f32,
+    /// Height of dense form controls and rows.
+    pub control_height: f32,
+    /// Corner radius of dense form controls and actions.
+    pub control_radius: u8,
+    /// Width of the dense form label column.
+    pub form_label_width: f32,
+    /// Vertical gap between dense form rows.
+    pub form_gap_y: f32,
+    /// Height of the full-width dense form footer.
+    pub form_footer_height: f32,
+    /// Height of the dense form header.
+    pub form_header_height: f32,
+    /// Outer width of a dense feature card.
+    pub form_card_width: f32,
+    /// Size of the icon in a dense form header.
+    pub form_icon_size: f32,
+    /// Size of the dense form close button.
+    pub form_close_size: f32,
+    /// Text inset in controls and gap after the header icon.
+    pub form_inset: f32,
+    /// Inset of artwork inside a dense form icon button.
+    pub form_icon_inset: f32,
+    /// Size of the section disclosure chevron.
+    pub form_section_icon_size: f32,
+    /// Height of a dense form checkbox row.
+    pub form_checkbox_height: f32,
+    /// Minimum height of a dense form footer action.
+    pub form_button_height: f32,
+    /// Outer width of the sketch options card.
+    pub sketch_palette_width: f32,
+    /// Square creation-mode button size and radius.
+    pub sketch_mode_size: f32,
+    pub sketch_mode_radius: u8,
+    pub sketch_mode_border: f32,
+    /// Opacity of the sketch card and its selected accent tint.
+    pub sketch_palette_alpha: f32,
+    pub sketch_mode_tint: f32,
+    /// Footer navigation icon size.
+    pub sketch_footer_icon_size: f32,
+    /// Extra section heading letter spacing as a fraction of font size.
+    pub font_section_tracking: f32,
     pub app_bar: Color32,
     /// Dividers between the application bar groups.
     pub app_bar_separator: Color32,
@@ -367,6 +434,16 @@ pub struct Tokens {
     pub app_bar_hover_strong: Color32,
     /// The active document tab: a solid surface lifted from the bar.
     pub app_bar_tab_active: Color32,
+    /// Dense feature dialogs: the body surface, the footer band, the dividers, input controls
+    /// (fill and border), field labels, and the selected-element foreground and background.
+    pub dialog_body: Color32,
+    pub dialog_footer: Color32,
+    pub dialog_rule: Color32,
+    pub control_fill: Color32,
+    pub control_border: Color32,
+    pub dialog_label: Color32,
+    pub selected_ink: Color32,
+    pub selected_bg: Color32,
     /// Timeline items: normal and failed.
     pub timeline_item: Color32,
     pub timeline_item_error: Color32,
@@ -519,8 +596,8 @@ mod tests {
     fn tab_accent_context_is_per_app_and_does_not_change_widget_visuals() {
         let mut harness = crate::scenario::Harness::new();
         let app = &mut harness.app;
-        let first = egui::Context::default();
-        let second = egui::Context::default();
+        let first = crate::fonts::test_context();
+        let second = crate::fonts::test_context();
         let before = first.style_of(egui::Theme::Dark).visuals.clone();
         app.ui.tab = "SURFACE".into();
         super::TabAccent::publish(app, &first);
@@ -563,7 +640,7 @@ mod tests {
     #[test]
     fn active_movable_window_header_uses_theme_panel_header() {
         for dark in [false, true] {
-            let ctx = egui::Context::default();
+            let ctx = crate::fonts::test_context();
             ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
             ctx.set_visuals(super::visuals(dark));
             let mut output = egui::FullOutput::default();

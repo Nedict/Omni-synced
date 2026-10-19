@@ -231,7 +231,7 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
         let (r, u, _) = app.cam.basis();
         let tip = origin + vec2((d.dot(r) * 17.0) as f32, -(d.dot(u) * 17.0) as f32) * scale;
         painter.line_segment([origin, tip], Stroke::new(1.5, color));
-        painter.text(tip, Align2::CENTER_CENTER, label, FontId::proportional(8.0), color);
+        painter.text(tip, Align2::CENTER_CENTER, label, FontId::proportional(crate::theme::Tokens::get().font_triad), color);
     }
 }
 
@@ -272,7 +272,7 @@ mod tests {
     fn former_edge_strips_click_the_face_and_hover_without_internal_seams() {
         let mut h = crate::scenario::Harness::new();
         h.call("ui.prefs", json!({"navigator_style":"cube"}));
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         h.app.preferences.look_at_anim = false;
         for up in ["z", "y"] {
             h.call("ui.prefs", json!({"up_axis":up}));
@@ -337,7 +337,7 @@ mod tests {
 
     #[test]
     fn hovered_face_and_corner_have_a_pale_blue_opaque_fill_in_both_themes() {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let faces = facets(&Camera::default(), pos2(100.0, 100.0), HALF);
         for t in [Tokens::light(), Tokens::dark()] {
             assert_ne!(t.navigation_cube(false).cube_face, t.cube_face);
@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn idle_principal_views_have_square_faces_without_visible_picking_seams() {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         for up in [UpAxis::Z, UpAxis::Y] {
             for view in [StandardView::Front, StandardView::Back, StandardView::Top, StandardView::Bottom, StandardView::Left, StandardView::Right] {
                 let mut cam = Camera { up, ..Default::default() };
@@ -427,11 +427,11 @@ mod tests {
 
     #[test]
     fn face_labels_use_normalized_font_atlas_coordinates() {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let output = paint_frame(&ctx, |ui| {
             let faces = facets(&Camera::default(), pos2(100.0, 100.0), HALF);
             for face in &faces {
-                face_text(ui.painter(), face, Tokens::light().cube_text, 14.0);
+                face_text(ui.painter(), face, Tokens::light().cube_text, Tokens::get().font_heading);
             }
         });
         let meshes: Vec<_> = output.shapes.iter().filter_map(|shape| if let Shape::Mesh(mesh) = &shape.shape { Some(mesh) } else { None }).collect();
@@ -444,7 +444,7 @@ mod tests {
 
     #[test]
     fn label_uvs_follow_font_atlas_growth_later_in_the_same_frame() {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let mut pixel_uv = Pos2::ZERO;
         let mut glyph_vertex = 0;
         let mut early_size = [0; 2];
@@ -457,7 +457,7 @@ mod tests {
             let (index, vertex) = galley.rows.first().unwrap().visuals.mesh.vertices.iter().enumerate().find(|(_, v)| v.uv.y > 1.0).unwrap();
             glyph_vertex = index;
             pixel_uv = vertex.uv;
-            face_text(ui.painter(), face, Tokens::light().cube_text, 14.0);
+            face_text(ui.painter(), face, Tokens::light().cube_text, Tokens::get().font_heading);
             early_size = ctx.fonts(|f| f.font_image_size());
             // Other widgets can allocate new glyphs after the cube has been drawn.
             let text: String = (32_u8..127).map(char::from).collect();
@@ -473,7 +473,7 @@ mod tests {
 
     #[test]
     fn rotating_cube_facets_stay_opaque_and_inside_the_projected_geometry() {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         for up in [UpAxis::Z, UpAxis::Y] {
             for view in [StandardView::Top, StandardView::Bottom, StandardView::Front, StandardView::Back, StandardView::Left, StandardView::Right] {
                 let from = Camera { up, ..Default::default() };

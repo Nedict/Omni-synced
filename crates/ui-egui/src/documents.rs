@@ -380,7 +380,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
         .map(|(name, dirty)| {
             let shown_name = crate::i18n::Locale::for_language(&app.preferences.language).given_name(name);
             let label = format!("{shown_name}{}", if *dirty { " •" } else { "" });
-            let text = ui.painter().layout_no_wrap(label, FontId::proportional(13.0), t.app_bar_text).size().x;
+            let text = ui.painter().layout_no_wrap(label, crate::fonts::semibold(crate::theme::Tokens::get().font_button), t.app_bar_text).size().x;
             (text + 40.0).clamp(72.0, MAX_FIT)
         })
         .collect();
@@ -403,8 +403,14 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
         }
         tab_shape(ui.painter(), &t, tr, active, resp.hovered() || resp.has_focus());
         let ink = if active || resp.hovered() { t.app_bar_text } else { t.app_bar_text.gamma_multiply(0.7) };
-        let label = format!("{}{}", crate::i18n::Locale::for_language(&app.preferences.language).given_name(name), if *dirty { " •" } else { "" });
-        let g = ui.painter().layout_no_wrap(label, FontId::proportional(13.0), ink);
+        let name_display = crate::i18n::Locale::for_language(&app.preferences.language).given_name(name);
+        let label = format!("{name_display}{}", if *dirty { " •" } else { "" });
+        let font = if active {
+            crate::fonts::semibold(crate::theme::Tokens::get().font_button)
+        } else {
+            FontId::proportional(crate::theme::Tokens::get().font_button)
+        };
+        let g = ui.painter().layout_no_wrap(label, font, ink);
         let text_w = (tr.width() - 30.0).max(10.0);
         let clip = Rect::from_min_size(tr.min, vec2(text_w + 10.0, tr.height()));
         ui.painter().with_clip_rect(clip).galley(pos2(tr.left() + 10.0, tr.center().y - g.size().y / 2.0), g, ink);
@@ -436,10 +442,17 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
     if shown < n {
         let mr = Rect::from_center_size(pos2(x + 12.0, r.center().y), vec2(20.0, 22.0));
         let mresp = ui.interact(mr, ui.id().with("doc_more"), Sense::click());
+        crate::scenario::publish_handle("tab:overflow", mr.center());
         if mresp.hovered() {
             ui.painter().rect_filled(mr, 4.0, t.app_bar_hover_button);
         }
-        ui.painter().text(mr.center(), egui::Align2::CENTER_CENTER, format!("»{}", n - shown), FontId::proportional(12.0), t.app_bar_text);
+        ui.painter().text(
+            mr.center(),
+            egui::Align2::CENTER_CENTER,
+            format!("»{}", n - shown),
+            FontId::proportional(crate::theme::Tokens::get().font_body),
+            t.app_bar_text,
+        );
         let id = egui::Id::new("sc_doc_more");
         if mresp.clone().on_hover_text(crate::i18n::tr_label("All open designs")).clicked() {
             ui.ctx().data_mut(|d| d.insert_temp(id, !d.get_temp::<bool>(id).unwrap_or(false)));
@@ -675,7 +688,7 @@ mod tests {
         for t in [Tokens::light(), Tokens::dark()] {
             let r = Rect::from_min_size(pos2(10.0, 5.0), vec2(80.0, 30.0));
             for (active, hovered) in [(false, false), (false, true), (true, false)] {
-                let ctx = egui::Context::default();
+                let ctx = crate::fonts::test_context();
                 let mut out = ctx.run_ui(egui::RawInput::default(), |ui| tab_shape(ui.painter(), &t, r, active, hovered));
                 out.textures_delta.clear();
                 let rects: Vec<_> = out
@@ -804,7 +817,7 @@ mod tests {
         request_quit(&mut a);
         answer_prompt(&mut a, Answer::Save);
         assert!(!a.quit_requested && a.file_picker_busy());
-        crate::file_picker::tick(&mut a, &egui::Context::default());
+        crate::file_picker::tick(&mut a, &crate::fonts::test_context());
         assert!(a.quit_requested && file.exists());
         let _ = std::fs::remove_file(&file);
     }

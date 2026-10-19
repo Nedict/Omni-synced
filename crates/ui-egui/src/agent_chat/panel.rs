@@ -2,6 +2,7 @@
 //! or in Preferences), resizable, folded to a thin strip with Minimise, closed with ×. Its side,
 //! width and fold are preferences, so they come back next time.
 
+use crate::fonts::RichTextExt as _;
 use egui::{Align, Align2, Color32, Id, Layout, Rect, RichText, Sense, Stroke, pos2, vec2};
 
 use super::*;
@@ -134,13 +135,13 @@ fn picture_strip(ui: &mut egui::Ui, n: usize, pictures: &[Picture]) -> Option<us
                 Shown::Ready(texture) => texture,
                 // Being decoded: a spinner the size of a thumbnail's corner, until it is in.
                 Shown::Loading => {
-                    ui.add(egui::Spinner::new().size(THUMB_MAX.1 / 2.0));
+                    ui.add(egui::Spinner::new().size(t.space_24));
                     continue;
                 }
                 // Not a readable picture: its name, or the plain caption.
                 Shown::Failed => {
                     let caption = if picture.note.is_empty() { tr("ui.agent_chat_view_attached").to_string() } else { picture.note.clone() };
-                    ui.label(RichText::new(caption).color(t.text_dim).size(11.0));
+                    ui.label(RichText::new(caption).color(t.text_dim).size(t.font_small));
                     continue;
                 }
             };
@@ -203,7 +204,7 @@ fn gallery_window(app: &mut SolveApp, ctx: &egui::Context) {
                     crate::scenario::publish_rect("agent_chat:gallery_picture", resp.rect);
                 }
                 Shown::Loading => {
-                    ui.add(egui::Spinner::new().size(32.0));
+                    ui.add(egui::Spinner::new().size(t.space_24));
                 }
                 Shown::Failed => {
                     ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim));
@@ -242,7 +243,7 @@ fn drop_hint(ctx: &egui::Context, area: Rect) {
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::new("sc_agent_chat_drop_hint")));
     let zone = area.shrink(6.0);
     painter.rect(zone, 10.0, t.accent.gamma_multiply(0.16), Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
-    let font = egui::FontId::proportional(14.0);
+    let font = egui::FontId::proportional(Tokens::get().font_heading);
     let text = painter.layout(tr("ui.agent_chat_drop_hint").to_string(), font, t.text, (zone.width() - 24.0).max(40.0));
     let at = zone.center() - text.size() / 2.0;
     painter.galley(at, text, t.text);
@@ -422,7 +423,13 @@ fn strip(app: &mut SolveApp, ui: &mut egui::Ui) {
     if waiting > 0 {
         let at = button.right_top() + vec2(-3.0, 3.0);
         ui.painter().circle_filled(at, 6.5, t.warning);
-        ui.painter().text(at, Align2::CENTER_CENTER, waiting.min(9).to_string(), egui::FontId::proportional(9.5), t.panel);
+        ui.painter().text(
+            at,
+            Align2::CENTER_CENTER,
+            waiting.min(9).to_string(),
+            egui::FontId::proportional(crate::theme::Tokens::get().font_badge),
+            t.panel,
+        );
     }
     ui.painter().line_segment(
         if app.preferences.agent_chat_side == "left" { [r.right_top(), r.right_bottom()] } else { [r.left_top(), r.left_bottom()] },
@@ -451,7 +458,9 @@ fn header(app: &mut SolveApp, ui: &mut egui::Ui, left: bool) {
                     }
                 }
             }
-            let l = ui.label(RichText::new(tr("ui.agent_chat")).strong().size(14.0));
+            let l = ui.label(
+                RichText::new(tr("ui.agent_chat")).semibold().color(crate::theme::Tokens::get().text).size(crate::theme::Tokens::get().font_heading),
+            );
             grip.union(l.rect)
         };
         let mut s = state.label().to_string();
@@ -539,7 +548,7 @@ fn dock_drag(app: &mut SolveApp, ui: &egui::Ui, drag: &egui::Response, left: boo
             zone.center(),
             Align2::CENTER_CENTER,
             tr(if to_left { "ui.agent_chat_dock_left" } else { "ui.agent_chat_dock_right" }),
-            egui::FontId::proportional(14.0),
+            egui::FontId::proportional(crate::theme::Tokens::get().font_heading),
             t.text,
         );
     }
@@ -693,7 +702,7 @@ pub(super) fn login_chip(ui: &mut egui::Ui, login: &str) {
         _ => return,
     };
     egui::Frame::NONE.stroke(Stroke::new(1.0, color)).corner_radius(8.0).inner_margin(egui::Margin::symmetric(6, 1)).show(ui, |ui| {
-        ui.label(RichText::new(text).color(color).size(11.0));
+        ui.label(RichText::new(text).color(color).size(crate::theme::Tokens::get().font_small));
     });
 }
 
@@ -736,29 +745,32 @@ fn switcher(app: &mut SolveApp, ui: &mut egui::Ui) {
             (ui.available_width() - if app.agent_chat.modes.is_empty() { 4.0 } else { 116.0 } - if models { 146.0 } else { 0.0 }).clamp(90.0, 260.0);
         let mut picked: Option<String> = None;
         let mut add = false;
-        let combo = egui::ComboBox::from_id_salt("sc_agent_switch").width(w).selected_text(RichText::new(label).strong()).show_ui(ui, |ui| {
-            for e in &all {
-                let sel = current.as_ref().is_some_and(|c| c.id == e.id);
-                let r = ui.horizontal(|ui| {
-                    kind_icon(ui, e.kind);
-                    let r = ui.selectable_label(sel, &e.name);
-                    ui.label(RichText::new(e.detail()).color(t.text_dim).size(11.0));
-                    login_chip(ui, e.login);
-                    r
-                });
-                crate::scenario::publish_handle(&format!("agent_chat:agent:{}", e.id), r.inner.rect.center());
-                if r.inner.clicked() {
-                    picked = Some(e.id.clone());
+        let combo = egui::ComboBox::from_id_salt("sc_agent_switch")
+            .width(w)
+            .selected_text(RichText::new(label).semibold().color(crate::theme::Tokens::get().text))
+            .show_ui(ui, |ui| {
+                for e in &all {
+                    let sel = current.as_ref().is_some_and(|c| c.id == e.id);
+                    let r = ui.horizontal(|ui| {
+                        kind_icon(ui, e.kind);
+                        let r = ui.selectable_label(sel, &e.name);
+                        ui.label(RichText::new(e.detail()).color(t.text_dim).size(crate::theme::Tokens::get().font_small));
+                        login_chip(ui, e.login);
+                        r
+                    });
+                    crate::scenario::publish_handle(&format!("agent_chat:agent:{}", e.id), r.inner.rect.center());
+                    if r.inner.clicked() {
+                        picked = Some(e.id.clone());
+                    }
                 }
-            }
-            ui.separator();
-            if ui.selectable_label(false, tr("ui.ai_add_agent")).clicked() {
-                add = true;
-            }
-            if ui.selectable_label(false, tr("ui.ai_settings")).clicked() {
-                crate::prefs::open_at(app, crate::prefs::PAGE_AI);
-            }
-        });
+                ui.separator();
+                if ui.selectable_label(false, tr("ui.ai_add_agent")).clicked() {
+                    add = true;
+                }
+                if ui.selectable_label(false, tr("ui.ai_settings")).clicked() {
+                    crate::prefs::open_at(app, crate::prefs::PAGE_AI);
+                }
+            });
         crate::scenario::publish_handle("agent_chat:switcher", combo.response.rect.center());
         combo.response.on_hover_text(tr("ui.ai_switch_tip"));
         if add {
@@ -811,7 +823,7 @@ fn switcher(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
     });
     if let Some(a) = &app.agent_chat.auth_status {
-        ui.label(RichText::new(a).color(t.text_dim).size(11.0));
+        ui.label(RichText::new(a).color(t.text_dim).size(crate::theme::Tokens::get().font_small));
     }
 }
 
@@ -826,7 +838,7 @@ fn picker(app: &mut SolveApp, ui: &mut egui::Ui) {
     let all = agents::entries(app);
     let current = agents::current(app);
     ui.horizontal(|ui| {
-        ui.label(RichText::new(tr("ui.agent_chat_pick")).strong());
+        ui.label(RichText::new(tr("ui.agent_chat_pick")).semibold().color(crate::theme::Tokens::get().text));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let refreshing = app.agent_chat.detecting.is_some();
             if ui.add_enabled(!refreshing, egui::Button::new(tr("ui.agent_chat_refresh")).small()).clicked() {
@@ -847,8 +859,8 @@ fn picker(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 kind_icon(ui, e.kind);
-                ui.label(RichText::new(&e.name).strong().color(t.text));
-                ui.label(RichText::new(e.detail()).color(t.text_dim).size(11.0));
+                ui.label(RichText::new(&e.name).semibold().color(t.text));
+                ui.label(RichText::new(e.detail()).color(t.text_dim).size(crate::theme::Tokens::get().font_small));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| login_chip(ui, e.login));
             });
         });
@@ -866,12 +878,16 @@ fn picker(app: &mut SolveApp, ui: &mut egui::Ui) {
             |ui| {
                 for m in missing {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(m.name).strong());
+                        ui.label(RichText::new(m.name).semibold().color(crate::theme::Tokens::get().text));
                         if ui.small_button(tr("ui.agent_chat_copy")).on_hover_text(m.install).clicked() {
                             ui.ctx().copy_text(m.install.to_string());
                         }
                     });
-                    ui.add(egui::Label::new(RichText::new(m.install).monospace().size(11.0).color(t.text_dim)).selectable(true).wrap());
+                    ui.add(
+                        egui::Label::new(RichText::new(m.install).monospace().size(crate::theme::Tokens::get().font_small).color(t.text_dim))
+                            .selectable(true)
+                            .wrap(),
+                    );
                 }
             },
         );
@@ -883,7 +899,7 @@ fn auth_box(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     egui::Frame::group(ui.style()).stroke(Stroke::new(1.0, t.warning)).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        ui.label(RichText::new(tr("ui.agent_chat_auth_title")).strong());
+        ui.label(RichText::new(tr("ui.agent_chat_auth_title")).semibold().color(crate::theme::Tokens::get().text));
         ui.label(RichText::new(tr("ui.agent_chat_auth_needed")).color(t.text_dim));
         let methods = app.agent_chat.auth.clone();
         let base = app.agent_chat.argv.iter().map(|a| quote(a)).collect::<Vec<_>>().join(" ");
@@ -893,14 +909,22 @@ fn auth_box(app: &mut SolveApp, ui: &mut egui::Ui) {
         for m in methods {
             ui.add_space(4.0);
             let desc = m.description.trim();
-            ui.label(RichText::new(if desc.is_empty() || desc == m.name { m.name.clone() } else { format!("{} — {desc}", m.name) }).strong());
+            ui.label(
+                RichText::new(if desc.is_empty() || desc == m.name { m.name.clone() } else { format!("{} — {desc}", m.name) })
+                    .semibold()
+                    .color(crate::theme::Tokens::get().text),
+            );
             match &m.kind {
                 acp::AuthKind::Terminal { args, .. } => {
                     ui.label(tr("ui.agent_chat_auth_terminal"));
                     let cmd = format!("{base} {}", args.iter().map(|a| quote(a)).collect::<Vec<_>>().join(" "));
                     ui.horizontal_wrapped(|ui| {
                         egui::Frame::NONE.fill(t.toolbar).corner_radius(4.0).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
-                            ui.add(egui::Label::new(RichText::new(&cmd).monospace().size(11.0)).selectable(true).wrap());
+                            ui.add(
+                                egui::Label::new(RichText::new(&cmd).monospace().size(crate::theme::Tokens::get().font_small))
+                                    .selectable(true)
+                                    .wrap(),
+                            );
                         });
                         if ui.small_button(tr("ui.agent_chat_copy")).clicked() {
                             ui.ctx().copy_text(cmd.clone());
@@ -950,7 +974,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
                         }
                     } else if *image {
                         // Taken when the agent starts on the message: nothing to show yet.
-                        ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim).size(11.0));
+                        ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim).size(t.font_small));
                     }
                     files_line(ui, files.iter().map(String::as_str));
                 });
@@ -981,7 +1005,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
             Item::Permission { title, options, answer: given, .. } => {
                 egui::Frame::group(ui.style()).stroke(Stroke::new(1.0, t.accent)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.label(RichText::new(trf("ui.agent_chat_permission", &[("title", title)])).strong());
+                    ui.label(RichText::new(trf("ui.agent_chat_permission", &[("title", title)])).semibold().color(crate::theme::Tokens::get().text));
                     match given {
                         Some(a) => {
                             ui.label(RichText::new(trf("ui.agent_chat_answered", &[("option", a)])).color(t.text_dim));
@@ -1005,8 +1029,8 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
             Item::Approval { id, title, tool, answer: given } => {
                 egui::Frame::group(ui.style()).stroke(Stroke::new(1.5, t.warning)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.label(RichText::new(tr("ui.agent_chat_approval")).strong());
-                    ui.add(egui::Label::new(RichText::new(title).monospace().size(11.5)).selectable(true).wrap());
+                    ui.label(RichText::new(tr("ui.agent_chat_approval")).semibold().color(crate::theme::Tokens::get().text));
+                    ui.add(egui::Label::new(RichText::new(title).monospace().size(crate::theme::Tokens::get().font_caption)).selectable(true).wrap());
                     match given {
                         Some(true) => {
                             ui.label(RichText::new(tr("ui.agent_chat_allowed")).color(t.text_dim));
@@ -1039,9 +1063,9 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
             Item::Changes { steps, doc, undone } => {
                 ui.horizontal(|ui| {
                     let text = trf("ui.agent_chat_changes", &[("n", &steps.to_string())]);
-                    ui.label(RichText::new(text).color(t.text_dim).size(11.5));
+                    ui.label(RichText::new(text).color(t.text_dim).size(crate::theme::Tokens::get().font_caption));
                     if *undone {
-                        ui.label(RichText::new(tr("ui.agent_chat_undone")).color(t.text_dim).size(11.5));
+                        ui.label(RichText::new(tr("ui.agent_chat_undone")).color(t.text_dim).size(crate::theme::Tokens::get().font_caption));
                     } else if Arc::ptr_eq(doc, &current_doc) {
                         let b = ui.button(tr("ui.agent_chat_undo_changes")).on_hover_text(tr("ui.ai_undo_tip"));
                         crate::scenario::publish_handle("agent_chat:undo", b.rect.center());
@@ -1071,15 +1095,19 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 let tag = if stopped && !busy { "ui.agent_chat_queued_stopped" } else { "ui.agent_chat_queued" };
-                ui.label(RichText::new(tr(tag)).color(t.accent).strong().size(11.0));
+                ui.label(RichText::new(tr(tag)).color(t.accent).semibold().size(crate::theme::Tokens::get().font_small));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let x = ui.add(egui::Button::new(RichText::new("×").size(14.0)).frame(false)).on_hover_text(tr("ui.agent_chat_remove"));
+                    let x = ui
+                        .add(egui::Button::new(RichText::new("×").size(crate::theme::Tokens::get().font_heading)).frame(false))
+                        .on_hover_text(tr("ui.agent_chat_remove"));
                     crate::scenario::publish_handle(&format!("agent_chat:pending_remove:{n}"), x.rect.center());
                     if x.clicked() {
                         remove = Some(n);
                     }
                     if editing.as_ref().is_none_or(|(i, _)| *i != n) {
-                        let e = ui.add(egui::Button::new(RichText::new(tr("ui.agent_chat_edit")).size(11.5)).frame(false));
+                        let e = ui.add(
+                            egui::Button::new(RichText::new(tr("ui.agent_chat_edit")).size(crate::theme::Tokens::get().font_caption)).frame(false),
+                        );
                         crate::scenario::publish_handle(&format!("agent_chat:pending_edit:{n}"), e.rect.center());
                         if e.clicked() {
                             start_edit = Some((n, p.text.clone()));
@@ -1105,7 +1133,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
                         ui.add(egui::Label::new(RichText::new(&p.text).color(t.text)).selectable(true).wrap());
                     }
                     if p.image {
-                        ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim).size(11.0));
+                        ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim).size(crate::theme::Tokens::get().font_small));
                     }
                     files_line(ui, p.files.iter().map(|f| f.name.as_str()));
                 }
@@ -1134,7 +1162,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
         ui.add_space(12.0);
         ui.label(RichText::new(tr("ui.agent_chat_intro")).color(t.text_dim));
         ui.add_space(6.0);
-        ui.label(RichText::new(tr("ui.agent_chat_privacy")).color(t.text_dim).size(11.0));
+        ui.label(RichText::new(tr("ui.agent_chat_privacy")).color(t.text_dim).size(crate::theme::Tokens::get().font_small));
     }
     if let Some((n, text)) = edit_done {
         if let (Some(text), Some(p)) = (text.filter(|t| !t.trim().is_empty()), app.agent_chat.pending.get_mut(n)) {
@@ -1173,7 +1201,7 @@ fn files_line<'a>(ui: &mut egui::Ui, names: impl Iterator<Item = &'a str>) {
     let list = names.collect::<Vec<_>>().join(", ");
     if !list.is_empty() {
         let t = Tokens::get();
-        ui.add(egui::Label::new(RichText::new(trf("ui.agent_chat_files", &[("files", &list)])).color(t.text_dim).size(11.0)).wrap());
+        ui.add(egui::Label::new(RichText::new(trf("ui.agent_chat_files", &[("files", &list)])).color(t.text_dim).size(t.font_small)).wrap());
     }
 }
 
@@ -1248,11 +1276,11 @@ fn loading_chip(ui: &mut egui::Ui, name: &str, importing: bool, i: usize, w: f32
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let doing = tr(if importing { "ui.agent_chat_file_importing" } else { "ui.agent_chat_file_loading" });
-                let mark = ui.add(egui::Spinner::new().size(16.0)).on_hover_text(doing).rect.width();
+                let mark = ui.add(egui::Spinner::new().size(t.form_icon_size)).on_hover_text(doing).rect.width();
                 let name_w = (inner - mark - 18.0 - 8.0).max(8.0);
                 ui.allocate_ui(vec2(name_w, 20.0), |ui| {
                     ui.set_width(name_w);
-                    ui.add(egui::Label::new(RichText::new(name).size(11.5).color(t.text_dim)).truncate())
+                    ui.add(egui::Label::new(RichText::new(name).size(t.font_small).color(t.text_dim)).truncate())
                 })
                 .inner
                 .on_hover_text(name);
@@ -1295,14 +1323,20 @@ fn chip(ui: &mut egui::Ui, thumbs: &mut std::collections::HashMap<u64, egui::Tex
                         let (r, _) = ui.allocate_exact_size(vec2(28.0, 20.0), Sense::hover());
                         let color = if matches!(f.content, attach::Content::Pdf { .. }) { t.error } else { t.text_dim };
                         ui.painter().rect_stroke(r.shrink2(vec2(1.0, 1.0)), 2.0, Stroke::new(1.2, color), egui::StrokeKind::Inside);
-                        ui.painter().text(r.center(), Align2::CENTER_CENTER, f.mark(), egui::FontId::proportional(8.5), color);
+                        ui.painter().text(
+                            r.center(),
+                            Align2::CENTER_CENTER,
+                            f.mark(),
+                            egui::FontId::proportional(crate::theme::Tokens::get().font_micro),
+                            color,
+                        );
                         r.width()
                     }
                 };
                 let name_w = (inner - mark - 18.0 - 8.0).max(8.0);
                 ui.allocate_ui(vec2(name_w, 20.0), |ui| {
                     ui.set_width(name_w);
-                    ui.add(egui::Label::new(RichText::new(&f.name).size(11.5)).truncate())
+                    ui.add(egui::Label::new(RichText::new(&f.name).size(t.font_small)).truncate())
                 })
                 .inner
                 .on_hover_text(&f.name);
@@ -1325,8 +1359,9 @@ fn chip(ui: &mut egui::Ui, thumbs: &mut std::collections::HashMap<u64, egui::Tex
 /// the clipboard's picture.
 #[cfg(not(target_arch = "wasm32"))]
 fn add_menu(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let t = Tokens::get();
     let (mut choose, mut paste) = (false, false);
-    let r = ui.menu_button(RichText::new("+").strong().size(15.0), |ui| {
+    let r = ui.menu_button(RichText::new("+").semibold().size(t.font_heading), |ui| {
         let a = ui.button(tr("ui.agent_chat_add_file"));
         crate::scenario::publish_handle("agent_chat:add_file", a.rect.center());
         let b = ui.button(tr("ui.agent_chat_paste_picture"));
@@ -1376,12 +1411,16 @@ fn tool_card(ui: &mut egui::Ui, n: usize, title: &str, kind: &str, status: Optio
                 status_dot(ui, color, filled);
                 // The state and kind keep their room at the right; the title is cut short before them.
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(RichText::new(tr(state)).size(10.5).color(color));
+                    ui.label(RichText::new(tr(state)).size(crate::theme::Tokens::get().font_panel).color(color));
                     if !kind.is_empty() && kind != "other" {
-                        ui.label(RichText::new(kind).size(10.5).color(t.text_dim));
+                        ui.label(RichText::new(kind).size(crate::theme::Tokens::get().font_panel).color(t.text_dim));
                     }
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                        ui.add(egui::Label::new(RichText::new(title).monospace().size(11.5).color(t.text)).truncate()).on_hover_text(title);
+                        ui.add(
+                            egui::Label::new(RichText::new(title).monospace().size(crate::theme::Tokens::get().font_caption).color(t.text))
+                                .truncate(),
+                        )
+                        .on_hover_text(title);
                     });
                 });
             });
@@ -1397,7 +1436,7 @@ fn tool_card(ui: &mut egui::Ui, n: usize, title: &str, kind: &str, status: Optio
                 if let Some(o) = output {
                     ui.separator();
                     egui::ScrollArea::vertical().id_salt(("sc_agent_tool_out", n)).max_height(180.0).show(ui, |ui| {
-                        ui.add(egui::Label::new(RichText::new(o).monospace().size(11.0)).selectable(true).wrap());
+                        ui.add(egui::Label::new(RichText::new(o).monospace().size(crate::theme::Tokens::get().font_small)).selectable(true).wrap());
                     });
                 }
             });

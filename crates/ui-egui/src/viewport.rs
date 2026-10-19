@@ -1,6 +1,7 @@
 //! The 3D viewport: navigation, GPU (or CPU fallback) rendering, picking, overlays, the axis
 //! view and the navigation bar.
 
+use crate::fonts::RichTextExt as _;
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, pos2, vec2};
 use serde_json::json;
 use solidcraft_engine::Sel;
@@ -2892,7 +2893,7 @@ fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Rect) {
             if let Some(r) = paint_toast(ui, free, msg, error, false) {
                 crate::scenario::publish_rect("toast", r);
                 free.max.y = r.top() - t.space_8;
-                // A click opens every message of the run, to read and copy (#2763).
+                // Open the run's messages from the tokenised status toast.
                 crate::scenario::publish_handle("status:chip", r.center());
                 if ui.interact(r, egui::Id::new("sc_status_chip"), Sense::click()).on_hover_text(crate::i18n::tr("messages.chip_hint")).clicked() {
                     app.messages.open = true;
@@ -2922,7 +2923,7 @@ fn paint_toast(ui: &egui::Ui, free: Rect, text: String, error: bool, computing: 
     }
     let t = Tokens::get();
     let painter = ui.painter().with_clip_rect(free);
-    let galley = painter.layout(text, FontId::proportional(t.font_label), t.text, (free.width() - 40.0).min(440.0));
+    let galley = painter.layout(text, crate::fonts::medium(t.font_label), t.text, (free.width() - 40.0).min(440.0));
     let size = galley.size() + vec2(40.0, 16.0);
     if !size.is_finite() || size.x > free.width() || size.y > free.height() {
         return None;
@@ -3673,7 +3674,7 @@ fn view_menu(app: &mut SolveApp, ui: &mut egui::Ui, button: Rect) -> bool {
     let r = area.show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_width(220.0);
-            ui.label(egui::RichText::new(crate::i18n::tr_label("VIEW")).strong().size(t.font_caption));
+            ui.label(egui::RichText::new(crate::i18n::tr_label("VIEW")).semibold().color(crate::theme::Tokens::get().text).size(t.font_caption));
             ui.label(app.tr("ui.graphics_preset"));
             crate::prefs::graphics_preset_selector(app, ui);
             ui.separator();
@@ -4154,7 +4155,7 @@ mod tests {
         draw.hover = Some((b, None));
         for mode in [0, 1, 2] {
             crate::sketch_palette::set_mode(&mut h.app, mode);
-            let ctx = egui::Context::default();
+            let ctx = crate::fonts::test_context();
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 let painter = ui.ctx().layer_painter(egui::LayerId::background());
                 crate::tools::preview(&h.app, &draw, &painter, &proj);
@@ -4379,7 +4380,7 @@ mod tests {
     #[test]
     fn edge_between_two_faces_picks_along_its_whole_length() {
         for style in [0u8, 2] {
-            let ctx = egui::Context::default();
+            let ctx = crate::fonts::test_context();
             let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
             app.run("solid.box", json!({"length":200,"width":120,"height":160})).unwrap();
             app.ui.show_origin = false;
@@ -4452,7 +4453,7 @@ mod tests {
     #[test]
     fn holding_space_pans_instead_of_dragging_geometry() {
         for preset in crate::prefs::NAV_PRESETS.iter().map(|p| p.id) {
-            let ctx = egui::Context::default();
+            let ctx = crate::fonts::test_context();
             let mut app = hover_app(false);
             app.preferences.nav = preset.into();
             app.ui.show_origin = false;
@@ -4480,7 +4481,7 @@ mod tests {
     fn ctrl_left_drag_from_empty_space_orbits_in_every_preset() {
         for preset in crate::prefs::NAV_PRESETS.iter().map(|p| p.id) {
             for action in ["orbit", "tool", "point", "click"] {
-                let ctx = egui::Context::default();
+                let ctx = crate::fonts::test_context();
                 let mut app = hover_app(false);
                 app.preferences.nav = preset.into();
                 app.ui.show_origin = false;
@@ -4536,7 +4537,7 @@ mod tests {
     #[test]
     fn openscad_left_drag_preserves_editing_and_selection() {
         for action in ["point", "box", "tool"] {
-            let ctx = egui::Context::default();
+            let ctx = crate::fonts::test_context();
             let mut app = hover_app(false);
             app.preferences.nav = crate::prefs::OPENSCAD_NAV.into();
             app.ui.show_origin = false;
@@ -4594,7 +4595,7 @@ mod tests {
             (egui::PointerButton::Secondary, true),
             (egui::PointerButton::Middle, true),
         ] {
-            let ctx = egui::Context::default();
+            let ctx = crate::fonts::test_context();
             let mut app = hover_app(false);
             app.preferences.nav = crate::prefs::OPENSCAD_NAV.into();
             hover_frame(&mut app, &ctx, vec![]);
@@ -4639,7 +4640,7 @@ mod tests {
     #[test]
     fn touchpad_modifier_motion_navigates_without_buttons_or_document_changes() {
         for alt in [false, true] {
-            let ctx = egui::Context::default();
+            let ctx = crate::fonts::test_context();
             let mut app = hover_app(false);
             app.preferences.nav = "touchpad".into();
             let p = pos2(350.0, 300.0);
@@ -4692,7 +4693,7 @@ mod tests {
 
     #[test]
     fn touchpad_motion_does_not_move_the_camera_under_a_canvas_triad() {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let mut s = solidcraft_engine::Session::default();
         s.execute("solid.box", &json!({"length":20,"width":20,"height":20})).unwrap();
         s.selection = vec![Sel::Body { name: "Body1".into() }];
@@ -4723,7 +4724,7 @@ mod tests {
 
     #[test]
     fn touchpad_motion_preserves_input_ownership_and_rearms_without_jumping() {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let mut app = hover_app(false);
         app.preferences.nav = "touchpad".into();
         app.preferences.orbit_around = crate::prefs::OrbitAround::Cursor;
@@ -4775,7 +4776,7 @@ mod tests {
 
     #[test]
     fn touchpad_focus_and_preset_changes_discard_old_motion() {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let mut app = hover_app(false);
         app.preferences.nav = "touchpad".into();
         let alt = egui::Modifiers { alt: true, ..Default::default() };
@@ -4853,7 +4854,7 @@ mod tests {
     fn hover_stays_off_between_navigation_events_and_returns_on_release() {
         for gpu in [false, true] {
             for button in [egui::PointerButton::Middle, egui::PointerButton::Secondary, egui::PointerButton::Primary] {
-                let ctx = egui::Context::default();
+                let ctx = crate::fonts::test_context();
                 let mut app = hover_app(gpu);
                 if button == egui::PointerButton::Primary {
                     app.viewport.nav = Some(NavMode::Orbit);
@@ -4902,7 +4903,7 @@ mod tests {
     #[test]
     fn device_navigation_keeps_face_hover_current_for_a_stationary_or_moving_pointer() {
         for gpu in [false, true] {
-            let ctx = egui::Context::default();
+            let ctx = crate::fonts::test_context();
             let mut app = device_face_app(gpu);
             hover_frame(&mut app, &ctx, vec![]);
             let p = projection(&app, app.viewport.rect.unwrap()).to_screen(Vec3::ZERO).unwrap();
@@ -4930,7 +4931,7 @@ mod tests {
     fn device_navigation_allows_face_clicks_and_preserves_modifier_selection() {
         for gpu in [false, true] {
             for (modifiers, add) in [(egui::Modifiers::NONE, false), (egui::Modifiers::SHIFT, true), (egui::Modifiers::CTRL, true)] {
-                let ctx = egui::Context::default();
+                let ctx = crate::fonts::test_context();
                 let mut app = device_face_app(gpu);
                 let existing = Sel::Body { name: "Body1".into() };
                 app.session.selection = vec![existing.clone()];
@@ -4969,7 +4970,7 @@ mod tests {
     fn device_navigation_keeps_hover_and_click_picking() {
         use crate::space_mouse::{DeviceMotion, Motion};
         for gpu in [false, true] {
-            let ctx = egui::Context::default();
+            let ctx = crate::fonts::test_context();
             let mut s = solidcraft_engine::Session::default();
             s.execute("solid.box", &json!({"length": 40, "width": 30, "height": 20})).unwrap();
             let mut app = SolveApp::new(s, crate::Services::default());
@@ -5008,7 +5009,7 @@ mod tests {
 
     #[test]
     fn hover_stays_off_during_spin_and_animated_views() {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let mut app = hover_app(true);
         hover_frame(&mut app, &ctx, vec![]);
         let p = projection(&app, app.viewport.rect.unwrap()).to_screen(Vec3::ZERO).unwrap();
@@ -5627,7 +5628,7 @@ mod tests {
 
     #[test]
     fn trackpad_gestures_over_dialogs_do_not_move_the_view() {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
         assert!(app.preferences.trackpad_pan);
         crate::help::run(&mut app, &ctx, "shortcuts");
@@ -5684,7 +5685,7 @@ mod tests {
     #[test]
     fn shortcuts_window_wheel_does_not_zoom_the_viewport() {
         for smooth in [true, false] {
-            let ctx = egui::Context::default();
+            let ctx = crate::fonts::test_context();
             let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
             app.preferences.smooth_wheel_zoom = smooth;
             app.preferences.trackpad_pan = false;
@@ -6106,8 +6107,7 @@ mod tests {
                 h.app.ui.perspective = perspective;
                 h.app.run("solid.box", json!({"length":80,"width":50,"height":20})).unwrap();
                 h.app.fit_view();
-                // Fit resolves after measuring the floating browser and history cards.
-                h.frames(2);
+                h.frames(2); // Fit resolves against the measured floating shell before the drag.
                 let rect = h.app.viewport.rect.unwrap();
                 let at = rect.center() + offset;
                 let proj = projection(&h.app, rect);

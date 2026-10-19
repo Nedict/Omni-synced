@@ -1,5 +1,6 @@
 //! Reviewed issue drafts with local evidence; never publishes or uploads a report.
 
+use crate::fonts::RichTextExt as _;
 use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -584,7 +585,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 }
             });
             ui.separator();
-            ui.label(RichText::new(crate::i18n::tr_label("Send your report on GitHub")).strong());
+            ui.label(RichText::new(crate::i18n::tr_label("Send your report on GitHub")).semibold().color(crate::theme::Tokens::get().text));
             let (url, copy_needed) = draft_url(&draft.title, &draft.body);
             ui.add(
                 egui::Label::new(crate::i18n::tr_label(if copy_needed {
@@ -600,7 +601,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 let t = crate::theme::Tokens::get();
                 if crate::frame::add_outlined(
                     ui,
-                    egui::Button::new(RichText::new(crate::i18n::tr_label("Open GitHub draft")).strong().color(t.text))
+                    egui::Button::new(RichText::new(crate::i18n::tr_label("Open GitHub draft")).semibold().color(t.text))
                         .fill(t.accent_soft)
                         .stroke(egui::Stroke::new(1.0, t.accent)),
                     1.0,
@@ -714,7 +715,7 @@ mod tests {
         app.run("solid.combine", json!({"target":"Stock","tools":["Cutter"],"operation":"cut","keep_tools":true})).unwrap();
         assert!(app.session.model.results.iter().all(|r| r.error.is_none()));
         let before = (app.session.doc.to_json(), app.session.undo.len(), app.session.redo.len(), app.cam);
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         help::run(&mut app, &ctx, "report");
         let draft = app.issue_report.draft.as_ref().unwrap();
         assert!(draft.body.contains("Describe the unexpected result"));
@@ -898,7 +899,7 @@ mod tests {
     #[test]
     fn issue_report_boundary_preserves_opacity_widget_state_and_real_focus() {
         let mut app = app();
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let focus = egui::Id::new("report-review-focus");
         let state = egui::Id::new("cad-layout-state");
         begin(&mut app, &ctx, None, None);
@@ -1093,7 +1094,7 @@ mod tests {
     #[test]
     fn issue_report_capture_accepts_only_its_matching_unchanged_frame() {
         let mut app = app();
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         begin(&mut app, &ctx, None, None);
         let token = app.issue_report.pending.as_ref().unwrap().token;
         let (reply, _receiver) = std::sync::mpsc::channel();
@@ -1118,7 +1119,7 @@ mod tests {
     fn issue_report_capture_rejects_changed_inputs_timeout_and_malformed_images() {
         let mut app = app();
         combine(&mut app);
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let dialog = app.dialog.clone();
         begin(&mut app, &ctx, dialog.as_ref(), Some("bad Boolean"));
         app.dialog.as_mut().unwrap().extra.insert("direction".into(), json!("negative"));

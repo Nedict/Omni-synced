@@ -134,7 +134,7 @@ pub fn search(app: &SolveApp, q: &str) -> Vec<Row> {
 /// ("Sketch › Create"). The separator is drawn, centred on the ink of the panel's name: a
 /// font's "›", or one centred on the row, sits low beside Japanese or Chinese words.
 fn paint_key_and_place(painter: &egui::Painter, at: Pos2, key: &str, place: Option<(&str, &str)>, color: egui::Color32) {
-    let font = FontId::proportional(10.5);
+    let font = FontId::proportional(crate::theme::Tokens::get().font_panel);
     // One piece of text ending at `x`, centred on the row: its left edge and the middle of its ink.
     let piece = |x: f32, text: &str| -> (f32, f32) {
         let galley = painter.layout_no_wrap(text.to_string(), font.clone(), color);
@@ -263,7 +263,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             }
             ui.add_space(4.0);
             if app.sbox.text.trim().is_empty() && !app.sbox.recent.is_empty() {
-                ui.label(egui::RichText::new(crate::i18n::tr_label("RECENT")).size(10.0).color(t.text_dim));
+                ui.label(egui::RichText::new(crate::i18n::tr_label("RECENT")).size(crate::theme::Tokens::get().font_micro).color(t.text_dim));
             }
             egui::ScrollArea::vertical().max_height(h - 90.0).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
@@ -287,7 +287,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         t.accent,
                     );
                     let col = if enabled { t.text } else { t.text_dim };
-                    ui.painter().text(pos2(r.left() + 30.0, r.center().y), Align2::LEFT_CENTER, label, FontId::proportional(13.0), col);
+                    ui.painter().text(
+                        pos2(r.left() + 30.0, r.center().y),
+                        Align2::LEFT_CENTER,
+                        label,
+                        FontId::proportional(crate::theme::Tokens::get().font_button),
+                        col,
+                    );
                     let key = crate::keymap::effective(app, id).unwrap_or_default();
                     paint_key_and_place(ui.painter(), pos2(r.right() - 26.0, r.center().y), &key, *place, t.text_dim);
                     // The pin.
@@ -373,7 +379,7 @@ mod tests {
     #[test]
     fn the_search_field_asks_for_focus_once_per_opening() {
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let field = egui::Id::new("sc_sbox_text");
         open(&mut app, None);
         frame(&mut app, &ctx);

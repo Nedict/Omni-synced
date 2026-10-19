@@ -47,7 +47,7 @@ fn browser_card_shrinks_and_scrolls_without_covering_history() {
 fn selected_row_paints_tab_soft_fill_and_accent_text_in_both_layouts() {
     for mode in [LayoutMode::Floating, LayoutMode::Docked] {
         for tab in ["MODEL", "SURFACE", "SKETCH"] {
-            let ctx = egui::Context::default();
+            let ctx = crate::fonts::test_context();
             let mut app = SolveApp::new(Default::default(), Default::default());
             app.ui.layout = mode;
             app.ui.tab = tab.into();
@@ -64,7 +64,7 @@ fn selected_row_paints_tab_soft_fill_and_accent_text_in_both_layouts() {
             assert!(
                 out.shapes
                     .iter()
-                    .any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.text() == "Selected body" && t.fallback_color == accent.color))
+                    .any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.text() == "Selected body" && t.fallback_color == crate::theme::selected_ink(&Tokens::get(), accent.color)))
             );
         }
     }
@@ -165,5 +165,74 @@ fn one_browser_keeps_its_resized_width_across_layouts_and_overlay_preferences() 
             h.settle();
             assert!((h.app.viewport.rect.unwrap().left() - width).abs() < 1.0, "the column uses the card's saved width");
         }
+    }
+}
+#[test]
+fn browser_title_uses_a_single_semibold_run() {
+    let ctx = crate::fonts::test_context();
+    let mut app = SolveApp::new(Default::default(), Default::default());
+    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        ui.set_width(250.0);
+        browser_header(&mut app, ui, true);
+    });
+    output.textures_delta.clear();
+    let title = crate::i18n::tr("ui.browser_title");
+    let titles: Vec<_> = output
+        .shapes
+        .iter()
+        .filter_map(|s| match &s.shape {
+            egui::Shape::Text(text) if text.galley.text() == title => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(titles.len(), 1);
+    assert_eq!(titles[0].galley.job.sections[0].format.font_id, crate::fonts::semibold(Tokens::get().font_heading));
+}
+
+#[test]
+fn resizing_browser_card_and_column_persists_width_including_floating_preference() {
+    for (mode, float, left_history) in [
+        (LayoutMode::Floating, false, false),
+        (LayoutMode::Docked, false, false),
+        (LayoutMode::Docked, true, false),
+        (LayoutMode::Floating, true, true),
+        (LayoutMode::Docked, true, true),
+    ] {
+        let mut h = Harness::new();
+        h.app.ui.layout = mode;
+        h.app.preferences.browser_float = float;
+        h.app.preferences.timeline_left = left_history;
+        h.call("ui.resize", json!({"width":1400,"height":900}));
+        h.settle();
+        let before = h.app.viewport.rect.unwrap();
+        let at = handle_at("left-browser-rail").unwrap();
+        h.call("ui.drag", json!({"x0":at.x,"y0":at.y,"x1":at.x+80.0,"y1":at.y,"steps":8}));
+        h.settle();
+        let width = h.app.preferences.browser_width;
+        assert!(width > crate::prefs::DEFAULT_BROWSER_WIDTH + 40.0, "{mode:?}, float={float}, width={width}");
+        if mode == LayoutMode::Floating || float {
+            assert!((rect_of("browser:card").unwrap().width() - width).abs() < 1.0);
+            assert_eq!(h.app.viewport.rect.unwrap(), before, "the card leaves the projection intact");
+        } else {
+            assert!((h.app.viewport.rect.unwrap().left() - width).abs() < 1.0);
+        }
+        let mut restored = SolveApp::new(Default::default(), Default::default());
+        restored.load_prefs(&h.app.prefs());
+        assert_eq!(restored.preferences.browser_width, width);
+        assert_eq!(restored.preferences.browser_float, float);
+    }
+}
+
+#[test]
+fn browser_width_rejects_hostile_preferences_and_tiny_windows_still_fit() {
+    for width in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        assert_eq!(browser_width(width), crate::prefs::DEFAULT_BROWSER_WIDTH);
+    }
+    assert_eq!(browser_width(-100.0), MIN_BROWSER_WIDTH);
+    assert_eq!(browser_width(f32::MAX), MAX_BROWSER_WIDTH);
+    let available = Rect::from_min_size(Pos2::ZERO, vec2(100.0, 300.0));
+    for top_gap in [0.0, crate::shell::SHELL_GAP] {
+        let bounds = floating_bounds(available, None, MAX_BROWSER_WIDTH, top_gap);
+        assert!(available.contains_rect(bounds));
     }
 }

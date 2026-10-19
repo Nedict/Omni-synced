@@ -12,6 +12,7 @@
 //! The host provides the HTTP client (`Services::http_get`), so this crate stays portable and
 //! the browser build never checks (it updates itself through its service worker).
 
+use crate::fonts::RichTextExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -803,7 +804,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         .show(ctx, |ui| {
             ui.set_width(WINDOW_W);
             ui.set_max_width(WINDOW_W);
-            ui.label(RichText::new(crate::i18n::format("update.available", &[("version", release.version())])).strong().size(15.0));
+            ui.label(
+                RichText::new(crate::i18n::format("update.available", &[("version", release.version())]))
+                    .semibold()
+                    .color(crate::theme::Tokens::get().text)
+                    .size(crate::theme::Tokens::get().font_subtitle),
+            );
             ui.label(RichText::new(crate::i18n::format("update.you_have", &[("version", current_version())])).color(t.text_dim));
             ui.add_space(6.0);
             egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -833,7 +839,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 });
                 ui.add_space(4.0);
             } else if let Some(name) = asset.as_ref().filter(|_| app.updater.installed.as_ref().is_none_or(|r| r.is_err())) {
-                ui.label(RichText::new(crate::i18n::format("update.file", &[("file", name)])).size(11.0).color(t.text_dim));
+                ui.label(
+                    RichText::new(crate::i18n::format("update.file", &[("file", name)]))
+                        .size(crate::theme::Tokens::get().font_small)
+                        .color(t.text_dim),
+                );
             }
             if let Some((_, progress)) = &app.updater.job {
                 let done = progress.done.load(std::sync::atomic::Ordering::Relaxed);
@@ -851,9 +861,16 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             }
             match &app.updater.installed {
                 Some(Ok(install::Outcome::Restart(_))) => {
-                    ui.label(RichText::new(crate::i18n::format("update.installed", &[("version", release.version())])).strong());
+                    ui.label(
+                        RichText::new(crate::i18n::format("update.installed", &[("version", release.version())]))
+                            .semibold()
+                            .color(crate::theme::Tokens::get().text),
+                    );
                     ui.horizontal(|ui| {
-                        let r = ui.add(egui::Button::new(RichText::new(crate::i18n::tr("update.restart")).strong()).fill(t.accent));
+                        let r = ui.add(
+                            egui::Button::new(RichText::new(crate::i18n::tr("update.restart")).semibold().color(crate::theme::Tokens::get().text))
+                                .fill(t.accent),
+                        );
                         crate::scenario::publish_rect("update:restart", r.rect);
                         if r.clicked() {
                             action = Some("restart");
@@ -885,14 +902,18 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         install::Method::Dmg => crate::i18n::tr("update.download_open"),
                         _ => crate::i18n::tr("update.update_now"),
                     };
-                    let r = ui.add(egui::Button::new(RichText::new(label).strong()).fill(t.accent));
+                    let r = ui.add(egui::Button::new(RichText::new(label).semibold().color(crate::theme::Tokens::get().text)).fill(t.accent));
                     crate::scenario::publish_rect("update:install", r.rect);
                     if r.clicked() {
                         action = Some("install");
                     }
                 }
                 let download = if kind.system_managed() { crate::i18n::tr("update.release_page") } else { crate::i18n::tr("update.download") };
-                let r = if one_click { ui.button(download) } else { ui.add(egui::Button::new(RichText::new(download).strong()).fill(t.accent)) };
+                let r = if one_click {
+                    ui.button(download)
+                } else {
+                    ui.add(egui::Button::new(RichText::new(download).semibold().color(crate::theme::Tokens::get().text)).fill(t.accent))
+                };
                 crate::scenario::publish_rect("update:download", r.rect);
                 if r.clicked() {
                     action = Some("download");
@@ -968,7 +989,7 @@ pub fn prefs_rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
     } else {
         crate::i18n::format("update.prefs_dev", &[("version", current_version())])
     };
-    ui.add(egui::Label::new(RichText::new(note).size(11.0).color(t.text_dim)).wrap());
+    ui.add(egui::Label::new(RichText::new(note).size(crate::theme::Tokens::get().font_small).color(t.text_dim)).wrap());
     ui.end_row();
     if let Some(v) = offered_or_newer(app)
         && offered(app).is_none()
@@ -1132,7 +1153,7 @@ fn markdown(ui: &mut egui::Ui, src: &str, t: &Tokens) {
             let (text, font, color) = match span {
                 Span::Text(s) => (s.as_str(), FontId::proportional(size), if strong { t.text } else { body }),
                 Span::Strong(s) => (s.as_str(), FontId::proportional(size), t.text),
-                Span::Code(s) => (s.as_str(), FontId::monospace(size - 1.0), body),
+                Span::Code(s) => (s.as_str(), FontId::monospace(size - (t.font_body - t.font_small)), body),
                 Span::Link { text, .. } => (text.as_str(), FontId::proportional(size), t.accent),
             };
             job.append(text, 0.0, egui::TextFormat { font_id: font, color, ..Default::default() });
@@ -1155,7 +1176,7 @@ fn markdown(ui: &mut egui::Ui, src: &str, t: &Tokens) {
         ui.horizontal_wrapped(|ui| {
             ui.add_space(indent);
             for (text, url) in targets {
-                ui.hyperlink_to(RichText::new(text).size(11.5), url).on_hover_text(url);
+                ui.hyperlink_to(RichText::new(text).size(t.font_caption), url).on_hover_text(url);
             }
         });
     };
@@ -1165,10 +1186,10 @@ fn markdown(ui: &mut egui::Ui, src: &str, t: &Tokens) {
         match block {
             Block::Heading(spans) => {
                 ui.add_space(4.0);
-                ui.add(egui::Label::new(job(&spans, 14.0, true, width)).wrap());
+                ui.add(egui::Label::new(job(&spans, t.font_heading, true, width)).wrap());
             }
             Block::Paragraph(spans) => {
-                ui.add(egui::Label::new(job(&spans, 12.5, false, width)).wrap());
+                ui.add(egui::Label::new(job(&spans, t.font_label, false, width)).wrap());
                 links(ui, &spans, 0.0);
                 ui.add_space(3.0);
             }
@@ -1176,8 +1197,8 @@ fn markdown(ui: &mut egui::Ui, src: &str, t: &Tokens) {
                 let indent = 6.0 + 12.0 * depth.min(4) as f32;
                 ui.horizontal_top(|ui| {
                     ui.add_space(indent);
-                    ui.label(RichText::new("•").size(12.5));
-                    ui.add(egui::Label::new(job(&spans, 12.5, false, width - indent - 14.0)).wrap());
+                    ui.label(RichText::new("•").size(crate::theme::Tokens::get().font_label));
+                    ui.add(egui::Label::new(job(&spans, t.font_label, false, width - indent - 14.0)).wrap());
                 });
                 links(ui, &spans, indent + 14.0);
             }

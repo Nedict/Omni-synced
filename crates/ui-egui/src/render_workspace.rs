@@ -549,7 +549,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         Ok(())
     })();
     if let Err(error) = result {
-        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, error, egui::FontId::proportional(14.0), Tokens::get().text);
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            error,
+            egui::FontId::proportional(crate::theme::Tokens::get().font_heading),
+            Tokens::get().text,
+        );
     }
     crate::viewport::axis_view(app, ui, rect);
 }

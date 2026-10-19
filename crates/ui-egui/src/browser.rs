@@ -6,6 +6,7 @@
 //! viewport, a double-click on a sketch edits it, and a right-click opens the item's menu
 //! ([`crate::context_menu`]).
 
+use crate::fonts::RichTextExt as _;
 #[cfg(test)]
 #[path = "occurrence_ui_tests.rs"]
 mod occurrence_ui_tests;
@@ -164,14 +165,14 @@ pub fn group_name(app: &SolveApp, id: u64) -> Option<String> {
 pub fn group_items(app: &SolveApp, id: u64, scope: &str) -> Vec<Item> {
     let Some(g) = find_group(app, id) else { return Vec::new() };
     let mut v = vec![
-        Item::action("ui.rename", "Rename", "").with(json!({ "group": id })),
+        Item::action("ui.rename", "Rename", "rename").with(json!({ "group": id })),
         Item::action("ui.ungroup", "Ungroup", "folder").with(json!({ "group": id })),
         Item::sep(),
         // The group itself: its items keep their own state.
         Item::action("ui.folderVisible", "Show/Hide", "eye").key("V").with(json!({ "key": format!("{scope}/g{id}") })),
     ];
     if g.folder == "bodies" {
-        v.push(Item::action("ui.isolate", "Isolate", "").with(json!({ "bodies": group_bodies(app, id) })));
+        v.push(Item::action("ui.isolate", "Isolate", "body").with(json!({ "bodies": group_bodies(app, id) })));
     }
     v
 }
@@ -391,10 +392,14 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
         icons::paint_icon(ui.painter(), ir, row.icon, if row.dim { DIM_ICON_OPACITY } else { 1.0 });
         x += 21.0;
     }
-    let col =
-        if row.selected { crate::theme::TabAccent::current(ui.ctx()).color } else { row.color.unwrap_or(if row.dim { t.text_dim } else { t.text }) };
+    let col = if row.selected {
+        crate::theme::selected_ink(&t, crate::theme::TabAccent::current(ui.ctx()).color)
+    } else {
+        row.color.unwrap_or(if row.dim { t.text_dim } else { t.text })
+    };
     let label_display = if row.name { crate::i18n::tr_name(row.label) } else { crate::i18n::tr_dyn(row.label) };
-    let galley = ui.painter().layout_no_wrap(label_display, FontId::proportional(t.font_label), col);
+    let font = if row.selected { crate::fonts::semibold(t.font_label) } else { FontId::proportional(t.font_label) };
+    let galley = ui.painter().layout_no_wrap(label_display, font, col);
     let lw = galley.size().x;
     ui.painter().galley(pos2(x, cy - galley.size().y / 2.0), galley, col);
     let mut bx = (x + lw + 6.0).min(r.right() - 16.0);
@@ -516,7 +521,7 @@ fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
     DRAWN.with(|d| d.borrow_mut().clear());
     OCCURRENCES.with(|d| d.borrow_mut().clear());
     let mut acts = Actions::default();
-    let width = browser_width(app);
+    let width = browser_width(app.preferences.browser_width);
     let panel = egui::Panel::left("sc_browser")
         .exact_size(width)
         .resizable(false)
@@ -547,8 +552,8 @@ fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
                     crate::scenario::publish_handle("left-history-divider", rect.center());
                 }
                 let arrow = if browser_collapsed { "▶" } else { "▼" };
-                let response =
-                    ui.add(egui::Button::new(RichText::new(format!("{arrow}  BROWSER")).size(t.font_small).strong().color(t.text_dim)).frame(false));
+                let response = ui
+                    .add(egui::Button::new(RichText::new(format!("{arrow}  BROWSER")).size(t.font_small).semibold().color(t.text_dim)).frame(false));
                 crate::scenario::publish_handle("left-browser-toggle", response.rect.center());
                 if response.clicked() {
                     app.preferences.timeline_left_browser_collapsed = !browser_collapsed;
@@ -565,8 +570,7 @@ fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
     finish_browser(app, ui, acts);
 }
 
-fn browser_width(app: &SolveApp) -> f32 {
-    let remembered = app.preferences.browser_width;
+fn browser_width(remembered: f32) -> f32 {
     if remembered.is_finite() { remembered.clamp(MIN_BROWSER_WIDTH, MAX_BROWSER_WIDTH) } else { crate::prefs::DEFAULT_BROWSER_WIDTH }
 }
 
@@ -592,11 +596,8 @@ pub fn floating(app: &mut SolveApp, ui: &mut egui::Ui, available: Rect) {
     let mut acts = Actions::default();
     let gap = crate::shell::SHELL_GAP;
     let top_gap = if app.ui.layout == crate::shell::LayoutMode::Docked { gap } else { 0.0 };
-    let min = available.min + vec2(gap, top_gap);
-    let right = (available.right() - gap).max(min.x);
-    let bottom = app.shell.history.map_or(available.bottom() - gap, |r| r.top() - gap).max(min.y);
-    let width = browser_width(app);
-    let bounds = Rect::from_min_max(min, pos2((min.x + width).min(right), bottom));
+    let width = browser_width(app.preferences.browser_width);
+    let bounds = floating_bounds(available, app.shell.history, width, top_gap);
     app.shell.browser = None;
     let min_height = HEADER_H + 2.0 * (CARD_INSET + 1.0);
     if bounds.is_positive() && bounds.height() >= min_height {
@@ -621,6 +622,14 @@ pub fn floating(app: &mut SolveApp, ui: &mut egui::Ui, available: Rect) {
         }
     }
     finish_browser(app, ui, acts);
+}
+
+fn floating_bounds(available: Rect, history: Option<Rect>, width: f32, top_gap: f32) -> Rect {
+    let gap = crate::shell::SHELL_GAP;
+    let min = available.min + vec2(gap, top_gap);
+    let right = (available.right() - gap).max(min.x);
+    let bottom = history.map_or(available.bottom() - gap, |r| r.top() - gap).max(min.y);
+    Rect::from_min_max(min, pos2((min.x + width).min(right), bottom))
 }
 
 fn browser_contents(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions, collapsible: bool) {
@@ -654,7 +663,7 @@ fn browser_header(app: &mut SolveApp, ui: &mut egui::Ui, collapsible: bool) {
     let title = crate::i18n::tr("ui.browser_title").to_string();
     let kind = if collapsible { egui::WidgetType::Button } else { egui::WidgetType::Label };
     response.widget_info(|| egui::WidgetInfo::labeled(kind, true, &title));
-    let galley = ui.painter().layout_no_wrap(title, FontId::proportional(t.font_heading), t.text);
+    let galley = ui.painter().layout_no_wrap(title, crate::fonts::semibold(t.font_heading), t.text);
     ui.painter().galley(pos2(rect.left() + t.space_6, rect.center().y - galley.size().y / 2.0), galley, t.text);
     let mut right = rect.right() - t.space_6;
     if collapsible {
@@ -763,8 +772,7 @@ fn finish_browser(app: &mut SolveApp, ui: &mut egui::Ui, acts: Actions) {
     occurrence_panel(app, ui);
     capture_prompt(app, ui.ctx());
     canvas_panel(app, ui.ctx());
-    let repair_anchor = app.viewport.rect.map(|rect| rect.right_top() + vec2(-16.0, 16.0)).unwrap_or_else(|| ui.ctx().content_rect().right_top());
-    crate::sketch_attachment_ui::panel(app, ui.ctx(), repair_anchor);
+    crate::sketch_attachment_ui::panel(app, ui.ctx());
 }
 
 fn component_name(app: &SolveApp, id: u64) -> String {
@@ -1146,7 +1154,7 @@ pub fn view_items(app: &SolveApp, name: &str) -> Vec<Item> {
         Item::action("ui.restoreView", "Restore", "home").with(json!({ "view": name })),
         Item::action("ui.updateView", "Update to Current View", "perspective").with(json!({ "view": name })).on_if(saved),
         Item::sep(),
-        Item::action("ui.rename", "Rename", "").with(json!({ "view": name })).on_if(saved),
+        Item::action("ui.rename", "Rename", "rename").with(json!({ "view": name })).on_if(saved),
         Item::action("view.delete", "Delete", "delete").with(json!({ "view": name })).on_if(saved),
     ]
 }
@@ -1327,7 +1335,7 @@ pub fn canvas_items(app: &SolveApp, id: u64) -> Vec<Item> {
         Item::action("ui.calibrateCanvas", "Calibrate", "measure").with(json!({ "canvas": id })),
         Item::sep(),
         Item::action("ui.delete", "Delete", "delete").with(json!({ "canvases": [id] })),
-        Item::action("ui.rename", "Rename", "").with(json!({ "canvas": id })),
+        Item::action("ui.rename", "Rename", "rename").with(json!({ "canvas": id })),
         Item::sep(),
         Item::action("ui.canvasVisible", "Show/Hide", "eye").key("V").with(json!({ "canvas": id, "visible": !visible })),
     ]
@@ -2135,9 +2143,12 @@ pub fn dims_overlay(app: &SolveApp, ctx: &egui::Context) {
     }
 }
 
-/// Where the browser's panels open: the viewport's top left corner.
+/// Keep browser panels beside the browser and below the ribbon, including the floating shell.
 fn panel_pos(app: &SolveApp) -> Pos2 {
-    app.viewport.rect.map(|r| crate::shell::content_rect(app, r).left_top() + vec2(16.0, 16.0)).unwrap_or(pos2(270.0, 140.0))
+    app.viewport
+        .rect
+        .map(|r| crate::shell::content_rect(app, r).left_top() + vec2(Tokens::get().space_16, Tokens::get().space_16))
+        .unwrap_or(pos2(270.0, 140.0))
 }
 
 /// The Capture Position question stands for saving.

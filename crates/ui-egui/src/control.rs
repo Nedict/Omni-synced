@@ -23,6 +23,7 @@
 //!   headless CPU render of the model with the current camera, in the window's theme, with the
 //!   section the viewport shows (no window needed); the ground grid and the origin's axes as the
 //!   window shows them, unless `grid` or `axes` says
+//! - `ui.icon_audit {reset?, stop?}`: collect/drain requested icon names, resolved masters and placeholder flags;
 //! - `ui.menu {x?, y?, target?, close?}`: open a context menu at a point (the viewport's marking
 //!   menu, or a browser menu with `target: {type: body|sketch|component, …}`); without a point,
 //!   the open menu and its items. `ui.menuPick {item}` runs an item by id or label;
@@ -654,6 +655,16 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
             app.synthetic.push(egui::Event::Text(s("text").unwrap_or("").to_string()));
             ok(Value::Null)
         }
+        "ui.icon_audit" => {
+            if b("reset") {
+                crate::icon_svg::audit::start();
+            }
+            let requested = crate::icon_svg::audit::take();
+            if b("stop") {
+                crate::icon_svg::audit::stop();
+            }
+            ok(json!({"requested": requested}))
+        }
         "ui.menu" => {
             if b("close") {
                 crate::context_menu::close(app);
@@ -943,7 +954,7 @@ mod tests {
     #[test]
     fn touchpad_text_prefix_does_not_collapse_queued_pointer_frames() {
         let mut app = SolveApp::new(Session::default(), Services::default());
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let (req, _) = ControlRequest::new("ui.text", json!({"text":"prefix"}));
         assert!(matches!(handle(&mut app, &ctx, &req), Outcome::Done(_)));
         for params in [json!({"x":10,"y":10,"shift":true}), json!({"x":20,"y":20,"alt":true}), json!({"x":30,"y":30})] {
@@ -967,7 +978,7 @@ mod tests {
     #[test]
     fn touchpad_automation_preserves_each_queued_moves_modifiers() {
         let mut app = SolveApp::new(Session::default(), Services::default());
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         for params in [json!({"x":10,"y":10,"shift":true}), json!({"x":20,"y":20,"alt":true}), json!({"x":30,"y":30})] {
             let (req, _) = ControlRequest::new("ui.move", params);
             assert!(matches!(handle(&mut app, &ctx, &req), Outcome::Done(_)));
@@ -989,7 +1000,7 @@ mod tests {
 
     fn render(app: &mut SolveApp, path: &std::path::Path) -> Vec<u8> {
         let (req, _rx) = ControlRequest::new("ui.render", json!({"path": path.to_string_lossy(), "width": 200, "height": 140}));
-        match handle(app, &egui::Context::default(), &req) {
+        match handle(app, &crate::fonts::test_context(), &req) {
             Outcome::Done(v) => assert_eq!(v["ok"], true, "{v}"),
             Outcome::Screenshot { .. } => panic!("ui.render took a screenshot"),
         }
@@ -1059,7 +1070,7 @@ mod tests {
             params[k.as_str()] = v.clone();
         }
         let (req, _rx) = ControlRequest::new("ui.render", params);
-        match handle(app, &egui::Context::default(), &req) {
+        match handle(app, &crate::fonts::test_context(), &req) {
             Outcome::Done(v) => assert_eq!(v["ok"], true, "{v}"),
             Outcome::Screenshot { .. } => panic!("ui.render took a screenshot"),
         }
@@ -1321,7 +1332,7 @@ mod tests {
                 params["allow_paths"] = json!([root.to_string_lossy()]);
             }
             let (req, _rx) = ControlRequest::new(method, params);
-            match handle(&mut app, &egui::Context::default(), &req) {
+            match handle(&mut app, &crate::fonts::test_context(), &req) {
                 Outcome::Done(v) => v,
                 Outcome::Screenshot { path } => json!({"ok": true, "screenshot": path}),
             }

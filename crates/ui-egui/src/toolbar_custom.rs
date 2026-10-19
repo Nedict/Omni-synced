@@ -8,6 +8,7 @@
 //! and Reset Toolbar; Reset Toolbar restores the tab. Kept with the
 //! preferences and exported or imported with the keyboard shortcuts.
 
+use crate::fonts::RichTextExt as _;
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
@@ -213,22 +214,22 @@ pub fn command_items(app: &SolveApp, id: &str) -> Vec<Item> {
     let fav = app.sbox.pinned.iter().any(|p| p == id);
     let mut v = Vec::new();
     v.push(if on {
-        Item::action("ui.toolbarRemove", "Remove from Toolbar", "").with(json!({ "command": id }))
+        Item::action("ui.toolbarRemove", "Remove from Toolbar", "close").with(json!({ "command": id }))
     } else {
-        Item::action("ui.toolbarPin", "Pin to Toolbar", "").with(json!({ "command": id }))
+        Item::action("ui.toolbarPin", "Pin to Toolbar", "plus").with(json!({ "command": id }))
     });
-    v.push(Item::action("ui.shortcutPin", if fav { "Unpin from Shortcuts" } else { "Pin to Shortcuts" }, "").with(json!({ "command": id })));
+    v.push(Item::action("ui.shortcutPin", if fav { "Unpin from Shortcuts" } else { "Pin to Shortcuts" }, "star").with(json!({ "command": id })));
     v.push(Item::sep());
-    v.push(Item::action("ui.toolbarCustomize", "Customize Toolbar…", ""));
-    v.push(Item::action("ui.toolbarReset", "Reset Toolbar", "").with(json!({ "tab": tab })));
+    v.push(Item::action("ui.toolbarCustomize", "Customize Toolbar…", "settings"));
+    v.push(Item::action("ui.toolbarReset", "Reset Toolbar", "restore").with(json!({ "tab": tab })));
     v
 }
 
 /// The toolbar's own menu (right-click on its empty space).
 pub fn toolbar_items(app: &SolveApp) -> Vec<Item> {
     vec![
-        Item::action("ui.toolbarCustomize", "Customize Toolbar…", ""),
-        Item::action("ui.toolbarReset", "Reset Toolbar", "").with(json!({ "tab": app.ui.tab })),
+        Item::action("ui.toolbarCustomize", "Customize Toolbar…", "settings"),
+        Item::action("ui.toolbarReset", "Reset Toolbar", "restore").with(json!({ "tab": app.ui.tab })),
     ]
 }
 
@@ -301,7 +302,7 @@ pub fn window(app: &mut SolveApp, ctx: &egui::Context) {
                     if cmds.is_empty() {
                         continue;
                     }
-                    ui.label(egui::RichText::new(app.tr_label(panel)).strong().size(11.0));
+                    ui.label(egui::RichText::new(app.tr_label(panel)).semibold().color(crate::theme::Tokens::get().text).size(crate::theme::Tokens::get().font_small));
                     let shown = buttons(app, &tab, panel, &cmds, n);
                     for c in &cmds {
                         let mut on = shown.iter().any(|b| b.id == c.id) || pinned_on(app, &tab, c.id).is_some();

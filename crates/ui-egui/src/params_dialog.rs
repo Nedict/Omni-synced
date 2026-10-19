@@ -9,6 +9,7 @@
 //! [`complete`] adds suggestions (parameters, functions, units) under any expression box: the
 //! names come from `parameters.complete`, cached per document revision by [`publish`].
 
+use crate::fonts::RichTextExt as _;
 use std::sync::Arc;
 
 use egui::RichText;
@@ -148,65 +149,75 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         d.lists += 1;
         r
     };
-    crate::frame::window(ctx, RichText::new(crate::i18n::tr_label("PARAMETERS")).strong().size(13.0), crate::frame::Width::Wide)
-        .id(egui::Id::new("sc_params_dialog"))
-        .open(&mut open)
-        .default_width(740.0)
-        .default_height(520.0)
-        .resizable(true)
-        .collapsible(false)
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut d.filter).hint_text(crate::i18n::tr_label("Filter")).desired_width(180.0));
-                ui.separator();
-                if ui.button("Import…").on_hover_text(crate::i18n::tr_label("CSV or JSON: updates existing parameters, adds new ones")).clicked() {
-                    app.pick_open_command("parameters.import", json!({}), &[]);
-                }
-                for (label, ext) in [("Export CSV…", "csv"), ("Export JSON…", "json")] {
-                    if ui.button(label).clicked() {
-                        app.pick_save_command(&format!("parameters.{ext}"), &[ext], "parameters.export", json!({"format": ext}));
-                    }
-                }
-            });
-            if let Some(e) = &d.error {
-                ui.label(RichText::new(e).color(t.error));
-            }
+    crate::frame::window(
+        ctx,
+        RichText::new(crate::i18n::tr_label("PARAMETERS"))
+            .semibold()
+            .color(crate::theme::Tokens::get().text)
+            .size(crate::theme::Tokens::get().font_button),
+        crate::frame::Width::Wide,
+    )
+    .id(egui::Id::new("sc_params_dialog"))
+    .open(&mut open)
+    .default_width(740.0)
+    .default_height(520.0)
+    .resizable(true)
+    .collapsible(false)
+    .show(ctx, |ui| {
+        ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut d.filter).hint_text(crate::i18n::tr_label("Filter")).desired_width(180.0));
             ui.separator();
-            let f = d.filter.to_ascii_lowercase();
-            let visible: Vec<&Row> = all
-                .iter()
-                .filter(|r| {
-                    f.is_empty()
-                        || r.name.to_ascii_lowercase().contains(&f)
-                        || r.comment.to_ascii_lowercase().contains(&f)
-                        || r.group.to_ascii_lowercase().contains(&f)
-                })
-                .collect();
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                let favs: Vec<&Row> = visible.iter().copied().filter(|r| r.favorite).collect();
-                if !favs.is_empty() {
-                    section(ui, &t, "Favorites");
-                    table(app, ui, &mut d, &favs, "fav");
+            if ui.button("Import…").on_hover_text(crate::i18n::tr_label("CSV or JSON: updates existing parameters, adds new ones")).clicked() {
+                app.pick_open_command("parameters.import", json!({}), &[]);
+            }
+            for (label, ext) in [("Export CSV…", "csv"), ("Export JSON…", "json")] {
+                if ui.button(label).clicked() {
+                    app.pick_save_command(&format!("parameters.{ext}"), &[ext], "parameters.export", json!({"format": ext}));
                 }
-                section(ui, &t, "User Parameters");
-                let users: Vec<&Row> = visible.iter().copied().filter(|r| r.source == "user").collect();
-                table(app, ui, &mut d, &users, "user");
-                add_row(app, ui, &mut d);
-                section(ui, &t, "Model Parameters");
-                let mut groups: Vec<String> = Vec::new();
-                for r in visible.iter().filter(|r| r.source != "user") {
-                    if !groups.contains(&r.group) {
-                        groups.push(r.group.clone());
-                    }
+            }
+        });
+        if let Some(e) = &d.error {
+            ui.label(RichText::new(e).color(t.error));
+        }
+        ui.separator();
+        let f = d.filter.to_ascii_lowercase();
+        let visible: Vec<&Row> = all
+            .iter()
+            .filter(|r| {
+                f.is_empty()
+                    || r.name.to_ascii_lowercase().contains(&f)
+                    || r.comment.to_ascii_lowercase().contains(&f)
+                    || r.group.to_ascii_lowercase().contains(&f)
+            })
+            .collect();
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            let favs: Vec<&Row> = visible.iter().copied().filter(|r| r.favorite).collect();
+            if !favs.is_empty() {
+                section(ui, &t, "Favorites");
+                table(app, ui, &mut d, &favs, "fav");
+            }
+            section(ui, &t, "User Parameters");
+            let users: Vec<&Row> = visible.iter().copied().filter(|r| r.source == "user").collect();
+            table(app, ui, &mut d, &users, "user");
+            add_row(app, ui, &mut d);
+            section(ui, &t, "Model Parameters");
+            let mut groups: Vec<String> = Vec::new();
+            for r in visible.iter().filter(|r| r.source != "user") {
+                if !groups.contains(&r.group) {
+                    groups.push(r.group.clone());
                 }
-                for g in groups {
-                    let members: Vec<&Row> = visible.iter().copied().filter(|r| r.source != "user" && r.group == g).collect();
-                    egui::CollapsingHeader::new(RichText::new(&g).strong()).id_salt(("pgroup", &g)).default_open(true).show(ui, |ui| {
+            }
+            for g in groups {
+                let members: Vec<&Row> = visible.iter().copied().filter(|r| r.source != "user" && r.group == g).collect();
+                egui::CollapsingHeader::new(RichText::new(&g).semibold().color(crate::theme::Tokens::get().text))
+                    .id_salt(("pgroup", &g))
+                    .default_open(true)
+                    .show(ui, |ui| {
                         table(app, ui, &mut d, &members, &g);
                     });
-                }
-            });
+            }
         });
+    });
     // The title bar's close button, for scenarios and demos.
     if let Some(r) = ctx.memory(|m| m.area_rect(egui::Id::new("sc_params_dialog"))) {
         crate::scenario::publish_handle("params:close", egui::pos2(r.right() - 16.0, r.top() + 15.0));
@@ -221,7 +232,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
 
 fn section(ui: &mut egui::Ui, t: &Tokens, title: &str) {
     ui.add_space(6.0);
-    ui.label(RichText::new(title).strong().color(t.text));
+    ui.label(RichText::new(title).semibold().color(t.text));
 }
 
 /// Live check of an expression typed for a parameter of this unit: Ok(shown value) or the message.
@@ -587,7 +598,7 @@ mod tests {
         assert_eq!(word_before("width + 1", 5), (0, "width".to_string()));
         assert_eq!(word_before("1 + ", 4), (4, String::new()));
         assert_eq!(word_before("ü", 9), (0, "ü".to_string()));
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         let _ = app.run("parameters.add", json!({"name": "width", "expression": "40 mm"}));
         publish(&mut app, &ctx);

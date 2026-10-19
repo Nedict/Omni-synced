@@ -308,7 +308,7 @@ pub(crate) fn show(app: &SolveApp, ui: &egui::Ui, painter: &Painter, proj: &Proj
             }
             Grab::Rotate => format!("{:.1}°", f.angle.to_degrees()),
         };
-        painter.text(p + vec2(14.0, -14.0), Align2::LEFT_BOTTOM, label, FontId::proportional(12.0), tk.accent);
+        painter.text(p + vec2(14.0, -14.0), Align2::LEFT_BOTTOM, label, FontId::proportional(crate::theme::Tokens::get().font_body), tk.accent);
     }
 }
 

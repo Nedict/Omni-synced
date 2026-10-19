@@ -5,6 +5,7 @@
 //! before the click. Joints and drives preview on the placed (world) model: the moving
 //! component shows where it goes, and with Animate the joint plays its motion.
 
+use crate::fonts::RichTextExt as _;
 use egui::{Color32, Pos2, RichText, Stroke, vec2};
 use serde_json::{Value, json};
 use solidcraft_engine::Sel;
@@ -14,7 +15,7 @@ use solidcraft_engine::doc::joints::JointKind;
 use solidcraft_engine::geom::{Aabb3, Mesh, Vec3};
 
 use crate::SolveApp;
-use crate::dialogs::{Dialog, Kind, combo, field, row_label};
+use crate::dialogs::{Dialog, Kind, combo, field, form_row, row_label};
 use crate::preview::{Built, Colors};
 use crate::selection::{BODIES, EDGES, FACES, SelInput, VERTICES};
 use crate::theme::Tokens;
@@ -518,13 +519,10 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
     let problem = joint_problem(app, k, inputs);
     match k {
         Asm::NewComponent { name, activate } => {
-            row_label(ui, "Name");
-            let r = ui.add(egui::TextEdit::singleline(name).hint_text(crate::i18n::tr_label("Component1")));
-            enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            ui.end_row();
-            row_label(ui, "Activate");
-            ui.checkbox(activate, "");
-            ui.end_row();
+            form_row(ui, "Name", |ui| {
+                enter |= crate::ui_kit::text_field(ui, name, crate::i18n::tr_label("Component1")).0;
+            });
+            crate::ui_kit::options(ui, "component_options", &mut [("Activate", activate)]);
         }
         Asm::Joint(f) => {
             // As-built: two components picked, the position comes next.
@@ -533,63 +531,65 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             }
             // Picks that make no joint say why, under them, and offer the way out (#1239).
             if let Some((why, bodies)) = problem {
-                row_label(ui, "");
                 ui.vertical(|ui| {
                     ui.add(egui::Label::new(RichText::new(why).color(t.warning)).wrap());
                     if !bodies.is_empty()
-                        && ui.button(crate::i18n::tr("cmd.component_from_bodies")).on_hover_text(crate::i18n::tr("joint.from_bodies_hint")).clicked()
+                        && crate::ui_kit::secondary_button(ui, crate::i18n::tr("cmd.component_from_bodies"))
+                            .on_hover_text(crate::i18n::tr("joint.from_bodies_hint"))
+                            .clicked()
                     {
                         // A refusal shows on the status line; the picks stay either way.
                         let _ = app.run("component.from_bodies", json!({ "bodies": bodies }));
                     }
                 });
-                ui.end_row();
             }
-            row_label(ui, "Motion");
-            ui.label("");
-            ui.end_row();
-            row_label(ui, "Type");
-            combo(ui, "jt_type", &TYPE_LABELS, &mut f.kind);
-            ui.end_row();
+            form_row(ui, "Motion", |ui| {
+                ui.label("");
+            });
+            form_row(ui, "Type", |ui| {
+                combo(ui, "jt_type", &TYPE_LABELS, &mut f.kind);
+            });
             f.fit_limits();
             if !f.as_built {
-                row_label(ui, "Angle");
-                enter |= field(ui, &mut f.angle);
-                ui.end_row();
-                for (l, v) in ["Offset X", "Offset Y", "Offset Z"].iter().zip(f.offset.iter_mut()) {
-                    if f.editing.is_some() && *l != "Offset Z" {
-                        continue;
+                form_row(ui, "Angle", |ui| {
+                    enter |= field(ui, &mut f.angle);
+                });
+                crate::ui_kit::section(ui, "joint_position", "Position", false, |ui| {
+                    for (l, v) in ["Offset X", "Offset Y", "Offset Z"].iter().zip(f.offset.iter_mut()) {
+                        if f.editing.is_some() && *l != "Offset Z" {
+                            continue;
+                        }
+                        form_row(ui, l, |ui| {
+                            enter |= field(ui, v);
+                        });
                     }
-                    row_label(ui, l);
-                    enter |= field(ui, v);
-                    ui.end_row();
-                }
-                row_label(ui, "Flip");
-                ui.checkbox(&mut f.flip, "");
-                ui.end_row();
+                });
+                crate::ui_kit::options(ui, "joint_options", &mut [("Flip", &mut f.flip)]);
             }
             let kind = f.joint_kind();
             if kind != JointKind::Rigid {
-                row_label(ui, "Animate");
-                let label = if f.animate { "■ Stop" } else { "▶ Play" };
-                if ui.button(label).on_hover_text("Play the joint's motion in the view").clicked() {
-                    f.animate = !f.animate;
-                }
-                ui.end_row();
-                for (i, (on, lo, hi)) in f.limits.iter_mut().enumerate() {
-                    let name = kind.dofs().get(i).copied().unwrap_or("value");
-                    row_label(ui, &format!("{} limits", capital(name)));
-                    ui.checkbox(on, "");
-                    ui.end_row();
-                    if *on {
-                        row_label(ui, "  Minimum");
-                        enter |= field(ui, lo);
-                        ui.end_row();
-                        row_label(ui, "  Maximum");
-                        enter |= field(ui, hi);
-                        ui.end_row();
+                form_row(ui, "Animate", |ui| {
+                    let label = if f.animate { "■ Stop" } else { "▶ Play" };
+                    if crate::ui_kit::secondary_button(ui, label).on_hover_text("Play the joint's motion in the view").clicked() {
+                        f.animate = !f.animate;
                     }
-                }
+                });
+                crate::ui_kit::section(ui, "joint_limits", "Limits", false, |ui| {
+                    for (i, (on, lo, hi)) in f.limits.iter_mut().enumerate() {
+                        let name = kind.dofs().get(i).copied().unwrap_or("value");
+                        form_row(ui, &format!("{} limits", capital(name)), |ui| {
+                            crate::ui_kit::checkbox(ui, "", on);
+                        });
+                        if *on {
+                            form_row(ui, "  Minimum", |ui| {
+                                enter |= field(ui, lo);
+                            });
+                            form_row(ui, "  Maximum", |ui| {
+                                enter |= field(ui, hi);
+                            });
+                        }
+                    }
+                });
             } else {
                 f.animate = false;
             }
@@ -601,10 +601,9 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             }
         }
         Asm::JointOrigin { name, .. } => {
-            row_label(ui, "Name");
-            let r = ui.add(egui::TextEdit::singleline(name).hint_text(crate::i18n::tr_label("Joint Origin1")));
-            enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            ui.end_row();
+            form_row(ui, "Name", |ui| {
+                enter |= crate::ui_kit::text_field(ui, name, crate::i18n::tr_label("Joint Origin1")).0;
+            });
         }
         Asm::RigidGroup => {}
         Asm::Drive { joint, values, focus } => {
@@ -677,7 +676,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
                 row_label(ui, "");
                 ui.label(
                     RichText::new(format!("{} … {}{}", fmt(lo), fmt(hi), if limited { "  (limits)" } else { "  (no limits)" }))
-                        .size(11.0)
+                        .size(crate::theme::Tokens::get().font_small)
                         .color(if limited { t.text } else { t.text_dim }),
                 );
                 ui.end_row();
@@ -694,50 +693,50 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             let s = &app.session;
             let joints = &s.doc.assembly.joints;
             if joints.len() < 2 {
-                row_label(ui, "");
-                ui.label(RichText::new(crate::i18n::tr_label("needs two joints")).color(t.text_dim));
-                ui.end_row();
+                form_row(ui, "", |ui| {
+                    ui.label(RichText::new(crate::i18n::tr_label("needs two joints")).color(t.text_dim));
+                });
                 return false;
             }
             let labels: Vec<&str> = joints.iter().map(|j| j.name.as_str()).collect();
             for (l, sel, idx, id) in [("Joint 1", &mut *a, &mut *ia, "ml_a"), ("Joint 2", &mut *b, &mut *ib, "ml_b")] {
-                row_label(ui, l);
-                combo(ui, id, &labels, sel);
-                ui.end_row();
+                form_row(ui, l, |ui| {
+                    combo(ui, id, &labels, sel);
+                });
                 let dofs = joints.get(*sel).map(|j| j.kind.dofs()).unwrap_or(&[]);
                 if dofs.len() > 1 {
-                    row_label(ui, "  Value");
-                    let caps: Vec<String> = dofs.iter().map(|d| capital(d)).collect();
-                    let refs: Vec<&str> = caps.iter().map(String::as_str).collect();
-                    combo(ui, &format!("{id}_i"), &refs, idx);
-                    ui.end_row();
+                    form_row(ui, "  Value", |ui| {
+                        let caps: Vec<String> = dofs.iter().map(|d| capital(d)).collect();
+                        let refs: Vec<&str> = caps.iter().map(String::as_str).collect();
+                        combo(ui, &format!("{id}_i"), &refs, idx);
+                    });
                 } else {
                     *idx = 0;
                 }
             }
-            row_label(ui, "Ratio");
-            enter |= field(ui, ratio);
-            ui.end_row();
-            row_label(ui, "Offset");
-            enter |= field(ui, offset);
-            ui.end_row();
+            form_row(ui, "Ratio", |ui| {
+                enter |= field(ui, ratio);
+            });
+            form_row(ui, "Offset", |ui| {
+                enter |= field(ui, offset);
+            });
         }
         Asm::Coupling(f) => enter |= crate::dialogs_coupling::rows(app, ui, f, inputs),
         Asm::Cam(f) => enter |= crate::dialogs_coupling::cam::rows(app, ui, f, inputs),
         Asm::Interference { result, overlaps, of, clearance } => {
             let picked: Vec<Sel> = inputs.first().map(|i| i.items.clone()).unwrap_or_default();
-            row_label(ui, "Clearance");
-            field(ui, clearance);
-            ui.end_row();
-            row_label(ui, "");
-            let stale = result.is_some() && *of != picked;
-            if ui.button(crate::i18n::tr(if stale { "dialog.compute_again" } else { "dialog.compute" })).clicked() {
-                let (r, o) = interference(app, &picked, clearance);
-                *result = Some(r);
-                *overlaps = o;
-                *of = picked;
-            }
-            ui.end_row();
+            form_row(ui, "Clearance", |ui| {
+                enter |= field(ui, clearance);
+            });
+            form_row(ui, "", |ui| {
+                let stale = result.is_some() && *of != picked;
+                if crate::ui_kit::secondary_button(ui, crate::i18n::tr(if stale { "dialog.compute_again" } else { "dialog.compute" })).clicked() {
+                    let (r, o) = interference(app, &picked, clearance);
+                    *result = Some(r);
+                    *overlaps = o;
+                    *of = picked;
+                }
+            });
             if let Some(r) = result.as_ref() {
                 interference_rows(app, ui, r);
             }
@@ -785,65 +784,66 @@ fn interference(app: &mut SolveApp, picked: &[Sel], clearance: &str) -> (Value, 
 fn interference_rows(app: &SolveApp, ui: &mut egui::Ui, r: &Value) {
     let t = Tokens::get();
     if let Some(e) = r.get("error").and_then(Value::as_str) {
-        row_label(ui, "");
-        ui.label(RichText::new(e).color(t.error));
-        ui.end_row();
+        form_row(ui, "", |ui| {
+            ui.label(RichText::new(e).color(t.error));
+        });
         return;
     }
     let hits = r["overlaps"].as_array().cloned().unwrap_or_default();
-    row_label(ui, "Checked");
-    ui.label(crate::i18n::format("dialog.bodies_count", &[("count", &r["bodies"].as_u64().unwrap_or(0).to_string())]));
-    ui.end_row();
+    form_row(ui, "Checked", |ui| {
+        ui.label(crate::i18n::format("dialog.bodies_count", &[("count", &r["bodies"].as_u64().unwrap_or(0).to_string())]));
+    });
     let unchecked = r["unchecked"].as_array().cloned().unwrap_or_default();
     let near = r["near"].as_array().cloned().unwrap_or_default();
     let pair = |h: &Value| format!("{} · {}", h["a"].as_str().unwrap_or(""), h["b"].as_str().unwrap_or(""));
     if hits.is_empty() && unchecked.is_empty() {
-        row_label(ui, "Result");
-        ui.label(RichText::new(crate::i18n::tr_label("no interference")).color(t.text_dim));
-        ui.end_row();
+        form_row(ui, "Result", |ui| {
+            ui.label(RichText::new(crate::i18n::tr_label("no interference")).color(t.text_dim));
+        });
     }
     // Pairs closer than the clearance, nearest first.
     if !near.is_empty() {
-        row_label(ui, "Too close");
-        ui.label(RichText::new(crate::i18n::tr("ui.distance")).strong());
-        ui.end_row();
+        form_row(ui, "Too close", |ui| {
+            ui.label(RichText::new(crate::i18n::tr("ui.distance")).semibold().color(crate::theme::Tokens::get().text));
+        });
     }
     for h in &near {
-        row_label(ui, &pair(h));
-        ui.label(RichText::new(crate::prefs::show_mm(app, h["distance_mm"].as_f64().unwrap_or(0.0), 1)).color(t.warning));
-        ui.end_row();
+        form_row(ui, &pair(h), |ui| {
+            ui.label(RichText::new(crate::prefs::show_mm(app, h["distance_mm"].as_f64().unwrap_or(0.0), 1)).color(t.warning));
+        });
     }
     // Each body's nearest neighbour.
     let nearest = r["nearest"].as_object().cloned().unwrap_or_default();
     if !nearest.is_empty() {
-        row_label(ui, "Nearest");
-        ui.label(RichText::new(crate::i18n::tr("ui.distance")).strong());
-        ui.end_row();
+        form_row(ui, "Nearest", |ui| {
+            ui.label(RichText::new(crate::i18n::tr("ui.distance")).semibold().color(crate::theme::Tokens::get().text));
+        });
     }
     for (body, list) in &nearest {
         let Some(n) = list.get(0) else { continue };
-        row_label(ui, &format!("{body} → {}", n["body"].as_str().unwrap_or("")));
-        ui.label(crate::prefs::show_mm(app, n["distance_mm"].as_f64().unwrap_or(0.0), 1));
-        ui.end_row();
+        form_row(ui, &format!("{body} → {}", n["body"].as_str().unwrap_or("")), |ui| {
+            ui.label(crate::prefs::show_mm(app, n["distance_mm"].as_f64().unwrap_or(0.0), 1));
+        });
     }
     if hits.is_empty() && unchecked.is_empty() {
         return;
     }
     if !hits.is_empty() {
-        row_label(ui, "Interferes");
-        ui.label(RichText::new(crate::i18n::tr_label("Volume")).strong());
-        ui.end_row();
+        form_row(ui, "Interferes", |ui| {
+            ui.label(RichText::new(crate::i18n::tr_label("Volume")).semibold().color(crate::theme::Tokens::get().text));
+        });
     }
     for h in hits {
-        row_label(ui, &format!("{} · {}", h["a"].as_str().unwrap_or(""), h["b"].as_str().unwrap_or("")));
-        ui.label(RichText::new(crate::prefs::show_mm(app, h["volume_mm3"].as_f64().unwrap_or(0.0), 3)).color(t.error));
-        ui.end_row();
+        form_row(ui, &format!("{} · {}", h["a"].as_str().unwrap_or(""), h["b"].as_str().unwrap_or("")), |ui| {
+            ui.label(RichText::new(crate::prefs::show_mm(app, h["volume_mm3"].as_f64().unwrap_or(0.0), 3)).color(t.error));
+        });
     }
     // Pairs the check could not work out: not clear, not known to interfere.
     for u in unchecked {
-        row_label(ui, &format!("{} · {}", u["a"].as_str().unwrap_or(""), u["b"].as_str().unwrap_or("")));
-        ui.label(RichText::new(crate::i18n::tr("dialog.could_not_be_checked")).color(t.warning)).on_hover_text(u["reason"].as_str().unwrap_or(""));
-        ui.end_row();
+        form_row(ui, &format!("{} · {}", u["a"].as_str().unwrap_or(""), u["b"].as_str().unwrap_or("")), |ui| {
+            ui.label(RichText::new(crate::i18n::tr("dialog.could_not_be_checked")).color(t.warning))
+                .on_hover_text(u["reason"].as_str().unwrap_or(""));
+        });
     }
 }
 
@@ -1281,7 +1281,7 @@ pub fn timeline_joints_vertical(app: &mut SolveApp, ui: &mut egui::Ui) {
         return;
     }
     ui.add_space(4.0);
-    ui.label(egui::RichText::new("JOINTS").size(10.0).strong().color(t.text_dim));
+    ui.label(egui::RichText::new("JOINTS").size(crate::theme::Tokens::get().font_micro).semibold().color(t.text_dim));
     let mut open = None;
     let mut run = None;
     for (id, name, kind, suppressed) in joints {
@@ -1298,7 +1298,7 @@ pub fn timeline_joints_vertical(app: &mut SolveApp, ui: &mut egui::Ui) {
             egui::pos2(icon.right() + 7.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             &name,
-            egui::FontId::proportional(12.0),
+            egui::FontId::proportional(crate::theme::Tokens::get().font_body),
             if suppressed { t.text_dim } else { t.text },
         );
         let response = response.on_hover_text(format!("{name}  ({kind:?} joint)\nDouble-click to edit · right-click for more"));

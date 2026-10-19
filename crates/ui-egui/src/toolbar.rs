@@ -1,5 +1,6 @@
 //! Application bar, the workspace toolbar (tabs and panels) and keyboard shortcuts.
 
+use crate::fonts::RichTextExt as _;
 use crate::icons::glyphs::pin_icon;
 use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::json;
@@ -291,7 +292,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 pos2(left + 36.0, r.center().y),
                 Align2::LEFT_CENTER,
                 "SolidCraft",
-                FontId::proportional(t.font_heading),
+                crate::fonts::semibold(t.font_heading),
                 t.app_bar_text,
             );
         }
@@ -488,17 +489,17 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                 ui.visuals_mut().widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
                 ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
                 ui.visuals_mut().widgets.hovered.weak_bg_fill = Tokens::get().hover;
-                let item_if = |ui: &mut egui::Ui, label: &str, key: &str, enabled: bool| {
-                    ui.add_enabled(enabled, egui::Button::new(label).shortcut_text(key).min_size(vec2(180.0, 22.0))).clicked()
+                let item_if = |ui: &mut egui::Ui, label: &str, key: &str, icon: &str, enabled: bool| {
+                    crate::context_menu::list_row(ui, &crate::context_menu::Item::action(label, label, icon).key(key).on_if(enabled)).is_some()
                 };
-                let item = |ui: &mut egui::Ui, label: &str, key: &str| item_if(ui, label, key, true);
+                let item = |ui: &mut egui::Ui, label: &str, key: &str, icon: &str| item_if(ui, label, key, icon, true);
                 // Insert, Save and Export act on the design, which Home hides.
                 let shown = design_shown(app);
-                if item(ui, app.tr("ui.new_design"), "Ctrl+N") {
+                if item(ui, app.tr("ui.new_design"), "Ctrl+N", "new") {
                     crate::documents::new_design(app);
                     close = true;
                 }
-                if item(ui, &format!("{}…", app.tr("ui.open")), "Ctrl+O") {
+                if item(ui, &format!("{}…", app.tr("ui.open")), "Ctrl+O", "open") {
                     app.pick_open(|app, path| {
                         if let Some(path) = path {
                             app.open_path_async(&path);
@@ -510,95 +511,94 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     for path in app.home.recent.clone() {
                         let missing = !solidcraft_engine::io::vfs::exists(&path);
                         let label = format!("{path}{}", if missing { " (missing)" } else { "" });
-                        if ui.button(label).clicked() {
+                        if crate::context_menu::button(ui, &label, "open").clicked() {
                             crate::home::open_recent(app, &path);
                             close = true;
                             ui.close();
                         }
                     }
                     ui.separator();
-                    if ui.button(app.tr("ui.clear_recent")).clicked() {
+                    if crate::context_menu::button(ui, app.tr("ui.clear_recent"), "delete").clicked() {
                         app.home.recent.clear();
                         app.home.opened_at.clear();
                         close = true;
                         ui.close();
                     }
                 });
-                if item_if(ui, "Insert STEP…", "", shown) {
+                if item_if(ui, "Insert STEP…", "", "import", shown) {
                     app.start("file.insert_step");
                     close = true;
                 }
-                if item_if(ui, "Insert Mesh…", "", shown) {
+                if item_if(ui, "Insert Mesh…", "", "import", shown) {
                     app.start("file.insert_mesh");
                     close = true;
                 }
-                if item_if(ui, &format!("{}…", app.tr_label("Insert Design")), "", shown) {
+                if item_if(ui, &format!("{}…", app.tr_label("Insert Design")), "", "component", shown) {
                     app.start("component.insert_design");
                     close = true;
                 }
-                if item_if(ui, app.tr("ui.save"), "Ctrl+S", shown) {
+                if item_if(ui, app.tr("ui.save"), "Ctrl+S", "save", shown) {
                     save(app);
                     close = true;
                 }
-                if item_if(ui, &format!("{}…", app.tr("ui.save_as")), "", shown) {
+                if item_if(ui, &format!("{}…", app.tr("ui.save_as")), "", "save", shown) {
                     save_as(app);
                     close = true;
                 }
-                if item(ui, "Save As JSON…", "") {
+                if item(ui, "Save As JSON…", "", "save") {
                     save_as_with_extension(app, "json");
                     close = true;
                 }
                 ui.separator();
-                if item_if(ui, "Save as mesh…", "", shown) {
+                if item_if(ui, "Save as mesh…", "", "mesh_export", shown) {
                     app.start("file.save_mesh");
                     close = true;
                 }
-                if item_if(ui, "Export STEP…", "", shown) {
+                if item_if(ui, "Export STEP…", "", "export", shown) {
                     export(app, "step");
                     close = true;
                 }
-                if item_if(ui, app.tr_label("Export Current View as DXF…"), "", shown) {
+                if item_if(ui, app.tr_label("Export Current View as DXF…"), "", "export", shown) {
                     app.start("file.export_view_dxf");
                     close = true;
                 }
-                if item_if(ui, "Export OBJ…", "", shown) {
+                if item_if(ui, "Export OBJ…", "", "export", shown) {
                     export(app, "obj");
                     close = true;
                 }
-                if item_if(ui, "Export URDF…", "", shown) {
+                if item_if(ui, "Export URDF…", "", "export", shown) {
                     export(app, "urdf");
                     close = true;
                 }
-                if item(ui, "Export Design as JSON…", "") {
+                if item(ui, "Export Design as JSON…", "", "export") {
                     export(app, "json");
                     close = true;
                 }
                 ui.separator();
-                if item_if(ui, &format!("{}…", app.tr_label("Design Properties")), "", shown) {
+                if item_if(ui, &format!("{}…", app.tr_label("Design Properties")), "", "settings", shown) {
                     app.start("document.metadata");
                     close = true;
                 }
                 ui.separator();
                 // The browser can install SolidCraft as an app (`install`): only while it offers to.
                 if let Some(offer) = crate::install::offered(app)
-                    && ui
-                        .add(egui::Button::new(crate::i18n::tr("install.menu")).min_size(vec2(180.0, 22.0)))
+                    && crate::context_menu::button(ui, crate::i18n::tr("install.menu"), "new")
                         .on_hover_text(crate::i18n::tr("install.button_tip"))
                         .clicked()
                 {
                     crate::install::start(app, offer);
                     close = true;
                 }
-                if item(ui, &format!("{}…", app.tr("ui.preferences")), "") {
+                if item(ui, &format!("{}…", app.tr("ui.preferences")), "", "settings") {
                     app.prefs_window.open = true;
                     close = true;
                 }
-                if item(ui, &format!("{}…", app.tr("ui.keyboard_shortcuts")), "") {
+                if item(ui, &format!("{}…", app.tr("ui.keyboard_shortcuts")), "", "list") {
                     app.keymap.open = true;
                     app.keymap.read_only = false;
                     close = true;
                 }
-                if item(ui, app.tr("ui.quit"), "") {
+                if item(ui, app.tr("ui.quit"), "", "close") {
                     crate::documents::request_quit(app);
                     close = true;
                 }
@@ -681,7 +681,8 @@ fn ribbon_button_lines(painter: &egui::Painter, label: &str, width: f32) -> Vec<
 }
 
 fn ribbon_label_width(painter: &egui::Painter, text: &str) -> f32 {
-    let mut job = egui::text::LayoutJob::simple(text.to_owned(), FontId::proportional(12.0), Color32::WHITE, f32::INFINITY);
+    let mut job =
+        egui::text::LayoutJob::simple(text.to_owned(), FontId::proportional(crate::theme::Tokens::get().font_body), Color32::WHITE, f32::INFINITY);
     job.halign = egui::Align::Center;
     painter.layout_job(job).size().x
 }
@@ -717,7 +718,7 @@ fn ribbon_label_lines(painter: &egui::Painter, label: &str, width: f32) -> Vec<S
 fn ribbon_button_galley(painter: &egui::Painter, label: &str, width: f32, color: Color32) -> std::sync::Arc<egui::Galley> {
     let lines = ribbon_button_lines(painter, label, width);
     // Explicit newlines only: egui must never split an oversized word.
-    let mut job = egui::text::LayoutJob::simple(lines.join("\n"), FontId::proportional(12.0), color, f32::INFINITY);
+    let mut job = egui::text::LayoutJob::simple(lines.join("\n"), FontId::proportional(crate::theme::Tokens::get().font_body), color, f32::INFINITY);
     job.halign = egui::Align::Center;
     painter.layout_job(job)
 }
@@ -740,15 +741,12 @@ fn ribbon_label(app: &SolveApp, label: &str) -> String {
 
 fn ribbon_text(ui: &egui::Ui, at: egui::Pos2, text: &str, size: f32, color: Color32, bold: bool) {
     let text = egui::RichText::new(text).size(size).color(color);
-    let text = if bold { text.strong() } else { text };
+    let text = if bold { text.semibold() } else { text };
     let galley = egui::WidgetText::from(text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Button);
     let origin = at - galley.size() / 2.0;
-    // egui's `strong` only changes colour. A small overstrike adds weight while retaining
-    // the user's interface font and its language fallbacks, without another font asset.
-    if bold {
-        ui.painter().galley(origin - vec2(0.2, 0.0), galley.clone(), color);
-    }
-    ui.painter().galley(origin + vec2(if bold { 0.2 } else { 0.0 }, 0.0), galley, color);
+    let ppp = ui.ctx().pixels_per_point().max(0.5);
+    let origin = pos2((origin.x * ppp).round() / ppp, (origin.y * ppp).round() / ppp);
+    ui.painter().galley(origin, galley, color);
 }
 
 /// The ribbon and S shortcut share one popup anchor, including after resizing.
@@ -759,8 +757,13 @@ fn search_anchor(ctx: &egui::Context) -> Option<egui::Pos2> {
 fn ribbon_tabs(app: &mut SolveApp, ui: &mut egui::Ui, row: Rect) {
     let t = Tokens::get();
     let tabs = crate::workspace::visible_tabs(app);
-    let widths: Vec<_> =
-        tabs.iter().map(|tab| ui.painter().layout_no_wrap(ribbon_label(app, tab), FontId::proportional(13.0), t.text).size().x + 24.0).collect();
+    let widths: Vec<_> = tabs
+        .iter()
+        .map(|tab| {
+            ui.painter().layout_no_wrap(ribbon_label(app, tab), crate::fonts::semibold(crate::theme::Tokens::get().font_button), t.text).size().x
+                + 24.0
+        })
+        .collect();
     let tabs_width: f32 = widths.iter().sum::<f32>()
         + tabs.len().saturating_sub(1) as f32 * 2.0
         + tabs.iter().filter(|tab| matches!(**tab, "SKETCH" | "SHEET METAL")).count() as f32 * 6.0;
@@ -783,10 +786,16 @@ fn ribbon_tabs(app: &mut SolveApp, ui: &mut egui::Ui, row: Rect) {
     icons::paint_icon(ui.painter(), Rect::from_center_size(search.left_center() + vec2(12.0, 0.0), vec2(16.0, 16.0)), "zoom", 1.0);
     let label = app.tr_label("Search commands");
     if search_width > 24.0 {
-        ui.painter().text(search.left_center() + vec2(29.0, 0.0), Align2::LEFT_CENTER, label, FontId::proportional(12.5), t.text_dim);
+        ui.painter().text(
+            search.left_center() + vec2(29.0, 0.0),
+            Align2::LEFT_CENTER,
+            label,
+            FontId::proportional(crate::theme::Tokens::get().font_label),
+            t.text_dim,
+        );
         let cap = Rect::from_center_size(search.right_center() - vec2(14.0, 0.0), vec2(16.0, 16.0));
         ui.painter().rect(cap, 3.0, t.toolbar, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
-        ribbon_text(ui, cap.center(), "S", 11.0, t.text_dim, false);
+        ribbon_text(ui, cap.center(), "S", t.font_small, t.text_dim, false);
     }
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     if resp.on_hover_text(label).clicked() {
@@ -837,7 +846,7 @@ fn ribbon_tabs(app: &mut SolveApp, ui: &mut egui::Ui, row: Rect) {
                         ui,
                         tr.center(),
                         &ribbon_label(app, tab),
-                        13.0,
+                        t.font_button,
                         if contextual {
                             t.on_accent
                         } else if active {
@@ -886,9 +895,9 @@ fn chevron(painter: &egui::Painter, at: egui::Pos2, ink: Color32) {
     crate::icons::paint_ink(painter, Rect::from_center_size(at, vec2(10.0, 10.0)), "chevron", ink);
 }
 
-/// The label colour on a selected tab or open section: on the dark ribbon a lighter tint of the accent.
+/// The label colour on a selected tab or open section.
 fn selected_ink(accent: &crate::theme::TabAccent) -> Color32 {
-    if crate::theme::is_dark() { accent.color.lerp_to_gamma(Tokens::get().on_accent, 0.5) } else { accent.color }
+    crate::theme::selected_ink(&Tokens::get(), accent.color)
 }
 
 pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
@@ -934,10 +943,11 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let render = crate::render_workspace::active(app);
         let workspace_icon = if render { "ws_render" } else { "ws_design" };
         icons::paint_icon(&painter, Rect::from_center_size(pos2(ws.center().x, ws.top() + 39.0), vec2(30.0, 30.0)), workspace_icon, 1.0);
-        ribbon_text(ui, pos2(ws.center().x, ws.top() + 69.0), app.tr(if render { "ui.render" } else { "ui.design" }), 13.0, t.text, true);
+        ribbon_text(ui, pos2(ws.center().x, ws.top() + 69.0), app.tr(if render { "ui.render" } else { "ui.design" }), t.font_button, t.text, true);
         let label = app.tr("ui.ribbon_workspace");
-        let label_width = painter.layout_no_wrap(label.to_string(), FontId::proportional(11.0), t.text_dim).size().x;
-        ribbon_text(ui, pos2(ws.center().x - 6.0, ws.top() + 89.0), label, 11.0, t.text_dim, false);
+        let label_width =
+            painter.layout_no_wrap(label.to_string(), FontId::proportional(crate::theme::Tokens::get().font_small), t.text_dim).size().x;
+        ribbon_text(ui, pos2(ws.center().x - 6.0, ws.top() + 89.0), label, t.font_small, t.text_dim, false);
         chevron(&painter, pos2(ws.center().x - 6.0 + label_width / 2.0 + 7.0, ws.top() + 89.5), t.text_dim);
         if wresp.on_hover_text(app.tr("ui.change_workspace")).clicked() {
             crate::context_menu::toggle_for(app, ws, ws.left_bottom(), crate::context_menu::Target::Workspace);
@@ -1221,9 +1231,14 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 painter.rect_filled(lr, 4.0, if panel_open { accent.soft } else { t.hover });
             }
             let label = if finish { app.tr("ui.ribbon_exit").to_string() } else { ribbon_label(app, panel) };
-            let label_width = painter.layout_no_wrap(label.clone(), FontId::proportional(11.5), t.text_dim).size().x;
+            let font = if panel_open || hot {
+                crate::fonts::semibold(crate::theme::Tokens::get().font_caption)
+            } else {
+                FontId::proportional(crate::theme::Tokens::get().font_caption)
+            };
+            let label_width = painter.layout_no_wrap(label.clone(), font, t.text_dim).size().x;
             let ink = if panel_open { selected_ink(&accent) } else { t.text_dim };
-            ribbon_text(ui, lr.center() - vec2(if finish { 0.0 } else { 6.0 }, 0.0), &label, 11.5, ink, panel_open || hot);
+            ribbon_text(ui, lr.center() - vec2(if finish { 0.0 } else { 6.0 }, 0.0), &label, t.font_caption, ink, panel_open || hot);
             if !finish {
                 chevron(&painter, pos2(lr.center().x + label_width / 2.0 + 1.0, lr.center().y + 0.5), ink);
             }
@@ -1350,7 +1365,18 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                             }
                             for c in cmds {
                                 let info = c.info(&app.session);
-                                let response = ui.add_enabled(info.enabled, egui::Button::new(c.label).shortcut_text(c.shortcut.unwrap_or("")));
+                                let response = ui
+                                    .add_enabled_ui(info.enabled, |ui| {
+                                        let icon = ui.id().with(("overflow_icon", c.id));
+                                        let row = egui::Button::new((egui::Atom::custom(icon, vec2(16.0, 16.0)), c.label))
+                                            .shortcut_text(c.shortcut.unwrap_or(""))
+                                            .atom_ui(ui);
+                                        if let Some(rect) = row.rect(icon) {
+                                            icons::paint_icon(ui.painter(), rect, c.icon, if info.enabled { 1.0 } else { 0.35 });
+                                        }
+                                        row.response
+                                    })
+                                    .inner;
                                 crate::scenario::publish_handle(&format!("toolbar:{}", c.id), response.rect.center());
                                 if response.clicked() {
                                     app.start(c.id);
@@ -1485,15 +1511,18 @@ fn ribbon_tooltip(app: &SolveApp, response: egui::Response, command: &solidcraft
     response.on_hover_ui(|ui| {
         let t = Tokens::get();
         let name = app.tr_label(command.label);
-        let name_width = ui.painter().layout_no_wrap(name.to_string(), FontId::proportional(14.0), t.text).size().x;
+        let name_width =
+            ui.painter().layout_no_wrap(name.to_string(), crate::fonts::semibold(crate::theme::Tokens::get().font_heading), t.text).size().x;
         let key_width = command
             .shortcut
-            .map(|key| ui.painter().layout_no_wrap(key.to_string(), FontId::monospace(12.0), t.text_dim).size().x + 24.0)
+            .map(|key| {
+                ui.painter().layout_no_wrap(key.to_string(), FontId::monospace(crate::theme::Tokens::get().font_body), t.text_dim).size().x + 24.0
+            })
             .unwrap_or(0.0);
         ui.set_width(280.0_f32.max(name_width + key_width + 12.0));
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(vec2(name_width, 20.0), Sense::hover());
-            ribbon_text(ui, rect.center(), name, 14.0, t.text, true);
+            ribbon_text(ui, rect.center(), name, t.font_heading, t.text, true);
             if let Some(key) = command.shortcut {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     egui::Frame::new()
@@ -1533,7 +1562,7 @@ fn section_heading(ui: &mut egui::Ui, label: &str, width: f32) {
         rect.left_center() + vec2(6.0, 0.0),
         Align2::LEFT_CENTER,
         crate::i18n::tr_label(label).to_uppercase(),
-        FontId::proportional(11.0),
+        crate::fonts::semibold(crate::theme::Tokens::get().font_small),
         t.text_dim,
     );
 }
@@ -1541,7 +1570,12 @@ fn section_heading(ui: &mut egui::Ui, label: &str, width: f32) {
 fn section_footer(ui: &mut egui::Ui) {
     ui.separator();
     ui.add_space(4.0);
-    ui.add(egui::Label::new(egui::RichText::new(crate::i18n::tr("ui.ribbon_pin_footer")).size(11.0).color(Tokens::get().text_dim)).wrap());
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(crate::i18n::tr("ui.ribbon_pin_footer")).size(crate::theme::Tokens::get().font_small).color(Tokens::get().text_dim),
+        )
+        .wrap(),
+    );
     ui.add_space(4.0);
 }
 
@@ -2132,8 +2166,8 @@ mod header_report_tests {
             2.0 * (1400.0 - crate::titlebar::WIDTH - RIGHT_GROUP - center.x)
         };
         let (en, ru) = (width_in("en"), width_in("ru"));
-        assert!((en - 115.2).abs() < 0.5, "{en}");
-        // "Сообщить об ошибке" needs more than the English button's 115 px.
+        assert!((en - 114.34375).abs() < 0.05, "Plex Sans report button width: {en}");
+        // "Сообщить об ошибке" needs more than the English button's 114 px.
         assert!(ru > en + 10.0, "{ru}");
     }
 
@@ -2504,8 +2538,35 @@ mod ribbon_label_tests {
     use super::*;
 
     #[test]
+    fn ribbon_weight_is_painted_once_at_a_pixel_aligned_origin() {
+        for scale in [1.0, 1.5, 2.0] {
+            let ctx = crate::fonts::test_context();
+            ctx.set_pixels_per_point(scale);
+            let ink = Tokens::get().text_dim;
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                ribbon_text(ui, pos2(100.3, 40.7), "Selected tab", 13.0, ink, true);
+            });
+            output.textures_delta.clear();
+            let text: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Text(text) if text.galley.text() == "Selected tab" => Some(text),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(text.len(), 1, "ribbon labels must never be drawn twice");
+            let text = text[0];
+            assert_eq!(text.galley.job.sections[0].format.font_id, crate::fonts::semibold(13.0));
+            assert_eq!(text.galley.job.sections[0].format.color, ink);
+            assert!((text.pos.x * scale - (text.pos.x * scale).round()).abs() < 0.001);
+            assert!((text.pos.y * scale - (text.pos.y * scale).round()).abs() < 0.001);
+        }
+    }
+
+    #[test]
     fn every_promoted_label_wraps_only_at_word_boundaries() {
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             let painter = ui.painter().clone();
             let specs = solidcraft_engine::command_specs();
@@ -2541,7 +2602,7 @@ mod ribbon_label_tests {
                     }
                 }
             }
-            for label in ["Rectangular", "Dimension", "Coincident"] {
+            for label in ["Rectangular", "Dimension", "Coincident", "Chamfer", "Revolve"] {
                 let width = ribbon_button_width(&painter, label);
                 assert_eq!(ribbon_button_lines(&painter, label, width - BUTTON_LABEL_PADDING), vec![label]);
                 assert!((BUTTON_MIN_WIDTH..=BUTTON_MAX_WIDTH).contains(&width));

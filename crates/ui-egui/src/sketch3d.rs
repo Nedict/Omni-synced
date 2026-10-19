@@ -209,13 +209,19 @@ pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) -
         }
         painter.circle_stroke(s, if label == "Plane" { 3.0 } else { 6.0 }, stroke);
         if label != "Plane" {
-            painter.text(s + vec2(10.0, -14.0), egui::Align2::LEFT_BOTTOM, label, egui::FontId::proportional(10.0), tk.text);
+            painter.text(
+                s + vec2(10.0, -14.0),
+                egui::Align2::LEFT_BOTTOM,
+                label,
+                egui::FontId::proportional(crate::theme::Tokens::get().font_micro),
+                tk.text,
+            );
         }
         painter.text(
             s + vec2(10.0, 10.0),
             egui::Align2::LEFT_TOP,
             format!("{}, {}, {}", crate::prefs::show_mm(app, h.x, 1), crate::prefs::show_mm(app, h.y, 1), crate::prefs::show_mm(app, h.z, 1)),
-            egui::FontId::proportional(11.0),
+            egui::FontId::proportional(crate::theme::Tokens::get().font_small),
             tk.text_dim,
         );
     }

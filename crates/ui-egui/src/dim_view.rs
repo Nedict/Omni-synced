@@ -9,6 +9,7 @@
 //! Everything acts through commands: `sketch.dimension_text`, `sketch.delete`,
 //! `parameters.change`.
 
+use crate::fonts::RichTextExt as _;
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -474,7 +475,7 @@ pub fn show(app: &mut SolveApp, ui: &egui::Ui, painter: &egui::Painter, proj: &P
     let tk = Tokens::get();
     let is_sel = |id: &str| app.session.selection.iter().any(|s| matches!(s, Sel::SketchConstraint { id: x } if x == id));
     let hover = ui.input(|i| i.pointer.hover_pos()).filter(|_| ui.rect_contains_pointer(proj.rect)).and_then(hit);
-    let font = FontId::proportional(12.0);
+    let font = FontId::monospace(crate::theme::Tokens::get().font_body);
     let centres = chain_centres(sk);
     let draft_sketch = draft.as_ref().and_then(|(_, d)| d.preview.sketch(d.sketch));
     let draft_centres = draft_sketch.map(|solved| chain_centres(&solved.sketch));
@@ -662,7 +663,7 @@ fn edit_box(app: &mut SolveApp, ctx: &egui::Context) {
     crate::frame::area(egui::Id::new("sc_dim_edit_area")).fixed_pos(anchor).order(egui::Order::Foreground).show(ctx, |ui| {
         egui::Frame::popup(ui.style()).inner_margin(egui::Margin::symmetric(3, 1)).show(ui, |ui| {
             ui.set_max_width(popup_width);
-            ui.label(egui::RichText::new(format!("Dimension: {}", e.param)).strong())
+            ui.label(egui::RichText::new(format!("Dimension: {}", e.param)).semibold().color(crate::theme::Tokens::get().text))
                 .on_hover_text("Double-click another driving dimension to insert its name");
             let r = ui.add(egui::TextEdit::singleline(&mut e.expr).id(id).desired_width(popup_width));
             crate::theme::TabAccent::number_focus(ui, &r);
