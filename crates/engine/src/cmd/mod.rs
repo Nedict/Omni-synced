@@ -41,6 +41,7 @@ mod file;
 mod file_library;
 pub(crate) use file_library::uses_file as file_library_uses_file;
 mod inspect;
+mod interference;
 pub(crate) mod joints;
 mod libraries;
 mod material_properties;
