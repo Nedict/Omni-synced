@@ -34,7 +34,16 @@ pub(crate) fn dead_zone_slider(ui: &mut egui::Ui, share: &mut f32) -> egui::Resp
 
 /// Starts calibrating the device being read, if there is one.
 pub fn start(app: &mut SolveApp) {
-    app.space_mouse.calibrating = app.space_mouse.device.clone().map(|device| (device, Wizard::default()));
+    app.space_mouse.calibrating = app.space_mouse.device.clone().map(|device| {
+        let wizard = wizard_for(&device);
+        (device, wizard)
+    });
+}
+
+/// A new recording for `device`. spacenavd and the 3Dconnexion driver send nothing while the cap
+/// is still, so a device behind them may stop short of rest after each release (#2778).
+fn wizard_for(device: &str) -> Wizard {
+    if device == "spacenavd" || device == "3dxware" { Wizard::quiet_at_rest() } else { Wizard::default() }
 }
 
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
@@ -95,7 +104,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             app.space_mouse.calibrating = None;
         } else if over {
             // A new recording; the dead zone set so far stays.
-            *wizard = Wizard::default();
+            *wizard = wizard_for(device);
             wizard.set_dead_zone_share(dead_zone);
         } else if back {
             wizard.back();
