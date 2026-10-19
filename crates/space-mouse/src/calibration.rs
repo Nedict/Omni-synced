@@ -327,7 +327,7 @@ pub const HOLD_SECONDS: f64 = 0.4;
 /// (#2778). Steady means each raw axis's readings span no more than twice its rest wander, at
 /// least 2 units and [`STEADY_SHARE`] of the furthest any step has gone: an axis that read flat
 /// at rest may still dither once it's off-centre.
-pub const SETTLE_SECONDS: f64 = 0.3;
+pub const SETTLE_SECONDS: f64 = 0.5;
 /// How far back from its peak, as a share of it, the step's own axis has to be to count as let go.
 pub const SETTLED_SHARE: f64 = 0.25;
 /// The least spread steady readings may have, as a share of the furthest any step has gone.
