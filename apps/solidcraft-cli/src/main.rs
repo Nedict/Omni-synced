@@ -4,7 +4,7 @@
 //! solidcraft-cli run <script.json|design.solidcraft|part.step|mesh.3mf> [--in design|part.step|mesh.3mf] [--out FILE]... [--save FILE] [--quiet] [--results] [--timings] [--profile] [--json-out FILE] [--allow-errors]
 //! solidcraft-cli eval <script.json|design.solidcraft|part.step> [--json-out FILE] (alias: inspect) measurements as JSON
 //! solidcraft-cli script <design.solidcraft> [--out script.json]     the design's history as a command script
-//! solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only] [--display LEVEL [--edit NAME EXPR]] loading timings as JSON lines
+//! solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only] [--save OUT.solidcraft] [--display LEVEL [--edit NAME EXPR]] loading timings as JSON lines
 //! solidcraft-cli bench-agent [--scale F] [--save F] [--script-out F] a ~1,300-body design built command by command, timed
 //! solidcraft-cli snapshot <script|design> [--in design|part.step] --out shot.png [--width W] [--height H] [--view iso|front|top|…|NAME | --camera JSON] [--no-grid] [--no-axes]
 //!                                                             [--body NAME:opacity=0.3,color=#rrggbb]... [--tool NAME]... [--section z=27]
@@ -49,7 +49,7 @@ const USAGE: &str = "usage:
        as plain UTF-8: a shell's > can re-encode it, e.g. Windows PowerShell adds a byte-order mark)
   solidcraft-cli script <design.solidcraft|script.json> [--out script.json]
       (the design's history as a command script that eval and run replay)
-  solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only] [--display LEVEL [--edit NAME EXPR]]
+  solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only] [--save OUT.solidcraft] [--display LEVEL [--edit NAME EXPR]]
   solidcraft-cli bench-agent [--scale F] [--save design.solidcraft] [--script-out script.json]
   solidcraft-cli snapshot <script|design> [--in design.solidcraft|part.step] --out shot.png [--width W] [--height H] [--view NAME | --camera JSON] [--no-grid] [--no-axes]
       [--body NAME:opacity=0.3,color=#rrggbb]... [--tool NAME]... [--section z=27]
@@ -624,24 +624,27 @@ pub(crate) fn cmd_bench_open(args: &[String]) -> Result<(), String> {
     let t = std::time::Instant::now();
     // The file as read, held until the timeline has evaluated it (as the import command does).
     let mut read = None;
-    let doc = if step {
+    let (doc, saved) = if step {
         let imported = solidcraft_engine::io::step_import_feature(&bytes, path).map_err(|e| e.to_string())?;
         let mut doc = solidcraft_engine::doc::Document::new(&imported.name);
         doc.add_feature(imported.kind, Some(&imported.name)).map_err(|e| e.to_string())?;
         read = Some(imported.import);
-        doc
+        (doc, None)
     } else {
-        solidcraft_engine::io::read_design(&bytes).map_err(|e| e.to_string())?
+        // As Open reads it: with the model the file keeps.
+        solidcraft_engine::io::read_design_file(path, None::<fn(solidcraft_engine::io::DesignPreview)>).map_err(|e| e.to_string())?
     };
     let parse_ms = t.elapsed().as_secs_f64() * 1000.0;
-    println!("{}", json!({"step": "parse", "ms": parse_ms, "features": doc.features.len()}));
+    println!("{}", json!({"step": "parse", "ms": parse_ms, "features": doc.features.len(), "saved_model": saved.is_some()}));
     if args.iter().any(|a| a == "--parse-only") {
         return Ok(());
     }
     let t = std::time::Instant::now();
-    let s = Session::new(doc);
+    let s = Session::opened(doc, saved.as_ref());
     drop(read);
-    println!("{}", json!({"step": "evaluate", "ms": t.elapsed().as_secs_f64() * 1000.0}));
+    // Taken from the file: nothing evaluated (SOLIDCRAFT_NO_MODEL_CACHE evaluates anyway).
+    let adopted = saved.is_some() && s.model.last_recomputed == 0;
+    println!("{}", json!({"step": "evaluate", "ms": t.elapsed().as_secs_f64() * 1000.0, "adopted": adopted}));
     for r in &s.model.results {
         println!("{}", json!({"step": "feature", "id": r.id, "name": r.name, "ms": r.ms, "error": r.error}));
     }
@@ -655,10 +658,45 @@ pub(crate) fn cmd_bench_open(args: &[String]) -> Result<(), String> {
         "{}",
         json!({"step": "mesh", "ms": t.elapsed().as_secs_f64() * 1000.0, "place_ms": place_ms, "bodies": st.bodies.len(), "triangles": triangles})
     );
+    let flag = |name: &str| args.iter().position(|a| a == name);
+    // `--save PATH`: save the opened design without its model cache (to PATH.plain.solidcraft) and
+    // as the app does, with it, then read the cache back.
+    let s = match flag("--save").and_then(|i| args.get(i + 1)) {
+        Some(out) => {
+            let mut s = s;
+            // Without the cache first, for comparison.
+            let plain = format!("{out}.plain.solidcraft");
+            let t = std::time::Instant::now();
+            s.execute("file.save_as", &json!({"path": plain, "cache": false})).map_err(|e| e.to_string())?;
+            let plain_ms = t.elapsed().as_secs_f64() * 1000.0;
+            let plain_bytes = std::fs::metadata(&plain).map(|m| m.len()).unwrap_or(0);
+            let t = std::time::Instant::now();
+            s.execute("file.save_as", &json!({"path": out})).map_err(|e| e.to_string())?;
+            let save_ms = t.elapsed().as_secs_f64() * 1000.0;
+            let bytes = std::fs::read(out).map_err(|e| format!("{out}: {e}"))?;
+            let t = std::time::Instant::now();
+            let cached = solidcraft_engine::io::read_design_geometry(&bytes).map(|m| m.bodies.len());
+            let read_ms = t.elapsed().as_secs_f64() * 1000.0;
+            // Why bodies could not be kept exactly, when the cache was left out.
+            let mut refused = std::collections::BTreeMap::<String, usize>::new();
+            if cached.is_none() {
+                for b in &s.model.state().bodies {
+                    if let Err(e) = solidcraft_engine::kernel::encode_native_body(&b.body) {
+                        *refused.entry(e.to_string()).or_default() += 1;
+                    }
+                }
+            }
+            println!(
+                "{}",
+                json!({"step": "save", "ms": save_ms, "bytes": bytes.len(), "plain_ms": plain_ms, "plain_bytes": plain_bytes, "cached_bodies": cached, "cache_read_ms": read_ms, "refused": refused})
+            );
+            s
+        }
+        None => s,
+    };
     // `--display LEVEL`: the display plans the viewport draws at that display quality, made as
     // the GPU viewport makes them; `--edit NAME EXPR` then changes a parameter and times the
     // evaluation and the plans of the bodies it changed.
-    let flag = |name: &str| args.iter().position(|a| a == name);
     let Some(level) = flag("--display").and_then(|i| args.get(i + 1)) else { return Ok(()) };
     let q = solidcraft_engine::doc::display_quality::DisplayQuality::parse(level).ok_or("--display: coarse, normal, fine or ultra")?;
     let plans = |st: &solidcraft_engine::doc::ModelState| {
