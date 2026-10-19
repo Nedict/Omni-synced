@@ -87,6 +87,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     #[cfg(not(target_arch = "wasm32"))]
     if app.preferences.agent_chat_popped {
         window(app, &ctx);
+        show_drop_hint(app, &ctx);
         return;
     }
     let t = Tokens::get();
@@ -129,9 +130,19 @@ fn picture_strip(ui: &mut egui::Ui, n: usize, pictures: &[Picture]) -> Option<us
     let mut clicked = None;
     ui.horizontal_wrapped(|ui| {
         for (i, picture) in pictures.iter().enumerate() {
-            let Some(texture) = picture.texture(ui.ctx()) else {
-                ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim).size(11.0));
-                continue;
+            let texture = match picture.texture(ui.ctx()) {
+                Shown::Ready(texture) => texture,
+                // Being decoded: a spinner the size of a thumbnail's corner, until it is in.
+                Shown::Loading => {
+                    ui.add(egui::Spinner::new().size(THUMB_MAX.1 / 2.0));
+                    continue;
+                }
+                // Not a readable picture: its name, or the plain caption.
+                Shown::Failed => {
+                    let caption = if picture.note.is_empty() { tr("ui.agent_chat_view_attached").to_string() } else { picture.note.clone() };
+                    ui.label(RichText::new(caption).color(t.text_dim).size(11.0));
+                    continue;
+                }
             };
             let size = fit(texture.size_vec2(), vec2(THUMB_MAX.0, THUMB_MAX.1));
             let thumb = ui.add(egui::Image::new((texture.id(), size)).corner_radius(4.0).sense(Sense::click()));
@@ -186,9 +197,17 @@ fn gallery_window(app: &mut SolveApp, ctx: &egui::Context) {
             ui.label(RichText::new(format!("{} / {}", gallery.at + 1, count)).color(t.text_dim));
         });
         if let Some(picture) = gallery.pictures.get(gallery.at) {
-            if let Some(texture) = picture.texture(ui.ctx()) {
-                let resp = ui.add(egui::Image::new((texture.id(), fit(texture.size_vec2(), max))).corner_radius(4.0));
-                crate::scenario::publish_rect("agent_chat:gallery_picture", resp.rect);
+            match picture.texture(ui.ctx()) {
+                Shown::Ready(texture) => {
+                    let resp = ui.add(egui::Image::new((texture.id(), fit(texture.size_vec2(), max))).corner_radius(4.0));
+                    crate::scenario::publish_rect("agent_chat:gallery_picture", resp.rect);
+                }
+                Shown::Loading => {
+                    ui.add(egui::Spinner::new().size(32.0));
+                }
+                Shown::Failed => {
+                    ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim));
+                }
             }
             if !picture.note.is_empty() {
                 ui.add(egui::Label::new(&picture.note).wrap());
@@ -286,12 +305,24 @@ fn window(app: &mut SolveApp, ctx: &egui::Context) {
         // The picture viewer opens over this window, where the click was, not over the main one.
         gallery_window(app, ui.ctx());
         if class == egui::ViewportClass::EmbeddedWindow {
-            // Floating inside the app: its handles are the main window's, as the panel's are.
+            // Floating inside the app: its handles are the main window's, as the panel's are. The
+            // app's own drop handling sees the drops, so the window counts as the chat's place
+            // (the hint is drawn by the caller).
             crate::scenario::publish_rect("agent_chat:window", r.response.rect);
             app.agent_chat.panel_rect = Some(r.response.rect);
+            app.agent_chat.drop_rect = Some(r.response.rect);
             return;
         }
         let ctx = ui.ctx().clone();
+        // A window of its own gets the drops made on it: the whole window is the chat, so there
+        // is no pointer to ask about (the main window's handling never sees them).
+        let dropped = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));
+        if !dropped.is_empty() {
+            attach_dropped(app, dropped.iter().map(|f| f.path().to_path_buf()));
+        }
+        if ctx.input(|i| !i.raw.hovered_files.is_empty()) {
+            drop_hint(&ctx, r.response.rect);
+        }
         if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT)) {
             toggle(app);
         }
@@ -579,6 +610,11 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
         ui.separator();
         // The files for the next message (#1744), as chips of their own.
         attachment_chips(app, ui);
+        // Ctrl/Cmd+V: files and pictures on the clipboard attach; text goes to the box below.
+        #[cfg(not(target_arch = "wasm32"))]
+        if focused {
+            super::paste::handle(app, ui);
+        }
         let edit = egui::TextEdit::multiline(&mut app.agent_chat.input)
             .hint_text(tr(if busy { "ui.agent_chat_placeholder_busy" } else { "ui.agent_chat_placeholder" }))
             .desired_rows(2)
@@ -1255,8 +1291,11 @@ fn chip(ui: &mut egui::Ui, thumbs: &mut std::collections::HashMap<u64, egui::Tex
                         ui.image((tex.id(), size * (22.0 / size.x.max(size.y).max(1.0)))).rect.width()
                     }
                     None => {
-                        let (r, _) = ui.allocate_exact_size(vec2(16.0, 20.0), Sense::hover());
-                        ui.painter().rect_stroke(r.shrink2(vec2(2.0, 3.0)), 2.0, Stroke::new(1.2, t.text_dim), egui::StrokeKind::Inside);
+                        // A page marked with the file's type.
+                        let (r, _) = ui.allocate_exact_size(vec2(28.0, 20.0), Sense::hover());
+                        let color = if matches!(f.content, attach::Content::Pdf { .. }) { t.error } else { t.text_dim };
+                        ui.painter().rect_stroke(r.shrink2(vec2(1.0, 1.0)), 2.0, Stroke::new(1.2, color), egui::StrokeKind::Inside);
+                        ui.painter().text(r.center(), Align2::CENTER_CENTER, f.mark(), egui::FontId::proportional(8.5), color);
                         r.width()
                     }
                 };
