@@ -84,11 +84,21 @@ pub(super) fn interference(s: &mut Session, p: &Value) -> Result<Value> {
     };
     // Prune by bounding boxes first (sort and sweep), so the cost follows the pairs that can
     // touch rather than the square of the body count.
-    let boxes: Vec<Aabb3> = meshes.iter().map(|m| m.bounds()).collect();
+    // Each mesh lies within its chord of the faces, inside a round one: grown by that, the boxes
+    // of bodies a hundredth of a millimetre into each other still meet (an arm's round end into a
+    // rounded rim, its facets clear of the rim's).
+    let chords: Vec<f64> = bodies.iter().map(|b| b.display_tol()).collect();
+    let boxes: Vec<Aabb3> = meshes
+        .iter()
+        .zip(&chords)
+        .map(|(m, &chord)| {
+            let (bx, g) = (m.bounds(), 2.0 * chord);
+            if bx.is_empty() { bx } else { Aabb3 { min: bx.min - Vec3::new(g, g, g), max: bx.max + Vec3::new(g, g, g) } }
+        })
+        .collect();
     let (pairs, skipped) = super::joints::overlapping_pairs(&boxes, MAX_INTERFERENCE_PAIRS);
 
     // Then by the meshes: pairs whose meshes stay apart (and neither holds the other) are clear.
-    let chords: Vec<f64> = bodies.iter().map(|b| b.display_tol()).collect();
     let used: Vec<bool> = {
         let mut u = vec![false; bodies.len()];
         for &(i, j) in &pairs {
