@@ -103,8 +103,8 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
 - **Publishing**: `origin` is github.com/bherbruck/solidcraft. Changes land through **pull requests**:
   push a branch, open a PR, and let GitHub CI run. Maintainers (and agents working for them) may
   merge their own PR as soon as CI is green (`gh pr merge --squash`); a trivial fix (docs, typos)
-  may be merged right away. Keep each PR to one topic, rebase or merge `main` into it when it
-  conflicts, and never force-push `main`. Never commit `plan/`, build dirs (`target*/`) or
+  may be merged right away. Keep each PR to one topic, bring `main` into it only
+  when you push a change anyway or it conflicts, and never force-push `main`. Never commit `plan/`, build dirs (`target*/`) or
   generated reference data; check `git ls-files` before pushing.
 - **Never break wasm**: everything below the apps must build for `wasm32-unknown-unknown`
   (`cargo xtask wasm`, part of `cargo xtask ci`).
@@ -124,13 +124,16 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
 - Use a small public-safe example and check for private designs, paths, account details or
   other sensitive content before sharing. Attach media to the issue/PR or link to an accessible
   recording; do not commit generated screenshots or videos just to provide review evidence.
-- Throughout the work and before handoff, check current upstream commits and the relevant
-  PR's merge status. Keep your branch current with upstream merges, resolve conflicts without
-  discarding others' work, and re-run validation when integration changes the result. Use
-  `git pull --rebase origin main` before pushing as above; never force-push. Report the checked
-  upstream/PR state, any conflicts resolved and the validation performed. If a PR remains open,
-  keep monitoring it while the task is active and make its pending status clear at handoff;
-  do not claim it merged without checking.
+- Throughout the work and before handoff, check the relevant PR's merge status. Don't push to
+  an open PR only to catch up with `main` (no merge of `main`, no Update branch, no rebase for
+  that alone): every push restarts the whole CI run, and `main`'s own run catches what lands in
+  between, to be fixed forward. When you push a change anyway, or GitHub reports a conflict,
+  rebase onto the latest `main` (push your own branch with `--force-with-lease`) or merge `main`
+  in once, and resolve conflicts without discarding others' work; never force-push `main`.
+  Don't re-run CI on an unchanged commit: a real failure fails again. Re-run only a job that
+  runner trouble cancelled, with "Re-run failed jobs". Report the PR state you checked and any
+  conflicts resolved. If a PR remains open, keep monitoring it while the task is active and
+  make its pending status clear at handoff; do not claim it merged without checking.
 
 ## Claim = a draft PR
 - Before working on issue #N, check nobody has it: `gh pr list -R bherbruck/solidcraft --state open --search "#N"`.

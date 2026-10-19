@@ -179,7 +179,7 @@ pub use helix::{loft_to_point, sweep_helix, sweep_helix_mesh};
 pub use hole_walls::{HoleWall, hole_walls};
 pub use iges_in::{MAX_IGES_BYTES, iges_import, iges_to_step};
 pub use iges_out::iges_export_bodies;
-pub use lip::raise_band;
+pub use lip::{raise_band, rim_band};
 pub use loft_blend::loft_blend;
 pub use matchsurf::{match_surface, seam_continuity};
 pub use measure::{BodyMeasure, MassMeasure, measure, measure_mass};
