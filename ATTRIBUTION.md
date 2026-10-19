@@ -412,6 +412,7 @@ Editable drawing code, native projects and shipped exports are collected under `
 | assets/icons/ui/design/tools/author/lib.py | SolidCraft contributors | icon authoring script (standard-library Python), original SolidCraft code | MIT OR Apache-2.0 |
 
 | docs/book/src/og.png | SolidCraft contributors | copy of assets/branding/web/source/og.png staged by cargo xtask book (gitignored) | MIT OR Apache-2.0 |
+| docs/sponsors/blacksmith-ci-powered.png | Blacksmith (blacksmith.sh) | "CI powered by Blacksmith" sponsor banner supplied by Blacksmith for the sponsorship credit; used only to credit the sponsor, not part of the application | © Blacksmith, used with permission |
 
 ## Code adapted from sibling projects
 
