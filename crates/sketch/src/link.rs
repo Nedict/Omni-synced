@@ -623,7 +623,8 @@ impl Sketch {
         self.links.iter().find(|l| l.id == id)
     }
 
-    /// The expressions of the sketch's texts, each with what it sets (`Text height`…).
+    /// The expressions of the sketch's texts and of its points placed by parameters, each with
+    /// what it sets (`Text height`, `Point X`…).
     pub fn text_exprs(&self) -> Vec<(&'static str, &String)> {
         self.links
             .iter()
@@ -632,6 +633,7 @@ impl Sketch {
                 _ => None,
             })
             .flatten()
+            .chain(self.points.iter().filter_map(|p| p.exprs.as_deref()).flat_map(crate::PointExprs::list))
             .collect()
     }
 
@@ -644,6 +646,7 @@ impl Sketch {
                 _ => None,
             })
             .flatten()
+            .chain(self.points.iter_mut().filter_map(|p| p.exprs.as_deref_mut()).flat_map(crate::PointExprs::list_mut))
             .collect()
     }
 

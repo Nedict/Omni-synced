@@ -466,7 +466,8 @@ fn resolve_anchored_face_omitting(
     skip: &std::collections::BTreeSet<usize>,
 ) -> Result<Resolved> {
     let body = st.body(&anchor.target.body).ok_or_else(|| lost("anchored projection body"))?;
-    let indices = doc.configuration_face_indices(body, &anchor.target)?;
+    // The sketch's plane says when the face was found by fallback; its projection follows it.
+    let (indices, _) = doc.anchored_face_indices(st, body, &anchor.target)?;
     resolve_face_indices_omitting(st, plane, kind, &body.name, &indices, skip)
 }
 
@@ -899,7 +900,7 @@ pub fn face_link_edges(
     let index = |i: usize| u32::try_from(i).map_err(|_| DocError::Invalid("face index exceeds limit".into()));
     let edges = match anchor.filter(|_| link.auto_face) {
         Some(anchor) => {
-            let indices = doc.configuration_face_indices(target, &anchor.target)?;
+            let (indices, _) = doc.anchored_face_indices(st, target, &anchor.target)?;
             match indices.as_slice() {
                 [i] => projection_face_edges(target, &mesh, index(*i)?, &plane)?,
                 _ => order::family_edges(&mesh, &indices.iter().copied().collect(), &plane)?,
