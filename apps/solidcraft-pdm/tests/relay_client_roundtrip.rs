@@ -66,6 +66,11 @@ fn user_cycle(origin: &str, expected_id: &str) -> Result<[ManagedVersion; 3], St
     if catalog.server_id != expected_id || !catalog.entries.is_empty() {
         return Err("unexpected initial catalog".into());
     }
+    let identity = client.authenticated_identity().map_err(diagnostic)?;
+    if identity.server_id != expected_id || identity.principal.id != "alice" || identity.principal.role != solidcraft_pdm::managed::Role::Contributor
+    {
+        return Err("relay login did not preserve the authenticated server principal and role".into());
+    }
     let entry = client.managed_create("parts/toy.solidcraft".into()).map_err(diagnostic)?;
     let checkout = client.managed_checkout(entry.document.clone(), "workspace".into(), "desktop".into()).map_err(diagnostic)?;
     if checkout.entry.checkout.as_ref().map(|value| value.owner.as_str()) != Some("alice") {

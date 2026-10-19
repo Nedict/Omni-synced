@@ -26,6 +26,8 @@ mod native_frame;
 #[cfg(target_os = "macos")]
 mod open_documents;
 mod pdm;
+pub mod pdm_credentials;
+pub mod pdm_login;
 mod pdm_managed;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 mod space_mouse;

@@ -242,6 +242,42 @@ checks passed; the licence report notes the expected generated-file update on
 main. The authenticated identity operation returns the actual configured
 principal and role; it accepts no caller-selected account or permission fields.
 
+### Native credential and login boundary
+
+The native application has separate worker APIs for enrollment, verified login,
+resume and forgetting a saved user credential. Constructors perform neither
+network requests nor credential-store access. Login binds the expected server
+before the first request and obtains the account and current role from the
+authenticated service. It persists a user bearer only after that verification.
+Resume retrieves the matching user slot, repeats authentication and checks the
+actual account before returning a client session.
+
+The OS credential-store namespace is `SolidCraft PDM`, separate from agent-chat
+credentials. User and connector purposes cannot share slots. A user slot binds
+the normalized origin, server identity, actual account, certificate trust
+fingerprint and direct/relay tunnel context. An imported profile with changed
+trust or route cannot automatically retrieve the credential from the old slot.
+Profiles contain only public identity and trust data; the bounded JSON loader
+rejects inputs above 384 KiB before deserialization. Unsupported native operating
+systems report credential storage unavailable rather than using a mock backend.
+
+Native enrollment connects the first-administrator bootstrap to a credential
+sink before publishing the principal registry. A failed sink permits retry; a
+failed registry publication retains the captured credential for recovery.
+Neither path resets an existing archive. These are native worker foundations:
+the current connection dialog still uses the delivered local workflow. A guided
+setup/login UI, persistent profile installation and external identity-provider
+login remain pending. Tests use an in-memory credential store and disposable
+HTTPS services; they do not access the actual OS keyring.
+
+All 19 focused native PDM tests and strict native Clippy passed. Coverage includes
+real disposable HTTPS login/resume, wrong-server and wrong-credential rejection,
+selective forgetting, first-admin sink failure/retry and imported trust/route
+changes. The public-client relay test also passed with authenticated identity
+checked across both TLS hops before its historical v1/v2/v3 publication cycle.
+Repository CI again passed formatting/assets before the existing Windows icon
+hash failure. These foundations are not part of the frozen user trial.
+
 ## Verified offline backup and restore foundation
 
 Stop the local service before using these commands. The backup command acquires
