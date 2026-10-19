@@ -1362,6 +1362,7 @@ impl SolveApp {
     /// Lay out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         expression_complete::begin_frame(ui.ctx());
+        value_step::set_enabled(ui.ctx(), self.preferences.step_values);
         let t0 = now_ms();
         if self.preferences.language != self.applied_fonts_language || self.preferences.ui_font != self.applied_ui_font {
             self.applied_fonts_language.clone_from(&self.preferences.language);

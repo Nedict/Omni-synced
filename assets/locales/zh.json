@@ -1501,6 +1501,8 @@
   "ui.stand_up_tip": "当 Z 朝上的 STEP 或 IGES 文件打开后，提示绕 X 轴旋转四分之一周",
   "ui.start": "开始",
   "ui.start_radius": "起始半径",
+  "ui.step_values": "使用方向键和滚轮调整数值",
+  "ui.step_values_tip": "在正在输入的数值框中，上下方向键和框上的鼠标滚轮可将数字增减 1（Shift：10，Alt：0.1）。表达式保持不变。",
   "ui.stretch": "伸展",
   "ui.supersampling": "超级采样 (SSAA)",
   "ui.supersampling_adaptive": "仅在视图静止时",
