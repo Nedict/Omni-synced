@@ -463,7 +463,7 @@ impl Dialog {
             "sketch.create" => Dialog::new(Kind::Sketch, vec![SelInput::new("Plane", PLANES | PLANAR_FACES, false)]),
             "solid.extrude" => Dialog::new(
                 Kind::Extrude {
-                    distance: "10 mm".into(),
+                    distance: crate::prefs::extrude_start_distance(app),
                     direction: 0,
                     operation: usize::from(has_bodies),
                     auto_op: true,
@@ -3616,6 +3616,7 @@ pub(crate) fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
         return crate::dialogs_save_mesh::run(app, k, &d.inputs);
     }
     let commands = apply_commands(app, d)?;
+    let new_extrude = remembered_extrude_distance(app, d);
     if let Some((_, marker)) = d.editing {
         // Record the actual pre-edit timeline state in the command's undo snapshot.
         roll_marker(app, marker)?;
@@ -3639,7 +3640,21 @@ pub(crate) fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
             }
         }
     }
+    if let Some(distance) = new_extrude {
+        app.preferences.extrude_last_distance = distance;
+    }
     Ok(())
+}
+
+/// The distance a new (not edited) extrude was committed with, in mm, for the "Last used"
+/// starting distance; none when the extent isn't a plain distance.
+pub(crate) fn remembered_extrude_distance(app: &SolveApp, d: &Dialog) -> Option<String> {
+    let Kind::Extrude { distance, all, .. } = &d.kind else { return None };
+    if d.editing.is_some() || *all || to_object_on(&d.inputs) {
+        return None;
+    }
+    let v = app.session.doc.eval(distance, ValueKind::Length).ok()?;
+    (v.is_finite() && v.abs() > 1e-9).then(|| format!("{v} mm"))
 }
 
 /// Placement used to edit a definition in the selected authoring occurrence.

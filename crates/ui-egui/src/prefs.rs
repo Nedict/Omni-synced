@@ -251,6 +251,22 @@ pub enum OrbitAround {
     Cursor,
 }
 
+/// Where a new Extrude dialog starts its distance (Preferences: "New extrude distance").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtrudeStart {
+    /// 10 mm, as it always was.
+    #[default]
+    Fixed,
+    /// The distance of the last extrude that was committed.
+    LastUsed,
+    /// The value typed in `extrude_custom_distance`.
+    Custom,
+}
+
+/// The distance the Extrude dialog opened at before this was a preference.
+pub const DEFAULT_EXTRUDE_DISTANCE: &str = "10 mm";
+
 /// The browser sidebar's first width, and the width [`Prefs::default`] restores; the panel
 /// itself clamps what the user drags to its own range.
 pub const DEFAULT_BROWSER_WIDTH: f32 = 250.0;
@@ -336,6 +352,12 @@ pub struct Prefs {
     pub smooth_wheel_zoom: bool,
     /// Two-finger trackpad scroll pans (off: it zooms like the wheel); pinch always zooms.
     pub trackpad_pan: bool,
+    /// Where a new Extrude dialog starts its distance (editing an extrude keeps its own).
+    pub extrude_start: ExtrudeStart,
+    /// The distance a new Extrude starts at when `extrude_start` is `custom` (a length expression).
+    pub extrude_custom_distance: String,
+    /// The last distance a new Extrude was committed with, in mm (empty until one is).
+    pub extrude_last_distance: String,
     /// Horizontal trackpad and thumb-wheel scrolling pans the view the other way (#2007).
     pub pan_reverse_x: bool,
     /// View changes (axis view, Look At, Home) animate; `look_at_speed` scales how fast.
@@ -459,6 +481,9 @@ impl Default for Prefs {
             smooth_wheel_zoom: true,
             trackpad_pan: true,
             pan_reverse_x: false,
+            extrude_start: ExtrudeStart::Fixed,
+            extrude_custom_distance: DEFAULT_EXTRUDE_DISTANCE.into(),
+            extrude_last_distance: String::new(),
             look_at_anim: true,
             look_at_speed: 1.0,
             up_axis: "z".into(),
@@ -757,6 +782,8 @@ fn defaults(app: &mut SolveApp, page: usize) {
         PAGE_DESIGN => {
             p.up_axis = d.up_axis;
             p.offer_stand_up = d.offer_stand_up;
+            p.extrude_start = d.extrude_start;
+            p.extrude_custom_distance = d.extrude_custom_distance;
         }
         PAGE_GRAPHICS => {
             let msaa = p.msaa != d.msaa;
@@ -854,6 +881,19 @@ pub fn set_autosave(app: &mut SolveApp) {
 /// Which navigation dragging `button` with `mods` held does under the preset.
 pub fn nav_mode(app: &SolveApp, button: NavButton, mods: Modifiers) -> Option<NavMode> {
     nav_preset(&app.preferences.nav).mode(button, mods)
+}
+
+/// The distance a new Extrude dialog opens with. Anything unusable (no extrude yet, a custom
+/// value that isn't a length) falls back to the fixed 10 mm.
+pub fn extrude_start_distance(app: &SolveApp) -> String {
+    let p = &app.preferences;
+    let wanted = match p.extrude_start {
+        ExtrudeStart::Fixed => return DEFAULT_EXTRUDE_DISTANCE.into(),
+        ExtrudeStart::LastUsed => p.extrude_last_distance.as_str(),
+        ExtrudeStart::Custom => p.extrude_custom_distance.as_str(),
+    };
+    let ok = app.session.doc.eval(wanted, solidcraft_engine::doc::expr::Kind::Length).is_ok_and(|v| v.is_finite() && v.abs() > 1e-9);
+    if ok { wanted.trim().to_string() } else { DEFAULT_EXTRUDE_DISTANCE.into() }
 }
 
 /// +1, or −1 when horizontal scrolling pans the other way (#2007).
@@ -1365,6 +1405,18 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             });
             ui.end_row();
             note(ui, crate::i18n::tr_label("Which axis points up in the views (axis view, Home, Look At). Designs are unchanged."));
+            ui.label(crate::i18n::tr_label("New extrude distance"));
+            ui.horizontal_wrapped(|ui| {
+                ui.radio_value(&mut app.preferences.extrude_start, ExtrudeStart::Fixed, crate::i18n::tr_label("Fixed (10 mm)"));
+                ui.radio_value(&mut app.preferences.extrude_start, ExtrudeStart::LastUsed, crate::i18n::tr_label("Last used"));
+                ui.radio_value(&mut app.preferences.extrude_start, ExtrudeStart::Custom, crate::i18n::tr_label("Custom"));
+                ui.add_enabled(
+                    app.preferences.extrude_start == ExtrudeStart::Custom,
+                    egui::TextEdit::singleline(&mut app.preferences.extrude_custom_distance).desired_width(80.0),
+                );
+            });
+            ui.end_row();
+            note(ui, crate::i18n::tr_label("The distance a new Extrude starts with. Editing an existing extrude keeps its own."));
             ui.label(crate::i18n::tr_label("Offer to stand up Y-up files"));
             ui.checkbox(&mut app.preferences.offer_stand_up, "")
                 .on_hover_text(crate::i18n::tr_label("After a STEP or IGES file opens with Z up, offer a quarter turn about X"));
@@ -2152,6 +2204,50 @@ mod tests {
         let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         other.load_prefs(&app.prefs());
         assert_eq!(other.preferences.nav, OPENSCAD_NAV);
+    }
+
+    #[test]
+    fn extrude_start_distance_has_three_modes_and_defaults_to_ten_mm() {
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        assert_eq!(serde_json::from_value::<Prefs>(json!({})).unwrap().extrude_start, ExtrudeStart::Fixed);
+        let opened = |app: &SolveApp| match crate::dialogs::Dialog::for_command(app, "solid.extrude").unwrap().kind {
+            crate::dialogs::Kind::Extrude { distance, .. } => distance,
+            _ => unreachable!(),
+        };
+        assert_eq!(opened(&app), "10 mm", "the default is unchanged");
+        // Fixed ignores whatever was used or typed.
+        set(&mut app, &json!({"extrude_custom_distance": "25 mm", "extrude_last_distance": "7 mm"})).unwrap();
+        assert_eq!(opened(&app), "10 mm");
+        set(&mut app, &json!({"extrude_start": "custom"})).unwrap();
+        assert_eq!(opened(&app), "25 mm");
+        set(&mut app, &json!({"extrude_custom_distance": "nonsense"})).unwrap();
+        assert_eq!(opened(&app), "10 mm", "an unusable custom value falls back");
+        set(&mut app, &json!({"extrude_start": "last_used", "extrude_last_distance": ""})).unwrap();
+        assert_eq!(opened(&app), "10 mm", "nothing used yet");
+        set(&mut app, &json!({"extrude_last_distance": "7 mm"})).unwrap();
+        assert_eq!(opened(&app), "7 mm");
+        let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        other.load_prefs(&app.prefs());
+        assert_eq!(opened(&other), "7 mm", "persists with the preferences");
+    }
+
+    #[test]
+    fn last_used_remembers_new_extrudes_only() {
+        let app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        let mut d = crate::dialogs::Dialog::for_command(&app, "solid.extrude").unwrap();
+        if let Some((_, _, text)) = d.primary() {
+            *text = "12.5 mm".into();
+        }
+        assert_eq!(crate::dialogs::remembered_extrude_distance(&app, &d).as_deref(), Some("12.5 mm"));
+        if let Some((_, _, text)) = d.primary() {
+            *text = "bogus".into();
+        }
+        assert_eq!(crate::dialogs::remembered_extrude_distance(&app, &d), None, "not a length");
+        if let Some((_, _, text)) = d.primary() {
+            *text = "3 mm".into();
+        }
+        d.editing = Some((1, None));
+        assert_eq!(crate::dialogs::remembered_extrude_distance(&app, &d), None, "editing an extrude doesn't count");
     }
 
     #[test]
