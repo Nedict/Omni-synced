@@ -2178,7 +2178,17 @@ fn auto_operation(app: &SolveApp, d: &mut Dialog) {
     if !matches!(d.kind, Kind::Extrude { auto_op: true, .. }) {
         return;
     }
-    let Some(params) = dialog_commands(app, d).ok().and_then(|c| c.into_iter().next()).map(|(_, p)| p) else { return };
+    let first = |d: &Dialog| dialog_commands(app, d).ok().and_then(|c| c.into_iter().next()).map(|(_, p)| p);
+    // A Join with no Targets listed is refused, but what the extrude meets still decides: it is
+    // asked as a New Body would be, which an empty component then becomes.
+    let as_new = || {
+        let mut new = d.clone();
+        if let Kind::Extrude { operation, .. } = &mut new.kind {
+            *operation = 0;
+        }
+        first(&new)
+    };
+    let Some(params) = first(d).or_else(as_new) else { return };
     // To an object, the extrude goes to it on whichever side it is: that is the side (#1633).
     if params.get("to").is_some()
         && let Some(reach) = solidcraft_engine::extrude_reach(&app.session, &params)
@@ -3322,7 +3332,10 @@ fn picked_bodies(inputs: &[SelInput], label: &str) -> Vec<String> {
 
 /// The bodies a new Join, Cut or Intersect changes unless told otherwise: a Join from a shown
 /// body's face (or a sketch on one) that body, as the command does; else the visible bodies of
-/// the active component, or the visible bodies anywhere while it has none.
+/// the active component. When it has none, the visible bodies anywhere if the design itself is
+/// active (a part kept in one component) or the profile is faces (which the command then cuts or
+/// joins wherever they are, as it does); a component of its own with none lists none, and its
+/// extrude makes a new body there.
 fn default_targets(s: &Session, d: &Dialog) -> Vec<Sel> {
     if matches!(d.kind, Kind::Extrude { operation: 1, .. }) {
         let face = match d.inputs.first().and_then(|i| i.items.first()) {
@@ -3337,8 +3350,12 @@ fn default_targets(s: &Session, d: &Dialog) -> Vec<Sel> {
     let st = s.model.state();
     let shown: Vec<_> = st.bodies.iter().filter(|b| !b.body.is_mesh() && s.body_visible(&b.name)).collect();
     let own: Vec<_> = shown.iter().filter(|b| s.doc.model_body_component(b) == s.active_component).collect();
-    let names: Vec<String> =
-        if own.is_empty() { shown.iter().map(|b| b.name.clone()).collect() } else { own.iter().map(|b| b.name.clone()).collect() };
+    let faces = d.inputs.first().is_some_and(|i| i.items.iter().any(|x| matches!(x, Sel::Face { .. })));
+    let names: Vec<String> = if own.is_empty() && (s.active_component == 0 || faces) {
+        shown.iter().map(|b| b.name.clone()).collect()
+    } else {
+        own.iter().map(|b| b.name.clone()).collect()
+    };
     names.into_iter().map(|name| Sel::Body { name }).collect()
 }
 

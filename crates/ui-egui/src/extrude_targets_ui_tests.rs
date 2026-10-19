@@ -108,6 +108,38 @@ fn the_list_holds_the_visible_bodies_or_the_face_body() {
     assert!((volume(&h, "Plate (2)") - 8000.0).abs() < 1e-6, "the sketch's face body is joined alone");
 }
 
+/// The design active, its plate kept in a component: the plate is listed. A component of its
+/// own, empty: nothing is, and Auto makes a new body there rather than joining the other
+/// component's plate.
+#[test]
+fn bodies_of_other_components_are_listed_only_from_the_design() {
+    let mut h = Harness::new();
+    h.app.run("component.create", json!({"name":"Base"})).unwrap();
+    h.app.run("solid.box", json!({"length":40,"width":40,"height":5,"body_name":"Plate"})).unwrap();
+    h.app.run("component.activate", json!({"component":0})).unwrap();
+    h.app.run("sketch.create", json!({"plane":{"origin":[0,0,5],"x_dir":[1,0,0],"y_dir":[0,1,0]},"name":"Rim"})).unwrap();
+    h.app.run("sketch.rectangle.two_point", json!({"p0":[2,2],"p1":[38,38]})).unwrap();
+    h.app.run("sketch.rectangle.two_point", json!({"p0":[4,4],"p1":[36,36]})).unwrap();
+    h.app.run("sketch.finish", json!({})).unwrap();
+    start_join(&mut h);
+    assert_eq!(params(&h)["targets"], json!(["Plate"]));
+    h.app.dialog = None;
+    h.app.run("component.create", json!({"name":"Lid"})).unwrap();
+    h.app.run("sketch.create", json!({"plane":{"origin":[0,0,30],"x_dir":[1,0,0],"y_dir":[0,1,0]},"name":"Top"})).unwrap();
+    h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[40,40]})).unwrap();
+    h.app.run("sketch.finish", json!({})).unwrap();
+    let st = h.app.session.world_state();
+    let top = st.sketches.iter().find(|ss| ss.name == "Top").unwrap().feature;
+    h.app.session.selection = vec![Sel::Profile { sketch: top, index: 0 }];
+    h.app.start("solid.extrude");
+    h.frames(2);
+    assert!(h.app.dialog.as_ref().unwrap().inputs.iter().find(|i| i.label == TARGETS).is_some_and(|i| i.items.is_empty()));
+    let p = params(&h);
+    assert_eq!((p["operation"].as_str(), p.get("targets")), (Some("new"), None), "{p}");
+    h.step(&json!({"key":"Enter"})).unwrap();
+    assert_eq!(h.app.session.model.state().bodies.len(), 2);
+}
+
 /// Showing or hiding a body while the window is open changes the list, until a pill is removed
 /// by hand: then it stays as edited.
 #[test]
