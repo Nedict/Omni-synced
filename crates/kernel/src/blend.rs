@@ -2749,10 +2749,6 @@ fn chamfer_tool_sides(cur: &Body, p: Vec3, s: f64, sides: Option<(ChamferSide, b
 }
 
 #[cfg(test)]
-#[path = "blend_apart_tests.rs"]
-mod blend_apart_tests;
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use solidcraft_geom::{Loop2, Plane, Region2, Vec2};

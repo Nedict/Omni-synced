@@ -1765,7 +1765,7 @@ fn apply_traced_as(state: &mut ModelState, f: &Feature, extrusions: bool, tools:
             // size must not expand the contact tolerance and absorb a nearby body.
             if apply_traced(&mut batched, f, vec![Traced::step(compound, &tools.iter().collect::<Vec<_>>())], op, &names).is_ok() {
                 #[cfg(test)]
-                pattern_tests::count(0, 1);
+                cost_tests::pattern::count(0, 1);
                 *state = batched;
                 return Ok(());
             }
@@ -4508,17 +4508,13 @@ fn chamfer_copies_apart(st: &mut ModelState, edges: &[Vec3], mats: &[Mat], d: f6
     let Some(mb) = st.bodies.get(ti).cloned() else { return false };
     let Ok(nb) = kernel::chamfer_apart(&mb.body, &groups, d) else { return false };
     #[cfg(test)]
-    pattern_tests::count(1, 0);
+    cost_tests::pattern::count(1, 0);
     let nb = mb.traced().then(nb);
     if let Some(slot) = st.bodies.get_mut(ti) {
         *slot = ModelBody::traced_new(mb.name, nb, mb.feature);
     }
     true
 }
-
-#[cfg(test)]
-#[path = "eval_pattern_tests.rs"]
-mod pattern_tests;
 
 #[path = "eval_more.rs"]
 mod more;
