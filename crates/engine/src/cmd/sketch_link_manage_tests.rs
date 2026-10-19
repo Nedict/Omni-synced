@@ -540,3 +540,67 @@ fn part_of_a_projection_without_source_edges_is_refused() {
     run(&mut s, "sketch.delete", json!({"entities":silhouette}));
     assert_eq!(s.doc.sketch(sketch).unwrap().links.len(), 1);
 }
+
+/// Part A: a 40 × 40 × 10 plate with a D-shaped pocket 1 mm into its top face (a line and a
+/// cubic control-point spline), placed twice (A:2 at x = 100); part B's sketch projects A:2's
+/// top face. The spline's edge comes in as its exact Bézier piece (#1508), and a deleted
+/// member is matched against that same piece: it is found to be the spline's source edge, and
+/// refused only because that edge's name does not follow exact history (a pocket's wall is
+/// found again by geometry), not as a curve of no source edge.
+#[test]
+fn a_deleted_exact_spline_member_is_matched_to_its_source_edge() {
+    let mut s = Session::default();
+    let a1 = run(&mut s, "component.create", json!({"name":"A"}))["occurrence"].as_u64().unwrap();
+    run(&mut s, "solid.box", json!({"length":40,"width":40,"height":10,"body_name":"Plate"}));
+    run(&mut s, "sketch.create", json!({"plane":"XY","offset":10}));
+    run(&mut s, "sketch.line", json!({"points":[[5,5],[25,5]]}));
+    run(&mut s, "sketch.spline.control_point", json!({"points":[[25,5],[25,15],[5,15],[5,5]]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance":-1,"operation":"cut"}));
+    let a2 = run(&mut s, "occurrence.copy", json!({"occurrence":a1}))["occurrence"].as_u64().unwrap();
+    run(&mut s, "occurrence.move", json!({"occurrence":a2,"translate":[100,0,0]}));
+    run(&mut s, "component.activate", json!({"component":0}));
+    run(&mut s, "component.create", json!({"name":"B"}));
+    let b = run(&mut s, "sketch.create", json!({"plane":"XY","name":"Receiver"}))["sketch"].as_u64().unwrap();
+    let face = run(&mut s, "sketch.project", json!({"refs":[{"face":[138,38,10],"body":"Plate","path":[a2]}]}))["links"][0]["link"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let st = s.model.state();
+    let sk = &st.sketch(b).unwrap().sketch;
+    let exact: Vec<String> = sk
+        .link_curves(&face)
+        .into_iter()
+        .filter(|c| matches!(sk.curves[*c].kind, CurveKind::Spline { control: true, .. }))
+        .map(|c| sk.curves[c].id.clone())
+        .collect();
+    assert_eq!(exact.len(), 1, "the spline comes in as its exact piece");
+    let before = s.doc.to_json();
+    let e = s.execute("sketch.delete", &json!({"entities":exact})).unwrap_err();
+    assert!(e.to_string().contains("name is not exact"), "matched to its source edge: {e}");
+    assert_eq!(s.doc.to_json(), before);
+}
+
+/// A solid's exact pieces (#1508) are matched on the curves they gave the sketch: a control-point
+/// spline's and a conic's control points lie off the curve, so their points on the curve are
+/// probed; a piece that is not on the curve is not matched.
+#[test]
+fn exact_spline_and_conic_pieces_lie_on_their_curves() {
+    use solidcraft_sketch::LinkGeom;
+    let mut s = Session::default();
+    let sketch = run(&mut s, "sketch.create", json!({"plane":"XY"}))["sketch"].as_u64().unwrap();
+    run(&mut s, "sketch.spline.control_point", json!({"points":[[0,0],[0,12],[20,12],[20,0]],"connect":false}));
+    run(&mut s, "sketch.conic", json!({"start":[30,0],"end":[40,0],"apex":[35,6],"rho":0.7}));
+    let sk = s.doc.sketch(sketch).unwrap().clone();
+    let spline = sk.curves.iter().position(|c| matches!(c.kind, CurveKind::Spline { .. })).unwrap();
+    let conic = sk.curves.iter().position(|c| matches!(c.kind, CurveKind::Conic { .. })).unwrap();
+    let pts = vec![Vec2::new(0., 0.), Vec2::new(0., 12.), Vec2::new(20., 12.), Vec2::new(20., 0.)];
+    let piece = LinkGeom::Spline { pts: pts.clone(), control: true, degree: 3, periodic: false };
+    assert!(super::piece_on(&sk, spline, &piece, 1e-7));
+    let lifted = LinkGeom::Spline { pts: pts.iter().map(|p| *p + Vec2::Y).collect(), control: true, degree: 3, periodic: false };
+    assert!(!super::piece_on(&sk, spline, &lifted, 1e-7));
+    let piece = LinkGeom::Conic { a: Vec2::new(30., 0.), apex: Vec2::new(35., 6.), b: Vec2::new(40., 0.), rho: 0.7 };
+    assert!(super::piece_on(&sk, conic, &piece, 1e-7));
+    let flatter = LinkGeom::Conic { a: Vec2::new(30., 0.), apex: Vec2::new(35., 6.), b: Vec2::new(40., 0.), rho: 0.3 };
+    assert!(!super::piece_on(&sk, conic, &flatter, 1e-7));
+}

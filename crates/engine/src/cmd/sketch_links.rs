@@ -178,14 +178,18 @@ fn on_curve(sk: &Sketch, ci: usize, p: Vec2, tol: f64) -> bool {
 
 /// Does piece `g` lie on curve `ci` of `sk` (its ends and middle within `tol` of it)?
 fn piece_on(sk: &Sketch, ci: usize, g: &LinkGeom, tol: f64) -> bool {
-    let mut probe = vec![g.spot()];
-    match g {
-        LinkGeom::Point(p) => probe.push(*p),
-        LinkGeom::Line(a, b) | LinkGeom::Arc { a, b, .. } | LinkGeom::Conic { a, b, .. } => probe.extend([*a, *b]),
-        LinkGeom::Circle(c, r) => probe.extend([*c - Vec2::X * *r, *c + Vec2::Y * *r]),
-        LinkGeom::Ellipse { major, .. } => probe.push(*major),
-        LinkGeom::Spline { pts, .. } => probe.extend(pts.first().into_iter().chain(pts.last()).copied()),
-    }
+    // Points on the piece itself: a conic's or a control-point spline's `spot` is a control
+    // point, off the curve (a solid's exact Bézier pieces are such splines).
+    let probe = match g {
+        LinkGeom::Point(p) => vec![*p],
+        LinkGeom::Line(a, b) | LinkGeom::Arc { a, b, .. } => vec![g.spot(), *a, *b],
+        LinkGeom::Conic { a, apex, b, rho } => vec![solidcraft_sketch::conic_point(*a, *apex, *b, *rho, 0.5), *a, *b],
+        LinkGeom::Circle(c, r) => vec![g.spot(), *c - Vec2::X * *r, *c + Vec2::Y * *r],
+        LinkGeom::Ellipse { major, .. } => vec![*major],
+        LinkGeom::Spline { pts, control, degree, periodic } => {
+            [0.0, 0.5, 1.0].map(|t| solidcraft_sketch::spline_point_mode(pts, *control, *degree, *periodic, t)).to_vec()
+        }
+    };
     probe.iter().all(|p| on_curve(sk, ci, *p, tol))
 }
 
