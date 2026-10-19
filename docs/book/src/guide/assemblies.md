@@ -240,6 +240,19 @@ sets tell them apart: an occurrence inside a sub-assembly placed twice is one pa
 copies are not checked against each other. A check takes at most 256 bodies; on a large design,
 list the `occurrences` to check (an arm, with `against` the parts it must miss). When the work
 runs out it says `truncated` and the step it `checked_to`.
+`joint.sweep {joint, from, to, index?, step?, refine?, occurrences?, against?, contact_sets?,
+report_gaps?, apply?}` drives one joint value from `from` toward `to` and answers how far it gets
+before parts touch: `stopped_at` (the last value clear of contact), `stopped_by` (the two parts
+and the point `at` which they touch, or `"loop"` where a closed loop can no longer close, or
+`"limit"`), and with `report_gaps` the nearest gap at every sample and the nearest each part came
+to another (`min_gap`). The samples are fine enough that no part passes through another between
+two (or `step` apart), and the first contact is bisected until no part moves more than `refine`
+(0.01 mm by default) across it. Gaps are distances between the parts' tessellations
+(`gap_method: "mesh"`): exact for flat faces, within `gap_tolerance_mm` for curved ones. Pairs
+already touching at `from`, such as parts joined face to face or a door resting on its frame, are
+listed in `touching_at_start` and stop the sweep only once they pass into each other, deeper than
+they start. The sweep runs on a copy (closed loops follow, contact sets don't stop it) and
+leaves the design as it was unless `apply` is true.
 
 **Insert Design** (`component.insert_design {path, translate?}`, on the **ASSEMBLE** panel and
 in the **File** menu) adds a component linked to another saved design, so each part can live in
@@ -279,3 +292,41 @@ measures the complete assembly. Volumes are summed, including overlapping bodies
 measuring their union. The same workflow is available through `component.properties` and
 `occurrence.properties`; see
 [placement and measurement details](https://github.com/bherbruck/solidcraft/blob/main/docs/assembly-properties.md).
+
+## Part properties and the bill of materials
+
+A component definition carries its own **part properties**: a part number, a description and a
+revision, other tools' data under a reverse-DNS key (the same rules as the design's own
+properties), and free text properties such as a material grade or a finish. Every occurrence of
+the component shares them, Paste New copies them, and they are saved with the component.
+`component.metadata {component}` reads them and
+`component.metadata.set {component, part_number?, description?, revision?, values?, properties?}`
+changes them in one undo step (an empty value removes a field). The root component is the
+design itself: its properties are `document.metadata`'s. Standard parts (`parts.insert`) get a
+part number from their standard and size (`ISO 4762 M6x20`, or a bearing's designation) and a
+description; **Change Part Size** renumbers them, keeping a field you changed yourself.
+
+**Bill of Materials** (`assembly.bom`, on the **INSPECT** panel) counts the placed components:
+
+- `levels: "flat"` (the default) lists the parts at any depth, each counted through its
+  subassemblies: a part placed once in a subassembly that is placed twice counts 2. A
+  subassembly is listed through its parts, unless it has bodies of its own.
+- `levels: "top"` lists the direct children, a subassembly as one row.
+- `group_by: ["part_number"]` (the default) puts definitions with the same part number in one
+  row; a definition without a part number gets a row of its own. `["definition"]` gives every
+  definition its own row.
+- `group_children: true` keeps what is placed inside a part with a part number in that part's
+  row: a bolt with a washer and a nut placed inside it is one row, the washer and the nut listed
+  under it as `children` (items 1.1, 1.2…, with `each` per bolt and `count` in all) instead of
+  rows of their own. Bolts with different contents (one with a nut, one without) are different
+  rows. `total_occurrences` counts the children too, so it is the same either way.
+- `component` lists one subassembly's parts instead of the design's.
+
+Rows are sorted by part number (rows without one come last) and hold `item`, `part_number`,
+`description`, `revision`, `count`, `definition` (the component names), `components` (their ids)
+and `properties`, with `total_occurrences` beside them. `path` writes them to a `.csv` file
+(the columns item, part_number, description, revision, count and definition, every field
+quoted; children follow their row) or a `.json` file. The window lists the same rows, switches
+between the levels and groupings and shows children under their part, edits a picked row's part
+number, description and revision, and exports them. Changing part properties changes no
+geometry, so it doesn't evaluate the model or re-seat joints again.

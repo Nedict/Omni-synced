@@ -62,8 +62,15 @@ impl Capturer {
     /// As [`Capturer::new`], drawing with the depth format `depth` (with a stencil): the fallback
     /// `Depth24PlusStencil8` on a device that has a float one too, to compare the two.
     pub fn with_depth(adapter: &wgpu::Adapter, device: wgpu::Device, queue: wgpu::Queue, depth: wgpu::TextureFormat) -> Result<Self> {
+        Self::with_samples(adapter, device, queue, depth, SAMPLES)
+    }
+
+    /// As [`Capturer::with_depth`], with `samples` per pixel (1: no multisampling, as a device or
+    /// browser without 4× draws); 1 where the device lacks that many.
+    fn with_samples(adapter: &wgpu::Adapter, device: wgpu::Device, queue: wgpu::Queue, depth: wgpu::TextureFormat, samples: u32) -> Result<Self> {
         let flags = |f: wgpu::TextureFormat| adapter.get_texture_format_features(f).flags;
-        let samples = if flags(FORMAT).sample_count_supported(SAMPLES) && flags(depth).sample_count_supported(SAMPLES) { SAMPLES } else { 1 };
+        let samples =
+            if samples > 1 && flags(FORMAT).sample_count_supported(samples) && flags(depth).sample_count_supported(samples) { samples } else { 1 };
         let scopes = error_scopes(&device);
         let renderer = Renderer::new(&device, GpuTarget { format: FORMAT, depth: Some(depth), samples, tess: false }, None);
         let background = background_pipeline(&device, samples, depth);
@@ -97,6 +104,16 @@ impl Capturer {
         let (adapter, device, queue) = crate::open_headless()?;
         device.on_uncaptured_error(Arc::new(|e: wgpu::Error| log::error!("GPU: {e}")));
         Self::with_depth(&adapter, device, queue, depth)
+    }
+
+    /// As [`Capturer::headless`], without multisampling: one sample per pixel, as the viewport
+    /// draws where 4× isn't available (some browsers and devices, or MSAA turned off).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn headless_single_sample() -> Result<Self> {
+        let (adapter, device, queue) = crate::open_headless()?;
+        device.on_uncaptured_error(Arc::new(|e: wgpu::Error| log::error!("GPU: {e}")));
+        let depth = crate::depth_format(&device, true);
+        Self::with_samples(&adapter, device, queue, depth, 1)
     }
 
     /// The depth format pictures are drawn with; float formats are drawn with reversed depth.
@@ -314,6 +331,7 @@ fn frame(scene: &Scene, cam: &Camera, [width, height]: [u32; 2], key: u64, acces
         hl_slot: empty(),
         pv_key: 0,
         pv_slot: empty(),
+        pv_hide: false,
         view_proj: cam.view_proj(f64::from(width) / f64::from(height.max(1)), scene.radius.max(1.0)).to_f32(),
         back: cam.back().to_f32(),
         size_px: [width as f32, height as f32],
