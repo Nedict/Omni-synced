@@ -118,6 +118,10 @@ impl ModifierCombo {
 
     /// Human-readable display label for a specific platform.
     pub fn label_for(self, platform: Platform) -> String {
+        // Classic default: either primary or Alt/Option suppresses snap.
+        if self == Self::CTRL_ALT {
+            return format!("{} or {}", ctrl_name_for(platform), alt_name_for(platform));
+        }
         let mut parts: Vec<&str> = Vec::new();
         if self.shift {
             parts.push("Shift");
@@ -133,6 +137,9 @@ impl ModifierCombo {
         }
         parts.join("+")
     }
+
+    /// Combos offered by the sketch snap-suppress picker (classic OR first).
+    pub const SNAP_SUPPRESS_CHOICES: [Self; 4] = [Self::CTRL_ALT, Self::CTRL, Self::ALT, Self::SHIFT];
 
     /// All single-key combos, in display order (for a picker widget).
     pub const SINGLE_KEYS: [Self; 3] = [Self::CTRL, Self::ALT, Self::SHIFT];
@@ -255,21 +262,6 @@ impl ModAction {
         Self::ALL.iter().copied().find(|a| a.id() == id)
     }
 
-    pub const fn label_key(self) -> &'static str {
-        match self {
-            Self::SuppressSnap => "ui.mod.suppress_snap",
-            Self::FreeManipulatorDrag => "ui.mod.free_manipulator_drag",
-            Self::SelectToggle => "ui.mod.select_toggle",
-            Self::SelectAdd => "ui.mod.select_add",
-            Self::TargetMidpoint => "ui.mod.target_midpoint",
-            Self::Cycle3dSketchPlane => "ui.mod.cycle_3d_sketch_plane",
-            Self::PreviewReselect => "ui.mod.preview_reselect",
-            Self::TextSingleLetter => "ui.mod.text_single_letter",
-            Self::TextHandleConstrain => "ui.mod.text_handle_constrain",
-            Self::IsoCurveAlternate => "ui.mod.isocurve_alternate",
-        }
-    }
-
     pub const fn group(self) -> Option<Group> {
         match self {
             Self::SelectToggle | Self::SelectAdd => Some(Group::SelectionClick),
@@ -357,7 +349,8 @@ const SELECTION_BINDINGS: &[Binding] = &[
 const SKETCH_SNAP_BINDINGS: &[Binding] = &[
     Binding {
         action: ModAction::SuppressSnap,
-        defaults: &[ModifierCombo::ALT],
+        // Classic SolidCraft: Ctrl/Cmd or Alt/Option each suppress snap.
+        defaults: &[ModifierCombo::CTRL, ModifierCombo::ALT],
         matching: Match::AtLeast,
         trigger: Trigger::Live,
         rebindable: true,
@@ -548,8 +541,8 @@ mod tests {
         assert_eq!(ModifierCombo::CTRL.label_for(Platform::Other), "Ctrl/Cmd");
         assert_eq!(ModifierCombo::CTRL.label_for(Platform::Mac), "Cmd");
         assert_eq!(ModifierCombo::NONE.label_for(Platform::Other), "None");
-        assert_eq!(ModifierCombo::CTRL_ALT.label_for(Platform::Other), "Ctrl/Cmd+Alt");
-        assert_eq!(ModifierCombo::CTRL_ALT.label_for(Platform::Mac), "Cmd+Option");
+        assert_eq!(ModifierCombo::CTRL_ALT.label_for(Platform::Other), "Ctrl/Cmd or Alt");
+        assert_eq!(ModifierCombo::CTRL_ALT.label_for(Platform::Mac), "Cmd or Option");
         assert_eq!(ModifierCombo { shift: true, ctrl: true, alt: false }.label_for(Platform::Other), "Shift+Ctrl/Cmd");
     }
 

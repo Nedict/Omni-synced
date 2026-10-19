@@ -2290,6 +2290,20 @@ pub fn delete_selection(app: &mut SolveApp) {
     crate::delete::delete_selection(app);
 }
 
+/// Whether Primary should hide the live command preview so obscured geometry can be reselected.
+///
+/// Shared by [`show`] so tests can lock the same path: a manipulator drag never rolls the
+/// preview back, even when Primary (preview-reselect) is held.
+pub(crate) fn preview_should_roll_back(
+    app: &SolveApp,
+    held: crate::tool_modifiers::Held,
+    manipulator_dragging: bool,
+) -> bool {
+    app.dialog.as_ref().is_some_and(|d| d.previews())
+        && app.preview.active
+        && crate::tool_modifiers::preview_reselect(held, manipulator_dragging)
+}
+
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let rect = ui.max_rect();
@@ -2339,9 +2353,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             false
         };
         crate::tool_modifiers::set_target_midpoint(mid);
-        app.preview.rolled_back = app.dialog.as_ref().is_some_and(|d| d.previews())
-            && app.preview.active
-            && crate::tool_modifiers::preview_reselect(held, manipulator_dragging);
+        app.preview.rolled_back = preview_should_roll_back(app, held, manipulator_dragging);
     }
     let proj = projection(app, rect);
     if let Ok(mut cache) = app.viewport.display.lock() {
@@ -6411,5 +6423,28 @@ mod grid_plane_tests {
         app.ui.show_origin = true;
         let sc = build_highlight(&app);
         assert!(sc.xray.is_empty() && !sc.guide_trans.is_empty(), "outside Create Sketch the planes are depth-tested");
+    }
+
+    /// Primary rolls a live preview back for reselect, but not while a manipulator is dragged
+    /// (same gate [`show`] uses via [`preview_should_roll_back`]).
+    #[test]
+    fn preview_rollback_stays_off_while_manipulator_dragging() {
+        let mut s = solidcraft_engine::Session::default();
+        s.execute("sketch.create", &json!({"plane": "xy"})).unwrap();
+        s.execute("sketch.rectangle", &json!({"corner1": [0, 0], "corner2": [20, 10]})).unwrap();
+        s.execute("sketch.finish", &json!({})).unwrap();
+        let mut app = SolveApp::new(s, crate::Services::default());
+        app.start("solid.extrude");
+        assert!(app.dialog.as_ref().is_some_and(|d| d.previews()), "extrude opens a preview dialog");
+        app.preview.active = true;
+        let primary = crate::tool_modifiers::Held { primary: true, ..Default::default() };
+        assert!(
+            preview_should_roll_back(&app, primary, false),
+            "Primary alone rolls the preview back when a preview dialog is open"
+        );
+        assert!(
+            !preview_should_roll_back(&app, primary, true),
+            "Primary must not roll the preview back while a manipulator arrow is dragged"
+        );
     }
 }

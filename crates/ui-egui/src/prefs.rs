@@ -498,7 +498,7 @@ impl Default for Prefs {
             agent_chat_popped: false,
             agent_chat_window: None,
             agent_chat_turn_limit: crate::agent_chat::gate::DEFAULT_TURN_LIMIT,
-            suppress_sketch_snap: ModifierCombo::ALT,
+            suppress_sketch_snap: ModifierCombo::CTRL_ALT,
             manipulator_free_alt: true,
             selection_shift_add_only: false,
         }
@@ -884,7 +884,14 @@ pub fn pan_sign_x(app: &SolveApp) -> f32 {
 
 /// Whether the configured suppress-snap chord is held.
 pub fn suppress_sketch_snap_held(app: &SolveApp, m: Modifiers) -> bool {
-    app.preferences.suppress_sketch_snap.held(m)
+    let c = app.preferences.suppress_sketch_snap;
+    let held = crate::tool_modifiers::Held::from_modifiers(m);
+    // Classic default (`CTRL_ALT`): Ctrl/Cmd **or** Alt/Option each suppress snap.
+    // A single-key preference keeps the usual AtLeast match for that key only.
+    if c == ModifierCombo::CTRL_ALT {
+        return held.primary || held.alt;
+    }
+    c.held(m)
 }
 
 /// Primary always frees manipulator arrows; Alt/Option also frees when `manipulator_free_alt` is on.
@@ -1530,12 +1537,9 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.end_row();
 
             ui.label(crate::i18n::tr_label("Suppress auto-snap while drawing / dragging"));
-            modifier_combo_picker(ui, "pref_suppress_sketch_snap", &mut app.preferences.suppress_sketch_snap);
+            snap_suppress_picker(ui, "pref_suppress_sketch_snap", &mut app.preferences.suppress_sketch_snap);
             ui.end_row();
-            note(
-                ui,
-                crate::i18n::tr_label("Default: Alt/Option suppresses sketch snapping. Choose Ctrl/Cmd for the alternate mapping."),
-            );
+            note(ui, crate::i18n::tr_label("ui.suppress_auto_snap_note"));
 
             ui.label(crate::i18n::tr_label("Manipulator free drag also on Alt/Option"));
             ui.checkbox(&mut app.preferences.manipulator_free_alt, "").on_hover_text(crate::i18n::tr_label(
@@ -1568,6 +1572,16 @@ fn modifier_combo_picker(ui: &mut egui::Ui, salt: &str, combo: &mut ModifierComb
     let label = combo.label();
     egui::ComboBox::from_id_salt(salt).selected_text(label).show_ui(ui, |ui| {
         for c in ModifierCombo::SINGLE_KEYS {
+            ui.selectable_value(combo, c, c.label());
+        }
+    });
+}
+
+/// Sketch snap-suppress picker: classic Ctrl/Cmd-or-Alt first, then single keys.
+fn snap_suppress_picker(ui: &mut egui::Ui, salt: &str, combo: &mut ModifierCombo) {
+    let label = combo.label();
+    egui::ComboBox::from_id_salt(salt).selected_text(label).show_ui(ui, |ui| {
+        for c in ModifierCombo::SNAP_SUPPRESS_CHOICES {
             ui.selectable_value(combo, c, c.label());
         }
     });
@@ -2180,13 +2194,17 @@ mod tests {
     #[test]
     fn tool_modifier_prefs_default_classic_and_persist() {
         let d = Prefs::default();
-        assert_eq!(d.suppress_sketch_snap, ModifierCombo::ALT);
+        assert_eq!(d.suppress_sketch_snap, ModifierCombo::CTRL_ALT);
         assert!(d.manipulator_free_alt);
         assert!(!d.selection_shift_add_only);
         let old: Prefs = serde_json::from_value(json!({"nav": "solidworks"})).unwrap();
-        assert_eq!(old.suppress_sketch_snap, ModifierCombo::ALT);
+        assert_eq!(old.suppress_sketch_snap, ModifierCombo::CTRL_ALT);
         assert!(!old.selection_shift_add_only);
+        // Classic default: Ctrl/Cmd or Alt each suppress.
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        assert!(suppress_sketch_snap_held(&app, Modifiers::CTRL));
+        assert!(suppress_sketch_snap_held(&app, Modifiers::ALT));
+        assert!(!suppress_sketch_snap_held(&app, Modifiers::SHIFT));
         control(
             &mut app,
             &json!({"open": "Sketch", "suppress_sketch_snap": {"shift": false, "ctrl": true, "alt": false}, "manipulator_free_alt": false}),
@@ -2204,7 +2222,7 @@ mod tests {
         assert!(!other.preferences.manipulator_free_alt);
         assert!(other.preferences.selection_shift_add_only);
         control(&mut app, &json!({"open": "Sketch", "button": "defaults"})).unwrap();
-        assert_eq!(app.preferences.suppress_sketch_snap, ModifierCombo::ALT);
+        assert_eq!(app.preferences.suppress_sketch_snap, ModifierCombo::CTRL_ALT);
         assert!(app.preferences.manipulator_free_alt);
         assert!(app.preferences.selection_shift_add_only, "Selection page setting stays until that page resets");
         control(&mut app, &json!({"button": "cancel"})).unwrap();
