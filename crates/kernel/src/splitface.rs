@@ -456,21 +456,50 @@ pub(crate) fn fit(pts: &[mt::Point3], scale: f64) -> Result<mt::Curve> {
     Ok(mt::Curve::BSplineCurve(bsp))
 }
 
-/// The curve of a split line: an exact circular arc when a cylinder meets a plane square to its
-/// axis (a sketch arc splitting a planar face), else [`fit`].
+/// The curve of a split line: an exact circular arc where a cylinder meets a plane square to its
+/// axis, whichever of the two is the tool (a sketch arc splitting a planar face, a plane cutting
+/// across a hole's wall or a rounded side), else [`fit`].
+///
+/// A plane across a cylinder must give the arc too: a fitted cubic is no line or arc to the 2D
+/// prism route, which then can't read the cap the cut leaves (`prism_local` cuts a column round a
+/// tool with such planes, #2360).
 fn fit_on(g: &Field, face: &mt::Face, pts: &[mt::Point3], scale: f64) -> Result<mt::Curve> {
-    if let (Field::Cylinder { axis, .. }, mt::Surface::Plane(pl)) = (g, face.surface())
-        && let (Some(a), Some(b), Some(m)) = (pts.first(), pts.last(), pts.get(pts.len() / 2))
+    if let (Some(a), Some(b), Some(m)) = (pts.first(), pts.last(), pts.get(pts.len() / 2))
         && a.distance(*b) > scale * 1e-9
     {
-        let n = pl.normal();
-        if n.cross(crate::body::v3(*axis)).magnitude() < 1e-9 {
+        let mid = match (g, face.surface()) {
+            (Field::Cylinder { axis, .. }, mt::Surface::Plane(pl)) => (pl.normal().cross(crate::body::v3(*axis)).magnitude() < 1e-9).then_some(*m),
+            (Field::Plane { n, .. }, surface) => match surface_field(&surface) {
+                Field::Cylinder { o, axis, r, .. } if n.cross(axis).len() < 1e-9 => on_circle(pts, o, axis, r, scale).map(p3),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(mid) = mid {
             let (va, vb) = (mt::Vertex::new(*a), mt::Vertex::new(*b));
-            let e = guard("split arc", || Ok(mt::builder::circle_arc(&va, &vb, *m)))?;
+            let e = guard("split arc", || Ok(mt::builder::circle_arc(&va, &vb, mid)))?;
             return Ok(e.curve());
         }
     }
     fit(pts, scale)
+}
+
+/// Where a split line traced across a cylinder (radius `r` about the line through `o` along unit
+/// `axis`) by a plane square to the axis runs through: its middle point put exactly on the
+/// circle, when every traced point lies on that circle. `None` when one strays (a cylinder
+/// recognised loosely).
+fn on_circle(pts: &[mt::Point3], o: Vec3, axis: Vec3, r: f64, scale: f64) -> Option<Vec3> {
+    let tol = (scale * 1e-6).max(1e-9);
+    let radial = |p: &mt::Point3| {
+        let v = from_p3(*p) - o;
+        v - axis * v.dot(axis)
+    };
+    if !(r > tol) || !pts.iter().all(|p| (radial(p).len() - r).abs() <= tol) {
+        return None;
+    }
+    let m = pts.get(pts.len() / 2)?;
+    let out = radial(m).normalized()?;
+    Some(from_p3(*m) - radial(m) + out * r)
 }
 
 /// Cut an edge at a parameter (none when the point is already a vertex): the vertex and the
@@ -1553,6 +1582,38 @@ mod tests {
         // A plane that misses gives the body back.
         let far = Plane::new(Vec3::new(50.0, 0.0, 0.0), Vec3::Y, Vec3::Z).unwrap();
         assert_eq!(split_body(&b, &SplitTool::Plane(far)).unwrap().len(), 1);
+    }
+
+    /// A plane square to a hole's axis cuts the hole's wall in exact arcs, which the 2D prism
+    /// route reads as arcs: a fitted cubic there left the cap a column cut makes unreadable
+    /// (#2360).
+    #[test]
+    fn a_plane_across_a_hole_cuts_its_wall_in_arcs() {
+        let plate = box_solid(Vec3::ZERO, Vec3::new(40.0, 30.0, 10.0)).unwrap();
+        let pin = cylinder(Vec3::new(20.0, 15.0, -1.0), Vec3::Z, 5.0, 12.0).unwrap();
+        let holed = crate::boolean(&plate, &pin, crate::BoolOp::Cut).unwrap().unwrap();
+        let cut = Plane { origin: Vec3::new(0.0, 0.0, 4.0), ..Plane::XY };
+        let parts = split_body(&holed, &SplitTool::Plane(cut)).unwrap();
+        let v = volumes(&parts);
+        let ring = 1200.0 - std::f64::consts::PI * 25.0;
+        assert!(v.len() == 2 && rel(v[0], ring * 4.0) < 1e-4 && rel(v[1], ring * 6.0) < 1e-4, "{v:?}");
+        let mut work = 1_000_000;
+        for part in &parts {
+            let mut arcs = 0;
+            for e in part.solid.edge_iter() {
+                let (a, b) = (from_p3(e.front().point()), from_p3(e.back().point()));
+                if (a.z - 4.0).abs() > 1e-9 || (b.z - 4.0).abs() > 1e-9 || matches!(e.curve(), mt::Curve::Line(_)) {
+                    continue;
+                }
+                let segs = crate::prism_curve::segment(&e, &cut, 1e-6, &mut work).expect("the cut across the hole's wall is a line or an arc");
+                for s in segs {
+                    let Seg2::Arc { center, radius, .. } = s else { panic!("not an arc: {s:?}") };
+                    assert!((radius - 5.0).abs() < 1e-9 && center.dist(Vec2::new(20.0, 15.0)) < 1e-9, "{s:?}");
+                    arcs += 1;
+                }
+            }
+            assert!(arcs > 0, "no arc on the cut");
+        }
     }
 
     /// Sketch arcs split exactly (a circular edge), a listed face the tool misses is named, and

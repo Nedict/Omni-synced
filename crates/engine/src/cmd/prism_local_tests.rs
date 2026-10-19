@@ -92,3 +92,29 @@ fn a_ring_cut_round_a_counterbored_hole_in_a_chamfered_disc() {
         assert!((taken - want).abs() < want * 1e-3, "chamfer {chamfer}: {taken} taken, want {want}");
     }
 }
+
+/// #2360: the round pocket made deeper above a countersunk hole drilled from below, inside the
+/// pocket's box but clear of the pocket. The column under the pocket is cut across the hole's
+/// wall, which must give an exact arc (a fitted cubic left a cap the 2D route can't read), and the
+/// countersink's cone, ending 0.3 mm under the deeper pocket's floor, must leave room for that cut.
+#[test]
+fn a_round_pocket_made_deeper_above_a_countersunk_hole() {
+    let countersunk = |s: &mut Session| {
+        run(s, "solid.hole", json!({"position":[44.5,29.5,0],"diameter":2,"type":"countersink","cs_diameter":4}));
+    };
+    // The cone ends at z = 1: the deeper pocket's floor 4 mm above it, then 0.3 mm.
+    for floor in [5.0, 1.3] {
+        let mut s = plate(countersunk);
+        run(&mut s, "sketch.create", json!({"plane":"XY","offset":10}));
+        run(&mut s, "sketch.circle.center", json!({"center":[40,25],"radius":5}));
+        run(&mut s, "sketch.finish", json!({}));
+        let before = volume(&mut s);
+        let id = run(&mut s, "solid.extrude", json!({"distance":-(10.0 - floor),"operation":"cut"}))["feature"].as_u64().unwrap();
+        let r = s.model.result(id).unwrap();
+        assert!(r.error.is_none() && r.warning.is_none(), "floor {floor}: {r:?}");
+        assert!(r.boolean_diagnostics.events.is_empty(), "floor {floor}: retried {:?}", r.boolean_diagnostics.events);
+        let taken = before - volume(&mut s);
+        let want = PI * 25.0 * (8.0 - floor);
+        assert!((taken - want).abs() < want * 1e-3, "floor {floor}: {taken} taken, want {want}");
+    }
+}

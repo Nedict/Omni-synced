@@ -72,8 +72,11 @@ pub(crate) fn local_prism_boolean(a: &Body, b: &Body, op: BoolOp) -> Option<Resu
         return None;
     }
     // A piece of an offending face within a hair of the tool's box: no column round the tool
-    // can leave it out, so nothing is cut.
-    let reach = size * 2e-3 + 2.0 * gap;
+    // can leave it out, so nothing is cut. A hair is room for one cut plane `gap` clear of
+    // either (the extents are already widened by the mesh step): the cuts are exact imprints.
+    // A fixed fraction of the size refused a countersink 0.4 mm under a pocket in an 86 mm
+    // case (#2360).
+    let reach = 2.0 * gap;
     if pieces.iter().any(|(_, e)| e.iter().zip(&tool).all(|((c0, c1), (t0, t1))| *c1 > t0 - reach && *c0 < t1 + reach)) {
         return None;
     }
