@@ -42,9 +42,9 @@ protocol, authorization and CAD workflow:
 
 | Mode | Service and metadata | Blob archive | Access | Current state |
 | --- | --- | --- | --- | --- |
-| Local / LAN | Local host | Local filesystem | Local client; authenticated TLS for LAN | Loopback implementation under verification; LAN pending |
-| Local with remote access | Local host | Filesystem or configured object store | Outbound connector and public HTTPS relay | Pending implementation and isolated relay tests |
-| Fully hosted | Hosted independently of local workstations | Filesystem or S3-compatible storage; separate optional Azure adapter | Authenticated HTTPS | Pending implementation and isolated hosted-mode tests |
+| Local / LAN | Local host | Local filesystem | Local client; authenticated TLS for LAN | Native loopback trial verified; HTTPS library verified; guided LAN setup pending |
+| Local with remote access | Local host | Filesystem or configured object store | Outbound connector and public HTTPS relay | Connector and relay library under isolated integration tests; installation and pairing UI pending |
+| Fully hosted | Hosted independently of local workstations | Filesystem or S3-compatible storage; separate optional Azure adapter | Authenticated HTTPS | HTTPS library verified; deployment, login and provider integration pending |
 
 Setup must guide service installation, first administrator creation, archive
 selection and backup policy, workspace selection and client login. Remote mode
@@ -90,8 +90,9 @@ published as v3, unchanged historical versions, same-path normal-tab reuse,
 read-only saves after publication, and retry without an additional version.
 The delivered executable and demo are frozen separately from further development.
 The repository CI entry point passes formatting and asset attribution, then stops
-at the independently reproduced Windows accepted-icon hash mismatch. Final Wasm
-and latest-upstream integration checks remain follow-up work.
+at the independently reproduced Windows accepted-icon hash mismatch. After
+merging upstream e4d9015, all 12 Wasm crates and the 34 focused native checks
+passed again.
 
 The next increment exports and verifies the filesystem BlobStore boundary and
 one-time local first-administrator enrollment. It does not enable a network
@@ -116,7 +117,52 @@ exercise invalid trust/hostname, configured roles, competing checkouts, stale
 bases, retry receipts, oversized chunked input and stalled connections. Original
 public test keys are confined to fixtures and never enter a production trust store.
 These changes are not in the frozen trial. There is no HTTPS CLI, login wizard,
-relay, remote provisioning or cloud provider enabled by this increment.
+remote provisioning or cloud provider enabled by this increment.
+
+### Outbound relay and identity binding
+
+The following library increment shares the bounded TLS listener between the
+service and a relay. A connector polls the relay and forwards each request to
+its configured HTTPS service; it does not listen for inbound workstation
+connections. Both hops validate their certificates. The relay has bounded,
+ephemeral jobs, per-job leases, deadlines and cancellation, with one active
+connector poll per tunnel. Losing a relay job cannot release a checkout or
+publish a version: the authoritative service owns those operations and their
+durable retry receipts.
+
+Each tunnel has an immutable server identity and a separate connector
+capability. The connector forwards the caller's user credential; the connector
+capability is never a document principal. The user client discovers and pins
+the authenticated server identity, then supplies it on subsequent requests.
+The service checks that identity in the same serialized operation as user
+authorization and execution, so changing a host or restoring another store at
+the endpoint cannot silently redirect a write. Initial discovery permits only
+the catalog operation without a server identity.
+
+Pairing challenges require an opaque administrator context minted by the
+configured service, expire, permit bounded attempts and can be redeemed once.
+Pairing secrets and connector capabilities have distinct types and redacted
+diagnostics. This registry is currently in memory; it has no pairing network
+route or persistent deployment configuration. Revocation in the registry does
+not update an already constructed relay configuration. Guided setup must join
+those boundaries before remote access is enabled.
+
+The relay operator is trusted with user credentials and request content in
+memory under TLS. This is not end-to-end encryption through an untrusted relay.
+The increment remains a library exercised with disposable loopback listeners:
+there is no public gateway, login wizard, background installation or resumable
+large-transfer protocol. Native enrollment can persist its first credential
+through a trusted sink before publishing the administrator registry; the sink
+must be connected to durable OS credential storage by the installer.
+
+The integrated service suite passed 101 tests in 11 suites, including eight
+direct HTTPS tests and the real two-hop user-client/connector cycle. The latter
+was extended and passed again with v1, changed v2, historical v1 republished as
+v3, retry without v4, and all three payloads checked after reopening the service.
+It tests protocol-level republishing; the native restore confirmation was
+verified separately in the frozen local trial. Strict Clippy, formatting,
+dependency layers and sorted catalogs passed. Repository CI still stops at the
+unchanged, independently reproduced Windows accepted-icon hash mismatch.
 
 ### Storage and remote access contracts
 
@@ -145,8 +191,8 @@ integration; no compatibility is assumed from their advertised protocol names.
 Provider provisioning, public endpoints and real credentials are outside this
 increment. These contracts must not delay verification of the local workflow.
 
-No public listener, remote deployment, encrypted transport, external identity
-provider, approvals or revision lifecycle is implied by this increment. Backup
+No public listener, remote deployment, external identity provider, approvals or
+revision lifecycle is implied by this increment. Backup
 must include the complete service store and metadata; version history alone is
 not a backup. Any incomplete behavior remains disabled or explicitly reported.
 

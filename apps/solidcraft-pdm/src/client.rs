@@ -5,6 +5,7 @@ use std::{
     io::Read,
     net::{Ipv4Addr, SocketAddrV4, TcpStream},
     path::Path,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -17,7 +18,7 @@ pub struct Client {
 #[derive(Clone)]
 enum Transport {
     Loopback(u16),
-    Https { endpoint: String, agent: ureq::Agent },
+    Https { endpoint: String, agent: ureq::Agent, server_id: Arc<Mutex<Option<String>>> },
 }
 
 impl std::fmt::Debug for Client {
@@ -85,6 +86,48 @@ fn authorization_header(token: &AuthToken) -> Result<ureq::http::HeaderValue, Er
     Ok(authorization)
 }
 
+fn server_identity(value: &str) -> Result<String, Error> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(Error::Invalid("HTTPS server identity"));
+    }
+    Ok(value.to_ascii_lowercase())
+}
+
+fn pin_server(cache: &Mutex<Option<String>>, identity: &str) -> Result<String, Error> {
+    let identity = server_identity(identity)?;
+    let mut pinned = cache.lock().map_err(|_| Error::Invalid("HTTPS identity state unavailable"))?;
+    match &*pinned {
+        Some(expected) if expected != &identity => Err(Error::Server("server_identity_mismatch".into())),
+        Some(_) => Ok(identity),
+        None => {
+            *pinned = Some(identity.clone());
+            Ok(identity)
+        }
+    }
+}
+
+fn relay_endpoint(origin: &str, tunnel: &str) -> Result<String, Error> {
+    if tunnel.is_empty() || tunnel.len() > 64 || !tunnel.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_') {
+        return Err(Error::Invalid("HTTPS relay tunnel"));
+    }
+    let normalized = https_endpoint(origin)?;
+    let uri: ureq::http::Uri = origin.parse().map_err(|_| Error::Invalid("HTTPS relay origin"))?;
+    if !matches!(uri.path(), "" | "/") {
+        return Err(Error::Invalid("HTTPS relay origin"));
+    }
+    let origin = normalized.strip_suffix(crate::HTTP_RPC_PATH).ok_or(Error::Invalid("HTTPS relay origin"))?;
+    Ok(format!("{origin}/pdm/v2/tunnels/{tunnel}/rpc"))
+}
+
+fn ca_roots(ca_der: &[u8]) -> Result<ureq::tls::RootCerts, Error> {
+    if ca_der.is_empty() || ca_der.len() > 64 * 1024 {
+        return Err(Error::Invalid("HTTPS CA size"));
+    }
+    let mut validation = rustls::RootCertStore::empty();
+    validation.add(rustls::pki_types::CertificateDer::from(ca_der.to_vec())).map_err(|_| Error::Invalid("HTTPS CA certificate"))?;
+    Ok(ureq::tls::RootCerts::new_with_certs(&[ureq::tls::Certificate::from_der(ca_der).to_owned()]))
+}
+
 impl Client {
     pub fn new(port: u16, token: AuthToken) -> Self {
         Self { transport: Transport::Loopback(port), token }
@@ -99,17 +142,37 @@ impl Client {
     /// Explicit private-CA trust for self-hosted deployments. This CA replaces
     /// platform roots; standard hostname, validity and chain checks stay enabled.
     pub fn https_with_ca(endpoint: &str, token: AuthToken, ca_der: &[u8]) -> Result<Self, Error> {
-        if ca_der.is_empty() || ca_der.len() > 64 * 1024 {
-            return Err(Error::Invalid("HTTPS CA size"));
+        Self::with_https_roots(endpoint, token, ca_roots(ca_der)?)
+    }
+
+    /// Connect through the fixed user RPC route of a verified relay origin.
+    /// The tunnel identifier cannot select another URL path or authority.
+    pub fn https_relay(origin: &str, tunnel: &str, token: AuthToken) -> Result<Self, Error> {
+        Self::from_https_endpoint(relay_endpoint(origin, tunnel)?, token, ureq::tls::RootCerts::PlatformVerifier)
+    }
+
+    pub fn https_relay_with_ca(origin: &str, tunnel: &str, token: AuthToken, ca_der: &[u8]) -> Result<Self, Error> {
+        Self::from_https_endpoint(relay_endpoint(origin, tunnel)?, token, ca_roots(ca_der)?)
+    }
+
+    /// Bind a paired service identity before the first RPC. All clones share
+    /// the immutable pin; neither this method nor discovery can retarget it.
+    pub fn bind_server(self, expected_server_id: &str) -> Result<Self, Error> {
+        match &self.transport {
+            Transport::Https { server_id, .. } => {
+                pin_server(server_id, expected_server_id)?;
+            }
+            Transport::Loopback(_) => return Err(Error::Invalid("server binding requires HTTPS")),
         }
-        let mut validation = rustls::RootCertStore::empty();
-        validation.add(rustls::pki_types::CertificateDer::from(ca_der.to_vec())).map_err(|_| Error::Invalid("HTTPS CA certificate"))?;
-        let certificate = ureq::tls::Certificate::from_der(ca_der).to_owned();
-        Self::with_https_roots(endpoint, token, ureq::tls::RootCerts::new_with_certs(&[certificate]))
+        Ok(self)
     }
 
     fn with_https_roots(endpoint: &str, token: AuthToken, roots: ureq::tls::RootCerts) -> Result<Self, Error> {
         let endpoint = https_endpoint(endpoint)?;
+        Self::from_https_endpoint(endpoint, token, roots)
+    }
+
+    fn from_https_endpoint(endpoint: String, token: AuthToken, roots: ureq::tls::RootCerts) -> Result<Self, Error> {
         let tls = ureq::tls::TlsConfig::builder()
             .root_certs(roots)
             .unversioned_rustls_crypto_provider(std::sync::Arc::new(rustls::crypto::ring::default_provider()))
@@ -120,12 +183,13 @@ impl Client {
             .proxy(None)
             .http_status_as_error(false)
             .max_redirects(0)
+            .max_response_header_size(16 * 1024)
             .timeout_connect(Some(Duration::from_secs(5)))
             .timeout_global(Some(Duration::from_secs(30)))
             .user_agent("SolidCraft PDM")
             .build()
             .into();
-        Ok(Self { transport: Transport::Https { endpoint, agent }, token })
+        Ok(Self { transport: Transport::Https { endpoint, agent, server_id: Arc::new(Mutex::new(None)) }, token })
     }
 
     pub fn request(&self, request: Request) -> Result<Response, Error> {
@@ -138,7 +202,7 @@ impl Client {
     fn request_impl(&self, request: Request) -> Result<Response, Error> {
         let port = match &self.transport {
             Transport::Loopback(port) => *port,
-            Transport::Https { endpoint, agent } => return self.https_request(endpoint, agent, request),
+            Transport::Https { endpoint, agent, server_id } => return self.https_request(endpoint, agent, server_id, request),
         };
         let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
         let mut stream = TcpStream::connect_timeout(&address.into(), Duration::from_secs(5))?;
@@ -152,8 +216,32 @@ impl Client {
         }
     }
 
-    fn https_request(&self, endpoint: &str, agent: &ureq::Agent, request: Request) -> Result<Response, Error> {
-        let body = serde_json::to_vec(&crate::RpcEnvelope { protocol: crate::PROTOCOL.into(), request })?;
+    fn https_request(&self, endpoint: &str, agent: &ureq::Agent, cache: &Mutex<Option<String>>, request: Request) -> Result<Response, Error> {
+        let cached = cache.lock().map_err(|_| Error::Invalid("HTTPS identity state unavailable"))?.clone();
+        let expected = if let Some(expected) = cached {
+            expected
+        } else {
+            let handshake = self.https_exchange(endpoint, agent, Request::ManagedCatalog, None)?;
+            let Response::ManagedCatalog { catalog } = &handshake else {
+                return Err(Error::Invalid("HTTPS identity discovery response"));
+            };
+            let identity = pin_server(cache, &catalog.server_id)?;
+            if matches!(&request, Request::ManagedCatalog) {
+                return Ok(handshake);
+            }
+            identity
+        };
+        let response = self.https_exchange(endpoint, agent, request, Some(expected.clone()))?;
+        if let Response::ManagedCatalog { catalog } = &response
+            && server_identity(&catalog.server_id)? != expected
+        {
+            return Err(Error::Server("server_identity_mismatch".into()));
+        }
+        Ok(response)
+    }
+
+    fn https_exchange(&self, endpoint: &str, agent: &ureq::Agent, request: Request, server_id: Option<String>) -> Result<Response, Error> {
+        let body = serde_json::to_vec(&crate::RpcEnvelope { protocol: crate::PROTOCOL.into(), server_id, request })?;
         if body.len() as u64 > crate::MAX_FRAME {
             return Err(Error::Invalid("HTTPS request size"));
         }
@@ -183,6 +271,8 @@ impl Client {
                 | "integrity"
                 | "storage_error"
                 | "unsupported_protocol"
+                | "server_identity_required"
+                | "server_identity_mismatch"
                 | "unauthorized" => Err(Error::Server(code)),
                 _ => Err(Error::Invalid("PDM HTTPS response error code")),
             },
@@ -338,7 +428,8 @@ mod https_tests {
         assert!(!format!("{header:?}").contains(&secret));
         let client = Client::https("https://example.test", token).unwrap();
         assert!(!format!("{client:?}").contains(&secret));
-        let body = serde_json::to_string(&crate::RpcEnvelope { protocol: crate::PROTOCOL.into(), request: Request::ManagedCatalog }).unwrap();
+        let body = serde_json::to_string(&crate::RpcEnvelope { protocol: crate::PROTOCOL.into(), server_id: None, request: Request::ManagedCatalog })
+            .unwrap();
         assert!(!body.contains(&secret));
         assert!(!body.contains("token"));
         let error = Client::https(&format!("https://{secret}@example.test"), AuthToken::parse(secret.clone()).unwrap()).unwrap_err();
@@ -364,5 +455,55 @@ mod https_tests {
         assert_eq!(config.max_redirects(), 0);
         assert_eq!(config.timeouts().global, Some(Duration::from_secs(30)));
         assert_eq!(config.timeouts().connect, Some(Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn relay_route_is_derived_only_from_origin_and_validated_tunnel() {
+        assert_eq!(relay_endpoint("https://EXAMPLE.test:4443/", "office-1").unwrap(), "https://example.test:4443/pdm/v2/tunnels/office-1/rpc");
+        for tunnel in ["", "../office", "office/rpc", "office?token=x", "office\r\n"] {
+            assert!(relay_endpoint("https://example.test", tunnel).is_err());
+        }
+        assert!(relay_endpoint("https://example.test/pdm/v2/rpc", "office").is_err());
+        let client = Client::https_relay("https://example.test", "office", AuthToken::parse("00".repeat(32)).unwrap()).unwrap();
+        let Transport::Https { endpoint, .. } = client.transport else { panic!("HTTPS relay expected") };
+        assert_eq!(endpoint, "https://example.test/pdm/v2/tunnels/office/rpc");
+    }
+
+    #[test]
+    fn paired_identity_pin_is_shared_immutable_and_redacted() {
+        let secret = "ab".repeat(32);
+        let first = "11".repeat(32);
+        let different = "22".repeat(32);
+        let client = Client::https("https://example.test", AuthToken::parse(secret.clone()).unwrap()).unwrap();
+        let alias = client.clone();
+        let pinned = client.bind_server(&first).unwrap();
+        assert!(alias.clone().bind_server(&first).is_ok());
+        assert!(matches!(alias.bind_server(&different), Err(Error::Server(code)) if code == "server_identity_mismatch"));
+        let debug = format!("{pinned:?}");
+        assert!(!debug.contains(&secret));
+        assert!(!debug.contains(&first));
+        assert!(pinned.bind_server("invalid").is_err());
+    }
+
+    #[test]
+    fn concurrent_clones_cannot_pin_different_service_identities() {
+        let client = Client::https("https://example.test", AuthToken::parse("00".repeat(32)).unwrap()).unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let outcomes = std::thread::scope(|scope| {
+            let left = client.clone();
+            let right = client.clone();
+            let left_barrier = barrier.clone();
+            let left = scope.spawn(move || {
+                left_barrier.wait();
+                left.bind_server(&"11".repeat(32))
+            });
+            let right = scope.spawn(move || {
+                barrier.wait();
+                right.bind_server(&"22".repeat(32))
+            });
+            [left.join().unwrap(), right.join().unwrap()]
+        });
+        assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(outcomes.iter().filter(|result| matches!(result, Err(Error::Server(code)) if code == "server_identity_mismatch")).count(), 1);
     }
 }

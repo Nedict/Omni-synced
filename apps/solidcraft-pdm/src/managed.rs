@@ -320,6 +320,10 @@ impl ManagedStore {
         !self.credentials.is_empty()
     }
 
+    pub(crate) fn server_id(&self) -> &str {
+        &self.state.server_id
+    }
+
     pub(crate) fn authenticate(&self, token: &str) -> Option<Principal> {
         use subtle::ConstantTimeEq;
         if token.len() != 64 {

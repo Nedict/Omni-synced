@@ -69,7 +69,16 @@ fn raw(address: SocketAddr, request: &[u8]) -> String {
     String::from_utf8(bytes).unwrap()
 }
 fn rpc(address: SocketAddr, token: &str, request: Request) -> Response {
-    let body = serde_json::to_vec(&serde_json::json!({"protocol":PROTOCOL,"request":request})).unwrap();
+    let server_id = if matches!(&request, Request::ManagedCatalog) {
+        None
+    } else {
+        match rpc(address, token, Request::ManagedCatalog) {
+            Response::ManagedCatalog { catalog } => Some(catalog.server_id),
+            // Preserve authentication failures without fabricating an identity.
+            error => return error,
+        }
+    };
+    let body = serde_json::to_vec(&serde_json::json!({"protocol":PROTOCOL,"server_id":server_id,"request":request})).unwrap();
     let mut wire = format!("POST {HTTP_RPC_PATH} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len()).into_bytes();
     wire.extend(body);
     let response = raw(address, &wire);
@@ -81,6 +90,19 @@ fn startup_requires_credentials_and_valid_tls() {
     let root = Temp::new();
     assert!(HttpsServer::start(Store::open(&root.0).unwrap(), config()).is_err());
     assert!(HttpsConfig::from_der("127.0.0.1:0".parse().unwrap(), vec![], KEY.to_vec()).is_err());
+}
+#[test]
+fn occupied_listener_startup_releases_the_writer_and_store_lock() {
+    let root = Temp::new();
+    // Install the same valid trusted principal configuration as successful tests.
+    server(&root).shutdown().unwrap();
+    let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let config = HttpsConfig::from_der(occupied.local_addr().unwrap(), vec![CERT.to_vec()], KEY.to_vec()).unwrap();
+    let start = std::time::Instant::now();
+    assert!(HttpsServer::start(Store::open(&root.0).unwrap(), config).is_err());
+    assert!(start.elapsed() < Duration::from_secs(5));
+    // This would fail while a detached writer still owned the service store.
+    assert!(Store::open(&root.0).is_ok());
 }
 #[test]
 fn configured_roles_checkout_cas_and_receipt_survive_https() {
@@ -169,6 +191,26 @@ fn simultaneous_checkout_has_exactly_one_winner() {
     assert_eq!(responses.iter().filter(|r| matches!(r, Response::ManagedCheckout { .. })).count(), 1);
     assert_eq!(responses.iter().filter(|r| matches!(r, Response::Error { code } if code == "conflict")).count(), 1);
     assert!(matches!(rpc(address, ALICE, Request::ManagedCatalog), Response::ManagedCatalog { .. }));
+}
+
+#[test]
+fn configured_identity_fence_rejects_missing_and_stale_mutation_targets() {
+    let root = Temp::new();
+    let server = server(&root);
+    let address = server.address();
+    for (identity, expected) in [(None, "server_identity_required"), (Some("0".repeat(64)), "server_identity_mismatch")] {
+        let body = serde_json::to_vec(&serde_json::json!({"protocol":PROTOCOL,"server_id":identity,"request":Request::ManagedCreate { logical_path:"parts/wrong-target.solidcraft".into() }})).unwrap();
+        let mut wire = format!("POST {HTTP_RPC_PATH} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {ALICE}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len()).into_bytes();
+        wire.extend(body);
+        let response = raw(address, &wire);
+        assert!(response.starts_with("HTTP/1.1 200"));
+        let response: Response = serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert!(matches!(response,Response::Error{code} if code==expected));
+    }
+    match rpc(address, ALICE, Request::ManagedCatalog) {
+        Response::ManagedCatalog { catalog } => assert!(catalog.entries.is_empty()),
+        other => panic!("{other:?}"),
+    }
 }
 
 #[test]

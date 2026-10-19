@@ -64,7 +64,35 @@ fn validate_root(root: &Path) -> Result<(), Error> {
 /// A partial credential registry is deliberately retained after any failure:
 /// reopening then fails closed rather than reverting to an unconfigured account.
 /// Never retry enrollment by removing that registry or resetting an existing store.
+/// Native installers should use [`initialize_to`] to persist the credential before
+/// authority is published; this compatibility API transfers capture to its caller.
 pub fn initialize(root: &Path, administrator: &str) -> Result<(EnrollmentReceipt, EnrollmentSecret), Error> {
+    initialize_with_sink(root, administrator, |_, _| Ok(()))
+}
+
+/// Enroll through a trusted native credential sink before publishing authority.
+///
+/// The sink must durably capture the borrowed secret into private OS credential
+/// storage and must never log it. It runs while the store writer lock is held.
+/// A sink error leaves no principal registry and permits a later enrollment retry.
+/// Once the sink succeeds, keep its credential even if publication fails: it may
+/// be needed to recover an interrupted registry. This ordering prevents a crash
+/// between registry publication and the installer's initial credential capture.
+/// This function returns only the public receipt, never authentication material.
+pub fn initialize_to(
+    root: &Path,
+    administrator: &str,
+    sink: impl FnOnce(&EnrollmentReceipt, &str) -> Result<(), Error>,
+) -> Result<EnrollmentReceipt, Error> {
+    let (receipt, _) = initialize_with_sink(root, administrator, sink)?;
+    Ok(receipt)
+}
+
+fn initialize_with_sink(
+    root: &Path,
+    administrator: &str,
+    sink: impl FnOnce(&EnrollmentReceipt, &str) -> Result<(), Error>,
+) -> Result<(EnrollmentReceipt, EnrollmentSecret), Error> {
     if !crate::valid_id(administrator) || administrator == "owner" {
         return Err(Error::Invalid("administrator ID"));
     }
@@ -94,6 +122,8 @@ pub fn initialize(root: &Path, administrator: &str) -> Result<(EnrollmentReceipt
         token_sha256: crate::digest(secret.0.as_bytes()),
     }];
     let bytes = serde_json::to_vec(&credentials)?;
+    let receipt = EnrollmentReceipt { administrator: administrator.into(), server_id: catalog.server_id };
+    sink(&receipt, &secret.0)?;
     // Reserve the final name before writing anything. A crash or I/O failure
     // cannot leave a missing registry that would reactivate legacy fallback.
     let mut options = fs::OpenOptions::new();
@@ -108,7 +138,7 @@ pub fn initialize(root: &Path, administrator: &str) -> Result<(EnrollmentReceipt
     file.sync_all()?;
     #[cfg(unix)]
     fs::File::open(root)?.sync_all()?;
-    Ok((EnrollmentReceipt { administrator: administrator.into(), server_id: catalog.server_id }, secret))
+    Ok((receipt, secret))
 }
 
 #[cfg(test)]
@@ -142,6 +172,79 @@ mod tests {
         assert_eq!(reopened.managed.catalog().server_id, receipt.server_id);
         assert_eq!(reopened.managed.authenticate(&bearer), Some(Principal { id: receipt.administrator, role: Role::Administrator }));
         assert_eq!(reopened.managed.authenticate(&"0".repeat(64)), None);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_credential_capture_allows_retry_without_publishing_authority() -> Result<(), Error> {
+        let root = TestRoot::new()?;
+        let failed = initialize_to(&root.0, "admin", |_, _| Err(Error::Invalid("credential storage unavailable")));
+        assert!(failed.is_err());
+        assert!(!root.0.join("managed-principals.json").try_exists()?);
+        let mut captured = None;
+        let receipt = initialize_to(&root.0, "admin", |receipt, secret| {
+            assert_eq!(receipt.administrator, "admin");
+            assert!(!root.0.join("managed-principals.json").try_exists()?);
+            assert!(Store::open(&root.0).is_err());
+            captured = Some(secret.to_owned());
+            Ok(())
+        })?;
+        let captured = captured.ok_or(Error::Invalid("test credential capture missing"))?;
+        let mut reopened = Store::open(&root.0)?;
+        let principal = reopened.managed.authenticate(&captured).ok_or(Error::Forbidden)?;
+        assert_eq!(principal, Principal { id: receipt.administrator, role: Role::Administrator });
+        let created = reopened.managed.create(&principal, "Parts/captured.solidcraft".into())?;
+        assert_eq!(created.logical_path, "Parts/captured.solidcraft");
+        assert_eq!(reopened.managed.catalog().server_id, receipt.server_id);
+        assert!(!String::from_utf8_lossy(&fs::read(root.0.join("managed-principals.json"))?).contains(&captured));
+        Ok(())
+    }
+
+    #[test]
+    fn rejected_existing_state_never_calls_credential_sink() -> Result<(), Error> {
+        let root = TestRoot::new()?;
+        let mut existing = Store::open(&root.0)?;
+        existing.managed.create(&Principal { id: "existing-admin".into(), role: Role::Administrator }, "existing.solidcraft".into())?;
+        drop(existing);
+        let mut called = false;
+        assert!(
+            initialize_to(&root.0, "admin", |_, _| {
+                called = true;
+                Ok(())
+            })
+            .is_err()
+        );
+        assert!(!called);
+        assert!(!root.0.join("managed-principals.json").try_exists()?);
+        let partial = TestRoot::new()?;
+        drop(Store::open(&partial.0)?);
+        fs::write(partial.0.join("managed-principals.json"), b"[")?;
+        assert!(
+            initialize_to(&partial.0, "admin", |_, _| {
+                called = true;
+                Ok(())
+            })
+            .is_err()
+        );
+        assert!(!called);
+        assert_eq!(fs::read(partial.0.join("managed-principals.json"))?, b"[");
+        Ok(())
+    }
+
+    #[test]
+    fn publication_failure_keeps_captured_credential_and_partial_registry() -> Result<(), Error> {
+        let root = TestRoot::new()?;
+        let mut captured = None;
+        let result = initialize_to(&root.0, "admin", |_, secret| {
+            captured = Some(secret.to_owned());
+            // Simulate interrupted publication after the credential was captured.
+            fs::write(root.0.join("managed-principals.json"), b"[")?;
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert!(captured.is_some_and(|secret| secret.len() == 64));
+        assert!(Store::open(&root.0).is_err());
+        assert_eq!(fs::read(root.0.join("managed-principals.json"))?, b"[");
         Ok(())
     }
 

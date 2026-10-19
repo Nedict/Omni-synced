@@ -1,136 +1,53 @@
 //! Bounded HTTPS RPC transport. Only configured principals reach the writer.
+pub use crate::http_listener::HttpsConfig;
+use crate::http_listener::{Handler, HttpListener};
 use crate::{Error, HTTP_RPC_PATH, MAX_FRAME, PROTOCOL, Request, Response, RpcEnvelope, Store};
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::{
     Request as HttpRequest, Response as HttpResponse, StatusCode,
     body::{Bytes, Incoming},
-    service::service_fn,
 };
-use hyper_util::rt::{TokioIo, TokioTimer};
 use std::{
     net::SocketAddr,
     sync::{Arc, mpsc},
     thread,
     time::Duration,
 };
-use tokio::sync::{Semaphore, oneshot};
-
+use tokio::sync::oneshot;
 const DEADLINE: Duration = Duration::from_secs(5);
 type Reply = HttpResponse<Full<Bytes>>;
-type Job = (Request, String, oneshot::Sender<Response>);
-
-pub struct HttpsConfig {
-    bind: SocketAddr,
-    tls: Arc<rustls::ServerConfig>,
-}
-
-impl HttpsConfig {
-    pub fn from_der(bind: SocketAddr, certificates: Vec<Vec<u8>>, key: Vec<u8>) -> Result<Self, Error> {
-        let provider = Arc::new(rustls::crypto::ring::default_provider());
-        let tls = rustls::ServerConfig::builder_with_provider(provider)
-            .with_safe_default_protocol_versions()
-            .map_err(|_| Error::Invalid("TLS versions"))?
-            .with_no_client_auth()
-            .with_single_cert(certificates.into_iter().map(Into::into).collect(), rustls::pki_types::PrivatePkcs8KeyDer::from(key).into())
-            .map_err(|_| Error::Invalid("TLS certificate or private key"))?;
-        Ok(Self { bind, tls: Arc::new(tls) })
-    }
-}
-
+type Job = (Request, String, Option<String>, oneshot::Sender<Response>);
 pub struct HttpsServer {
     address: SocketAddr,
-    stop: Option<oneshot::Sender<()>>,
-    thread: Option<thread::JoinHandle<()>>,
+    listener: Option<HttpListener>,
+    writer: Option<thread::JoinHandle<()>>,
 }
-
 impl HttpsServer {
     pub fn start(mut store: Store, config: HttpsConfig) -> Result<Self, Error> {
         if !store.has_configured_principals() {
             return Err(Error::Invalid("HTTPS requires configured principals"));
         }
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-        let listener = std::net::TcpListener::bind(config.bind)?;
-        listener.set_nonblocking(true)?;
-        let address = listener.local_addr()?;
-        let (stop, mut stopped) = oneshot::channel();
-        let (ready, readiness) = mpsc::sync_channel(1);
-        let handle = thread::Builder::new().name("pdm-https".into()).spawn(move || {
-            let listener = {
-                let _entered = runtime.enter();
-                match tokio::net::TcpListener::from_std(listener) {
-                    Ok(listener) => listener,
-                    Err(error) => {
-                        let _ = ready.send(Err(error));
-                        return;
-                    }
-                }
-            };
-            let (send, receive) = mpsc::sync_channel::<Job>(16);
-            let writer = thread::Builder::new().name("pdm-writer".into()).spawn(move || {
-                while let Ok((request, credential, reply)) = receive.recv() {
-                    let response = store.execute_configured(request, &credential);
-                    let _ = reply.send(response);
-                }
-            });
-            let writer = match writer {
-                Ok(writer) => writer,
-                Err(error) => {
-                    let _ = ready.send(Err(error));
-                    return;
-                }
-            };
-            if ready.send(Ok(())).is_err() {
-                drop(send);
-                let _ = writer.join();
-                return;
-            }
-            {
-                runtime.block_on(async move {
-                    let acceptor = tokio_rustls::TlsAcceptor::from(config.tls);
-                    let permits = Arc::new(Semaphore::new(16));
-                    loop {
-                        if !matches!(stopped.try_recv(), Err(oneshot::error::TryRecvError::Empty)) {
-                            break;
-                        }
-                        match tokio::time::timeout(Duration::from_millis(100), listener.accept()).await {
-                            Ok(accepted) => {
-                                let Ok((stream, _)) = accepted else { break };
-                                let Ok(permit) = permits.clone().try_acquire_owned() else { continue };
-                                let acceptor = acceptor.clone();
-                                let send = send.clone();
-                                tokio::spawn(async move {
-                                    let _permit = permit;
-                                    let Ok(Ok(tls)) = tokio::time::timeout(DEADLINE, acceptor.accept(stream)).await else { return };
-                                    let mut builder = hyper::server::conn::http1::Builder::new();
-                                    builder
-                                        .timer(TokioTimer::new())
-                                        .header_read_timeout(DEADLINE)
-                                        .max_headers(32)
-                                        .max_buf_size(16 * 1024)
-                                        .keep_alive(false);
-                                    let service = service_fn(move |request| rpc(request, send.clone()));
-                                    let _ = tokio::time::timeout(Duration::from_secs(15), builder.serve_connection(TokioIo::new(tls), service)).await;
-                                });
-                            }
-                            Err(_) => continue,
-                        }
-                    }
-                });
-                // Runtime drop cancels network tasks and releases all queue senders.
-                drop(runtime);
-                let _ = writer.join();
+        let (send, receive) = mpsc::sync_channel::<Job>(16);
+        let writer = thread::Builder::new().name("pdm-writer".into()).spawn(move || {
+            while let Ok((request, credential, expected, reply)) = receive.recv() {
+                let response = store.execute_configured_for(request, &credential, expected.as_deref());
+                let _ = reply.send(response);
             }
         })?;
-        let mut server = Self { address, stop: Some(stop), thread: Some(handle) };
-        match readiness.recv_timeout(DEADLINE) {
-            Ok(Ok(())) => Ok(server),
-            Ok(Err(error)) => {
-                let _ = server.stop_and_join();
-                Err(Error::Io(error))
-            }
-            Err(_) => {
-                let _ = server.stop_and_join();
-                Err(Error::Invalid("HTTPS startup failed"))
+        let handler: Handler = Arc::new(move |request| {
+            let send = send.clone();
+            Box::pin(async move {
+                match rpc(request, send).await {
+                    Ok(reply) => reply,
+                    Err(never) => match never {},
+                }
+            })
+        });
+        match HttpListener::start(config, handler, 16, Duration::from_secs(15)) {
+            Ok(listener) => Ok(Self { address: listener.address(), listener: Some(listener), writer: Some(writer) }),
+            Err(error) => {
+                let _ = writer.join();
+                Err(error)
             }
         }
     }
@@ -138,24 +55,25 @@ impl HttpsServer {
         self.address
     }
     pub fn shutdown(mut self) -> Result<(), Error> {
-        self.stop_and_join()
+        self.close()
     }
-    fn stop_and_join(&mut self) -> Result<(), Error> {
-        if let Some(stop) = self.stop.take() {
-            let _ = stop.send(());
-        }
-        if let Some(handle) = self.thread.take() {
-            handle.join().map_err(|_| Error::Invalid("HTTPS worker failed"))?;
-        }
-        Ok(())
+    fn close(&mut self) -> Result<(), Error> {
+        let listener_result = match self.listener.take() {
+            Some(listener) => listener.shutdown(),
+            None => Ok(()),
+        };
+        let writer_result = match self.writer.take() {
+            Some(writer) => writer.join().map_err(|_| Error::Invalid("PDM writer failed")),
+            None => Ok(()),
+        };
+        listener_result.and(writer_result)
     }
 }
 impl Drop for HttpsServer {
     fn drop(&mut self) {
-        let _ = self.stop_and_join();
+        let _ = self.close();
     }
 }
-
 fn reply(status: StatusCode, body: impl Into<Bytes>) -> Reply {
     let mut response = HttpResponse::new(Full::new(body.into()));
     *response.status_mut() = status;
@@ -202,7 +120,7 @@ async fn rpc(request: HttpRequest<Incoming>, send: mpsc::SyncSender<Job>) -> Res
         return Ok(reply(StatusCode::BAD_REQUEST, "{}"));
     }
     let (result, receive) = oneshot::channel();
-    if send.try_send((envelope.request, credential, result)).is_err() {
+    if send.try_send((envelope.request, credential, envelope.server_id, result)).is_err() {
         return Ok(reply(StatusCode::SERVICE_UNAVAILABLE, "{}"));
     }
     match tokio::time::timeout(DEADLINE, receive).await {

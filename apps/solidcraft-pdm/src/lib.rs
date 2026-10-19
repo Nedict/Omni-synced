@@ -16,9 +16,15 @@ pub mod backup_restore;
 pub mod blob_store;
 pub mod bootstrap;
 pub mod client;
+pub mod connector;
+mod http_listener;
 pub mod http_server;
 pub mod managed;
 pub mod managed_workspace;
+pub mod pairing;
+pub mod relay;
+pub mod relay_client;
+pub mod relay_http;
 pub mod workspace;
 
 pub const PROTOCOL: &str = "solidcraft-pdm/2";
@@ -29,6 +35,8 @@ pub const HTTP_RPC_PATH: &str = "/pdm/v2/rpc";
 #[serde(deny_unknown_fields)]
 pub(crate) struct RpcEnvelope {
     pub protocol: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_id: Option<String>,
     pub request: Request,
 }
 pub const TOKEN_ENV: &str = "SOLIDCRAFT_PDM_TOKEN";
@@ -380,11 +388,27 @@ impl Store {
         self.managed.has_configured_principals()
     }
 
-    pub(crate) fn execute_configured(&mut self, request: Request, bearer: &str) -> Response {
-        match self.managed.authenticate(bearer) {
-            Some(principal) => self.execute_as(request, &principal),
-            None => Response::Error { code: "unauthorized".into() },
+    pub(crate) fn execute_configured_for(&mut self, request: Request, bearer: &str, expected_server: Option<&str>) -> Response {
+        let Some(principal) = self.managed.authenticate(bearer) else {
+            return Response::Error { code: "unauthorized".into() };
+        };
+        match expected_server {
+            Some(expected) if expected != self.managed.server_id() => {
+                return Response::Error { code: "server_identity_mismatch".into() };
+            }
+            None if !matches!(&request, Request::ManagedCatalog) => {
+                return Response::Error { code: "server_identity_required".into() };
+            }
+            _ => {}
         }
+        self.execute_as(request, &principal)
+    }
+
+    /// Mint pairing administration from a configured account, bound to this store.
+    pub fn pairing_administrator(&self, bearer: &AuthToken) -> Result<pairing::PairingAdmin, Error> {
+        let principal =
+            self.managed.authenticate(&bearer.0).filter(|principal| principal.role == managed::Role::Administrator).ok_or(Error::Forbidden)?;
+        Ok(pairing::PairingAdmin::authenticated(principal.id, self.managed.server_id().to_owned()))
     }
 
     pub fn execute_as(&mut self, request: Request, principal: &managed::Principal) -> Response {
@@ -580,7 +604,7 @@ mod tests {
         let mut store = Store::open(&root).unwrap();
         assert!(!store.has_configured_principals());
         assert!(matches!(
-            store.execute_configured(Request::ManagedCatalog, &unknown_owner),
+            store.execute_configured_for(Request::ManagedCatalog, &unknown_owner, None),
             Response::Error { code } if code == "unauthorized"
         ));
         drop(store);
@@ -588,11 +612,46 @@ mod tests {
         let enrolled = enrolled.into_bearer();
         let mut store = Store::open(&root).unwrap();
         assert!(store.has_configured_principals());
-        assert!(matches!(store.execute_configured(Request::ManagedCatalog, &enrolled), Response::ManagedCatalog { .. }));
+        assert!(matches!(store.execute_configured_for(Request::ManagedCatalog, &enrolled, None), Response::ManagedCatalog { .. }));
         assert!(matches!(
-            store.execute_configured(Request::ManagedCatalog, &unknown_owner),
+            store.execute_configured_for(Request::ManagedCatalog, &unknown_owner, None),
             Response::Error { code } if code == "unauthorized"
         ));
+        assert!(matches!(
+            store.execute_configured_for(Request::ManagedCreate { logical_path: "must-not-exist.solidcraft".into() }, &enrolled, None),
+            Response::Error { code } if code == "server_identity_required"
+        ));
+        let server_id = store.managed.server_id().to_owned();
+        let wrong_id = if server_id == "00".repeat(32) { "11".repeat(32) } else { "00".repeat(32) };
+        assert!(matches!(
+            store.execute_configured_for(Request::ManagedCreate { logical_path: "must-not-exist.solidcraft".into() }, &enrolled, Some(&wrong_id)),
+            Response::Error { code } if code == "server_identity_mismatch"
+        ));
+        assert!(store.managed.catalog().entries.is_empty());
+        assert!(store.pairing_administrator(&AuthToken::parse(unknown_owner).unwrap()).is_err());
+        let admin = store.pairing_administrator(&AuthToken::parse(enrolled).unwrap()).unwrap();
+        let (receipt, _) = pairing::PairingRegistry::default().issue(&admin, "test-tunnel", Duration::from_secs(60)).unwrap();
+        assert_eq!(receipt.server_id, server_id);
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn pairing_administration_is_minted_only_for_configured_administrators() {
+        let root = std::env::temp_dir().join(format!("solidcraft-pairing-auth-{}", AuthToken::generate().unwrap()));
+        std::fs::create_dir(&root).unwrap();
+        let reader = AuthToken::generate().unwrap();
+        let contributor = AuthToken::generate().unwrap();
+        let administrator = AuthToken::generate().unwrap();
+        let entries = [("reader", "viewer", &reader), ("writer", "contributor", &contributor), ("administrator", "administrator", &administrator)]
+            .into_iter()
+            .map(|(id, role, token)| serde_json::json!({"principal":{"id":id,"role":role},"token_sha256":digest(token.as_bytes())}))
+            .collect::<Vec<_>>();
+        std::fs::write(root.join("managed-principals.json"), serde_json::to_vec(&entries).unwrap()).unwrap();
+        let store = Store::open(&root).unwrap();
+        assert!(store.pairing_administrator(&AuthToken::parse(reader).unwrap()).is_err());
+        assert!(store.pairing_administrator(&AuthToken::parse(contributor).unwrap()).is_err());
+        assert_eq!(store.pairing_administrator(&AuthToken::parse(administrator).unwrap()).unwrap().principal_id(), "administrator");
         drop(store);
         let _ = std::fs::remove_dir_all(root);
     }
