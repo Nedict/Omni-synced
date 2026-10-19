@@ -43,6 +43,8 @@ pub struct ViewportState {
     /// A two-point drawing tool's first point was placed by a press that became a drag: the
     /// release places the second (#1630).
     pub(crate) draw_drag: bool,
+    /// A Trim drag is drawing its path (`sketch_tools::trim_drag_*`).
+    pub(crate) trim_drag: bool,
     /// Per-body boxes of one world state, held (not just its address, which a later state can
     /// reuse once the old one is freed, so stale boxes would come back).
     pick_bounds: std::sync::Mutex<Option<BodyBounds>>,
@@ -2455,6 +2457,15 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             crate::tools::on_hover(app, &proj, p);
         }
     }
+    // A Trim drag's path follows the pointer; letting go trims what it crossed.
+    if app.viewport.trim_drag {
+        if resp.drag_stopped() || !ui.input(|i| i.pointer.primary_down()) {
+            app.viewport.trim_drag = false;
+            crate::sketch_tools::trim_drag_end(app);
+        } else if let Some(p) = ui.input(|i| i.pointer.latest_pos()).filter(|p| rect.contains(*p)) {
+            crate::sketch_tools::trim_drag_to(app, &proj, p);
+        }
+    }
     let add = mods.shift || mods.command || mods.ctrl;
     crate::sketch_text::set_one_letter(mods.shift);
     if let Some(p) = hover.filter(|_| inside) {
@@ -2473,6 +2484,19 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         {
             crate::tools::on_click(app, &proj, a);
             app.viewport.draw_drag = app.tool.as_ref().is_some_and(|t| t.pts.len() == 1);
+        }
+        // Trim also trims by press and drag across the pieces to remove.
+        if app.tool.as_ref().is_some_and(|t| t.cmd == "sketch.trim")
+            && !held
+            && primary_nav.is_none()
+            && mode.is_none()
+            && resp.drag_started_by(egui::PointerButton::Primary)
+            && let Some(a) = ui.input(|i| i.pointer.press_origin())
+        {
+            app.viewport.trim_drag = crate::sketch_tools::trim_drag_start(app, &proj, a);
+            if app.viewport.trim_drag {
+                crate::sketch_tools::trim_drag_to(app, &proj, p);
+            }
         }
         let reference_pick = (resp.clicked() || resp.double_clicked())
             && !held
