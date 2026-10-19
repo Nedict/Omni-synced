@@ -303,7 +303,9 @@ pub(crate) fn canvas(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Painter,
         let at = a + (b - a) * 0.5 + vec2(8.0, -12.0);
         let r =
             crate::canvas::value_box_with(ui, egui::Id::new(("sc_hole_ref_area", *k)), egui::Id::new(("sc_hole_ref", *k)), label, value, at, focus);
-        crate::scenario::publish_handle(&format!("canvas:{label}"), r.rect.center());
+        if let Some(r) = r {
+            crate::scenario::publish_handle(&format!("canvas:{label}"), r.center());
+        }
     }
     took
 }

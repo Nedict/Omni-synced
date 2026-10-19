@@ -383,7 +383,7 @@ pub struct HoleOpts {
     pub tapped: bool,
     pub thread: String,
     /// The Single hole's reference edge distances (`hole_refs`, #37).
-    pub refs: crate::hole_refs::Refs,
+    pub refs: Box<crate::hole_refs::Refs>,
 }
 
 impl Default for HoleOpts {

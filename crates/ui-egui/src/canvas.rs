@@ -575,7 +575,7 @@ fn value_box(ui: &mut egui::Ui, label: &str, value: &mut String, at: Pos2, selec
 }
 
 /// [`value_box`] under its own ids (its area's and its field's), for a value beside the main one
-/// (a hole's reference distances). Returns the field.
+/// (a hole's reference distances). Returns where the field is.
 pub(crate) fn value_box_with(
     ui: &mut egui::Ui,
     area: egui::Id,
@@ -584,36 +584,27 @@ pub(crate) fn value_box_with(
     value: &mut String,
     at: Pos2,
     select_all: bool,
-) -> egui::Response {
+) -> Option<egui::Rect> {
     let t = Tokens::get();
-    crate::frame::area(area)
-        .fixed_pos(at)
-        .order(egui::Order::Foreground)
-        .show(ui.ctx(), |ui| {
-            egui::Frame::popup(ui.style())
-                .inner_margin(egui::Margin::symmetric(6, 3))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(crate::i18n::tr_label(label)).color(t.text_dim).size(11.5));
-                        let r = ui.add(egui::TextEdit::singleline(value).id(id).desired_width(72.0));
-                        crate::params_dialog::complete(ui, &r, value);
-                        if select_all {
-                            r.request_focus();
-                            let n = value.chars().count();
-                            let mut st = egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
-                            st.cursor.set_char_range(Some(egui::text_selection::CCursorRange::two(
-                                egui::text::CCursor::new(0),
-                                egui::text::CCursor::new(n),
-                            )));
-                            st.store(ui.ctx(), id);
-                        }
-                        r
-                    })
-                    .inner
-                })
-                .inner
-        })
-        .inner
+    let mut field = None;
+    crate::frame::area(area).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+        egui::Frame::popup(ui.style()).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(crate::i18n::tr_label(label)).color(t.text_dim).size(11.5));
+                let r = ui.add(egui::TextEdit::singleline(value).id(id).desired_width(72.0));
+                crate::params_dialog::complete(ui, &r, value);
+                if select_all {
+                    r.request_focus();
+                    let n = value.chars().count();
+                    let mut st = egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
+                    st.cursor.set_char_range(Some(egui::text_selection::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(n))));
+                    st.store(ui.ctx(), id);
+                }
+                field = Some(r.rect);
+            });
+        });
+    });
+    field
 }
 
 /// How far (logical points) from an arrow's stem a press still takes the arrow.
