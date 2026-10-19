@@ -221,7 +221,7 @@ pub struct Session {
     pub log: Vec<String>,
     /// Increments on every document change (views use it to refresh).
     pub revision: u64,
-    /// Project a face's edges into a sketch created on it (Fusion's default; `sketch.auto_project`).
+    /// Project a face's edges into a sketch created on it (the default; `sketch.auto_project`).
     pub auto_project: bool,
     /// Leave the joints unsolved when the model is refreshed, while a command that builds
     /// several parts solves them once at the end (`parts.fasten`).
