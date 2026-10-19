@@ -20,7 +20,7 @@ fn far_sketch() -> (Harness, u64) {
 }
 
 fn near(a: Vec3, b: Vec3) -> bool {
-    (a - b).length() < 1e-6
+    (a - b).len() < 1e-6
 }
 
 /// The camera's view half-width (mm) the rectangle needs: its half diagonal.
@@ -34,7 +34,7 @@ fn the_menus_look_at_frames_a_sketch_far_from_the_origin() {
     let look = items.iter().find(|i| i.id == "ui.lookAt").cloned().expect("the sketch menu has Look At");
     crate::context_menu::run_item(&mut h.app, &look, egui::Pos2::ZERO);
     assert!(near(h.app.cam.target, Vec3::new(340.0, 490.0, 8.0)), "centred on the rectangle, not the plane's origin: {:?}", h.app.cam.target);
-    assert!((h.app.cam.back() - Vec3::new(0.0, 0.0, 1.0)).length() < 1e-6, "facing the sketch from above");
+    assert!((h.app.cam.back() - Vec3::new(0.0, 0.0, 1.0)).len() < 1e-6, "facing the sketch from above");
     let need = HALF_DIAGONAL / 0.4 * 1.15;
     assert!(h.app.cam.distance >= need - 1e-6, "zoomed out to fit it: {} < {need}", h.app.cam.distance);
 }
