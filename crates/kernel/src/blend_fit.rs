@@ -389,8 +389,11 @@ fn first_clash(sel: &Selection, size: Size, strict: bool) -> Option<Clash> {
                 .filter(|(j, (fj, _))| *j != i && fj.as_ref().is_some_and(|fj| fj.allowed.contains(face)))
                 .filter_map(|(_, (_, wj))| wj.as_ref())
                 .collect();
+            // The pieces near the arc's ends are thin: a curved face only goes clear of them
+            // when its mesh stays a chord outside, or a sliver into the round is missed (#324).
+            let fan = if sel.planar.get(*face).copied().unwrap_or(false) { flat } else { -sel.chord };
             reaches_inside_beyond(t, &w.planes, eps, &trimmed, out)
-                && (changed.len() <= 1 || changed.iter().any(|p| reaches_inside_beyond(t, &p.planes, eps, &trimmed, out)))
+                && (changed.len() <= 1 || changed.iter().any(|p| reaches_inside_beyond(t, &p.planes, fan, &trimmed, out)))
         });
         if hit {
             return Some(Clash::Face);
