@@ -376,11 +376,24 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
 /// The feature a body was made by, and that feature's sketch if it has one.
 fn body_feature_and_sketch(app: &SolveApp, body: &str) -> (Option<u64>, Option<u64>) {
     let f = body_feature(app, body);
-    let sketch = f
-        .and_then(|f| app.session.doc.feature(f))
-        .and_then(|f| serde_json::to_value(&f.kind).ok())
-        .and_then(|v| v.get("sketch").and_then(Value::as_u64).or_else(|| v.as_object()?.values().find_map(|x| x.get("sketch")?.as_u64())));
-    (f, sketch)
+    (f, f.and_then(|f| profile_sketch(app, f)))
+}
+
+/// The sketch feature `f` takes its profile from, if it takes one.
+fn profile_sketch(app: &SolveApp, f: u64) -> Option<u64> {
+    let v = serde_json::to_value(&app.session.doc.feature(f)?.kind).ok()?;
+    v.get("sketch").and_then(Value::as_u64).or_else(|| v.as_object()?.values().find_map(|x| x.get("sketch")?.as_u64()))
+}
+
+/// The feature a picked face stands for, and its profile sketch: the feature that made the face
+/// (a fillet's round, a cut's wall), as a feature input picks it on the canvas (#3075). The
+/// body's feature when the face's can't be told (a placed body, a face no feature's result
+/// shows).
+fn face_feature_and_sketch(app: &SolveApp, body: &str, index: usize, point: solidcraft_engine::geom::Vec3) -> (Option<u64>, Option<u64>) {
+    match crate::dialogs::feature_of_face(&app.session, body, index, point) {
+        Some(f) => (Some(f), profile_sketch(app, f)),
+        None => body_feature_and_sketch(app, body),
+    }
 }
 
 /// The canvas menus put Repeat on
@@ -420,8 +433,12 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
     if let Some(sketch) = sel_sketch(app).filter(|_| !solid) {
         v.extend(sketch_items(app, sketch));
     } else if has(|s| matches!(s, Sel::Face { .. })) {
-        let face = sel.iter().find_map(|s| if let Sel::Face { body, .. } = s { Some(body.clone()) } else { None }).unwrap_or_default();
-        let (feature, sketch) = body_feature_and_sketch(app, &face);
+        let picked = sel.iter().find_map(|s| if let Sel::Face { body, index, point } = s { Some((body.clone(), *index, *point)) } else { None });
+        let face = picked.as_ref().map(|(body, ..)| body.clone()).unwrap_or_default();
+        let (feature, sketch) = match &picked {
+            Some((body, index, point)) => face_feature_and_sketch(app, body, *index, *point),
+            None => (None, None),
+        };
         let hidden = app.session.visibility.hidden_bodies.contains(&face);
         v.push(cmd(app, "sketch.create", "Create Sketch"));
         v.push(cmd(app, "solid.extrude", "Extrude"));
@@ -1991,5 +2008,31 @@ mod tests {
                 assert!(screen.contains_rect(r), "{at:?} slot {k}: {r:?}");
             }
         }
+    }
+
+    /// #3075: Edit Feature on a face edits the feature that made the face (a fillet's round),
+    /// not the one that made its body; on a face the body's feature made, that feature. Edit
+    /// Profile Sketch follows the same feature.
+    #[test]
+    fn edit_feature_on_a_face_edits_the_feature_that_made_it() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+        h.app.run("sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [40, 20]})).unwrap();
+        h.app.run("sketch.finish", json!({})).unwrap();
+        let pad = h.app.run("solid.extrude", json!({"distance": 15, "name": "Pad"})).unwrap()["feature"].as_u64().unwrap();
+        let sketch = h.app.session.doc.features[0].id;
+        let round = h.app.run("solid.fillet", json!({"edges": [[20, 0, 15]], "radius": 3, "name": "Round"})).unwrap()["feature"].as_u64().unwrap();
+        let menu = |h: &mut crate::scenario::Harness, p: [f64; 3]| {
+            let face = crate::dialogs::face_sel(&h.app.session, solidcraft_engine::geom::Vec3::new(p[0], p[1], p[2])).unwrap();
+            h.app.session.selection = vec![face];
+            let items = items(&h.app, &Target::Viewport);
+            let of = |id: &str| items.iter().find(|i| i.id == id).and_then(|i| i.params.as_ref()).cloned().unwrap_or_default();
+            (of("ui.editFeature")["feature"].as_u64(), of("ui.editSketch")["sketch"].as_u64())
+        };
+        // On the round, 45 degrees round its axis (y = 3, z = 12).
+        let c = 3.0 * std::f64::consts::FRAC_1_SQRT_2;
+        assert_eq!(menu(&mut h, [20.0, 3.0 - c, 12.0 + c]), (Some(round), None), "the round's face edits the fillet");
+        assert_eq!(menu(&mut h, [20.0, 10.0, 0.0]), (Some(pad), Some(sketch)), "the bottom edits the extrude, and its sketch");
     }
 }
