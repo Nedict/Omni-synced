@@ -489,6 +489,7 @@ fn build_scene(
         })
         .flatten()
         .collect();
+    let mut thread_budget = crate::cosmetic_threads::Budget::default();
     for body in st.bodies.iter().filter(|b| s.body_visible(&b.name)) {
         let selected = selected_occurrences.contains(&body.name) || s.selection.iter().any(|x| matches!(x, Sel::Body { name } if *name == body.name));
         let mesh = body.mesh();
@@ -502,6 +503,11 @@ fn build_scene(
             s.doc.face_colors(body).into_iter().map(|(f, l)| (f as u32, Rgb(l.color[0], l.color[1], l.color[2]))).collect()
         };
         sc.meshes.push(SceneMesh { mesh: Arc::clone(&mesh), color, face_colors });
+        if thread_budget.available() && s.doc.model_body_opacity(body) >= 0.999 && s.doc.face_colors(body).iter().all(|(_, l)| l.opacity >= 0.999) {
+            for (a, b) in crate::cosmetic_threads::segments_with_budget(body, &mesh, &st.threads, &mut thread_budget) {
+                sc.lines.push(SceneLine { points: vec![a, b], color: p.edge, width: 0.85, on_top: false });
+            }
+        }
         for (i, e) in mesh.edges.iter().enumerate() {
             if !mesh.shaded_edge_visible(i) {
                 continue;
