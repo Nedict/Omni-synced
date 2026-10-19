@@ -265,6 +265,10 @@ pub struct Session {
     /// Record this session's top-level commands in the crash journal (the app's own design;
     /// never previews or other scratch sessions). See [`crash`].
     pub crash_journal: bool,
+    /// Part libraries opened in this session (`parts.library.load`): their fastener families
+    /// sit beside the built-in ones. Not part of the design; a part inserted from one keeps a
+    /// copy of its family.
+    pub part_libraries: Vec<cmd::PartLibrary>,
     /// Full model evaluations (`refresh`), for tests.
     #[cfg(test)]
     pub(crate) evaluations: usize,
@@ -389,17 +393,21 @@ impl Session {
             #[cfg(test)]
             evaluations: 0,
             crash_journal: false,
+            part_libraries: Vec::new(),
         }
     }
 
     /// Become `fresh` (another design opened, recovered or started), keeping the settings that
-    /// are the user's rather than the design's: `auto_project` is a preference (#680).
+    /// are the user's rather than the design's: `auto_project` is a preference (#680), the opened
+    /// part libraries are the user's.
     pub fn replace_design(&mut self, fresh: Session) {
         let auto_project = self.auto_project;
         let render_viewport = self.render_viewport.clone();
         let render_jobs = self.render_jobs.scratch();
+        let part_libraries = std::mem::take(&mut self.part_libraries);
         *self = fresh;
         self.auto_project = auto_project;
+        self.part_libraries = part_libraries;
         self.render_viewport = render_viewport;
         self.render_jobs = render_jobs;
     }
@@ -861,6 +869,7 @@ impl Session {
             #[cfg(test)]
             evaluations: 0,
             crash_journal: false,
+            part_libraries: self.part_libraries.clone(),
         }
     }
 
