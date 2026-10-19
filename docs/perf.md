@@ -341,6 +341,70 @@ author-run. A fresh full workspace `xtask ci` attempt stops at the existing UI
 icon standards/hash check in this Windows CRLF checkout; it is not reported as
 passing. Combined desktop integration and a user trial remain separate.
 
+## Reuse two support grids while checking planar faces (2026-10-20, #3035)
+
+`heal::planar_surfaces` visits consecutive boundary curves that often share a
+spline support. Its pass now retains up to two immutable support grids between
+curves, using the same full-bit, 1,024-word support keys as the shell mesher.
+An entry is moved to the back on reuse; the oldest grid is dropped before a third
+is prepared. The 51 by 51 grid, seed scan order, strict distance comparisons,
+Newton searches, sample counts, tolerances and rejection paths are unchanged.
+Exact edge fitting and edge validation retain their existing per-curve sampler.
+
+The pass borrows its scratch exclusively through each sampler's destruction.
+Explicit sampler and prepared-support destructors keep that borrow live even
+after the last sampling call, including a retained support clone. An oversized
+key clears the scratch and uses the existing local-grid search; scoped clones
+share those fallback grid cells. This bounds retained grid payload across the
+scratch, sampler and its clones to two grids, 126,480 bytes total. At most four
+1,024-word key buffers add 32 KiB, with allocation and synchronization headers
+outside those figures. This is a scoped payload bound, not a process RSS limit.
+Contended or poisoned locks use the original uncached search; no lock remains
+held during Newton iteration. Ordinary unscoped samplers keep their prior clone
+behavior.
+
+Private component replays use captured target/tool geometry and a cold reconstructed
+body, without the original optional history, paint or display metadata. Their
+output can be compared exactly, but their elapsed times are not a replay of the
+complete document history or the preceding 20-cut measurement. One baseline and
+one candidate replay ran with 20 workers under concurrent activity:
+
+| Captured-geometry scope | Per-curve grids | Two-grid planar pass |
+|---|---:|---:|
+| Boolean operation | 5,725.182 ms | 4,747.550 ms |
+| Nested planar-surface check | 970.891 ms | 618.181 ms |
+
+The candidate returned exactly the same compressed result bytes and every JSON
+floating-point bit as the captured 1,207-face result. Inputs remained unchanged.
+Other unchanged phases also varied between executions; the total difference
+cannot be assigned to this cache. The candidate additionally included private
+vendor phase timers, whose overhead is included. These observations do not
+establish a general speedup or a complete-history editing latency.
+
+Vendor Boolean time includes two internal operand triangulations, which are
+outside the kernel's `body.raw_mesh` timer. The candidate replay observed
+562.586 ms in those triangulations, 695.910 ms in face division and 215.743 ms in
+loop construction, within its 1,492.647 ms vendor Boolean total. These disjoint
+leaves are nested in that total; they must not be added to it or to the kernel
+Boolean total. The product candidate contains no vendor changes or private
+timers.
+
+The final planar source passed 43 focused sampler/meshing tests and 801 kernel
+tests (28 ignored, the same two existing exclusions), three oblique engine
+regressions and 96 Hole-related engine tests, including all 16 Hole face tests.
+Kernel all-target Clippy with warnings denied, wasm, formatting and diff checks
+passed. Four public native-document Hole controls (simple/fragmented stock,
+axial/oblique) retained every result field bit for bit except timings/source path,
+including measurements, documents and face/edge references; analytic volume
+checks passed. The clean optimized CLI contains no private diagnostic markers.
+Independent read-only review found no actionable correctness issue. Six compiler
+checks distinguish the old accepted retained-owner/clone cases, the new borrow
+errors and successful reuse after explicit destruction; runtime regressions cover
+oversized fallback clones and poisoning. A fresh full `xtask ci` attempt stopped
+at the same 288 existing icon hash errors as the preceding Windows checkout
+attempt, with no asset changes. Full workspace CI and combined desktop
+integration are not claimed passing.
+
 ## Edges made by booleans: each point evaluated once (2026-10-16)
 
 A boolean meshes both operands with truck-meshalgo, which first divides every edge into a

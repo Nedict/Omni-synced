@@ -121,6 +121,7 @@ mod step;
 mod step_in;
 mod step_out;
 mod surface_extend;
+mod surface_key;
 mod surface_kind;
 mod surface_offset;
 mod surface_ruled;

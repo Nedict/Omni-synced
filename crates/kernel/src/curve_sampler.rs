@@ -1,7 +1,10 @@
-//! Immutable spline support grids reused only while sampling one borrowed curve.
+//! Immutable spline support grids reused while sampling borrowed curves.
 //! Grid scan adapted from truck-geotrait 0.4.0 algo/surface.rs
 //! (Apache-2.0, copyright RICOS Co. Ltd.); see ATTRIBUTION.md.
+use crate::surface_key::SurfaceKey;
 use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use truck_meshalgo::prelude::TrySubs;
 #[cfg(test)]
 use truck_modeling::SearchNearestParameter;
@@ -71,29 +74,83 @@ impl Grid {
     }
 }
 
+/// Two grids shared by consecutive curves in one planar-surface pass. No state
+/// survives the pass; an unkeyable curve clears these before using local grids.
+/// Grid data stays within 126,480 bytes, matching two ordinary support grids.
+/// At most four live support keys add 32 KiB of words, plus allocation headers.
+pub(crate) struct GridScratch {
+    entries: Mutex<VecDeque<(Arc<SurfaceKey>, Grid)>>,
+}
+impl GridScratch {
+    pub(crate) fn new() -> Self {
+        Self { entries: Mutex::new(VecDeque::with_capacity(2)) }
+    }
+    fn seed(&self, key: &Arc<SurfaceKey>, surface: &mt::Surface, point: mt::Point3) -> Option<(f64, f64)> {
+        let mut entries = self.entries.try_lock().ok()?;
+        if let Some(index) = entries.iter().position(|(cached, _)| cached == key) {
+            let entry = entries.remove(index)?;
+            let seed = entry.1.seed(point);
+            entries.push_back(entry);
+            return Some(seed);
+        }
+        if entries.len() >= 2 {
+            // Release the old data before preparing the replacement.
+            drop(entries.pop_front());
+        }
+        let grid = Grid::prepare(surface)?;
+        let seed = grid.seed(point);
+        entries.push_back((Arc::clone(key), grid));
+        Some(seed)
+    }
+}
+
 struct PreparedSurface<'a> {
     original: &'a mt::Surface,
     grid: RefCell<Option<Grid>>,
+    local_shared: Option<Arc<Mutex<Option<Grid>>>>,
+    shared: Option<(&'a GridScratch, Arc<SurfaceKey>)>,
 }
 impl Clone for PreparedSurface<'_> {
-    // Clone is required by ParametricSurface; no caller needs to duplicate grids.
+    // Ordinary clones start fresh; shared clones retain the same two-grid bound.
     fn clone(&self) -> Self {
-        Self::new(self.original)
+        let mut cloned = Self::new(self.original);
+        cloned.local_shared = self.local_shared.as_ref().map(Arc::clone);
+        cloned.shared = self.shared.as_ref().map(|(scratch, key)| (*scratch, Arc::clone(key)));
+        cloned
     }
 }
 impl<'a> PreparedSurface<'a> {
     fn new(original: &'a mt::Surface) -> Self {
-        Self { original, grid: RefCell::new(None) }
+        Self { original, grid: RefCell::new(None), local_shared: None, shared: None }
     }
     fn seed(&self, point: mt::Point3) -> Option<(f64, f64)> {
         if !matches!(self.original, mt::Surface::BSplineSurface(_) | mt::Surface::NurbsSurface(_)) {
             return None;
+        }
+        if let Some((scratch, key)) = &self.shared {
+            return scratch.seed(key, self.original, point);
+        }
+        if let Some(local) = &self.local_shared {
+            let mut grid = local.try_lock().ok()?;
+            if grid.is_none() {
+                *grid = Grid::prepare(self.original);
+            }
+            return grid.as_ref().map(|grid| grid.seed(point));
         }
         let mut grid = self.grid.try_borrow_mut().ok()?;
         if grid.is_none() {
             *grid = Grid::prepare(self.original);
         }
         grid.as_ref().map(|g| g.seed(point))
+    }
+}
+// Drop checking keeps the support's scratch lifetime live through destruction,
+// including clones retained after their last sampling call.
+impl Drop for PreparedSurface<'_> {
+    fn drop(&mut self) {
+        drop(self.grid.get_mut().take());
+        drop(self.shared.take());
+        drop(self.local_shared.take());
     }
 }
 impl ParametricSurface for PreparedSurface<'_> {
@@ -160,6 +217,42 @@ impl<'a> CurveSampler<'a> {
         };
         Self { original, supports }
     }
+    /// Drop guards retain the exclusive scratch loan until this sampler and its
+    /// prepared support clones have released all grids and key references.
+    /// Large support keys retain the existing local cache, after dropping the
+    /// shared grids, rather than repeating an uncached search for every sample.
+    pub(crate) fn with_scratch(original: &'a mt::Curve, scratch: &'a mut GridScratch) -> Self {
+        let mt::Curve::IntersectionCurve(curve) = original else {
+            return Self::new(original);
+        };
+        let key_a = SurfaceKey::new(curve.surface0()).map(Arc::new);
+        let key_b = SurfaceKey::new(curve.surface1()).map(Arc::new);
+        let unkeyable = |surface: &mt::Surface, key: &Option<Arc<SurfaceKey>>| {
+            matches!(surface, mt::Surface::BSplineSurface(_) | mt::Surface::NurbsSurface(_)) && key.is_none()
+        };
+        if unkeyable(curve.surface0(), &key_a) || unkeyable(curve.surface1(), &key_b) {
+            match scratch.entries.get_mut() {
+                Ok(entries) => entries.clear(),
+                Err(poisoned) => poisoned.into_inner().clear(),
+            }
+            let mut local = Self::new(original);
+            if let Some((a, b)) = local.supports.as_mut() {
+                // Clones of this fallback share its two local grids. They cannot
+                // multiply retained grid data while extending the scratch loan.
+                a.local_shared = Some(Arc::new(Mutex::new(None)));
+                b.local_shared = Some(Arc::new(Mutex::new(None)));
+            }
+            return local;
+        }
+        let shared: &'a GridScratch = scratch;
+        let prepared = |surface: &'a mt::Surface, key: Option<Arc<SurfaceKey>>| PreparedSurface {
+            original: surface,
+            grid: RefCell::new(None),
+            local_shared: None,
+            shared: key.map(|key| (shared, key)),
+        };
+        Self { original, supports: Some((prepared(curve.surface0(), key_a), prepared(curve.surface1(), key_b))) }
+    }
     pub(crate) fn at(&self, t: f64) -> Option<mt::Point3> {
         match (self.original, self.supports.as_ref()) {
             (mt::Curve::IntersectionCurve(c), Some((a, b))) => {
@@ -171,6 +264,14 @@ impl<'a> CurveSampler<'a> {
     /// Keep the caller's existing guarded `subs` failure contract.
     pub(crate) fn subs(&self, t: f64) -> mt::Point3 {
         self.at(t).unwrap_or_else(|| self.original.subs(t))
+    }
+}
+
+// The explicit destructor also retains the scratch loan when this owner is kept
+// after its last use. Its supports release their resources before the loan ends.
+impl Drop for CurveSampler<'_> {
+    fn drop(&mut self) {
+        drop(self.supports.take());
     }
 }
 
@@ -496,3 +597,7 @@ mod expanded_tests {
         assert!(second.grid.borrow().is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "curve_sampler_scratch_tests.rs"]
+mod scratch_tests;

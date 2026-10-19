@@ -1,6 +1,7 @@
 //! Reuse intersection support grids only while meshing one shell.
 //! The grid and ordered seed scan are shared with curve_sampler; see its attribution.
 use crate::curve_sampler::Grid;
+use crate::surface_key::SurfaceKey;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
@@ -12,62 +13,6 @@ use truck_modeling::{self as mt, ParametricCurve, ParametricSurface, ParametricS
 // Only unhinted spline support searches consume a slot. Active entries retain their
 // slots even after eviction; unavailable slots keep the original search unchanged.
 pub(super) const MAX_GRIDS: usize = 512;
-// Keys retain every geometry bit, including signed zero, weights and NaN payloads.
-// At most 1,024 words (8 KiB) per support key; larger supports keep the original search.
-const MAX_KEY_WORDS: usize = 1024;
-#[derive(Debug, PartialEq, Eq, Hash)]
-struct SurfaceKey(Vec<u64>);
-impl SurfaceKey {
-    fn new(surface: &mt::Surface) -> Option<Self> {
-        fn push(out: &mut Vec<u64>, word: u64) -> Option<()> {
-            if out.len() >= MAX_KEY_WORDS {
-                return None;
-            }
-            out.push(word);
-            Some(())
-        }
-        fn knots(out: &mut Vec<u64>, values: &mt::KnotVec) -> Option<()> {
-            push(out, values.len() as u64)?;
-            for &v in values.iter() {
-                push(out, v.to_bits())?;
-            }
-            Some(())
-        }
-        let mut out = Vec::new();
-        match surface {
-            mt::Surface::BSplineSurface(s) => {
-                push(&mut out, 0)?;
-                knots(&mut out, s.uknot_vec())?;
-                knots(&mut out, s.vknot_vec())?;
-                push(&mut out, s.control_points().len() as u64)?;
-                for row in s.control_points() {
-                    push(&mut out, row.len() as u64)?;
-                    for p in row {
-                        for value in [p.x, p.y, p.z] {
-                            push(&mut out, value.to_bits())?;
-                        }
-                    }
-                }
-            }
-            mt::Surface::NurbsSurface(s) => {
-                push(&mut out, 1)?;
-                knots(&mut out, s.uknot_vec())?;
-                knots(&mut out, s.vknot_vec())?;
-                push(&mut out, s.control_points().len() as u64)?;
-                for row in s.control_points() {
-                    push(&mut out, row.len() as u64)?;
-                    for p in row {
-                        for value in [p.x, p.y, p.z, p.w] {
-                            push(&mut out, value.to_bits())?;
-                        }
-                    }
-                }
-            }
-            _ => return None,
-        }
-        Some(Self(out))
-    }
-}
 // Local references are weak so an idle entry can be recycled under pressure.
 // A separate permit counts every live entry, including an evicted entry another
 // thread upgraded just before removal. It is returned only after its grid drops.

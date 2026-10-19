@@ -429,6 +429,7 @@ fn exact_edges(shell: &mt::Shell, tol: f64, trace: &mut Trace) -> Option<mt::She
 /// line) get a real plane, so they merge with their coplanar neighbours and blend like planes.
 pub(crate) fn planar_surfaces(shell: &mt::Shell, tol: f64) -> Option<mt::Shell> {
     use mt::{BoundedCurve, ParametricSurface, ParametricSurface3D, SearchNearestParameter};
+    let mut scratch = crate::curve_sampler::GridScratch::new();
     let mut changed = false;
     let mut faces = Vec::new();
     for f in shell.face_iter() {
@@ -443,7 +444,7 @@ pub(crate) fn planar_surfaces(shell: &mt::Shell, tol: f64) -> Option<mt::Shell> 
         for w in f.absolute_boundaries() {
             for e in w.edge_iter() {
                 let c = e.oriented_curve();
-                let sampler = crate::curve_sampler::CurveSampler::new(&c);
+                let sampler = crate::curve_sampler::CurveSampler::with_scratch(&c, &mut scratch);
                 let (t0, t1) = c.range_tuple();
                 for k in 0..6 {
                     let p = sampler.subs(t0 + (t1 - t0) * k as f64 / 6.0);
