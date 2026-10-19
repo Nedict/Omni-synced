@@ -1096,6 +1096,47 @@ mod tests {
     }
 
     #[test]
+    fn a_push_after_a_single_reading_settle_starts_a_hold() {
+        // One reading back at rest, not a steady run, is all the settle stores; a full push after
+        // it is still movement.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        hold(&mut wizard, [100, 0, 0, 0, 0, 0], 0.5);
+        wizard.feed([0; 6], 0.02);
+        assert_eq!(wizard.stage(), Stage::Step(1));
+        assert_eq!(wizard.settled.map(|settled| settled.count), Some(1));
+        hold(&mut wizard, [-100, 0, 0, 0, 0, 0], 0.2);
+        assert_eq!((wizard.stage(), wizard.progress() > 0.0), (Stage::Step(1), true));
+    }
+
+    #[test]
+    fn a_narrow_settled_run_skips_a_whole_tolerance_either_side_and_the_band_stays_anchored() {
+        // Flat at rest and a 100 push: tolerance is exactly 4. The release settles flat at 10, so a
+        // reading 4 either side (6, 14) is untouched, repeated or not; one more unit is movement.
+        let wizard = || {
+            let mut wizard = Wizard::default();
+            hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+            hold(&mut wizard, [100, 0, 0, 0, 0, 0], 0.5);
+            hold(&mut wizard, [10, 0, 0, 0, 0, 0], SETTLE_SECONDS + 0.1);
+            assert_eq!(wizard.stage(), Stage::Step(1));
+            assert_eq!(wizard.tolerance(0), 4.0);
+            wizard
+        };
+        let mut edges = wizard();
+        cycle(&mut edges, &[[6, 0, 0, 0, 0, 0], [14, 0, 0, 0, 0, 0]], 0.2);
+        hold(&mut edges, [14, 0, 0, 0, 0, 0], 0.2);
+        assert_eq!(edges.progress(), 0.0);
+        // Skipped readings don't widen the band: after all those 14s, 15 is still movement.
+        edges.feed([15, 0, 0, 0, 0, 0], 0.02);
+        assert!(edges.progress() > 0.0);
+        for x in [5, 15] {
+            let mut wizard = wizard();
+            wizard.feed([x, 0, 0, 0, 0, 0], 0.02);
+            assert!(wizard.progress() > 0.0, "{x}");
+        }
+    }
+
+    #[test]
     fn a_step_settles_on_its_own_axis_when_another_with_a_wider_range_stays_out() {
         // The step's own axis only goes to 100; another axis stays 30 out after the release,
         // more than a quarter of 100, which mustn't hold the step up.
