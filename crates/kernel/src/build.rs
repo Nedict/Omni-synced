@@ -1,7 +1,7 @@
 //! Building bodies: extrude and revolve planar regions, primitives.
 
 use mt::builder;
-use solidcraft_geom::{Loop2, Plane, Region2, Seg2, Vec2, Vec3};
+use solidcraft_geom::{Grid, Loop2, Plane, Region2, Seg2, Vec2, Vec3};
 use truck_modeling as mt;
 
 use crate::body::{Body, Solid, from_p3, p3, v3};
@@ -190,6 +190,19 @@ pub(crate) fn frame_ok(plane: &Plane) -> bool {
 
 /// Extrude each region from `start` to `end` along the plane normal (offsets in mm, `end > start`).
 pub fn extrude(plane: &Plane, regions: &[Region2], start: f64, end: f64) -> Result<Vec<Body>> {
+    extrude_with(plane, regions, start, end, false)
+}
+
+/// [`extrude`] with each run of profile lines that continue one another in a straight line (a side
+/// drawn in two pieces, a mirrored half meeting its mirror image) swept into one side face over
+/// all its pieces, rather than coplanar faces with an edge between them (#1788). The side's
+/// history lists every piece under it. For the Extrude feature; other builders (sheet metal's
+/// flat pattern, tools) keep a face per segment.
+pub fn extrude_whole_sides(plane: &Plane, regions: &[Region2], start: f64, end: f64) -> Result<Vec<Body>> {
+    extrude_with(plane, regions, start, end, true)
+}
+
+fn extrude_with(plane: &Plane, regions: &[Region2], start: f64, end: f64, whole_sides: bool) -> Result<Vec<Body>> {
     if !frame_ok(plane) {
         return Err(KernelError::Invalid("extrude frame is not finite and orthonormal".into()));
     }
@@ -206,7 +219,19 @@ pub fn extrude(plane: &Plane, regions: &[Region2], start: f64, end: f64) -> Resu
     for r in regions {
         region_ok(r)?;
         let base = plane.offset(lo);
-        let profile = region_wires(&base, &oriented(r)?)?;
+        let pieces = oriented(r)?;
+        let numbered = if whole_sides { pieces.map_loops(|l| l.merged_lines(continues_straight)) } else { pieces.clone() };
+        // A joined side's source is its first piece, a segment of the profile as drawn (the side
+        // lies along it): the sketch curve it is certified and named by, as when it stood alone.
+        let first_piece = |side: &ProfileEdge| {
+            pieces
+                .loops()
+                .flat_map(|l| l.lp.segs.iter())
+                .copied()
+                .find(|piece| side.numbers.len() > 1 && piece.start() == side.segment.start())
+                .unwrap_or(side.segment)
+        };
+        let profile = region_wires(&base, &numbered)?;
         let wires = wires_of(&profile);
         let f = guard("extrude profile", || builder::try_attach_plane(&wires).map_err(|e| KernelError::Invalid(format!("profile: {e}"))))?;
         let solid: Solid = guard("extrude", || Ok(builder::tsweep(&f, v3(n * (hi - lo)))))?;
@@ -263,7 +288,7 @@ pub fn extrude(plane: &Plane, regions: &[Region2], start: f64, end: f64) -> Resu
                         _ => None,
                     };
                     (
-                        Some(crate::FaceSource::ExtrudeSide { segment: side.segment, plane: basis, coalesced: false }),
+                        Some(crate::FaceSource::ExtrudeSide { segment: first_piece(side), plane: basis, coalesced: false }),
                         Some(record::profile(&side.numbers)),
                     )
                 } else if Some(*id) == end {
@@ -283,6 +308,14 @@ pub fn extrude(plane: &Plane, regions: &[Region2], start: f64, end: f64) -> Resu
         out.push(record::attach(body, &[], history, Default::default())?);
     }
     Ok(out)
+}
+
+/// `t` carries on from `s` in the same straight line: the turn at their meeting point is within
+/// rounding of none, measured against both lengths.
+fn continues_straight(s: &Seg2, t: &Seg2) -> bool {
+    let (u, v) = (s.end() - s.start(), t.end() - t.start());
+    let (lu, lv) = (u.len(), v.len());
+    lu > 0.0 && lv > 0.0 && s.end().dist(t.start()) <= 1e-9 * (lu + lv) && u.dot(v) > 0.0 && u.cross(v).abs() <= 1e-9 * lu * lv
 }
 
 /// Choose the per-profile axis sign whose positive rotation follows the sketch normal.
@@ -2120,6 +2153,36 @@ pub(crate) fn interpolate_cubic(pts: &[Vec3]) -> Option<mt::BSplineCurve<mt::Poi
     let m = pts.len();
     let u: Vec<f64> = (0..m).map(|i| i as f64 / (m.max(2) - 1) as f64).collect();
     interpolate_cubic_at(pts, &u)
+}
+
+/// A cubic B-spline surface through a grid of samples at uniform parameters: cubics across v
+/// through each u index's samples, then cubics across u through their control points.
+pub(crate) struct NetFit {
+    pub surface: mt::BSplineSurface<mt::Point3>,
+    /// The surface's edges at the first and the last u (curves across v).
+    pub u_ends: [mt::BSplineCurve<mt::Point3>; 2],
+    /// The surface's edges at the first and the last v (curves across u).
+    pub v_ends: [mt::BSplineCurve<mt::Point3>; 2],
+}
+
+/// [`NetFit`] through `samples`; `None` with fewer than four samples across either direction.
+pub(crate) fn interpolate_net(samples: &Grid<Vec3>) -> Option<NetFit> {
+    let across_v: Vec<mt::BSplineCurve<mt::Point3>> = samples.transposed().lines().map(interpolate_cubic).collect::<Option<_>>()?;
+    let across_u: Vec<mt::BSplineCurve<mt::Point3>> =
+        control_net(&across_v)?.lines().map(|run| interpolate_cubic(&run.iter().map(|&p| from_p3(p)).collect::<Vec<_>>())).collect::<Option<_>>()?;
+    let net = control_net(&across_u)?.transposed().into_u_rows();
+    let knots = (across_u.first()?.knot_vec().clone(), across_v.first()?.knot_vec().clone());
+    let surface = mt::BSplineSurface::try_new(knots, net).ok()?;
+    let u_ends = [across_v.first()?.clone(), across_v.last()?.clone()];
+    let v_ends = [across_u.first()?.clone(), across_u.last()?.clone()];
+    Some(NetFit { surface, u_ends, v_ends })
+}
+
+/// The control points of `curves` as a grid: value `(i, j)` is control point `j` of curve `i`.
+/// `None` unless every curve has as many control points.
+fn control_net(curves: &[mt::BSplineCurve<mt::Point3>]) -> Option<Grid<mt::Point3>> {
+    let rows: Vec<&[mt::Point3]> = curves.iter().map(|c| c.control_points().as_slice()).collect();
+    Grid::from_u_rows(&rows)
 }
 
 /// [`interpolate_cubic`] by chord length: the parameters (0 to 1) in proportion to the distance

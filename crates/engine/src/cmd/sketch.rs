@@ -179,7 +179,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params("entities: [curve, point or constraint ids]"),
     CommandSpec::new("sketch.move_point", "Drag Sketch Point", move_point).icon("sketch_move").enabled(in_sketch).params("point: ref, to: [x,y]"),
     CommandSpec::new("sketch.drag", "Drag Sketch Geometry", drag).icon("sketch_move").enabled(in_sketch).live(drag_live).params(
-        "entity: point or curve, from: [x,y] where it was grabbed, to: [x,y], live?: bool: a point goes to `to`, a line (spline, conic) slides by to - from, a circle or arc grabbed on its edge takes the radius to `to`; the rest moves as little as it can and keeps its solution branch (a long move is followed in short steps, each solved with the entity held; a step that cannot be solved that way is approached as far as it can be and the next ones tried; when none past it solves, the last one is left to the sketch's ordinary solve, which may pull it back or leave the sketch unsolved; a step that would sweep an arc through its start is undone and the drag ends there). Returns `reached`: how much of the way from `from` to `to` the geometry followed (0..1), and `at`: where the grabbed spot went (`from` moved as the dragged points did), the `from` of the next move. `live: true` (each frame of an interactive drag) solves the sketch once and leaves the features after it as they were (stale) until `sketch.drag_end` or any command that reads the model; `dof` is then the one from before the drag",
+        "entity: point or curve, from: [x,y] where it was grabbed, to: [x,y], live?: bool: a point moves toward `to` within the design constraints; when exact cursor placement is impossible, bounded feasible steps minimize cursor distance while keeping design constraints mandatory. A line (spline, conic) slides by to - from; a circle or arc grabbed on its edge takes the radius to `to`. Long moves use continuation to retain the solution branch, and a step that would sweep an arc through its start is rejected. Returns `reached`: progress along the requested move (0..1; feasible point motion projects its actual displacement onto that move), and `at`: where the grabbed spot went (`from` moved as the dragged points did), the `from` of the next move. `live: true` solves the sketch and leaves later features stale until `sketch.drag_end` or a command that reads the model; `dof` is then the one from before the drag",
     ),
     CommandSpec::new("sketch.drag_end", "End Sketch Drag", drag_end).icon("sketch_move").enabled(in_sketch).doc_only().params(
         "constraint?: {command: a sketch.constraint.* id, params}: ends a drag made of `sketch.drag` `live: true` frames: adds the constraint it let go on (not kept if it over-constrains the sketch), then evaluates the whole model once; returns the constraint's result and the sketch's solved state and degrees of freedom",
@@ -275,6 +275,8 @@ pub(super) fn edit_solved<T>(
     // The stored sketch is solved for its stored values.
     let stored = sk.driving_values();
     let (out, left) = f(&mut sk, &mut doc)?;
+    // A curve that took an offset spline's generated node (drawn from its end) gets its own point there.
+    sk.detach_offset_points()?;
     let offsets = !sk.offsets.is_empty() || !sk.freeform_offsets.is_empty();
     let rep = match left {
         // A drag step solved it (held, with the dimensions' values applied).
@@ -1435,7 +1437,7 @@ fn keep_size(sk: &Sketch, e: Ent) -> Vec<ConstraintKind> {
     }
 }
 
-/// Satisfy a just-added constraint the way Fusion applies it: the first-picked entities stay
+/// Satisfy a just-added constraint the way a dimensional-constraint tool applies it: the first-picked entities stay
 /// put and only the second moves (first keeping its size, so it turns and slides, then also
 /// resizing).
 /// If the second can't move (fixed, projected or fully determined), the first moves instead;
