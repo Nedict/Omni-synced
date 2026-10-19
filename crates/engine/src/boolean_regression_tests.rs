@@ -45,6 +45,49 @@ fn volume(s: &Session, body: &str) -> f64 {
     s.model.state().body(body).map(|b| solidcraft_kernel::measure(&b.body).unwrap().volume).unwrap_or(0.0)
 }
 
+/// #1985: the STEP export of a small enclosure never finished. The export reads its own file
+/// back, and meshing the screw hole's seam cylinder never ended: the boundary walk took
+/// projected angles millions of turns apart. The file is written, reads back cleanly, and holds
+/// the same solid.
+#[test]
+fn step_export_of_an_enclosure_with_a_screw_hole_finishes_and_reads_back() {
+    let s = replay(include_str!("../../../examples/regressions/step_export_screw_hole_enclosure.json"));
+    let state = s.model.state();
+    let body = &state.body("Unterteil").unwrap().body;
+    // 27 faces; the kernel splits each of the three whole turns (the hole, two standoffs) in two.
+    assert_eq!(body.face_count(), 30);
+    let (text, file_faces) = read_back(&s, body);
+    assert_eq!(text.matches("CYLINDRICAL_SURFACE(").count(), 7, "the seven round faces stay cylinders");
+    assert_eq!(file_faces, 27);
+}
+
+/// #1985, the reporter's second reproduction: the same walk on a standoff of a flanged
+/// enclosure without a screw hole.
+#[test]
+fn step_export_of_a_flanged_enclosure_finishes_and_reads_back() {
+    let s = replay(include_str!("../../../examples/regressions/step_export_flanged_enclosure.json"));
+    let state = s.model.state();
+    let (_, file_faces) = read_back(&s, &state.body("Unterteil").unwrap().body);
+    assert_eq!(file_faces, 29);
+}
+
+/// The body's STEP text, which reads back without warnings as one closed solid of the same
+/// volume and area, and the number of faces the file holds.
+fn read_back(s: &Session, body: &solidcraft_kernel::Body) -> (String, usize) {
+    assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+    let text = solidcraft_kernel::step_export(&[body], "SolidCraft").unwrap();
+    let imp = solidcraft_kernel::step_import(&text).unwrap();
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+    assert_eq!(imp.bodies.len(), 1);
+    let back = &imp.bodies[0];
+    assert!(back.closed);
+    let (a, b) = (solidcraft_kernel::measure(body).unwrap(), solidcraft_kernel::measure(&back.body).unwrap());
+    assert!((a.volume - b.volume).abs() < 1e-3 * a.volume, "volume {} read back as {}", a.volume, b.volume);
+    assert!((a.area - b.area).abs() < 1e-3 * a.area, "area {} read back as {}", a.area, b.area);
+    println!("#1985 volume {:.3} / {:.3} mm³; area {:.3} / {:.3} mm²", a.volume, b.volume, a.area, b.area);
+    (text, back.file_faces)
+}
+
 /// #2059: tabs exactly as wide as their supporting ribs share the ribs' side
 /// planes. The base's remote conical chamfer must not prevent their join.
 #[test]
@@ -806,5 +849,99 @@ fn multi_target_join_keeps_nearby_bodies_and_original_absorption_order() {
         for body in &session.model.state().bodies {
             assert!((volume(&session, &body.name) - volume(&reference, &body.name)).abs() < 1e-6);
         }
+    }
+}
+
+/// Two posts joined into one body while apart, trimmed by a cut that splits neither, then joined
+/// to a case they stand on. The cut split the joined posts into "Posts" and "Posts (1)" without
+/// saying so (`created_bodies` was empty), and the join then took only "Posts", leaving the other
+/// post behind as a body of its own. A cut that does cut a body in two still makes two bodies,
+/// and its reply names the new one.
+#[test]
+fn cut_keeps_posts_joined_while_apart_in_one_body() {
+    let mut s = Session::default();
+    let post = |name: &str, x: f64| json!({"length": 10, "width": 10, "height": 30, "center": [x, 0, 25], "operation": "new", "body_name": name});
+    s.execute("solid.box", &json!({"length": 60, "width": 40, "height": 10, "center": [0, 0, 5], "operation": "new", "body_name": "Case"})).unwrap();
+    s.execute("solid.box", &post("Posts", -20.0)).unwrap();
+    s.execute("solid.box", &post("Post2", 20.0)).unwrap();
+    s.execute("solid.combine", &json!({"target": "Posts", "tools": ["Post2"], "operation": "join"})).unwrap();
+    s.execute("solid.box", &json!({"length": 80, "width": 20, "height": 10, "center": [0, 0, 40], "operation": "new", "body_name": "Trim"})).unwrap();
+    let cut = s.execute("solid.combine", &json!({"target": "Posts", "tools": ["Trim"], "operation": "cut"})).unwrap();
+    // Each post loses its top 5 mm: 10 x 10 x 25 left of each.
+    let posts = 2.0 * 10.0 * 10.0 * 25.0;
+    assert_eq!(cut["bodies"], json!(["Case", "Posts"]), "{cut}");
+    assert_eq!(cut["created_bodies"], json!([]), "{cut}");
+    assert_eq!(s.model.state().body("Posts").map(|b| b.body.shell_count()), Some(2));
+    assert!((volume(&s, "Posts") - posts).abs() < 1e-6 * posts, "{}", volume(&s, "Posts"));
+    let join = s.execute("solid.combine", &json!({"target": "Case", "tools": ["Posts"], "operation": "join"})).unwrap();
+    assert_eq!(join["bodies"], json!(["Case"]), "{join}");
+    assert_eq!(join["removed_bodies"], json!(["Posts"]), "{join}");
+    let want = 60.0 * 40.0 * 10.0 + posts;
+    let got = volume(&s, "Case");
+    println!("posts joined while apart, cut, joined: Case {got:.6} mm³, expected {want:.6}");
+    assert!((got - want).abs() < 1e-6 * want, "{got} vs {want}");
+
+    // A cut through the middle of the case still leaves two bodies, and says it made the second.
+    s.execute("solid.box", &json!({"length": 2, "width": 80, "height": 80, "center": [0, 0, 20], "operation": "new", "body_name": "Saw"})).unwrap();
+    let saw = s.execute("solid.combine", &json!({"target": "Case", "tools": ["Saw"], "operation": "cut"})).unwrap();
+    assert_eq!(saw["bodies"], json!(["Case", "Case (1)"]), "{saw}");
+    assert_eq!(saw["created_bodies"], json!(["Case (1)"]), "{saw}");
+    let half = (60.0 - 2.0) / 2.0 * 40.0 * 10.0 + posts / 2.0;
+    for name in ["Case", "Case (1)"] {
+        assert!((volume(&s, name) - half).abs() < 1e-6 * half, "{name}: {} vs {half}", volume(&s, name));
+    }
+}
+
+/// Designs saved before that fix combined the pieces the cut split off: tools "Posts" and
+/// "Posts (1)", or "Posts (1)" joined back into "Posts". The cut keeps them in "Posts" now, so
+/// the combine takes "Posts" and says the piece is part of it, instead of failing on
+/// "Posts (1)" and leaving both posts off the case. Any other missing body still fails.
+#[test]
+fn combine_of_a_piece_a_cut_used_to_split_off_takes_the_body_it_is_part_of() {
+    let posts_cut = || {
+        let mut s = Session::default();
+        let post = |name: &str, x: f64| json!({"length": 10, "width": 10, "height": 30, "center": [x, 0, 25], "operation": "new", "body_name": name});
+        s.execute("solid.box", &json!({"length": 60, "width": 40, "height": 10, "center": [0, 0, 5], "operation": "new", "body_name": "Case"}))
+            .unwrap();
+        s.execute("solid.box", &post("Posts", -20.0)).unwrap();
+        s.execute("solid.box", &post("Post2", 20.0)).unwrap();
+        s.execute("solid.combine", &json!({"target": "Posts", "tools": ["Post2"], "operation": "join"})).unwrap();
+        s.execute("solid.box", &json!({"length": 80, "width": 20, "height": 10, "center": [0, 0, 40], "operation": "new", "body_name": "Trim"}))
+            .unwrap();
+        s.execute("solid.combine", &json!({"target": "Posts", "tools": ["Trim"], "operation": "cut"})).unwrap();
+        s
+    };
+    let (case, posts) = (60.0 * 40.0 * 10.0, 2.0 * 10.0 * 10.0 * 25.0);
+    let close = |got: f64, want: f64| assert!((got - want).abs() < 1e-6 * want, "{got} vs {want}");
+    let piece = Some("`Posts (1)` is part of `Posts` now");
+
+    let mut s = posts_cut();
+    s.execute("solid.combine", &json!({"target": "Case", "tools": ["Posts", "Posts (1)"], "operation": "join"})).unwrap();
+    let reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    let join = reopened.model.results.last().unwrap();
+    assert_eq!((join.error.as_deref(), join.warning.as_deref()), (None, piece));
+    assert_eq!(reopened.model.state().bodies.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(), ["Case"]);
+    close(volume(&reopened, "Case"), case + posts);
+
+    let mut s = posts_cut();
+    s.execute("solid.combine", &json!({"target": "Posts", "tools": ["Posts (1)"], "operation": "join"})).unwrap();
+    assert_eq!(s.model.results.last().unwrap().warning.as_deref(), piece);
+    close(volume(&s, "Posts"), posts);
+
+    // A slab through both posts, 10 mm of each, cut by both pieces.
+    let mut s = posts_cut();
+    s.execute("solid.box", &json!({"length": 80, "width": 20, "height": 10, "center": [0, 0, 25], "operation": "new", "body_name": "Slab"})).unwrap();
+    s.execute("solid.combine", &json!({"target": "Slab", "tools": ["Posts", "Posts (1)"], "operation": "cut"})).unwrap();
+    assert_eq!(s.model.results.last().unwrap().warning.as_deref(), piece);
+    close(volume(&s, "Slab"), 80.0 * 20.0 * 10.0 - 2.0 * 10.0 * 10.0 * 10.0);
+
+    for (target, tools, operation) in [
+        ("Case", json!(["Posts (1)"]), "join"),
+        ("Case", json!(["Posts", "Ghost (1)"]), "join"),
+        ("Case", json!(["Posts", "Posts (0)"]), "join"),
+        ("Posts", json!(["Posts (1)"]), "cut"),
+    ] {
+        let r = posts_cut().execute("solid.combine", &json!({"target": target, "tools": tools, "operation": operation}));
+        assert!(r.is_err(), "{target} {operation} {tools}: {r:?}");
     }
 }

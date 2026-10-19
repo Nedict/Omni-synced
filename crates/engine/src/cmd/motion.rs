@@ -20,6 +20,8 @@ mod analysis;
 mod animation;
 #[path = "contact_sweep.rs"]
 mod contact_sweep;
+#[path = "motion_sweep.rs"]
+mod sweep;
 
 macro_rules! trace_doc {
     () => {
@@ -79,6 +81,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     )),
     CommandSpec::new("motion.plot", "Plot Motion Study", analysis::plot).icon("graph").noundo().params(analysis::PLOT_DOC),
     CommandSpec::new("motion.interference", "Motion Interference", analysis::interference).icon("interference").noundo().params(analysis::INTERFERENCE_DOC),
+    CommandSpec::new("joint.sweep", "Sweep Joint", sweep::sweep).icon("interference").params(sweep::SWEEP_DOC),
     CommandSpec::new("motion.list", "List Motion Studies", list_studies).icon("list").noundo(),
     CommandSpec::new("motion.delete", "Delete Motion Study", delete_study).icon("delete").params("study"),
     CommandSpec::new("explode.create", "Exploded View", explode_create).at("SOLID", "ASSEMBLE").icon("explode").params(
@@ -95,10 +98,10 @@ pub static COMMANDS: &[CommandSpec] = &[
 
 const MAX_ITEMS: usize = 10_000;
 
-fn next_id(s: &Session) -> u64 {
+fn next_id(s: &Session, cmd: &str) -> Result<u64> {
     let a = &s.doc.assembly;
     let ids = a.contact_sets.iter().map(|c| c.id).chain(a.studies.iter().map(|m| m.id)).chain(a.exploded.iter().map(|e| e.id));
-    ids.max().unwrap_or(0) + 1
+    super::next_free_id(cmd, ids)
 }
 
 fn occurrences(s: &Session, p: &Value, cmd: &str) -> Result<Vec<u64>> {
@@ -424,7 +427,7 @@ fn new_set(s: &mut Session, p: &Value) -> Result<Value> {
     if s.doc.assembly.contact_sets.len() >= MAX_ITEMS {
         return Err(bad(cmd, "too many contact sets"));
     }
-    let id = next_id(s);
+    let id = next_id(s, cmd)?;
     let name = str_(p, "name").map(str::to_string).unwrap_or_else(|| format!("Contact Set{}", s.doc.assembly.contact_sets.len() + 1));
     let a = &mut s.doc_mut().assembly;
     a.contact_sets.push(ContactSet { id, name: name.clone(), occurrences: occ, suppressed: false });
@@ -532,7 +535,7 @@ fn study(s: &mut Session, p: &Value) -> Result<Value> {
             keys.push(StudyKey { joint, index, points });
         }
     }
-    let id = next_id(s);
+    let id = next_id(s, cmd)?;
     let count = s.doc.assembly.studies.len();
     let a = &mut s.doc_mut().assembly;
     let out = match existing.and_then(|i| a.studies.get_mut(i)) {
@@ -952,7 +955,7 @@ fn explode_create(s: &mut Session, p: &Value) -> Result<Value> {
     if s.doc.assembly.exploded.len() >= MAX_ITEMS {
         return Err(bad(cmd, "too many exploded views"));
     }
-    let id = next_id(s);
+    let id = next_id(s, cmd)?;
     let name = str_(p, "name").map(str::to_string).unwrap_or_else(|| format!("Exploded View{}", s.doc.assembly.exploded.len() + 1));
     s.doc_mut().assembly.exploded.push(ExplodedView { id, name: name.clone(), moves: moves.clone() });
     Ok(json!({"view": id, "name": name, "moves": moves.iter().map(|(o, t)| json!({"occurrence": o, "translate": t})).collect::<Vec<_>>()}))
