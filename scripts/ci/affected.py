@@ -13,24 +13,37 @@ Prints and optionally appends to $GITHUB_OUTPUT:
 
 A changed file maps to the package whose directory holds it. The packages that depend on those
 (directly or not, dev-dependencies included) are added. Test data under tests/ maps to the
-packages that read it, and a vendored crate (vendor/, a [patch] of a crates.io dependency) to the
-packages that use it. Anything that can change every package, or that no package owns, selects
-the full workspace. Only documentation and packaging files are ignored.
+packages that read it, a vendored crate (vendor/, a [patch] of a crates.io dependency) to the
+packages that use it, and a root file or folder a crate embeds to that crate. Anything that can
+change every package, or that no package owns, selects the full workspace. Documentation,
+packaging, the other workflows and the GitHub bots' scripts are ignored: when only those change,
+nothing is selected and full is false, which CI reads as "no code changed" (on pull requests and
+on pushes to main alike).
 """
 import argparse
 import json
 import subprocess
 import sys
 
-# Changes here can affect every package.
-FULL_PREFIXES = (".cargo/", ".config/", ".github/", "scripts/")
-FULL_FILES = ("Cargo.toml", "Cargo.lock")
-# Changes here affect no code: documentation and packaging.
-IGNORED_PREFIXES = ("docs/", "packaging/")
+# Changes here can affect every package. The CI workflow itself is one; other workflows are not.
+FULL_PREFIXES = (".cargo/", ".config/", "scripts/")
+FULL_FILES = ("Cargo.toml", "Cargo.lock", ".github/workflows/ci.yml")
+# Changes here affect no code: documentation, packaging, the other workflows and GitHub settings,
+# and the GitHub bots' scripts (tested in the repository checks). Root *.md files too, unless
+# embedded (below).
+IGNORED_PREFIXES = ("docs/", "packaging/", ".github/", "scripts/claim/", "scripts/triage/")
+IGNORED_FILES = ("vendor/README.md",)
 # Root files that a crate embeds (include_str!), so they are not ignorable documentation.
-EMBEDDED = {"ATTRIBUTION.md": "solidcraft-ui-egui"}
-# Asset folders that only some packages read: the UI embeds the catalogs, xtask checks them.
-EMBEDDED_PREFIXES = {"assets/locales/": ("solidcraft-ui-egui", "xtask")}
+EMBEDDED = {
+    "ATTRIBUTION.md": "solidcraft-ui-egui",
+    "LICENSE-MIT": "solidcraft-engine",
+    "LICENSE-APACHE": "solidcraft-engine",
+    "NOTICE": "solidcraft-engine",
+    "THIRD-PARTY-LICENSES.txt": "solidcraft-engine",
+}
+# Folders that only some packages read: the UI embeds the catalogs and xtask checks them; the MCP
+# server's tests read the agent skills.
+EMBEDDED_PREFIXES = {"assets/locales/": ("solidcraft-ui-egui", "xtask"), "skills/": ("solidcraft-mcp",)}
 # Test data and the package directories whose tests (or xtask) read it. Any other folder under
 # tests/ selects the full workspace.
 TEST_DATA = {
@@ -38,7 +51,7 @@ TEST_DATA = {
     "tests/hole_matrix/": ("crates/engine/",),
     "tests/projection/": ("crates/engine/",),
     "tests/taper/": ("crates/engine/",),
-    "tests/oracle/": ("apps/solidcraft-cli/", "crates/kernel/", "xtask/"),
+    "tests/oracle/": ("apps/solidcraft-cli/", "xtask/"),
     "tests/action_matrix/": ("apps/solidcraft-cli/", "crates/engine/", "xtask/"),
 }
 # Vendored crates (vendor/<crate>/, a [patch] of a crates.io dependency) and the dependency names
@@ -102,12 +115,14 @@ def select(meta, paths):
 
     hit = set()
     for path in paths:
-        if path in FULL_FILES or path.startswith(FULL_PREFIXES) or path.startswith("rust-toolchain"):
+        if path in FULL_FILES or path.startswith("rust-toolchain"):
+            return True, []
+        if path in IGNORED_FILES or path.startswith(IGNORED_PREFIXES):
+            continue
+        if path.startswith(FULL_PREFIXES):
             return True, []
         owners = [d for d in by_dir if path.startswith(d)]
         if path.startswith("vendor/"):
-            if path == "vendor/README.md":
-                continue
             users = users_of(path.split("/")[1])
             if not users:
                 return True, []
@@ -124,7 +139,7 @@ def select(meta, paths):
             hit.add(EMBEDDED[path])
         elif any(path.startswith(p) for p in EMBEDDED_PREFIXES):
             hit.update(next(v for p, v in EMBEDDED_PREFIXES.items() if path.startswith(p)))
-        elif path.startswith(IGNORED_PREFIXES) or ("/" not in path and path.endswith(".md")):
+        elif "/" not in path and path.endswith(".md"):
             continue
         else:
             return True, []  # not owned by any package

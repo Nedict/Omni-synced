@@ -183,10 +183,12 @@ depend on wall-clock timing.
 **Ready pull requests test what they touch.** CI maps changed files to workspace packages and
 runs Clippy, the test build and tests for those and their dependents. The
 [package selector](scripts/ci/affected.py) and [CI workflow](.github/workflows/ci.yml) define
-which changes require native checks; documentation, packaging and bot-script-only PRs can run
-repository checks only. Workspace-wide changes, merge-queue groups, nightly runs and Run
-workflow select the full workspace. A push to `main` reuses a successful merge-queue run for
-the same commit; otherwise it runs the full suite.
+which changes require native checks; documentation, packaging, other-workflow and bot-script-only
+changes run the repository checks only, on pull requests and on `main`. Workspace-wide changes,
+merge-queue groups, nightly runs and Run workflow select the full workspace. A push to `main`
+reuses a successful merge-queue run for the same commit, and runs only the repository checks
+when no code changed since the last push to `main` that passed; otherwise it runs the full
+suite. Doc tests, reference tests and the Windows jobs run on `main` and nightly only.
 
 **CI shards the tests.** One job builds them into a cargo-nextest archive; two shards run on
 pull requests and four during full validation. Every test runs in its own process: don't rely

@@ -52,6 +52,12 @@ class Synthetic(unittest.TestCase):
     def test_docs_only_selects_nothing(self):
         self.assertEqual(affected.select(SYNTH, ["docs/book/a.md", "README.md", "packaging/x.yml"]), (False, []))
 
+    def test_no_code_paths_select_nothing(self):
+        # What CI reads as "no code changed", on pull requests and pushes to main alike.
+        for p in [".github/workflows/docker.yml", ".github/ISSUE_TEMPLATE/bug.yml", "scripts/claim/claim.js",
+                  "scripts/triage/triage.test.js", "vendor/README.md", "SECURITY.md"]:
+            self.assertEqual(affected.select(SYNTH, [p]), (False, []), p)
+
 
 class RealWorkspace(unittest.TestCase):
     @classmethod
@@ -78,11 +84,21 @@ class RealWorkspace(unittest.TestCase):
         self.assertNotIn("solidcraft-kernel", pk)
         self.assertNotIn("solidcraft-render", pk)
 
-    def test_oracle_cases_select_the_cli_and_xtask(self):
+    def test_oracle_cases_select_the_cli_and_xtask_not_the_kernel(self):
         full, pk = affected.select(self.meta, ["tests/oracle/box/recipe.json"])
         self.assertFalse(full)
         self.assertIn("solidcraft-cli", pk)
         self.assertIn("xtask", pk)
+        self.assertNotIn("solidcraft-kernel", pk)
+
+    def test_embedded_root_files_select_their_crate(self):
+        for path, pkg in [("ATTRIBUTION.md", "solidcraft-ui-egui"), ("LICENSE-MIT", "solidcraft-engine"),
+                          ("NOTICE", "solidcraft-engine"), ("THIRD-PARTY-LICENSES.txt", "solidcraft-engine"),
+                          ("skills/solidcraft-modeling/SKILL.md", "solidcraft-mcp")]:
+            full, pk = affected.select(self.meta, [path])
+            self.assertFalse(full, path)
+            self.assertIn(pkg, pk, path)
+            self.assertNotIn("solidcraft-kernel", pk, path)
 
     def test_unmapped_test_data_selects_full(self):
         self.assertEqual(affected.select(self.meta, ["tests/tools/x.json"]), (True, []))

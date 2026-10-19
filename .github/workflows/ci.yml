@@ -2,27 +2,27 @@
 # PRs test what they touch; main and nightly test everything. On a pull request the "Select
 # checks" job maps the changed files to workspace packages (scripts/ci/affected.py), adds the
 # packages that depend on them, and Clippy, the test archive and the test shards cover only
-# those. Changes to the lockfile, root manifest, toolchain/cargo/nextest config, .github/,
-# vendor/, tests/, scripts/ or any file no package owns select the whole workspace, as do
-# pushes to main, the nightly run and Run workflow.
+# those. Test data under tests/, vendored crates under vendor/ and root files a crate embeds
+# select the packages that read them. Changes to the lockfile, root manifest,
+# toolchain/cargo/nextest config, this workflow, scripts/ or any file no package owns select the
+# whole workspace, as do pushes to main that change code, the nightly run and Run workflow.
+# Documentation, packaging, the other workflows and the GitHub bots' scripts select nothing:
+# no native job runs for them, on pull requests or on main.
 # Tests are built once and run in shards. A few heavy tests (see .config/nextest.toml) are
 # skipped on pull requests and run on pushes to main and nightly. The Windows jobs (D3D12 shaders
 # and app startup), the reference tests and the doc tests run on main and nightly only, not on
 # pull requests (the fast lane, in Select checks); a break there is fixed forward on main. Only
-# main saves the build caches; pull requests restore them. The test build, the shards and the doc
-# tests start only after the format and repository checks pass.
-# The merge queue runs the full suite on exactly the commit it then puts on main, so a push to
-# main that a passing merge-queue run already tested runs only the repository checks. A push that
-# skipped the queue runs everything when it changes code; one that changes only documentation,
-# packaging, other workflows or the GitHub bots' scripts (the same rule as pull requests,
-# `touches_code` in Select checks) runs only the repository checks. Test data under tests/ and
-# vendored crates under vendor/ select the packages that read them (scripts/ci/affected.py).
+# main saves the build caches; pull requests restore them. On pull requests the test build and the
+# shards start only after the format and repository checks pass.
+# A push to main runs only the repository checks when a passing merge-queue run tested that very
+# commit, or when nothing a build reads changed since the last push to main whose run passed.
+# Otherwise it runs everything.
 # Heavy checks wait for review: a pull request without the `approved-for-ci` label runs only
 # Select checks, the format and repository checks and a quick compile. Adding the label (after
 # review) runs everything above, and every later push to the PR does too, except a push that only
 # merges main into a change that already passed (scripts/ci/main_merge.py): it carries that
-# result and runs the repository checks. Pushes to main, merge
-# groups, the nightly run and Run workflow are not pull requests and always run the full suite.
+# result and runs the repository checks. Merge groups, the nightly run and Run workflow are not
+# pull requests and always run the full suite.
 # GitHub cannot filter `labeled` events by label name, so any other label starts a run whose jobs
 # are all skipped; it gets its own concurrency group (below) so it never cancels the real run.
 # Cross-compilation is opt-in through Run workflow; release builds remain in release.yml.
@@ -130,7 +130,6 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PUSH_SHA: ${{ github.sha }}
-          BEFORE_SHA: ${{ github.event.before }}
           REPO: ${{ github.repository }}
           APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'approved-for-ci') }}
           GH_TOKEN: ${{ github.token }}
@@ -141,42 +140,38 @@ jobs:
           windows=false
           full=true
           packages=
-          # Whether any of the NUL-separated paths on stdin is something a build or test reads.
-          # Pull requests and pushes to main share it, so a docs-only change runs no native job
-          # on either.
-          touches_code() {
-            local path
-            while IFS= read -r -d '' path; do
-              case "$path" in
-                .github/workflows/ci.yml) return 0 ;;
-                *.rs|Cargo.toml|Cargo.lock|*/Cargo.toml|.cargo/*|rust-toolchain*) return 0 ;;
-                docs/*|*.md|.github/*|packaging/*|LICENSE*|NOTICE|THIRD-PARTY-LICENSES.txt) ;;
-                # The GitHub bots' scripts: no Rust, tested in this job (Claim and triage bot tests).
-                scripts/claim/*|scripts/triage/*) ;;
-                *) return 0 ;;
-              esac
-            done
-            return 1
+          # Whether the NUL-separated paths in $1 reach any code: scripts/ci/affected.py selects
+          # something or the whole workspace. Documentation, packaging, other workflows and the bots'
+          # scripts select nothing. Pull requests and pushes to main share it.
+          select_packages() {
+            python3 -I scripts/ci/affected.py --paths "$1" > "$RUNNER_TEMP/ci-affected"
+            cat "$RUNNER_TEMP/ci-affected"
+            full=$(sed -n 's/^full=//p' "$RUNNER_TEMP/ci-affected")
+            packages=$(sed -n 's/^packages=//p' "$RUNNER_TEMP/ci-affected")
           }
           if [ "$EVENT_NAME" = push ]; then
             # The queue lands the very commit its merge_group run tested. If that run passed,
             # testing the push again proves nothing new; otherwise (a merge that skipped the
             # queue, or the API cannot answer) test everything.
-            # curl and grep only: Select checks of a push runs on the self-hosted runner.
+            # The API through curl and grep: Select checks of a push runs on the self-hosted runner.
             tested=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
               "https://api.github.com/repos/$REPO/actions/workflows/ci.yml/runs?event=merge_group&head_sha=$PUSH_SHA&status=success&per_page=1" \
               | grep -o '"total_count": *[0-9]*' | grep -o '[0-9]*$' || echo 0)
             if [ "${tested:-0}" -gt 0 ]; then
               echo "The merge queue already tested $PUSH_SHA: repository checks only."
-            elif [ -n "$BEFORE_SHA" ] && [ "${BEFORE_SHA#0000000}" = "$BEFORE_SHA" ] \
-              && git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null \
-              && git diff --no-renames --name-only -z "$BEFORE_SHA" "$PUSH_SHA" > "$RUNNER_TEMP/ci-paths" \
-              && ! touches_code < "$RUNNER_TEMP/ci-paths"; then
-              # Nothing a build reads changed (documentation, packaging, other workflows, the bots'
-              # scripts): the code on main is what the last push already tested.
-              echo "$BEFORE_SHA..$PUSH_SHA changes no code: repository checks only."
+            elif tested=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/$REPO/actions/workflows/ci.yml/runs?event=push&branch=main&status=success&per_page=1" \
+                | grep -o '"head_sha": *"[0-9a-f]*"' | head -n 1 | grep -o '[0-9a-f]\{40\}') \
+              && [ -n "$tested" ] && git merge-base --is-ancestor "$tested" "$PUSH_SHA" \
+              && git diff --no-renames --name-only -z "$tested" "$PUSH_SHA" > "$RUNNER_TEMP/ci-paths" \
+              && select_packages "$RUNNER_TEMP/ci-paths" && [ "$full" != true ] && [ -z "$packages" ]; then
+              # Nothing a build reads changed since the last push to main whose run passed (the
+              # push before may never have run: a newer push cancels a waiting one).
+              echo "$tested..$PUSH_SHA changes no code: repository checks only."
             else
               # Code changed (or the push can't be compared): main runs everything.
+              full=true
+              packages=
               native=true
               windows=true
             fi
@@ -190,7 +185,7 @@ jobs:
               case "$path" in crates/kernel/*|vendor/truck-*) kernel=true ;; esac
               # What can change a robustness golden: the kernel and the crates a design is built with.
               case "$path" in
-                crates/kernel/*|crates/engine/*|crates/doc/*|crates/sketch/*|crates/geom/*|vendor/truck-*) goldens=true ;;
+                crates/kernel/*|crates/engine/*|crates/doc/*|crates/sketch/*|crates/geom/*|vendor/truck-*|tests/robustness/*) goldens=true ;;
               esac
               # What the Windows D3D12 jobs exercise: the GPU crate and its shaders, the app and
               # its startup, the viewport's wgpu glue, the vendored egui-wgpu, their scripts.
@@ -199,20 +194,16 @@ jobs:
                 tools/windows-*.ps1|.github/workflows/ci.yml|rust-toolchain*|.cargo/*) windows=true ;;
               esac
             done < "$RUNNER_TEMP/ci-paths"
-            if touches_code < "$RUNNER_TEMP/ci-paths"; then native=true; fi
             # A lockfile change that moves the graphics stack (wgpu, naga, egui, winit, windows).
             if [ "$windows" = false ] && grep -qxz 'Cargo.lock' "$RUNNER_TEMP/ci-paths" \
               && git diff "$BASE_SHA...$HEAD_SHA" -- Cargo.lock \
                 | grep -Eq '^[ +-]name = "(wgpu[a-z_-]*|naga|egui[a-z_-]*|eframe|winit|windows[a-z_-]*|d3d12)"'; then
               windows=true
             fi
-            # Pull requests build and test the touched packages and their dependents.
-            python3 -I scripts/ci/affected.py --paths "$RUNNER_TEMP/ci-paths" > "$RUNNER_TEMP/ci-affected"
-            cat "$RUNNER_TEMP/ci-affected"
-            full=$(sed -n 's/^full=//p' "$RUNNER_TEMP/ci-affected")
-            packages=$(sed -n 's/^packages=//p' "$RUNNER_TEMP/ci-affected")
-            # Code changed but nothing was selected: be safe and test everything.
-            if [ "$native" = true ] && [ "$full" != true ] && [ -z "$packages" ]; then full=true; fi
+            # Pull requests build and test the touched packages and their dependents; nothing
+            # selected means no code changed.
+            select_packages "$RUNNER_TEMP/ci-paths"
+            if [ "$full" = true ] || [ -n "$packages" ]; then native=true; fi
             # The goldens are solidcraft-engine tests: its tests must be in the archive.
             if [ "$goldens" = true ] && [ "$full" != true ]; then
               case " $packages " in *" solidcraft-engine "*) ;; *) packages="$packages solidcraft-engine" ;; esac
@@ -361,12 +352,14 @@ jobs:
 
   build-tests:
     name: Build tests
-    # Fail fast: the test archive (and so the shards) waits for the repository checks, the most
-    # common cheap failure; heavy jobs used to run on to the end beside a failed format check.
+    # Fail fast on pull requests: the test archive (and so the shards) waits for the repository
+    # checks, the most common cheap failure; heavy jobs used to run on to the end beside a failed
+    # format check. Main, nightly and Run workflow build regardless, so the action matrix and the
+    # property tests that hang off this job keep their signal.
     needs: [changes, checks]
     # The self-hosted shards (main and the merge queue) build from their warm build directories
     # instead: downloading the 3 GB archive took them longer than building.
-    if: needs.changes.outputs.native == 'true' && needs.changes.outputs.local != 'true'
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.native == 'true' && needs.changes.outputs.local != 'true' && (github.event_name != 'pull_request' || needs.checks.result == 'success') }}
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && (endsWith(format('{0}', github.event.pull_request.number), '7') || endsWith(format('{0}', github.event.pull_request.number), '8') || endsWith(format('{0}', github.event.pull_request.number), '9'))) && 'self-hosted-untrusted' || 'ubuntu-24.04' }}
     # Fork builds compile inside gVisor on shared boxes; give them room to finish and upload.
     timeout-minutes: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && (endsWith(format('{0}', github.event.pull_request.number), '7') || endsWith(format('{0}', github.event.pull_request.number), '8') || endsWith(format('{0}', github.event.pull_request.number), '9'))) && 90 || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 60 || 45 }}
@@ -413,7 +406,7 @@ jobs:
   tests:
     name: Native Linux tests (${{ matrix.shard }}/4)
     needs: [changes, checks, build-tests]
-    if: ${{ !cancelled() && needs.changes.outputs.native == 'true' && needs.checks.result == 'success' && (needs.changes.outputs.local == 'true' || needs.build-tests.result == 'success') }}
+    if: ${{ !cancelled() && needs.changes.outputs.native == 'true' && (github.event_name != 'pull_request' || needs.checks.result == 'success') && (needs.changes.outputs.local == 'true' || needs.build-tests.result == 'success') }}
     runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-fast' || ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && (endsWith(format('{0}', github.event.pull_request.number), '7') || endsWith(format('{0}', github.event.pull_request.number), '8') || endsWith(format('{0}', github.event.pull_request.number), '9'))) && 'self-hosted-untrusted' || 'ubuntu-24.04') }}
     timeout-minutes: 60
     strategy:
@@ -599,8 +592,7 @@ jobs:
 
   doc-tests:
     name: Doc tests
-    # After the repository checks pass (see Build tests).
-    needs: [changes, checks]
+    needs: changes
     if: needs.changes.outputs.doctests == 'true'
     runs-on: ${{ needs.changes.outputs.local == 'true' && 'self-hosted-fast' || 'ubuntu-24.04' }}
     timeout-minutes: 45
