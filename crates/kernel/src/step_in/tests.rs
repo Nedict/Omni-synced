@@ -242,7 +242,7 @@ fn parallel_body_preparation_reports_errors_in_place_and_preserves_placement() {
     let body = cylinder(Vec3::new(2.0, 2.0, 0.0), Vec3::Z, 2.0, 4.0).unwrap();
     let solids = vec![body.solid.as_ref().clone(), mt::Solid::new(Vec::new()), body.solid.as_ref().clone(), body.solid.as_ref().clone()];
     let placement = mt::Matrix4::from_translation(mt::Vector3::new(10.0, 20.0, 30.0));
-    let jobs: Vec<_> = solids.into_iter().map(|solid| parallel::Job { solid, check_mesh: true }).collect();
+    let jobs: Vec<_> = solids.into_iter().map(|solid| parallel::Job { solid, prepared: None, check_mesh: true }).collect();
     let serial = parallel::bodies(&jobs, &placement, 1);
     let threaded = parallel::bodies(&jobs, &placement, 4);
     assert_eq!(serial.len(), 4);
@@ -676,6 +676,17 @@ fn later_instances_show_the_first_instances_mesh_placed() {
     // Anything that changes what the body shows drops the shared mesh.
     let split = second.clone().with_split_lines(Some(std::sync::Arc::new(vec![vec![Vec3::new(91.0, 0.0, 5.0), Vec3::new(91.0, 10.0, 5.0)]])));
     assert!(split.display_of.is_none());
+}
+
+#[test]
+fn repeated_open_step_instances_keep_their_warning() {
+    let text = two_instance_assembly();
+    let open = text.replace("#100=CLOSED_SHELL('',(#411,#431,#451,#471,#491,#511));", "#100=OPEN_SHELL('',(#411,#431,#451,#471,#491));");
+    assert_ne!(text, open);
+    let open = crate::step_import(&open).unwrap();
+    assert_eq!(open.bodies.len(), 2);
+    assert!(open.bodies.iter().all(|b| !b.closed));
+    assert_eq!(open.warnings.iter().filter(|w| w.contains("open body")).count(), 1);
 }
 
 /// A body knows the product that holds it and the assembly occurrence it is, next to the name of

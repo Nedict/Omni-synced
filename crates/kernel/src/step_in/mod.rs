@@ -743,7 +743,8 @@ impl Reader {
                 Err(shared) => (*shared).clone(),
             };
             sources.push((i, item, closed, file_faces, face_origin));
-            solids.push(parallel::Job { solid, check_mesh: !self.unmeshed_checked.contains(&item) });
+            let prepared = if closed { self.shown.get(&item).map(|(shared, first)| (shared.original.clone(), *first)) } else { None };
+            solids.push(parallel::Job { solid, prepared, check_mesh: !self.unmeshed_checked.contains(&item) });
         }
         let Some(batch) = self.batches.get(id) else { return true };
         let (m, path, product, instance) = (batch.m, batch.path.clone(), batch.product.clone(), batch.instance.clone());
