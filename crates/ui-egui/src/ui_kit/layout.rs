@@ -198,3 +198,37 @@ pub(super) fn publish_geometry(ui: &Ui, response: &Response) {
 #[cfg(test)]
 #[path = "layout_tests.rs"]
 mod tests;
+
+/// Read-only, wrapping report text. Tokens: font_label, text/error, space_4.
+pub fn text_block(ui: &mut Ui, id: &str, text: &str, error: bool) -> Response {
+    let t = Tokens::get();
+    let response = ui
+        .add(egui::Label::new(RichText::new(text).font(egui::FontId::proportional(t.font_label)).color(if error { t.error } else { t.text })).wrap());
+    scenario::publish_rect(&format!("dialog:report:{id}"), response.rect);
+    scenario::publish_handle(&format!("dialog:report:{id}"), response.rect.center());
+    response
+}
+
+/// Inline read-only text beside actions. Tokens: font_label, text.
+pub fn inline_text(ui: &mut Ui, text: &str) -> Response {
+    let response =
+        ui.add(egui::Label::new(RichText::new(text).font(egui::FontId::proportional(Tokens::get().font_label)).color(Tokens::get().text)).truncate());
+    scenario::publish_rect(&format!("dialog:inline:{text}"), response.rect);
+    scenario::publish_handle(&format!("dialog:inline:{text}"), response.rect.center());
+    response
+}
+
+/// Large read-only licence/report with equal-height virtualized lines and horizontal overflow.
+/// Tokens: font_small, text, control_height. Only visible lines are laid out.
+pub fn text_lines(ui: &mut Ui, id: &str, text: &str) {
+    let t = Tokens::get();
+    let lines: Vec<_> = text.lines().collect();
+    let font = egui::FontId::monospace(t.font_small);
+    let height = ui.fonts_mut(|f| f.row_height(&font));
+    let response = egui::ScrollArea::both().id_salt(id).max_height(t.control_height * 15.0).show_rows(ui, height, lines.len(), |ui, rows| {
+        for line in lines.get(rows).unwrap_or_default() {
+            ui.add(egui::Label::new(RichText::new(*line).font(font.clone()).color(t.text)).extend());
+        }
+    });
+    scenario::publish_rect(&format!("dialog:lines:{id}"), response.inner_rect);
+}

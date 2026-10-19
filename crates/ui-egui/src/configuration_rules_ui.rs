@@ -1,7 +1,7 @@
 //! Structured configuration rule editing and non-mutating row preview.
 use crate::SolveApp;
-use crate::fonts::RichTextExt as _;
-use egui::{RichText, Ui};
+use crate::ui_kit;
+use egui::Ui;
 use serde_json::{Value, json};
 use solidcraft_engine::doc::config::{Column, ConfigRule, RuleCondition, RuleEffect, RuleOperator};
 
@@ -36,15 +36,30 @@ impl Default for Editor {
     }
 }
 fn choose(ui: &mut Ui, id: &str, value: &mut String, options: &[String]) {
-    egui::ComboBox::from_id_salt(id).selected_text(if value.is_empty() { "Choose…" } else { value.as_str() }).width(130.0).show_ui(ui, |ui| {
-        for option in options {
-            ui.selectable_value(value, option.clone(), option);
-        }
-    });
+    let mut labels = vec![crate::i18n::tr_label("Choose…")];
+    labels.extend(options.iter().map(String::as_str));
+    let mut selected = options.iter().position(|o| o == value).map_or(0, |i| i + 1);
+    let before = selected;
+    let label = match id {
+        "rule_length_units" => "Length units",
+        "rule_effect_kind" => "Then",
+        "condition_kind" => "When",
+        "effect_parameter" | "range_parameter" | "allowed_parameter" | "condition_parameter" => "Parameter",
+        "effect_feature" | "condition_feature" => "Feature",
+        "preview_configuration" => "Configuration",
+        _ => id,
+    };
+    ui_kit::row(ui, label, |ui| ui_kit::dropdown(ui, id, &mut selected, &labels));
+    if before != selected
+        && let Some(choice) = selected.checked_sub(1).and_then(|i| options.get(i))
+    {
+        *value = choice.clone();
+    }
 }
 fn expression(ui: &mut Ui, label: &str, value: &mut String) {
-    ui.label(label);
-    ui.add(egui::TextEdit::singleline(value).desired_width(160.0));
+    ui_kit::row(ui, label, |ui| {
+        ui_kit::text_field(ui, value, label);
+    });
 }
 
 pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, editor: &mut Editor) {
@@ -58,60 +73,60 @@ pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, 
     let features: Vec<(u64, String)> = app.session.doc.features.iter().map(|f| (f.id, f.name.clone())).collect();
     let suppression_features: Vec<(u64, String)> =
         features.iter().filter(|(id, _)| app.session.doc.configs.columns.contains(&Column::Suppress(*id))).cloned().collect();
-    ui.separator();
-    ui.label(RichText::new(crate::i18n::tr_label("Configuration rules")).semibold().color(crate::theme::Tokens::get().text));
-    ui.add(egui::Label::new("Rules run from top to bottom. Matched drives change effective values.").wrap());
-    ui.add(egui::Label::new("Matched restrictions check the final values.").wrap());
+    ui_kit::divider(ui, "configuration_rules");
+    ui_kit::text_block(ui, "rules_heading", crate::i18n::tr_label("Configuration rules"), false);
+    ui_kit::note(ui, "rules_drives", crate::i18n::tr_label("Rules run from top to bottom. Matched drives change effective values."));
+    ui_kit::note(ui, "rules_restrictions", crate::i18n::tr_label("Matched restrictions check the final values."));
     for (index, rule) in rules.iter().enumerate() {
         ui.push_id(&rule.id, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 let mut enabled = rule.enabled;
-                if ui.checkbox(&mut enabled, "").on_hover_text(crate::i18n::tr_label("Enable rule")).changed() {
+                if ui_kit::checkbox(ui, "", &mut enabled).on_hover_text(crate::i18n::tr_label("Enable rule")).changed() {
                     let mut r = rule.clone();
                     r.enabled = enabled;
                     *error = app.run("config.rule", json!({"rule":r})).err();
                 }
-                ui.add(egui::Label::new(&rule.name).truncate());
-                if ui.small_button("Edit").clicked() {
+                ui_kit::inline_text(ui, &rule.name);
+                if ui_kit::small_button(ui, crate::i18n::tr_label("Edit")).clicked() {
                     editor.rule = rule.clone();
                 }
-                if ui.add_enabled(index > 0, egui::Button::new("↑").small()).on_hover_text(crate::i18n::tr_label("Move earlier")).clicked() {
+                let up = ui_kit::enabled_button(ui, "↑", index > 0).on_hover_text(crate::i18n::tr_label("Move earlier"));
+                crate::scenario::publish_handle(&format!("config:rule:{}:up", rule.id), up.rect.center());
+                if up.clicked() {
                     *error = app.run("config.rule", json!({"id":rule.id,"index":index-1})).err();
                 }
-                if ui
-                    .add_enabled(index + 1 < rules.len(), egui::Button::new("↓").small())
-                    .on_hover_text(crate::i18n::tr_label("Move later"))
-                    .clicked()
-                {
+                if ui_kit::enabled_button(ui, "↓", index + 1 < rules.len()).on_hover_text(crate::i18n::tr_label("Move later")).clicked() {
                     *error = app.run("config.rule", json!({"id":rule.id,"index":index+1})).err();
                 }
-                if ui.small_button("Delete").clicked() {
+                if ui_kit::small_button(ui, crate::i18n::tr_label("Delete")).clicked() {
                     *error = app.run("config.rule", json!({"id":rule.id,"delete":true})).err();
                 }
             });
-            ui.label(match &rule.effect {
-                RuleEffect::DriveParameter { parameter, expression } => format!("Drives {parameter} = {expression}"),
-                RuleEffect::DriveSuppression { feature, value } => format!(
-                    "Drives suppression {} = {value}",
-                    features.iter().find(|f| f.0 == *feature).map(|f| f.1.as_str()).unwrap_or("missing feature")
-                ),
-                RuleEffect::ParameterRange { parameter, minimum, maximum } => format!("Restricts {parameter}: {minimum} through {maximum}"),
-                RuleEffect::AllowParameterValues { parameter, expressions } => format!("Restricts {parameter}: {}", expressions.join(", ")),
-            });
+            report(
+                ui,
+                match &rule.effect {
+                    RuleEffect::DriveParameter { parameter, expression } => format!("Drives {parameter} = {expression}"),
+                    RuleEffect::DriveSuppression { feature, value } => format!(
+                        "Drives suppression {} = {value}",
+                        features.iter().find(|f| f.0 == *feature).map(|f| f.1.as_str()).unwrap_or("missing feature")
+                    ),
+                    RuleEffect::ParameterRange { parameter, minimum, maximum } => format!("Restricts {parameter}: {minimum} through {maximum}"),
+                    RuleEffect::AllowParameterValues { parameter, expressions } => format!("Restricts {parameter}: {}", expressions.join(", ")),
+                },
+            );
         });
     }
-    ui.collapsing("Add or edit rule", |ui| {
-        ui.horizontal(|ui| {
+    ui_kit::section(ui, "rule_editor", "Add or edit rule", false, |ui| {
+        ui.vertical(|ui| {
             expression(ui, "Rule name", &mut editor.rule.name);
-            ui.checkbox(&mut editor.rule.enabled, crate::i18n::tr_label("Enabled"));
-            if ui.small_button("New").clicked() {
+            ui_kit::checkbox(ui, crate::i18n::tr_label("Enabled"), &mut editor.rule.enabled);
+            if ui_kit::small_button(ui, crate::i18n::tr_label("New")).clicked() {
                 editor.rule = Editor::default().rule;
             }
         });
         let mut length_unit = editor.rule.length_unit.clone().unwrap_or_else(|| app.session.doc.units.clone());
         let old_unit = length_unit.clone();
-        ui.horizontal(|ui| {
-            ui.label(crate::i18n::tr_label("Length units"));
+        ui.vertical(|ui| {
             choose(ui, "rule_length_units", &mut length_unit, &["mm".into(), "cm".into(), "m".into(), "in".into(), "ft".into()]);
         });
         if length_unit != old_unit {
@@ -126,8 +141,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, 
         }
         .to_string();
         let prior = effect_kind.clone();
-        ui.horizontal(|ui| {
-            ui.label(crate::i18n::tr_label("Then"));
+        ui.vertical(|ui| {
             choose(
                 ui,
                 "rule_effect_kind",
@@ -146,36 +160,37 @@ pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, 
         }
         match &mut editor.rule.effect {
             RuleEffect::DriveParameter { parameter, expression: value } => {
-                ui.horizontal(|ui| {
+                ui.vertical(|ui| {
                     choose(ui, "effect_parameter", parameter, &parameters);
                     expression(ui, "Value", value);
                 });
             }
             RuleEffect::DriveSuppression { feature, value } => {
-                ui.horizontal(|ui| {
+                ui.vertical(|ui| {
                     feature_choice(ui, "effect_feature", feature, &suppression_features);
-                    ui.checkbox(value, crate::i18n::tr_label("Suppressed"));
+                    ui_kit::checkbox(ui, crate::i18n::tr_label("Suppressed"), value);
                 });
             }
             RuleEffect::ParameterRange { parameter, minimum, maximum } => {
                 choose(ui, "range_parameter", parameter, &parameters);
-                ui.horizontal(|ui| {
+                ui.vertical(|ui| {
                     expression(ui, "Minimum", minimum);
                 });
-                ui.horizontal(|ui| {
+                ui.vertical(|ui| {
                     expression(ui, "Maximum", maximum);
                 });
             }
             RuleEffect::AllowParameterValues { parameter, expressions } => {
                 choose(ui, "allowed_parameter", parameter, &parameters);
                 let mut text = expressions.join("; ");
-                ui.label(crate::i18n::tr_label("Allowed expressions, separated by semicolons"));
-                if ui.add(egui::TextEdit::singleline(&mut text).desired_width(300.0)).changed() {
+                if ui_kit::row(ui, "Allowed expressions, separated by semicolons", |ui| ui_kit::text_field(ui, &mut text, "").1) {
                     *expressions = text.split(';').map(|s| s.trim().to_string()).collect();
                 }
             }
         }
-        if ui.add_enabled(!app.session.doc.configs.rows.is_empty(), egui::Button::new(crate::i18n::tr_label("Save Rule"))).clicked() {
+        let save = ui_kit::enabled_button(ui, "Save Rule", !app.session.doc.configs.rows.is_empty());
+        crate::scenario::publish_handle("config:save_rule", save.rect.center());
+        if save.clicked() {
             let result = (|| -> Result<(), String> {
                 let mut rule = editor.rule.clone();
                 if rule.id.is_empty() {
@@ -193,9 +208,11 @@ pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, 
         editor.row = app.session.doc.configs.active.clone().or_else(|| rows.first().cloned()).unwrap_or_default();
     }
     let previous_row = editor.row.clone();
-    ui.horizontal(|ui| {
+    ui.vertical(|ui| {
         choose(ui, "preview_configuration", &mut editor.row, &rows);
-        if ui.add_enabled(!editor.row.is_empty(), egui::Button::new(crate::i18n::tr_label("Preview Row"))).clicked() {
+        let preview = ui_kit::enabled_button(ui, "Preview Row", !editor.row.is_empty());
+        crate::scenario::publish_handle("config:preview_row", preview.rect.center());
+        if preview.clicked() {
             match app.session.execute("config.preview", &json!({"row":editor.row})) {
                 Ok(result) => {
                     editor.preview = Some(result);
@@ -213,44 +230,50 @@ pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, 
         editor.preview = None;
     }
     if let Some(preview) = &editor.preview {
-        ui.collapsing(format!("Preview: {}", preview["active"].as_str().unwrap_or("row")), |ui| {
-            ui.label(crate::i18n::tr_label("Preview leaves the current design unchanged."));
+        ui_kit::section(ui, "rule_preview", &format!("Preview: {}", preview["active"].as_str().unwrap_or("row")), false, |ui| {
+            report(ui, crate::i18n::tr_label("Preview leaves the current design unchanged."));
             if let Some(styles) = preview["styles"].as_array() {
                 for style in styles {
-                    ui.add(
-                        egui::Label::new(format!(
+                    report(
+                        ui,
+                        format!(
                             "{}: {} (shared definition)",
                             style["target"].as_str().unwrap_or("Appearance"),
                             if style["dormant"].as_bool() == Some(true) { "dormant" } else { "resolved" }
-                        ))
-                        .wrap(),
+                        ),
                     );
                 }
             }
             if let Some(trace) = preview["trace"].as_array() {
                 for entry in trace {
-                    ui.label(format!(
-                        "{} — {}",
-                        entry["name"].as_str().unwrap_or("rule"),
-                        if entry["matched"].as_bool() == Some(true) { "matched" } else { "skipped" }
-                    ));
+                    report(
+                        ui,
+                        format!(
+                            "{} — {}",
+                            entry["name"].as_str().unwrap_or("rule"),
+                            if entry["matched"].as_bool() == Some(true) { "matched" } else { "skipped" }
+                        ),
+                    );
                     if entry["matched"].as_bool() == Some(true)
                         && let Ok(effect) = serde_json::from_value::<RuleEffect>(entry["effect"].clone())
                     {
-                        ui.label(match effect {
-                            RuleEffect::DriveParameter { parameter, expression } => format!("Driven: {parameter} = {expression}"),
-                            RuleEffect::DriveSuppression { feature, value } => format!(
-                                "Driven: {} is {}",
-                                features.iter().find(|f| f.0 == feature).map(|f| f.1.as_str()).unwrap_or("feature"),
-                                if value { "suppressed" } else { "unsuppressed" }
-                            ),
-                            RuleEffect::ParameterRange { parameter, minimum, maximum } => {
-                                format!("Restricted: {parameter}, {minimum} through {maximum}")
-                            }
-                            RuleEffect::AllowParameterValues { parameter, expressions } => {
-                                format!("Restricted: {parameter}, {}", expressions.join("; "))
-                            }
-                        });
+                        report(
+                            ui,
+                            match effect {
+                                RuleEffect::DriveParameter { parameter, expression } => format!("Driven: {parameter} = {expression}"),
+                                RuleEffect::DriveSuppression { feature, value } => format!(
+                                    "Driven: {} is {}",
+                                    features.iter().find(|f| f.0 == feature).map(|f| f.1.as_str()).unwrap_or("feature"),
+                                    if value { "suppressed" } else { "unsuppressed" }
+                                ),
+                                RuleEffect::ParameterRange { parameter, minimum, maximum } => {
+                                    format!("Restricted: {parameter}, {minimum} through {maximum}")
+                                }
+                                RuleEffect::AllowParameterValues { parameter, expressions } => {
+                                    format!("Restricted: {parameter}, {}", expressions.join("; "))
+                                }
+                            },
+                        );
                     }
                 }
             }
@@ -259,21 +282,30 @@ pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, 
                     if let Some(name) = parameter["name"].as_str()
                         && all_parameters.iter().any(|p| p == name)
                     {
-                        ui.label(format!("{name} = {}", parameter["expression"].as_str().unwrap_or("")));
+                        let response = ui_kit::text_block(
+                            ui,
+                            "preview_parameter",
+                            &format!("{name} = {}", parameter["expression"].as_str().unwrap_or("")),
+                            false,
+                        );
+                        crate::scenario::publish_handle(&format!("config:preview:param:{name}"), response.rect.center());
                     }
                 }
             }
         });
     }
 }
+fn report(ui: &mut Ui, text: impl AsRef<str>) {
+    ui_kit::text_block(ui, "rule_report", crate::i18n::tr_label(text.as_ref()), false);
+}
+
 fn feature_choice(ui: &mut Ui, id: &str, feature: &mut u64, features: &[(u64, String)]) {
-    egui::ComboBox::from_id_salt(id)
-        .selected_text(features.iter().find(|f| f.0 == *feature).map(|f| f.1.as_str()).unwrap_or("Choose feature…"))
-        .show_ui(ui, |ui| {
-            for (id, name) in features {
-                ui.selectable_value(feature, *id, name);
-            }
-        });
+    let options: Vec<_> = features.iter().map(|(_, name)| name.clone()).collect();
+    let mut selected = features.iter().find(|f| f.0 == *feature).map(|f| f.1.clone()).unwrap_or_default();
+    choose(ui, id, &mut selected, &options);
+    if let Some((id, _)) = features.iter().find(|(_, name)| *name == selected) {
+        *feature = *id;
+    }
 }
 
 fn condition_editor(ui: &mut Ui, condition: &mut RuleCondition, parameters: &[String], features: &[(u64, String)], depth: usize) {
@@ -291,8 +323,7 @@ fn condition_editor(ui: &mut Ui, condition: &mut RuleCondition, parameters: &[St
     if depth < 8 {
         choices.extend(["All".into(), "Any".into(), "Not".into()]);
     }
-    ui.horizontal(|ui| {
-        ui.label(crate::i18n::tr_label("When"));
+    ui.vertical(|ui| {
         choose(ui, "condition_kind", &mut kind, &choices);
     });
     if previous != kind {
@@ -311,37 +342,29 @@ fn condition_editor(ui: &mut Ui, condition: &mut RuleCondition, parameters: &[St
     }
     match condition {
         RuleCondition::Parameter { parameter, operator, expression } => {
-            ui.horizontal(|ui| {
+            ui.vertical(|ui| {
                 choose(ui, "condition_parameter", parameter, parameters);
-                egui::ComboBox::from_id_salt("condition_operator")
-                    .width(45.0)
-                    .selected_text(match operator {
-                        RuleOperator::Eq => "=",
-                        RuleOperator::Ne => "≠",
-                        RuleOperator::Lt => "<",
-                        RuleOperator::Le => "≤",
-                        RuleOperator::Gt => ">",
-                        RuleOperator::Ge => "≥",
-                    })
-                    .show_ui(ui, |ui| {
-                        for (label, op) in [
-                            ("=", RuleOperator::Eq),
-                            ("≠", RuleOperator::Ne),
-                            ("<", RuleOperator::Lt),
-                            ("≤", RuleOperator::Le),
-                            (">", RuleOperator::Gt),
-                            ("≥", RuleOperator::Ge),
-                        ] {
-                            ui.selectable_value(operator, op, label);
-                        }
-                    });
-                ui.add(egui::TextEdit::singleline(expression).desired_width(110.0));
+                let operators = [
+                    ("=", RuleOperator::Eq),
+                    ("≠", RuleOperator::Ne),
+                    ("<", RuleOperator::Lt),
+                    ("≤", RuleOperator::Le),
+                    (">", RuleOperator::Gt),
+                    ("≥", RuleOperator::Ge),
+                ];
+                let mut index = operators.iter().position(|(_, op)| op == operator).unwrap_or(0);
+                let labels: Vec<_> = operators.iter().map(|(label, _)| *label).collect();
+                ui_kit::row(ui, "Operator", |ui| ui_kit::dropdown(ui, "condition_operator", &mut index, &labels));
+                if let Some((_, op)) = operators.get(index) {
+                    *operator = *op;
+                }
+                ui_kit::row(ui, "Expression", |ui| ui_kit::field(ui, expression));
             });
         }
         RuleCondition::Suppression { feature, value } => {
-            ui.horizontal(|ui| {
+            ui.vertical(|ui| {
                 feature_choice(ui, "condition_feature", feature, features);
-                ui.checkbox(value, crate::i18n::tr_label("Suppressed"));
+                ui_kit::checkbox(ui, crate::i18n::tr_label("Suppressed"), value);
             });
         }
         RuleCondition::All { conditions } | RuleCondition::Any { conditions } => {
@@ -350,7 +373,7 @@ fn condition_editor(ui: &mut Ui, condition: &mut RuleCondition, parameters: &[St
                 ui.push_id(index, |ui| {
                     ui.indent("condition_group", |ui| {
                         condition_editor(ui, child, parameters, features, depth + 1);
-                        if ui.small_button("Remove condition").clicked() {
+                        if ui_kit::small_button(ui, crate::i18n::tr_label("Remove condition")).clicked() {
                             remove = Some(index);
                         }
                     });
@@ -359,7 +382,7 @@ fn condition_editor(ui: &mut Ui, condition: &mut RuleCondition, parameters: &[St
             if let Some(index) = remove {
                 conditions.remove(index);
             }
-            if ui.add_enabled(conditions.len() < 32, egui::Button::new(crate::i18n::tr_label("Add condition")).small()).clicked() {
+            if ui_kit::enabled_button(ui, "Add condition", conditions.len() < 32).clicked() {
                 conditions.push(RuleCondition::Always);
             }
         }

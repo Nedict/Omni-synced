@@ -9,7 +9,7 @@ use solidcraft_engine::doc::plastic::PlasticRule;
 use solidcraft_engine::geom::Vec3;
 
 use crate::SolveApp;
-use crate::dialogs::{Kind, combo, face_sel, field, form_row, row_label, shown_expr};
+use crate::dialogs::{Kind, combo, face_sel, field, form_row, shown_expr};
 use crate::selection::{BODIES, FACES, PLANAR_FACES, SelInput};
 
 #[derive(Clone, Debug)]
@@ -251,9 +251,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pl, inputs: &[SelInpu
             let mut names: Vec<String> = rules.iter().map(|r| r.name.clone()).collect();
             names.push("New rule…".into());
             let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-            row_label(ui, "Rule");
-            combo(ui, "pl_rules", &refs, pick);
-            ui.end_row();
+            form_row(ui, "Rule", |ui| combo(ui, "pl_rules", &refs, pick));
             if *loaded != Some(*pick) {
                 let base = rules.get(*pick).or(rules.first()).cloned();
                 if let Some(b) = base {
@@ -266,20 +264,18 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pl, inputs: &[SelInpu
                 *loaded = Some(*pick);
             }
             if *pick >= rules.len() {
-                row_label(ui, "Name");
-                ui.text_edit_singleline(name);
-                ui.end_row();
+                form_row(ui, "Name", |ui| {
+                    crate::ui_kit::text_field(ui, name, "Name");
+                });
             }
             let keys = rule_keys();
             for (i, v) in values.iter_mut().enumerate() {
                 let label = if i == 0 { "Material".to_string() } else { keys.get(i - 1).map(|k| label_of(k)).unwrap_or_default() };
-                row_label(ui, &label);
-                enter |= if i == 0 { ui.text_edit_singleline(v).lost_focus() && ui.input(|x| x.key_pressed(egui::Key::Enter)) } else { field(ui, v) };
-                ui.end_row();
+                form_row(ui, &label, |ui| {
+                    enter |= if i == 0 { crate::ui_kit::text_field(ui, v, "Material").0 } else { field(ui, v) };
+                });
             }
-            row_label(ui, "Active rule");
-            ui.checkbox(active, "");
-            ui.end_row();
+            form_row(ui, "Active rule", |ui| crate::ui_kit::checkbox(ui, "", active));
         }
         Pl::Assign { rule } => {
             let mut names: Vec<String> = vec!["(no rule)".into()];

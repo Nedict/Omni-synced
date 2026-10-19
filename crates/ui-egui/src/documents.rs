@@ -11,6 +11,7 @@ use solidcraft_engine::render::Camera;
 
 use crate::SolveApp;
 use crate::theme::Tokens;
+use crate::ui_kit;
 
 /// Most designs open at once.
 pub const MAX_OPEN: usize = 32;
@@ -462,12 +463,8 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
                 crate::frame::area(id.with("area")).fixed_pos(pos2(mr.left(), r.bottom())).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
                     crate::context_menu::menu_frame(ui, |ui| {
                         for (i, (name, dirty)) in info.iter().enumerate() {
-                            let item = crate::context_menu::Item::action(
-                                "doc",
-                                &format!("{name}{}", if *dirty { " •" } else { "" }),
-                                if i == app.docs.active { "box" } else { "" },
-                            );
-                            if crate::context_menu::list_row(ui, &item).is_some() {
+                            let label = format!("{name}{}", if *dirty { " •" } else { "" });
+                            if ui_kit::list_picker(ui, &format!("document:{i}"), &label, i == app.docs.active).clicked() {
                                 pick = Some(i);
                             }
                         }
@@ -550,8 +547,9 @@ pub fn prompt(app: &mut SolveApp, ctx: &egui::Context) {
     let name = tabs_info(app).get(i).map(|x| x.0.clone()).unwrap_or_default();
     let name_display = crate::i18n::tr_name(&name);
     let mut answer: Option<Answer> = None;
-    // Left and Right move between the buttons (Save is picked first); Enter gives the picked one.
-    let order = [Answer::Save, Answer::DontSave, Answer::Cancel];
+    // Left and Right move between the buttons as they are laid out (Save is picked first, at the
+    // right); Enter gives the picked one.
+    let order = [Answer::Cancel, Answer::DontSave, Answer::Save];
     let (left, right, enter) = ctx.input_mut(|x| {
         (
             x.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft),
@@ -559,7 +557,7 @@ pub fn prompt(app: &mut SolveApp, ctx: &egui::Context) {
             x.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
         )
     });
-    let at = order.iter().position(|a| *a == app.docs.choice).unwrap_or(0);
+    let at = order.iter().position(|a| *a == app.docs.choice).unwrap_or(order.len() - 1);
     let at = if left {
         at.saturating_sub(1)
     } else if right {
@@ -573,26 +571,25 @@ pub fn prompt(app: &mut SolveApp, ctx: &egui::Context) {
         answer = Some(choice);
     }
     let title = crate::i18n::format("document.save_changes", &[("name", &name_display)]);
-    crate::frame::window(ctx, title, crate::frame::Width::Normal)
-        .id(egui::Id::new("sc_close_prompt"))
-        .collapsible(false)
-        .resizable(false)
-        .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-        .show(ctx, |ui| {
-            ui.label(crate::i18n::format("document.unsaved_changes", &[("name", &name_display)]));
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                if ui.add(egui::Button::new(crate::i18n::tr("ui.save")).selected(choice == Answer::Save)).clicked() {
-                    answer = Some(Answer::Save);
-                }
-                if ui.add(egui::Button::new(crate::i18n::tr("ui.don_t_save")).selected(choice == Answer::DontSave)).clicked() {
-                    answer = Some(Answer::DontSave);
-                }
-                if ui.add(egui::Button::new(crate::i18n::tr("ui.cancel")).selected(choice == Answer::Cancel)).clicked() {
-                    answer = Some(Answer::Cancel);
-                }
+    let (closed, action) =
+        ui_kit::Prompt::new(egui::Id::new("sc_close_prompt"), solidcraft_engine::find_command("file.save").map_or("", |c| c.icon), &title)
+            .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
+            .actions(crate::i18n::tr("ui.save"), crate::i18n::tr("ui.cancel"), Some(crate::i18n::tr("ui.don_t_save")))
+            .selected(match choice {
+                Answer::Save => ui_kit::Action::Ok,
+                Answer::DontSave => ui_kit::Action::Apply,
+                Answer::Cancel => ui_kit::Action::Cancel,
+            })
+            .show(ctx, true, |ui| {
+                ui_kit::text_block(ui, "unsaved", &crate::i18n::format("document.unsaved_changes", &[("name", &name_display)]), false);
             });
-        });
+    answer = match action {
+        ui_kit::Action::Ok => Some(Answer::Save),
+        ui_kit::Action::Apply => Some(Answer::DontSave),
+        ui_kit::Action::Cancel => Some(Answer::Cancel),
+        ui_kit::Action::None if closed => Some(Answer::Cancel),
+        ui_kit::Action::None => answer,
+    };
     if ctx.input(|x| x.key_pressed(egui::Key::Escape)) {
         answer = Some(Answer::Cancel);
         app.esc_handled = true;

@@ -3,12 +3,7 @@ use std::path::Path;
 use syn::visit::{self, Visit};
 
 /// Counts may shrink; additions need a specific reason. Dense-only files have no allowance.
-const ALLOWED: &[(&str, usize, &str)] = &[
-    ("dialogs.rs", 13, "retired non-dense window and explicitly guarded legacy selection/field helpers"),
-    ("dialogs_assembly.rs", 6, "non-dense Drive Joint slider, Motion Study compute and joint browser actions"),
-    ("dialogs_plastic.rs", 1, "non-dense Manage Rules active-rule checkbox"),
-    ("dialogs_sheet.rs", 4, "non-dense Manage Rules and flat-pattern export actions"),
-];
+const ALLOWED: &[(&str, usize, &str)] = &[];
 
 #[derive(Default)]
 struct Guard {

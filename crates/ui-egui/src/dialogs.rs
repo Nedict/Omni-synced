@@ -2,10 +2,9 @@
 //! inputs (geometry picked in the viewport, never typed), then runs its command; it never
 //! changes the design itself. Things selected before the command starts become its input.
 
-use crate::fonts::RichTextExt as _;
 use std::hash::{Hash, Hasher};
 
-use egui::{Color32, RichText, Stroke, vec2};
+use egui::{RichText, vec2};
 use serde_json::{Value, json};
 use solidcraft_engine::Sel;
 use solidcraft_engine::Session;
@@ -314,10 +313,6 @@ pub enum Kind {
     Combine {
         operation: usize,
         keep_tools: bool,
-    },
-    Params {
-        new_name: String,
-        new_expr: String,
     },
     EditParam {
         name: String,
@@ -715,7 +710,6 @@ impl Dialog {
                 Kind::Combine { operation: 1, keep_tools: false },
                 vec![SelInput::new("Target Body", BODIES, false), SelInput::new("Tool Bodies", BODIES, true)],
             ),
-            "parameters.change" => Dialog::new(Kind::Params { new_name: String::new(), new_expr: String::new() }, vec![]),
             _ => {
                 let (kind, inputs) = crate::dialogs_assembly::start(app, id)
                     .or_else(|| crate::dialogs_sheet::start(app, id))
@@ -950,8 +944,7 @@ impl Dialog {
 
     /// Dialogs holding a table get the wide limit.
     pub fn is_wide(&self) -> bool {
-        matches!(self.kind, Kind::Params { .. })
-            || (matches!(self.kind, Kind::PatternRect { .. }) && self.inputs.first().is_some_and(|i| i.accept == selection::FEATURES))
+        (matches!(self.kind, Kind::PatternRect { .. }) && self.inputs.first().is_some_and(|i| i.accept == selection::FEATURES))
             || matches!(&self.kind, Kind::Motion(k) if k.wide())
     }
 
@@ -1413,37 +1406,16 @@ fn plane_value(s: &Session, sel: Option<&Sel>) -> Option<Value> {
 
 /// A value field; true when Enter was pressed in it.
 pub(crate) fn field(ui: &mut egui::Ui, s: &mut String) -> bool {
-    if crate::ui_kit::contains(ui) {
-        return crate::ui_kit::field(ui, s);
-    }
-    let r = ui.text_edit_singleline(s);
-    crate::theme::TabAccent::number_focus(ui, &r);
-    publish_row(&r);
-    crate::params_dialog::complete(ui, &r, s);
-    r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
+    crate::ui_kit::field(ui, s)
 }
 
-/// A checkbox row. Its row handle (`dialog:<row label>`) lets a scenario click it by the label
-/// beside it, the way `field` already publishes one for a value field.
 pub(crate) fn check(ui: &mut egui::Ui, on: &mut bool) {
-    let r = if crate::ui_kit::contains(ui) { crate::ui_kit::checkbox(ui, "", on) } else { ui.checkbox(on, "") };
+    let r = crate::ui_kit::checkbox(ui, "", on);
     publish_check(ui, &r, *on);
 }
 
 pub(crate) fn combo(ui: &mut egui::Ui, id: &str, labels: &[&str], sel: &mut usize) {
-    if crate::ui_kit::contains(ui) {
-        crate::ui_kit::dropdown(ui, id, sel, labels);
-        return;
-    }
-    let row = ROW.with(|r| r.borrow().clone());
-    let selected = labels.get(*sel).copied().map(tr).unwrap_or("");
-    let r = egui::ComboBox::from_id_salt(id).selected_text(selected).width(FIELD_W).show_ui(ui, |ui| {
-        for (i, l) in labels.iter().enumerate() {
-            let item = ui.selectable_value(sel, i, tr(l));
-            crate::scenario::publish_handle(&format!("dialog:{row}:{l}"), item.rect.center());
-        }
-    });
-    publish_row(&r.response);
+    crate::ui_kit::dropdown(ui, id, sel, labels);
 }
 
 thread_local! {
@@ -1514,7 +1486,6 @@ fn title(k: &Kind) -> &'static str {
             _ => "TORUS",
         },
         Kind::Combine { .. } => "COMBINE",
-        Kind::Params { .. } => "PARAMETERS",
         Kind::EditParam { .. } => "EDIT DIMENSION",
         Kind::Rename { .. } => "RENAME",
         Kind::ConfirmDelete { .. } => "DELETE FEATURE",
@@ -1554,33 +1525,9 @@ fn hint(inp: &SelInput) -> &'static str {
     }
 }
 
-/// Width of the label column; longer labels are cut with "…".
-const LABEL_W: f32 = 92.0;
-/// The label column grows to fit its labels up to this, then long labels wrap.
-const LABEL_MAX_W: f32 = 150.0;
-
 pub(crate) fn form_row<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ROW.with(|row| *row.borrow_mut() = label.to_string());
-    if crate::ui_kit::contains(ui) {
-        crate::ui_kit::row(ui, label, add)
-    } else {
-        row_label(ui, label);
-        let result = add(ui);
-        ui.end_row();
-        result
-    }
-}
-
-/// A row label in the dialog's label column (the grid sizes the column to its widest label).
-pub(crate) fn row_label(ui: &mut egui::Ui, text: &str) {
-    ROW.with(|r| *r.borrow_mut() = text.to_string());
-    let display_text = tr(text);
-    let full = egui::WidgetText::from(display_text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body).size().x;
-    let w = full.clamp(LABEL_W, LABEL_MAX_W);
-    ui.allocate_ui_with_layout(vec2(w, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-        ui.set_width(w);
-        ui.add(egui::Label::new(display_text).wrap());
-    });
+    crate::ui_kit::row(ui, label, add)
 }
 
 thread_local! {
@@ -1812,22 +1759,9 @@ fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::
                 } else {
                     RichText::new(crate::i18n::tr("dialog.select")).color(t.text)
                 };
-                let stroke = if active { Stroke::new(1.5, t.accent) } else { Stroke::new(1.0, t.dialog_border.gamma_multiply(1.6)) };
-                // Not in the Tab order: Tab moves between values.
-                let b = egui::Button::new(text.clone())
-                    .wrap_mode(egui::TextWrapMode::Wrap)
-                    .fill(if filled { t.chip } else { Color32::TRANSPARENT })
-                    .stroke(stroke)
-                    .min_size(vec2(0.0, 22.0))
-                    .sense(egui::Sense::CLICK);
-                let chip = if crate::ui_kit::contains(ui) {
-                    // The dense field replaces the legacy arrow chip with a filled surface.
-                    let selected_text = text.text().strip_prefix("↖ ").unwrap_or_else(|| text.text());
-                    let prompt = if !filled && inp.label == "Edges" { tr("Select edges") } else { selected_text };
-                    crate::ui_kit::selection_field_state(ui, prompt, active, filled)
-                } else {
-                    crate::frame::add_outlined(ui, b, stroke.width)
-                };
+                let selected_text = text.text().strip_prefix("↖ ").unwrap_or_else(|| text.text());
+                let prompt = if !filled && inp.label == "Edges" { tr("Select edges") } else { selected_text };
+                let chip = crate::ui_kit::selection_field_state(ui, prompt, active, filled);
                 let chip_rect = chip.rect;
                 publish_row(&chip);
                 let tooltip = if let Some(reference) = stored_reference {
@@ -1849,15 +1783,11 @@ fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::
                     activate = Some(i);
                 }
                 if !inp.items.is_empty() || stored_reference.is_some() {
-                    let button = if crate::ui_kit::contains(ui) {
-                        let rect = egui::Rect::from_center_size(
-                            egui::pos2(chip_rect.right() - t.space_24 / 2.0, chip_rect.center().y),
-                            vec2(t.space_24, t.space_24),
-                        );
-                        crate::ui_kit::icon_button_at(ui, rect, "close", "Clear the selection")
-                    } else {
-                        ui.small_button("×").on_hover_text(tr("Clear the selection"))
-                    };
+                    let rect = egui::Rect::from_center_size(
+                        egui::pos2(chip_rect.right() - t.space_24 / 2.0, chip_rect.center().y),
+                        vec2(t.space_24, t.space_24),
+                    );
+                    let button = crate::ui_kit::icon_button_at(ui, rect, "close", "Clear the selection");
                     crate::scenario::publish_handle(&format!("dialog:clear:{}", inp.label), button.rect.center());
                     if button.clicked() {
                         clear = Some(i);
@@ -1928,7 +1858,7 @@ fn awaiting_selection(error: &str) -> bool {
     error.get(..7).is_some_and(|start| start.eq_ignore_ascii_case("select "))
 }
 
-fn error_rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: &mut egui::Ui, full_width: bool) {
+fn error_rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: &mut egui::Ui) {
     if matches!(d.kind, Kind::SketchModify(_))
         && d.previews()
         && let Err(error) = apply_commands(app, d)
@@ -1946,25 +1876,16 @@ fn error_rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: &mut 
         if matches!(d.kind, Kind::SketchModify(_)) && awaiting_selection(&error) {
             return;
         }
-        if !full_width {
-            row_label(ui, "");
-        }
         ui.vertical(|ui| {
-            ui.add(egui::Label::new(RichText::new(error.as_str()).color(Tokens::get().error)).wrap());
+            crate::ui_kit::text_block(ui, "error", &error, true);
             let response = crate::ui_kit::secondary_button(ui, "Create Issue…");
             crate::scenario::publish_handle("dialog:create_issue", response.rect.center());
             if response.clicked() {
                 crate::issue_report::begin(app, ctx, Some(d), Some(&error));
             }
         });
-        ui.end_row();
     }
 }
-
-/// Width limits of a docked dialog: shrink-wrapped to its content within these.
-use crate::frame::{DIALOG_MAX_W, DIALOG_MIN_W, DIALOG_WIDE_MAX_W};
-/// Width of value fields and choice boxes in a dialog.
-pub(crate) const FIELD_W: f32 = 124.0;
 
 /// Find the Boundary Fill cells again when the tool bodies changed (keeping the choices of
 /// cells that are still there).
@@ -2038,10 +1959,6 @@ fn update_measure(app: &SolveApp, d: &mut Dialog) {
     }
 }
 
-fn fmt_mm(app: &SolveApp, v: &Value) -> String {
-    v.as_f64().map(|x| crate::prefs::show_mm(app, x, 1)).unwrap_or_default()
-}
-
 /// Which distance of a pair the Measure panel shows (and the canvas draws).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shown {
@@ -2071,94 +1988,6 @@ pub(crate) fn shown_distance(r: &Value, show: Option<Shown>) -> Option<(Shown, f
     };
     let default = if r.get("measure").and_then(Value::as_str) == Some("center") { Shown::Centre } else { Shown::Min };
     show.and_then(get).or_else(|| get(default)).or_else(|| get(Shown::Min))
-}
-
-/// The measurement in the dialog.
-fn measure_rows(app: &SolveApp, ui: &mut egui::Ui, r: Option<&Value>, show: &mut Option<Shown>) {
-    let t = Tokens::get();
-    let Some(r) = r else {
-        ui.label("");
-        ui.label(RichText::new(tr("pick one or two vertices, edges or faces")).color(t.text_dim));
-        ui.end_row();
-        return;
-    };
-    if let Some(e) = r.get("error").and_then(Value::as_str) {
-        ui.label("");
-        ui.label(RichText::new(e).color(t.error));
-        ui.end_row();
-        return;
-    }
-    let mm = |v: &Value| fmt_mm(app, v);
-    for (i, it) in r["items"].as_array().into_iter().flatten().enumerate() {
-        // Round items: Ø first, then R, then the length (circumference, or the arc's length
-        // and angle).
-        let mut lines: Vec<String> = Vec::new();
-        if it.get("diameter").is_some() {
-            lines.push(format!("Ø  {}", mm(&it["diameter"])));
-            lines.push(format!("R  {}", mm(&it["radius"])));
-            if it.get("circumference").is_some() {
-                lines.push(format!("{}  {}", tr("Circumference"), mm(&it["circumference"])));
-            } else if let Some(a) = it["angle_deg"].as_f64() {
-                lines.push(format!("{}  {}", tr("Arc length"), mm(&it["arc_length"])));
-                lines.push(format!("{}  {a:.2}°", crate::i18n::tr_label("Angle")));
-            }
-        }
-        if let Some(sl) = it.get("slot") {
-            lines.push(format!("{}  {}", tr("Slot width"), mm(&sl["width"])));
-            lines.push(format!("{}  {}", tr("Centre to centre"), mm(&sl["center_distance"])));
-            lines.push(format!("{}  {}", tr("Overall length"), mm(&sl["overall_length"])));
-        }
-        let round = it.get("diameter").is_some();
-        match it["type"].as_str() {
-            Some("edge" | "sketch_curve") if !round => lines.push(format!("{}  {}", tr("Length"), mm(&it["length_mm"]))),
-            Some("face" | "profile") => {
-                lines.push(format!("{}  {}", tr("Area"), crate::prefs::show_mm(app, it["area_mm2"].as_f64().unwrap_or(0.0), 2)))
-            }
-            Some("vertex" | "sketch_point") => {
-                let p = &it["position"];
-                lines.push(format!("At  {}, {}, {}", mm(&p[0]), mm(&p[1]), mm(&p[2])));
-            }
-            _ => {}
-        }
-        for (k, line) in lines.into_iter().enumerate() {
-            ui.label(if k == 0 { format!("Item {}", i + 1) } else { String::new() });
-            ui.label(line);
-            ui.end_row();
-        }
-    }
-    if let Some((now, d, a, b)) = shown_distance(r, *show) {
-        if r.get("center_distance").is_some() {
-            // Centre, min and max all listed; the chosen one is drawn and broken into ΔX/Y/Z.
-            for (which, label, key) in
-                [(Shown::Centre, "Centre to centre", "center_distance"), (Shown::Min, "Min", "distance_mm"), (Shown::Max, "Max", "max")]
-            {
-                let Some(v) = r.get(key).filter(|v| v.is_number()) else { continue };
-                if ui.radio(now == which, tr(label)).clicked() {
-                    *show = Some(which);
-                }
-                let text = RichText::new(mm(v));
-                ui.label(if now == which { text.semibold().color(crate::theme::Tokens::get().text) } else { text });
-                ui.end_row();
-            }
-        } else {
-            ui.label(RichText::new(crate::i18n::tr_label("Distance")).semibold().color(crate::theme::Tokens::get().text));
-            ui.label(RichText::new(crate::prefs::show_mm(app, d, 1)).semibold().color(crate::theme::Tokens::get().text));
-            ui.end_row();
-        }
-        let delta = b - a;
-        for (l, v) in [("ΔX", delta.x), ("ΔY", delta.y), ("ΔZ", delta.z)] {
-            ui.label(l);
-            ui.label(crate::prefs::show_mm(app, v.abs(), 1));
-            ui.end_row();
-        }
-    }
-    if let Some(a) = r["angle_deg"].as_f64()
-        && r["items"].as_array().is_some_and(|v| v.len() == 2)
-    {
-        ui.label(RichText::new(crate::i18n::tr_label("Angle")).semibold().color(crate::theme::Tokens::get().text));
-        ui.label(RichText::new(format!("{a:.3}°")).semibold().color(crate::theme::Tokens::get().text));
-        ui.end_row();
-    }
 }
 
 /// Smart Extrude (#1257, see [`crate::smart_extrude`]): a new pick sets the direction from the
@@ -2259,7 +2088,6 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         }
     }
     // Physical materials: the library's, then the design's own (material.create).
-    let material_names = app.session.doc.material_names();
     let t = Tokens::get();
     let vp = crate::shell::content_rect(app, app.viewport.rect.unwrap_or_else(|| ctx.content_rect()));
     // The Sketch Palette owns the right edge for as long as a sketch is being edited. A dialog
@@ -2269,10 +2097,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     } else {
         crate::frame::Side::Right
     };
-    let dense_form = dense::command(&d.kind).is_some();
     let top = crate::shell::panel_top(app, vp, vp.bottom(), side);
     // Empty/hostile viewport geometry cannot provide a safe window rectangle.
-    if dense_form && (!vp.is_finite() || !vp.is_positive()) {
+    if !vp.is_finite() || !vp.is_positive() {
         app.dialog = Some(d);
         return;
     }
@@ -2287,16 +2114,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let mut apply_again = app.applying.is_some() && d.repeat_after_apply;
     let mut cancel = false;
     let mut enter = false;
-    let wide = d.is_wide();
+    let wide = matches!(&d.kind, Kind::Motion(k) if k.wide());
 
     let raw_title = title(&d.kind);
     let heading = if d.editing.is_some() { crate::i18n::format("dialog.edit_title", &[("title", tr(raw_title))]) } else { tr(raw_title).to_string() };
-    let frame = if dense_form { crate::ui_kit::Panel::feature_frame(ctx, app.ui.layout, side) } else { crate::frame::dock_frame(ctx, side) };
-    // The area includes the border as well as the inner margins; reserve all of it so a
-    // horizontally scrolling table cannot push a wide dialog two pixels past its limit.
-    let horizontal_frame = frame.inner_margin.leftf() + frame.inner_margin.rightf() + 2.0 * frame.stroke.width;
+    let frame = crate::ui_kit::Panel::feature_frame(ctx, app.ui.layout, side);
     // OK is offered once the inputs make a feature.
-    let has_ok = !matches!(d.kind, Kind::Sketch | Kind::Params { .. } | Kind::Measure { .. });
+    let has_ok = !matches!(d.kind, Kind::Sketch | Kind::Measure { .. });
     let valid = match &d.kind {
         Kind::Sketch => false,
         Kind::SaveMesh(_) => crate::dialogs_save_mesh::ready(&d.inputs),
@@ -2307,298 +2131,88 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         }
         _ => !has_ok || !d.previews() || (built.unwrap_or_else(|| apply_commands(app, &d).is_ok()) && app.preview.error.is_none()),
     };
-    let width = if wide { crate::frame::Width::Wide } else { crate::frame::Width::Normal };
-    let wkey = egui::Id::new(("sc_dialog_w", wide));
-    let panel = crate::ui_kit::Panel::new(&heading, egui::Id::new(("sc_dialog", title(&d.kind))), anchor, vp, side, frame);
-    let window = if dense_form {
-        panel.window()
-    } else {
-        crate::frame::docked_on(
-            RichText::new(heading.clone()).semibold().color(crate::theme::Tokens::get().text).size(crate::theme::Tokens::get().font_button),
-            egui::Id::new(("sc_dialog", title(&d.kind))),
-            anchor,
-            vp.bottom() - anchor.y - 8.0,
-            width,
-            side,
-        )
+    // Measure only closes; a deletion's primary action says what it does.
+    let (ok_label, close_label) = match &d.kind {
+        Kind::Measure { .. } => ("", "Close"),
+        Kind::ConfirmDelete { .. } => ("Delete", "Cancel"),
+        Kind::SaveMesh(k) => (crate::dialogs_save_mesh::button(k), "Cancel"),
+        Kind::ViewDxf { .. } => ("Export DXF…", "Cancel"),
+        _ => ("OK", "Cancel"),
     };
+    let panel =
+        crate::ui_kit::Panel::new(&heading, egui::Id::new(("sc_dialog", title(&d.kind))), anchor, vp, side, frame).actions(ok_label, close_label);
+    let panel = if wide {
+        let panel = panel.wide();
+        if side == crate::frame::Side::Left {
+            let available = app.viewport.palette_rect.map_or(vp.width(), |r| (r.left() - vp.left() - t.space_8).max(0.0));
+            panel.width((t.form_card_width * 3.0).min(available))
+        } else {
+            panel
+        }
+    } else {
+        panel
+    };
+    let window = panel.window();
     let repeatable =
         matches!(&d.kind, Kind::SketchModify(k) if crate::sketch_modify_ui::repeatable(k)) && d.editing.is_none() && !d.extra.contains_key("pattern");
     let response = window.frame(frame).open(&mut keep).show(ctx, |ui| {
-        if dense_form {
-            let spec = dense::command(&d.kind).and_then(solidcraft_engine::find_command);
-            let icon = spec.as_ref().map_or("", |s| s.icon);
-            let label = spec.as_ref().map_or(heading.as_str(), |s| tr(s.label));
-            let label = if d.editing.is_some() { heading.as_str() } else { label };
-            let (closed, action) = panel.feature(
-                ui,
-                crate::ui_kit::FeatureOptions {
-                    icon,
-                    title: label,
-                    drag_key: title(&d.kind),
-                    moved,
-                    docked,
-                    apply_label: repeatable.then_some("Apply"),
-                },
-                app.applying.is_some(),
-                valid,
-                |ui| {
-                    enter |= dense::rows(app, ctx, &mut d, ui);
-                    let text = app.applying.as_ref().map(|job| {
-                        let seconds = ((crate::now_ms() - job.started) / 1000.0).floor().max(0.0);
-                        crate::i18n::format("dialog.computing", &[("seconds", &format!("{seconds:.0}"))])
-                    });
-                    crate::ui_kit::ComputeStatus { text, busy: app.applying.is_some() || app.preview.busy, applying: app.applying.is_some() }
-                },
-            );
-            cancel |= closed;
-            if app.issue_report.draft.is_none() {
-                match action {
-                    crate::ui_kit::Action::Ok => {
-                        ok = true;
-                        apply_again = false;
-                    }
-                    crate::ui_kit::Action::Cancel => {
-                        if !app.esc_handled || !ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                            cancel = true;
-                        }
-                    }
-                    crate::ui_kit::Action::Apply => {
-                        ok = true;
-                        apply_again = true;
-                    }
-                    crate::ui_kit::Action::None => {}
-                }
-            }
-            return;
+        let spec = dense::command(&d.kind).and_then(solidcraft_engine::find_command);
+        let icon = spec.as_ref().map_or("", |s| s.icon);
+        let label = spec.as_ref().map_or(heading.as_str(), |s| tr(s.label));
+        let label = if d.editing.is_some() { heading.as_str() } else { label };
+        let heading =
+            crate::ui_kit::FeatureOptions { icon, title: label, drag_key: title(&d.kind), moved, docked, apply_label: repeatable.then_some("Apply") };
+        let applying = app.applying.is_some();
+        let mut collapsed = d.collapsed;
+        let manager = matches!(
+            d.kind,
+            Kind::Material { .. }
+                | Kind::Appearance(_)
+                | Kind::Motion(crate::dialogs_motion::Mo::Configurations { .. })
+                | Kind::Sheet(crate::dialogs_sheet::Sm::Rules { .. })
+                | Kind::Plastic(crate::dialogs_plastic::Pl::Rules { .. })
+        );
+        // A study/configuration owns Enter for its cells, including when folded.
+        let cell_enter = matches!(&d.kind, Kind::Motion(k) if k.wide());
+        if cell_enter && collapsed {
+            ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
         }
-        ui.spacing_mut().text_edit_width = FIELD_W;
-        // Long texts (errors, notes) wrap instead of widening the dialog.
-        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-        let margin = horizontal_frame;
-        let min_w = if wide { 480.0 } else { DIALOG_MIN_W } - margin;
-        ui.set_min_width(min_w);
-        ui.set_max_width(if wide { DIALOG_WIDE_MAX_W } else { DIALOG_MAX_W } - margin);
-        // Rows that end at the right edge line up with last frame's content width.
-        let total = crate::frame::content_width(ui, wkey, min_w);
-        // Header: "−" folds the dialog, the command name, "»" at the right, on the title band,
-        // which also moves the dialog.
-        let band_top = ui.cursor().min;
-        let band = egui::Rect::from_min_size(band_top, vec2(total, ui.spacing().interact_size.y + 2.0));
-        crate::frame::drag_dock(ui, band, title(&d.kind), moved, anchor - docked);
-        crate::frame::heading(ui, crate::frame::Level::Title, total, |ui| {
-            let total = total - 2.0 * crate::frame::HEADING_MARGIN;
-            let fold = if d.collapsed { "+" } else { "−" };
-            if ui
-                .add(egui::Button::new(RichText::new(fold).size(crate::theme::Tokens::get().font_heading)).frame(false))
-                .on_hover_text(if d.collapsed { "Expand" } else { "Collapse" })
-                .clicked()
-            {
-                d.collapsed = !d.collapsed;
+        let body = |ui: &mut egui::Ui| {
+            enter |= dense::rows(app, ctx, &mut d, ui);
+            if cell_enter {
+                ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
             }
-            // Not selectable: a drag on the title moves the dialog.
-            ui.add(
-                egui::Label::new(
-                    RichText::new(heading.as_str()).semibold().color(crate::theme::Tokens::get().text).size(crate::theme::Tokens::get().font_label),
-                )
-                .selectable(false),
-            );
-            let chevron_width = ui.spacing().interact_size.x;
-            crate::frame::right_aligned(ui, total, chevron_width, |ui| {
-                let chevron = if d.collapsed { "«" } else { "»" };
-                if ui
-                    .add(egui::Button::new(RichText::new(chevron).color(t.text_dim)).frame(false).min_size(vec2(chevron_width, 0.0)))
-                    .on_hover_text(if d.collapsed { "Expand" } else { "Collapse" })
-                    .clicked()
-                {
-                    d.collapsed = !d.collapsed;
-                }
-            });
-        });
-        if d.collapsed {
-            return;
-        }
-        ui.add_space(2.0);
-        // A sizing pass initially offers almost no height to an auto-sized window.
-        // Give only the fields a viewport-derived scroll budget; header and actions
-        // stay visible, while short forms still shrink to their natural height.
-        let vertical_frame = frame.inner_margin.topf() + frame.inner_margin.bottomf() + 2.0 * frame.stroke.width;
-        let footer_height = ui.spacing().interact_size.y.max(24.0) + 6.0 + ui.spacing().item_spacing.y;
-        let fields_height = (vp.bottom() - anchor.y - 8.0 - vertical_frame - ui.min_rect().height() - footer_height).max(1.0);
-        egui::ScrollArea::vertical().id_salt("feature_fields").min_scrolled_height(fields_height).max_height(fields_height).show(ui, |ui| {
-            // While OK computes, its inputs hold: what is applied is what was asked.
-            if app.applying.is_some() {
-                ui.disable();
-            }
-            // Configuration tables own their column widths and scrolling; the two-column form
-            // grid would squeeze their row names and action buttons into a label-sized cell.
-            if let Kind::Motion(k @ crate::dialogs_motion::Mo::Configurations { .. }) = &mut d.kind {
-                enter |= crate::dialogs_motion::rows(app, ui, k, &mut d.inputs);
-            }
-            egui::Grid::new("sc_dialog_grid").num_columns(2).spacing(vec2(10.0, 8.0)).show(ui, |ui| {
-                if matches!(&d.kind, Kind::Motion(crate::dialogs_motion::Mo::Configurations { .. })) {
-                    return;
-                }
-                placement_row(&mut d, ui);
-                if matches!(&d.kind, Kind::SketchModify(k) if k.previews())
-                    || matches!(d.kind, Kind::Mirror | Kind::PatternRect { .. } | Kind::PatternCirc { .. } | Kind::PathPattern { .. })
-                {
-                    row_label(ui, "dialog.step");
-                    let label = d.active_input().map(|input| tr(input.label)).unwrap_or_else(|| tr("Objects"));
-                    ui.label(crate::i18n::format(
-                        "dialog.selection_step",
-                        &[("step", &(d.active + 1).to_string()), ("total", &d.inputs.len().to_string()), ("input", label)],
-                    ));
-                    ui.end_row();
-                    row_label(ui, "");
-                    ui.label(tr("dialog.selection_guidance"));
-                    ui.end_row();
-                }
-                input_rows(&mut d, ui, &app.session);
-                match &mut d.kind {
-                    // These forms are drawn by dense::rows before entering this legacy grid.
-                    Kind::Extrude { .. } | Kind::Fillet { .. } | Kind::PatternRect { .. } | Kind::PatternCirc { .. } | Kind::Hole { .. } => {}
-
-                    Kind::Sketch | Kind::SketchModify(_) | Kind::Text(_) | Kind::TextMove(_) | Kind::EditParam { .. } => {}
-
-                    Kind::Revolve { .. }
-                    | Kind::Shell { .. }
-                    | Kind::Draft { .. }
-                    | Kind::Mirror
-                    | Kind::OffsetPlane { .. }
-                    | Kind::AnglePlane { .. }
-                    | Kind::PathPlane { .. }
-                    | Kind::Split
-                    | Kind::ReplaceFace
-                    | Kind::Remove
-                    | Kind::Midplane
-                    | Kind::MeshConvert { .. }
-                    | Kind::Construct { .. }
-                    | Kind::Rib { .. }
-                    | Kind::Emboss { .. }
-                    | Kind::Align { .. }
-                    | Kind::BoundaryFill { .. }
-                    | Kind::PathPattern { .. }
-                    | Kind::Pipe { .. }
-                    | Kind::Stock { .. }
-                    | Kind::Scale { .. }
-                    | Kind::OffsetFaces { .. }
-                    | Kind::Thread { .. }
-                    | Kind::Loft { .. }
-                    | Kind::Sweep { .. }
-                    | Kind::Move { .. }
-                    | Kind::Primitive { .. }
-                    | Kind::Combine { .. } => {}
-                    Kind::Measure { result, show, .. } => measure_rows(app, ui, result.as_ref(), show),
-                    Kind::Material { index } => {
-                        let names: Vec<&str> = material_names.iter().map(String::as_str).collect();
-                        row_label(ui, "Material");
-                        combo(ui, "mat", &names, index);
-                        ui.end_row();
-                    }
-                    Kind::Section { offset, flip } => {
-                        row_label(ui, "Distance");
-                        enter |= field(ui, offset);
-                        ui.end_row();
-                        row_label(ui, "Flip");
-                        ui.checkbox(flip, "");
-                        ui.end_row();
-                    }
-
-                    Kind::Params { new_name, new_expr } => params_table(app, ui, new_name, new_expr),
-                    Kind::Rename { name, .. } => {
-                        row_label(ui, "Name");
-                        let r = ui.text_edit_singleline(name);
-                        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                            ok = true;
-                        }
-                        r.request_focus();
-                        ui.end_row();
-                    }
-                    Kind::Assembly(k) => enter |= crate::dialogs_assembly::rows(app, ui, k, &mut d.inputs, &mut d.active),
-                    Kind::Sheet(k) => enter |= crate::dialogs_sheet::rows(app, ui, k, &mut d.inputs),
-                    Kind::Surface(k) => enter |= crate::dialogs_surface::rows(ui, k),
-                    Kind::SaveMesh(k) => enter |= crate::dialogs_save_mesh::rows(app, ui, k),
-                    Kind::ViewDxf { dashed, tolerance } => crate::dialogs_view_dxf::rows(app, ui, dashed, tolerance),
-                    Kind::Plastic(k) => enter |= crate::dialogs_plastic::rows(app, ui, k, &d.inputs),
-                    Kind::Appearance(k) => enter |= crate::dialogs_appearance::rows(app, ui, k, &mut d.inputs),
-                    Kind::Motion(k) => enter |= crate::dialogs_motion::rows(app, ui, k, &mut d.inputs),
-                    Kind::Part(k) => enter |= crate::dialogs_parts::rows(app, ui, k, &d.inputs),
-                    Kind::ConfirmDelete { with, fail, .. } => {
-                        if !with.is_empty() {
-                            row_label(ui, "Also deletes");
-                            ui.label(with.join(", "));
-                            ui.end_row();
-                        }
-                        if !fail.is_empty() {
-                            row_label(ui, "Will fail");
-                            ui.label(RichText::new(fail.join(", ")).color(t.warning));
-                            ui.end_row();
-                        }
-                    }
-                }
-                error_rows(app, ctx, &mut d, ui, false);
-            });
-        });
-        ui.add_space(6.0);
-        // Footer: an info glyph at the left, OK and Cancel at the right.
-        ui.horizontal(|ui| {
-            let (r, resp) = ui.allocate_exact_size(vec2(16.0, 16.0), egui::Sense::hover());
-            ui.painter().circle_stroke(r.center(), 7.0, Stroke::new(1.2, t.text_dim));
-            ui.painter().text(
-                r.center(),
-                egui::Align2::CENTER_CENTER,
-                "i",
-                egui::FontId::proportional(crate::theme::Tokens::get().font_small),
-                t.text_dim,
-            );
-            resp.on_hover_text(heading.as_str());
-            // The spinner's place is always taken: a widget that comes and goes would shift
-            // the automatic ids of OK and Cancel, and a click pressed in one frame and
-            // released in the next would be lost (an animating preview toggles it often).
-            let (sr, sresp) = ui.allocate_exact_size(vec2(14.0, 14.0), egui::Sense::hover());
-            if let Some(job) = &app.applying {
-                egui::Spinner::new().size(14.0).paint_at(ui, sr);
+            let text = app.applying.as_ref().map(|job| {
                 let seconds = ((crate::now_ms() - job.started) / 1000.0).floor().max(0.0);
-                ui.label(RichText::new(crate::i18n::format("dialog.computing", &[("seconds", &format!("{seconds:.0}"))])).color(t.text_dim));
-                ctx.request_repaint_after(std::time::Duration::from_millis(100));
-            } else if app.preview.busy {
-                egui::Spinner::new().size(14.0).paint_at(ui, sr);
-                sresp.on_hover_text(tr("Updating the preview"));
-            }
-            let raw_label = match &d.kind {
-                Kind::ConfirmDelete { .. } => "Delete",
-                Kind::SaveMesh(k) => crate::dialogs_save_mesh::button(k),
-                Kind::ViewDxf { .. } => "Export DXF…",
-                _ => "OK",
-            };
-            let label = tr(raw_label);
-            let raw_close = if matches!(d.kind, Kind::Params { .. } | Kind::Measure { .. }) { "Close" } else { "Cancel" };
-            let close = tr(raw_close);
-            let button_width = |text: &str| {
-                let galley = egui::WidgetText::from(text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Button);
-                (galley.size().x + 2.0 * ui.spacing().button_padding.x).max(64.0)
-            };
-            let (ok_width, close_width) = (button_width(label), button_width(close));
-            let buttons = close_width + if has_ok { ok_width + ui.spacing().item_spacing.x } else { 0.0 };
-            crate::frame::right_aligned(ui, total, buttons, |ui| {
-                if has_ok {
-                    let b = egui::Button::new(RichText::new(label).color(if valid { t.on_accent } else { t.text_dim }))
-                        .fill(if valid { t.accent } else { Color32::TRANSPARENT })
-                        .wrap_mode(egui::TextWrapMode::Extend)
-                        .min_size(vec2(ok_width, 24.0));
-                    let r = ui.add_enabled(valid && app.applying.is_none(), b);
-                    crate::scenario::publish_handle(&format!("dialog:{raw_label}"), r.rect.center());
-                    if r.clicked() {
-                        ok = true;
+                crate::i18n::format("dialog.computing", &[("seconds", &format!("{seconds:.0}"))])
+            });
+            crate::ui_kit::ComputeStatus { text, busy: app.applying.is_some() || app.preview.busy, applying: app.applying.is_some() }
+        };
+        let (closed, action) = if manager {
+            panel.feature_collapsible(ui, heading, applying, valid, &mut collapsed, body)
+        } else {
+            panel.feature(ui, heading, applying, valid, body)
+        };
+        d.collapsed = collapsed;
+        cancel |= closed;
+        if app.issue_report.draft.is_none() {
+            match action {
+                crate::ui_kit::Action::Ok => {
+                    ok = true;
+                    apply_again = false;
+                }
+                crate::ui_kit::Action::Cancel => {
+                    if !app.esc_handled || !ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        cancel = true;
                     }
                 }
-                if ui.add(egui::Button::new(close).wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(close_width, 24.0))).clicked() {
-                    cancel = true;
+                crate::ui_kit::Action::Apply => {
+                    ok = true;
+                    apply_again = true;
                 }
-            });
-        });
-        crate::frame::remember_width(ui, wkey);
+                crate::ui_kit::Action::None => {}
+            }
+        }
     });
     app.viewport.dialog_rect = response.map(|r| r.response.rect);
     if let Some(r) = app.viewport.dialog_rect {
@@ -2611,8 +2225,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let nothing_focused = ctx.memory(|m| m.focused().is_none());
     let canvas_enter = enter_free && ctx.memory(|m| m.had_focus_last_frame(egui::Id::new("sc_canvas_value")));
     // Tables (configurations, a study's keys) take Enter for their cells.
-    let enter_applies = !matches!(d.kind, Kind::Sketch | Kind::Params { .. } | Kind::Measure { .. } | Kind::ConfirmDelete { .. })
-        && !matches!(&d.kind, Kind::Motion(k) if k.wide());
+    let enter_applies =
+        !matches!(d.kind, Kind::Sketch | Kind::Measure { .. } | Kind::ConfirmDelete { .. }) && !matches!(&d.kind, Kind::Motion(k) if k.wide());
     let report_active = app.issue_report.draft.is_some();
     if !report_active && enter_applies && app.applying.is_none() && (enter || canvas_enter || (enter_free && nothing_focused)) {
         ok = true;
@@ -2839,7 +2453,7 @@ fn extra_choice(ui: &mut egui::Ui, extra: &mut serde_json::Map<String, Value>, i
 /// A checkbox stored in the dialog's extra parameters.
 fn extra_check(ui: &mut egui::Ui, extra: &mut serde_json::Map<String, Value>, key: &str) {
     let mut on = extra.get(key).and_then(Value::as_bool).unwrap_or(false);
-    let r = if crate::ui_kit::contains(ui) { crate::ui_kit::checkbox(ui, "", &mut on) } else { ui.checkbox(&mut on, "") };
+    let r = crate::ui_kit::checkbox(ui, "", &mut on);
     if r.changed() {
         extra.insert(key.into(), json!(on));
     }
@@ -2946,72 +2560,6 @@ fn hole_defaults() -> Kind {
         cs_angle: "90 deg".into(),
         opts: HoleOpts::default(),
     }
-}
-
-fn params_table(app: &mut SolveApp, ui: &mut egui::Ui, new_name: &mut String, new_expr: &mut String) {
-    let t = Tokens::get();
-    ui.label(RichText::new(tr("Name")).semibold().color(crate::theme::Tokens::get().text));
-    ui.label(RichText::new(tr("Expression  ·  value")).semibold().color(crate::theme::Tokens::get().text));
-    ui.end_row();
-    let (vals, errs) = app.session.doc.param_values();
-    let params = app.session.doc.params.clone();
-    for p in params {
-        ui.label(if p.model { RichText::new(&p.name).color(t.text_dim) } else { RichText::new(&p.name) });
-        ui.horizontal(|ui| {
-            let id = egui::Id::new(("pexpr", &p.name));
-            let mut e = ui.data(|dd| dd.get_temp::<String>(id)).unwrap_or_else(|| p.expr.clone());
-            let r = ui.add(egui::TextEdit::singleline(&mut e).desired_width(160.0));
-            let refused_id = egui::Id::new(("prefused", &p.name));
-            if r.changed() {
-                // Typing again clears the reason a previous change was refused.
-                ui.data_mut(|dd| {
-                    dd.insert_temp(id, e.clone());
-                    dd.remove::<String>(refused_id);
-                });
-            }
-            if r.lost_focus() && e != p.expr {
-                match change_param(app, &p.name, &e) {
-                    Ok(()) => ui.data_mut(|dd| {
-                        dd.remove::<String>(id);
-                        dd.remove::<String>(refused_id);
-                    }),
-                    // Refused (it would leave a sketch unsolved, say): the typed expression
-                    // stays in the field with the reason beside it, nothing silently reverts.
-                    Err(why) => ui.data_mut(|dd| {
-                        dd.insert_temp(refused_id, why);
-                    }),
-                }
-            }
-            let refused = ui.data(|dd| dd.get_temp::<String>(refused_id));
-            let v = vals.get(&p.name).map(|v| if p.unit == "deg" { format!("{:.3}°", v.v.to_degrees()) } else { format!("{:.4} {}", v.v, p.unit) });
-            match (v, errs.get(&p.name).or(refused.as_ref())) {
-                (_, Some(e)) => ui.label(RichText::new(e).color(t.error)),
-                (Some(v), None) => ui.label(RichText::new(v).color(t.text_dim)),
-                _ => ui.label(""),
-            };
-        });
-        ui.end_row();
-    }
-    ui.add(egui::TextEdit::singleline(new_name).hint_text(tr("new name")).desired_width(110.0));
-    ui.horizontal(|ui| {
-        ui.add(egui::TextEdit::singleline(new_expr).hint_text(tr("expression, e.g. 25 mm")).desired_width(160.0));
-        if ui.button(tr("Add")).clicked()
-            && !new_name.is_empty()
-            && app.run("parameters.change", json!({"name": new_name, "expression": new_expr})).is_ok()
-        {
-            new_name.clear();
-            new_expr.clear();
-        }
-    });
-    ui.end_row();
-}
-
-/// Set a parameter's expression from the parameters table: `Err` with the message to show
-/// beside the field when the change is refused (the document keeps its values).
-pub(crate) fn change_param(app: &mut SolveApp, name: &str, expression: &str) -> Result<(), String> {
-    app.run("parameters.change", json!({"name": name, "expression": expression}))
-        .map(|_| ())
-        .map_err(|e| crate::friendly_error("parameters.change", &e))
 }
 
 /// Start a sketch on a picked plane or planar face and turn the view to face it.
@@ -3882,7 +3430,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::EditParam { name, expr } => ("parameters.change", json!({"name": name, "expression": expr})),
         Kind::Rename { feature, name } => ("timeline.rename", json!({"feature": feature, "name": name})),
         Kind::ConfirmDelete { features, .. } => ("timeline.delete", json!({ "features": features })),
-        Kind::Sketch | Kind::Params { .. } | Kind::Measure { .. } => return Ok(Vec::new()),
+        Kind::Sketch | Kind::Measure { .. } => return Ok(Vec::new()),
         Kind::Assembly(k) => return crate::dialogs_assembly::commands(app, k, &d.inputs),
         Kind::Sheet(k) => return crate::dialogs_sheet::commands(app, k, &d.inputs, &d.extra),
         Kind::Surface(k) => return crate::dialogs_surface::commands(app, k, &d.inputs, &d.extra),
@@ -5028,11 +4576,11 @@ mod param_refusal_tests {
         let name = s.doc.params.iter().find(|p| p.model).map(|p| p.name.clone()).unwrap();
         let before = s.doc.param(&name).map(|p| p.expr.clone());
         let mut app = SolveApp::new(s, Default::default());
-        let why = change_param(&mut app, &name, "500 mm").unwrap_err();
+        let why = app.run("parameters.change", json!({"name":name,"expression":"500 mm"})).unwrap_err();
         assert!(why.contains("Tri") && why.contains("conflict"), "{why}");
         assert_eq!(app.session.doc.param(&name).map(|p| p.expr.clone()), before);
         assert!(app.status.as_ref().is_some_and(|(m, _, error)| *error && m.contains("Tri")), "{:?}", app.status);
-        assert!(change_param(&mut app, &name, "41 mm").is_ok());
+        assert!(app.run("parameters.change", json!({"name":name,"expression":"41 mm"})).is_ok());
     }
 }
 

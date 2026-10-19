@@ -5807,11 +5807,17 @@ mod tests {
                 .expect("the list's popup");
             let dialog = h.app.viewport.dialog_rect.expect("the dialog");
             let vp = h.app.viewport.rect.expect("the viewport");
+            // The dense header, hint and footer change which item first hangs beyond
+            // the card. Keep the original reproduction over the exposed model.
+            let (item, first) = crate::scenario::handles("dialog:Material:")
+                .into_iter()
+                .find(|(_, point)| !dialog.contains(*point) && list.shrink(2.0).contains(*point) && vp.contains(*point))
+                .expect("a visible list item over the model");
             assert!(!dialog.contains(first) && vp.contains(first), "the list must hang over the model: {first:?} {dialog:?}");
 
             // The wheel scrolls the list and only the list, in its middle and by its edges.
             assert!(!wheel(&mut h, pos2(list.center().x, first.y), -60.0), "smooth {smooth}: the wheel over the list zoomed the model");
-            let moved = handle_at(item).expect("the list stays open");
+            let moved = handle_at(&item).expect("the list stays open");
             assert!(moved.y < first.y - 1.0, "the wheel must scroll the list: {first:?} -> {moved:?}");
             for p in [pos2(list.left() + 2.0, list.center().y), pos2(list.right() - 2.0, list.center().y), pos2(list.center().x, list.bottom() - 2.0)]
             {
@@ -5824,7 +5830,7 @@ mod tests {
             // next to the model.
             h.call("ui.move", field.clone());
             h.call("ui.click", field);
-            assert!(handle_at(item).is_none(), "the list must close");
+            assert!(handle_at(&item).is_none(), "the list must close");
             // Floating cards sit inside the full viewport. Probe their actual edges; the
             // content anchor also reserves gaps and space below the short browser card.
             // Docked panels end at the viewport boundary instead.

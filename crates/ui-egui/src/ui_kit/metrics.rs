@@ -18,6 +18,29 @@ pub(super) fn dimension(value: f32) -> f32 {
     if value.is_finite() { value.max(0.0) } else { 0.0 }
 }
 
+/// A table column's header-width basis, as a multiple of `form_label_width`.
+pub(super) const TABLE_COLUMN_BASIS: f32 = 3.2;
+
+/// Share of a row given to the name in `label_actions`.
+pub(super) const LABEL_ACTIONS_SHARE: f32 = 0.45;
+
+/// Widest a label column may grow, as a multiple of `form_label_width`.
+const LABEL_COLUMN_MAX: f32 = 1.6;
+
+/// Measured width of a label in the form label font. Tokens: `font_label, dialog_label`.
+fn natural_label_width(ui: &Ui, text: &str) -> f32 {
+    let t = Tokens::get();
+    ui.painter().layout_no_wrap(crate::i18n::tr_label(text).to_string(), egui::FontId::proportional(t.font_label), t.dialog_label).size().x.ceil()
+}
+
+/// Width of a table header column, measured directly: it never touches the form's shared label-column state.
+/// Tokens: `form_label_width, font_label, dialog_label, space_4`.
+pub(super) fn header_column(ui: &Ui, text: &str) -> f32 {
+    let t = Tokens::get();
+    let base = t.form_label_width;
+    (natural_label_width(ui, text) + t.space_4).clamp(base, base * LABEL_COLUMN_MAX).min(base * TABLE_COLUMN_BASIS * 0.5)
+}
+
 /// Allocate exactly one control-height row. Long labels elide; controls cannot widen the card.
 /// The design's label column is `form_label_width` wide; a dialog with longer labels widens the
 /// column for all of its rows (up to 1.6 times that), so the controls still line up and labels
@@ -27,12 +50,7 @@ pub(super) fn dimension(value: f32) -> f32 {
 pub(super) fn label_column(ui: &Ui, text: &str, row_width: f32) -> f32 {
     let t = Tokens::get();
     let base = t.form_label_width;
-    let natural = ui
-        .painter()
-        .layout_no_wrap(crate::i18n::tr_label(text).to_string(), egui::FontId::proportional(t.font_label), t.dialog_label)
-        .size()
-        .x
-        .ceil();
+    let natural = natural_label_width(ui, text);
     let widest = match ui.stack().iter().find(|node| node.tags().contains(FORM)).map(|node| node.id) {
         Some(form) => {
             let key = form.with("label_column");
@@ -51,7 +69,7 @@ pub(super) fn label_column(ui: &Ui, text: &str, row_width: f32) -> f32 {
         }
         None => natural,
     };
-    (widest + t.space_4).clamp(base, base * 1.6).min(row_width * 0.5)
+    (widest + t.space_4).clamp(base, base * LABEL_COLUMN_MAX).min(row_width * 0.5)
 }
 
 #[cfg(test)]

@@ -11,7 +11,7 @@ use solidcraft_engine::Session;
 use solidcraft_engine::doc::joints::JointKind;
 
 use crate::SolveApp;
-use crate::dialogs::{combo, row_label};
+use crate::dialogs::{combo, form_row};
 use crate::selection::SelInput;
 use crate::theme::Tokens;
 
@@ -267,65 +267,67 @@ fn collision_rows(
     if a.collisions.as_ref().is_some_and(|(k, _)| *k != key) {
         a.collisions = None;
     }
-    row_label(ui, "Collisions");
-    ui.horizontal(|ui| {
-        if sets && parts.is_empty() {
-            combo(ui, "ms_among", &["All components", "Contact sets"], &mut a.among);
-        }
-        let button = ui.add_enabled(check.is_some(), egui::Button::new(crate::i18n::tr_label("Check collisions")));
-        crate::scenario::publish_handle("motion:check", button.rect.center());
-        if button.clicked()
-            && let Some((st, mut p)) = check
-        {
-            let mut sc = app.session.scratch();
-            let r = super::scratch_study(&mut sc, &st).and_then(|id| {
-                p["study"] = id;
-                sc.execute("motion.interference", &p).map_err(|e| e.to_string())
-            });
-            a.collisions = Some((key, r));
-        }
+    crate::ui_kit::section(ui, "motion_collisions", "Collisions", true, |ui| {
+        ui.horizontal(|ui| {
+            if sets && parts.is_empty() {
+                ui.allocate_ui(vec2(t.form_label_width * 1.6, t.control_height), |ui| {
+                    combo(ui, "ms_among", &["All components", "Contact sets"], &mut a.among)
+                });
+            }
+            let button = crate::ui_kit::enabled_button(ui, "Check collisions", check.is_some());
+            crate::scenario::publish_handle("motion:check", button.rect.center());
+            if button.clicked()
+                && let Some((st, mut p)) = check
+            {
+                let mut sc = app.session.scratch();
+                let r = super::scratch_study(&mut sc, &st).and_then(|id| {
+                    p["study"] = id;
+                    sc.execute("motion.interference", &p).map_err(|e| e.to_string())
+                });
+                a.collisions = Some((key, r));
+            }
+        });
     });
-    ui.end_row();
     match a.collisions.as_ref().map(|(_, r)| r) {
         Some(Ok(v)) => {
             let hits = v["collisions"].as_array().cloned().unwrap_or_default();
-            row_label(ui, "");
             ui.vertical(|ui| {
-                if hits.is_empty() {
-                    ui.label(RichText::new(crate::i18n::tr("motion.no_collisions")).color(t.text_dim));
-                }
-                for (i, c) in hits.iter().enumerate() {
-                    let steps: Vec<String> = c["steps"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .map(|r| {
-                            let (from, to) = (r[0].as_f64().unwrap_or(0.0).round(), r[1].as_f64().unwrap_or(0.0).round());
-                            if from == to { format!("{from}") } else { format!("{from}-{to}") }
-                        })
-                        .collect();
-                    let name = |k: &str| c[k].as_str().unwrap_or_default().to_string();
-                    let text = crate::i18n::format("motion.collision", &[("a", &name("a")), ("b", &name("b")), ("steps", &steps.join(", "))]);
-                    // A click shows where they first collide.
-                    let link = ui.link(RichText::new(text).color(t.error));
-                    crate::scenario::publish_handle(&format!("motion:collision:{i}"), link.rect.center());
-                    if link.clicked()
-                        && let Some(first) = c["first_step"].as_f64()
-                    {
-                        (*step, *playing) = (first, false);
+                ui.vertical(|ui| {
+                    if hits.is_empty() {
+                        ui.label(RichText::new(crate::i18n::tr("motion.no_collisions")).color(t.text_dim));
                     }
-                }
-                if v["truncated"] == true {
-                    let to = v["checked_to"].as_f64().map(|x| x.round().to_string()).unwrap_or_default();
-                    ui.label(RichText::new(crate::i18n::format("motion.checked_to", &[("step", &to)])).color(t.warning));
-                }
+                    for (i, c) in hits.iter().enumerate() {
+                        let steps: Vec<String> = c["steps"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(|r| {
+                                let (from, to) = (r[0].as_f64().unwrap_or(0.0).round(), r[1].as_f64().unwrap_or(0.0).round());
+                                if from == to { format!("{from}") } else { format!("{from}-{to}") }
+                            })
+                            .collect();
+                        let name = |k: &str| c[k].as_str().unwrap_or_default().to_string();
+                        let text = crate::i18n::format("motion.collision", &[("a", &name("a")), ("b", &name("b")), ("steps", &steps.join(", "))]);
+                        // A click shows where they first collide.
+                        let link = ui.link(RichText::new(text).color(t.error));
+                        crate::scenario::publish_handle(&format!("motion:collision:{i}"), link.rect.center());
+                        if link.clicked()
+                            && let Some(first) = c["first_step"].as_f64()
+                        {
+                            (*step, *playing) = (first, false);
+                        }
+                    }
+                    if v["truncated"] == true {
+                        let to = v["checked_to"].as_f64().map(|x| x.round().to_string()).unwrap_or_default();
+                        ui.label(RichText::new(crate::i18n::format("motion.checked_to", &[("step", &to)])).color(t.warning));
+                    }
+                });
             });
-            ui.end_row();
         }
         Some(Err(e)) => {
-            row_label(ui, "");
-            ui.add(egui::Label::new(RichText::new(e.as_str()).color(t.error)).wrap());
-            ui.end_row();
+            ui.vertical(|ui| {
+                ui.add(egui::Label::new(RichText::new(e.as_str()).color(t.error)).wrap());
+            });
         }
         None => {}
     }
@@ -356,20 +358,20 @@ fn plot_rows(
             a.what = i;
         }
     }
-    row_label(ui, "Plot");
-    let labels: Vec<&str> = list.iter().map(|(l, _)| l.as_str()).collect();
-    combo(ui, "ms_plot", &labels, &mut a.what);
-    ui.end_row();
+    form_row(ui, "Plot", |ui| {
+        let labels: Vec<&str> = list.iter().map(|(l, _)| l.as_str()).collect();
+        combo(ui, "ms_plot", &labels, &mut a.what);
+    });
     let what = list.get(a.what).map_or(Plotted::Nothing, |(_, w)| *w);
     let bands = a.collisions.as_ref().and_then(|(_, r)| r.as_ref().ok()).map(collision_bands).unwrap_or_default();
     if what != Plotted::Nothing {
-        row_label(ui, "Quantity");
-        combo(ui, "ms_quantity", &QUANTITIES, &mut a.quantity);
-        ui.end_row();
-        row_label(ui, "Duration");
-        let r = ui.add(egui::TextEdit::singleline(&mut a.duration).hint_text(crate::i18n::tr("motion.duration_hint")));
-        crate::scenario::publish_handle("dialog:Duration", r.rect.center());
-        ui.end_row();
+        form_row(ui, "Quantity", |ui| {
+            combo(ui, "ms_quantity", &QUANTITIES, &mut a.quantity);
+        });
+        form_row(ui, "Duration", |ui| {
+            let r = crate::ui_kit::cell_editor(ui, ui.id().with("duration"), &mut a.duration, "motion.duration_hint", false);
+            crate::scenario::publish_handle("dialog:Duration", r.rect.center());
+        });
         let params = study.clone().and_then(|st| plot_params(s, what, &st, &a.duration, inputs).map(|p| (st, p)));
         let key = key_of(&params);
         if a.plot.as_ref().is_none_or(|(k, _)| *k != key) {
@@ -380,8 +382,7 @@ fn plot_rows(
             });
             a.plot = Some((key, r));
         }
-        row_label(ui, "");
-        match a.plot.as_ref().map(|(_, r)| r) {
+        ui.vertical(|ui| match a.plot.as_ref().map(|(_, r)| r) {
             Some(Ok(v)) => {
                 ui.vertical(|ui| {
                     if let Some((xs, ys, unit)) = line(v, what, a.quantity)
@@ -398,8 +399,7 @@ fn plot_rows(
                 ui.add(egui::Label::new(RichText::new(e.as_str()).color(t.text_dim)).wrap());
             }
             None => {}
-        }
-        ui.end_row();
+        });
     }
 }
 

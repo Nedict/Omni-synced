@@ -8,6 +8,7 @@ pub mod layout;
 pub mod metrics;
 pub(crate) mod panel;
 pub mod status;
+pub mod table;
 pub mod text;
 
 pub use actions::*;
@@ -15,9 +16,10 @@ pub use choice::*;
 pub use fields::*;
 pub use layout::*;
 pub use metrics::{header_height, row_height};
-pub use panel::header;
-pub(crate) use panel::{ComputeStatus, FeatureOptions, Panel, Part};
+pub(crate) use panel::{ComputeStatus, FeatureOptions, Panel, Part, Prompt};
+pub use panel::{collapsible_header, header};
 pub use status::*;
+pub use table::*;
 
 #[cfg(test)]
 mod gallery;

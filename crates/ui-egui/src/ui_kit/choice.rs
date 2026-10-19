@@ -17,7 +17,7 @@ pub fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str]) -> bool {
 
 /// Optional per-segment states preserve mixed selections in command-backed controls.
 /// Segmented choices with mixed per-choice state. Tokens: `same as segmented`.
-pub fn segmented_states(ui: &mut Ui, selected: &mut usize, options: &[&str], states: &[bool]) -> bool {
+pub(crate) fn segmented_states(ui: &mut Ui, selected: &mut usize, options: &[&str], states: &[bool]) -> bool {
     segments(ui, selected, options, states, false)
 }
 
@@ -295,3 +295,104 @@ pub fn toggle_icon(ui: &mut Ui, row: &str, label: &str, selected: &mut bool, ico
 #[cfg(test)]
 #[path = "choice_tests.rs"]
 mod tests;
+
+/// Selectable list item retaining checked state and full text as an accessible label.
+/// Tokens: control_height and scope selection/control/font tokens.
+pub fn list_picker(ui: &mut Ui, key: &str, text: &str, selected: bool) -> egui::Response {
+    let response =
+        ui.add_sized(egui::vec2(super::metrics::dimension(ui.available_width()), super::row_height()), egui::Button::selectable(selected, text));
+    crate::scenario::publish_handle(&format!("dialog:list:{key}"), response.rect.center());
+    crate::scenario::publish_rect(&format!("dialog:list:{key}"), response.rect);
+    response
+}
+
+/// A reusable draggable document-colour sample; caller supplies the existing domain payload.
+/// Tokens: control_height/radius, border, accent, hover.
+pub fn color_swatch<T: Send + Sync + 'static>(
+    ui: &mut Ui,
+    id: egui::Id,
+    color: egui::Color32,
+    selected: bool,
+    tip: &str,
+    payload: T,
+) -> egui::Response {
+    let t = crate::theme::Tokens::get();
+    let response = ui
+        .dnd_drag_source(id, payload, |ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(t.control_height, t.control_height), egui::Sense::hover());
+            if color.a() < u8::MAX {
+                let half = rect.width() / 2.0;
+                for offset in [egui::Vec2::ZERO, egui::vec2(half, half)] {
+                    ui.painter().rect_filled(egui::Rect::from_min_size(rect.min + offset, egui::vec2(half, half)), 0.0, t.hover);
+                }
+            }
+            ui.painter().rect(
+                rect,
+                t.control_radius,
+                color,
+                egui::Stroke::new(if selected { t.space_2 } else { 1.0 }, if selected { t.accent } else { t.border }),
+                egui::StrokeKind::Inside,
+            );
+        })
+        .response;
+    let response = ui.interact(response.rect, id.with("click"), egui::Sense::click()).on_hover_text(tip);
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
+    response
+}
+
+/// Wrapped samples with common token spacing. Keeps native drag-and-drop payloads intact.
+pub fn swatch_grid<T>(ui: &mut Ui, values: &[T], mut each: impl FnMut(&mut Ui, &T)) {
+    let t = Tokens::get();
+    let columns = ((super::metrics::dimension(ui.available_width()) + t.space_4) / (t.control_height + t.space_4)).floor().clamp(1.0, 64.0) as usize;
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing = vec2(t.space_4, t.space_4);
+        for row in values.chunks(columns.max(1)) {
+            ui.horizontal(|ui| {
+                for value in row {
+                    each(ui, value);
+                }
+            });
+        }
+    });
+}
+
+/// A completion/suggestion entry; text and detail are application-supplied data.
+pub struct PopupOption<'a> {
+    pub text: &'a str,
+    pub detail: &'a str,
+    pub color: egui::Color32,
+}
+
+/// Focus-neutral suggestion popup. The owner handles navigation and completion semantics.
+/// Tokens: space_2, form_label_width, control_height, text_dim, scope control/font tokens.
+pub fn popup_list(ctx: &egui::Context, id: egui::Id, anchor: egui::Rect, selected: usize, options: &[PopupOption<'_>], hint: &str) -> Option<usize> {
+    let t = crate::theme::Tokens::get();
+    let mut chosen = None;
+    let area = crate::frame::area(id).order(egui::Order::Tooltip).fixed_pos(anchor.left_bottom() + egui::vec2(0.0, t.space_2)).show(ctx, |ui| {
+        egui::Frame::popup(ui.style()).show(ui, |ui| {
+            super::scope(ui, |ui| {
+                ui.set_width(anchor.width().max(t.form_label_width * 2.0));
+                for (index, option) in options.iter().enumerate() {
+                    let response = ui
+                        .add_sized(
+                            egui::vec2(ui.available_width(), t.control_height),
+                            egui::Button::selectable(index == selected, egui::RichText::new(option.text).color(option.color)),
+                        )
+                        .on_hover_text(option.detail);
+                    crate::scenario::publish_handle(&format!("dialog:suggestion:{index}"), response.rect.center());
+                    if index == selected {
+                        super::note(ui, "completion_detail", option.detail);
+                    }
+                    if response.clicked() {
+                        chosen = Some(index);
+                    }
+                }
+                super::note(ui, "completion_hint", hint);
+            })
+        });
+    });
+    crate::scenario::publish_rect("dialog:suggestions", area.response.rect);
+    chosen
+}

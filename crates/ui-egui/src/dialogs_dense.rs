@@ -4,11 +4,26 @@ use crate::ui_kit;
 
 pub(super) fn command(kind: &Kind) -> Option<&'static str> {
     match kind {
+        Kind::Material { .. } => Some("material.assign"),
+        Kind::Appearance(_) => Some("appearance.assign"),
+        Kind::Motion(k) => Some(match k {
+            crate::dialogs_motion::Mo::ContactSet { .. } => "contact.create",
+            crate::dialogs_motion::Mo::MotionStudy { .. } => "motion.study",
+            crate::dialogs_motion::Mo::Explode { .. } => "explode.create",
+            crate::dialogs_motion::Mo::Configurations { .. } => "config.table",
+        }),
+        Kind::Part(_) => Some("parts.insert"),
+        Kind::SaveMesh(_) => Some("file.save_mesh"),
+        Kind::ViewDxf { .. } => Some("file.export_view_dxf"),
         Kind::Sketch => Some("sketch.create"),
         Kind::SketchModify(k) => Some(crate::sketch_modify_ui::command(k)),
         Kind::Text(_) => Some("sketch.edit_text"),
         Kind::TextMove(_) => Some("sketch.move"),
         Kind::EditParam { .. } => Some("parameters.change"),
+        Kind::Measure { .. } => Some("inspect.measure"),
+        Kind::Section { .. } => Some("inspect.section"),
+        Kind::Rename { .. } => Some("timeline.rename"),
+        Kind::ConfirmDelete { .. } => Some("timeline.delete"),
         Kind::Extrude { .. } => Some("solid.extrude"),
         Kind::Fillet { chamfer, .. } => Some(if *chamfer { "solid.chamfer" } else { "solid.fillet" }),
         Kind::Hole { .. } => Some("solid.hole"),
@@ -66,7 +81,8 @@ pub(super) fn command(kind: &Kind) -> Option<&'static str> {
             crate::dialogs_sheet::Sm::Fold { .. } => Some("sheet.fold"),
             crate::dialogs_sheet::Sm::Unfold { refold } => Some(if *refold { "sheet.refold" } else { "sheet.unfold" }),
             crate::dialogs_sheet::Sm::Convert { .. } => Some("sheet.convert"),
-            _ => None,
+            crate::dialogs_sheet::Sm::Rules { .. } => Some("sheet.manage_rules"),
+            crate::dialogs_sheet::Sm::FlatPattern { .. } => Some("sheet.flat_pattern"),
         },
         Kind::Plastic(k) => match k {
             crate::dialogs_plastic::Pl::Boss { .. } => Some("plastic.boss"),
@@ -74,7 +90,7 @@ pub(super) fn command(kind: &Kind) -> Option<&'static str> {
             crate::dialogs_plastic::Pl::SnapFit { .. } => Some("plastic.snap_fit"),
             crate::dialogs_plastic::Pl::Rest { .. } => Some("plastic.rest"),
             crate::dialogs_plastic::Pl::Assign { .. } => Some("plastic.assign_rule"),
-            _ => None,
+            crate::dialogs_plastic::Pl::Rules { .. } => Some("plastic.manage_rules"),
         },
         Kind::Assembly(k) => match k {
             crate::dialogs_assembly::Asm::NewComponent { .. } => Some("component.create"),
@@ -85,9 +101,9 @@ pub(super) fn command(kind: &Kind) -> Option<&'static str> {
             crate::dialogs_assembly::Asm::Coupling(f) => Some(f.command),
             crate::dialogs_assembly::Asm::Cam(_) => Some("joint.cam"),
             crate::dialogs_assembly::Asm::Trace(_) => Some("motion.trace"),
-            _ => None,
+            crate::dialogs_assembly::Asm::Drive { .. } => Some("joint.drive"),
+            crate::dialogs_assembly::Asm::Interference { .. } => Some("inspect.interference"),
         },
-        _ => None,
     }
 }
 
@@ -151,9 +167,30 @@ pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: 
             ui_kit::hint(ui, "step", &step).on_hover_text(tr("dialog.selection_guidance"));
         }
     }
+    let manage_hint = match &d.kind {
+        Kind::Material { .. } => Some("manage.material_hint"),
+        Kind::Appearance(_) => Some("manage.appearance_hint"),
+        Kind::Motion(crate::dialogs_motion::Mo::Configurations { .. }) => Some("manage.config_hint"),
+        Kind::Sheet(crate::dialogs_sheet::Sm::Rules { .. }) | Kind::Plastic(crate::dialogs_plastic::Pl::Rules { .. }) => Some("manage.rules_hint"),
+        Kind::Plastic(crate::dialogs_plastic::Pl::Assign { .. }) => Some("manage.assign_hint"),
+        _ => None,
+    };
+    if let Some(key) = manage_hint {
+        ui_kit::hint(ui, "manage", tr(key));
+    }
     placement_row(d, ui);
     input_rows(d, ui, &app.session);
     match &mut d.kind {
+        Kind::Material { index } => {
+            let names = app.session.doc.material_names();
+            let names: Vec<_> = names.iter().map(String::as_str).collect();
+            ui_kit::row(ui, "Material", |ui| ui_kit::dropdown(ui, "mat", index, &names));
+        }
+        Kind::Appearance(k) => enter |= crate::dialogs_appearance::rows(app, ui, k, &mut d.inputs),
+        Kind::Motion(k) => enter |= crate::dialogs_motion::rows(app, ui, k, &mut d.inputs),
+        Kind::Part(k) => enter |= crate::dialogs_parts::rows(app, ui, k, &d.inputs),
+        Kind::SaveMesh(k) => enter |= crate::dialogs_save_mesh::rows(app, ui, k),
+        Kind::ViewDxf { dashed, tolerance } => crate::dialogs_view_dxf::rows(app, ui, dashed, tolerance),
         Kind::Sketch => {
             if d.error.is_some() && matches!(d.inputs.first().and_then(|i| i.items.first()), Some(Sel::Face { .. })) {
                 ui_kit::hint(
@@ -551,7 +588,7 @@ pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: 
         }
         _ => enter |= additional_rows(app, d, ui),
     }
-    error_rows(app, ctx, d, ui, true);
+    error_rows(app, ctx, d, ui);
     enter
 }
 
@@ -842,9 +879,114 @@ fn additional_rows(app: &mut SolveApp, d: &mut Dialog, ui: &mut egui::Ui) -> boo
         Kind::Sheet(k) => enter |= crate::dialogs_sheet::rows(app, ui, k, &mut d.inputs),
         Kind::Plastic(k) => enter |= crate::dialogs_plastic::rows(app, ui, k, &d.inputs),
         Kind::Assembly(k) => enter |= crate::dialogs_assembly::rows(app, ui, k, &mut d.inputs, &mut d.active),
+        Kind::Measure { result, show, .. } => measure_rows(app, ui, result.as_ref(), show),
+        Kind::Section { offset, flip } => {
+            form_row(ui, "Distance", |ui| {
+                enter |= ui_kit::field(ui, offset);
+            });
+            ui_kit::options(ui, "feature_options", &mut [("Flip", flip)]);
+        }
+        Kind::Rename { name, .. } => {
+            form_row(ui, "Name", |ui| {
+                enter |= ui_kit::focused_text_field(ui, name, "");
+            });
+        }
+        Kind::ConfirmDelete { with, fail, .. } => {
+            if !with.is_empty() {
+                form_row(ui, "Also deletes", |ui| {
+                    ui_kit::cell_text(ui, &with.join(", "));
+                });
+            }
+            if !fail.is_empty() {
+                ui_kit::text_block(ui, "will_fail", &format!("{}: {}", tr("Will fail"), fail.join(", ")), true);
+            }
+        }
         _ => {}
     }
     enter
+}
+
+fn fmt_mm(app: &SolveApp, v: &Value) -> String {
+    v.as_f64().map(|x| crate::prefs::show_mm(app, x, 1)).unwrap_or_default()
+}
+
+/// The measurement in the dialog: each item's size, then the distance (a pair of round items
+/// offers centre to centre, closest and farthest), its ΔX/Y/Z and the angle between two items.
+fn measure_rows(app: &SolveApp, ui: &mut egui::Ui, r: Option<&Value>, show: &mut Option<Shown>) {
+    let Some(r) = r else {
+        ui_kit::hint(ui, "measure", tr("pick one or two vertices, edges or faces"));
+        return;
+    };
+    if let Some(e) = r.get("error").and_then(Value::as_str) {
+        ui_kit::text_block(ui, "measure_error", e, true);
+        return;
+    }
+    let mm = |v: &Value| fmt_mm(app, v);
+    let value = |ui: &mut egui::Ui, label: &str, text: &str| {
+        form_row(ui, label, |ui| {
+            ui_kit::cell_text(ui, text);
+        });
+    };
+    for (i, it) in r["items"].as_array().into_iter().flatten().enumerate() {
+        // Round items: Ø first, then R, then the length (circumference, or the arc's length
+        // and angle).
+        let mut lines: Vec<String> = Vec::new();
+        if it.get("diameter").is_some() {
+            lines.push(format!("Ø  {}", mm(&it["diameter"])));
+            lines.push(format!("R  {}", mm(&it["radius"])));
+            if it.get("circumference").is_some() {
+                lines.push(format!("{}  {}", tr("Circumference"), mm(&it["circumference"])));
+            } else if let Some(a) = it["angle_deg"].as_f64() {
+                lines.push(format!("{}  {}", tr("Arc length"), mm(&it["arc_length"])));
+                lines.push(format!("{}  {a:.2}°", crate::i18n::tr_label("Angle")));
+            }
+        }
+        if let Some(sl) = it.get("slot") {
+            lines.push(format!("{}  {}", tr("Slot width"), mm(&sl["width"])));
+            lines.push(format!("{}  {}", tr("Centre to centre"), mm(&sl["center_distance"])));
+            lines.push(format!("{}  {}", tr("Overall length"), mm(&sl["overall_length"])));
+        }
+        let round = it.get("diameter").is_some();
+        match it["type"].as_str() {
+            Some("edge" | "sketch_curve") if !round => lines.push(format!("{}  {}", tr("Length"), mm(&it["length_mm"]))),
+            Some("face" | "profile") => {
+                lines.push(format!("{}  {}", tr("Area"), crate::prefs::show_mm(app, it["area_mm2"].as_f64().unwrap_or(0.0), 2)))
+            }
+            Some("vertex" | "sketch_point") => {
+                let p = &it["position"];
+                lines.push(format!("{}  {}, {}, {}", tr("measure.at"), mm(&p[0]), mm(&p[1]), mm(&p[2])));
+            }
+            _ => {}
+        }
+        for (k, line) in lines.into_iter().enumerate() {
+            let label = if k == 0 { crate::i18n::format("measure.item", &[("number", &(i + 1).to_string())]) } else { String::new() };
+            value(ui, &label, &line);
+        }
+    }
+    if let Some((now, d, a, b)) = shown_distance(r, *show) {
+        if r.get("center_distance").is_some() {
+            // Centre, min and max all listed; the chosen one is drawn and broken into ΔX/Y/Z.
+            for (which, label, key) in
+                [(Shown::Centre, "Centre to centre", "center_distance"), (Shown::Min, "Min", "distance_mm"), (Shown::Max, "Max", "max")]
+            {
+                let Some(v) = r.get(key).filter(|v| v.is_number()) else { continue };
+                if ui_kit::list_picker(ui, key, &format!("{}  {}", tr(label), mm(v)), now == which).clicked() {
+                    *show = Some(which);
+                }
+            }
+        } else {
+            value(ui, crate::i18n::tr_label("Distance"), &crate::prefs::show_mm(app, d, 1));
+        }
+        let delta = b - a;
+        for (l, v) in [("ΔX", delta.x), ("ΔY", delta.y), ("ΔZ", delta.z)] {
+            value(ui, l, &crate::prefs::show_mm(app, v.abs(), 1));
+        }
+    }
+    if let Some(a) = r["angle_deg"].as_f64()
+        && r["items"].as_array().is_some_and(|v| v.len() == 2)
+    {
+        value(ui, crate::i18n::tr_label("Angle"), &format!("{a:.3}°"));
+    }
 }
 
 #[cfg(test)]

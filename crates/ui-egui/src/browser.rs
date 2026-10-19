@@ -769,9 +769,9 @@ fn finish_browser(app: &mut SolveApp, ui: &mut egui::Ui, acts: Actions) {
     if let Some((at, target)) = acts.menu {
         crate::context_menu::open_for(app, at, target);
     }
-    occurrence_panel(app, ui);
-    capture_prompt(app, ui.ctx());
-    canvas_panel(app, ui.ctx());
+    crate::browser_prompts::occurrence_panel(app, ui);
+    crate::browser_prompts::capture_prompt(app, ui.ctx());
+    crate::browser_canvas::panel(app, ui.ctx());
     crate::sketch_attachment_ui::panel(app, ui.ctx());
 }
 
@@ -1348,7 +1348,7 @@ pub struct CanvasPanel {
     pub canvas: u64,
     pub calibrate: bool,
     /// Undo depth when the panel opened.
-    depth: usize,
+    pub(crate) depth: usize,
     pub a: [f64; 2],
     pub b: [f64; 2],
     pub distance: f64,
@@ -1367,86 +1367,6 @@ impl CanvasPanel {
             .unwrap_or(([0.0, 0.0], [100.0, 0.0], 100.0));
         CanvasPanel { canvas, calibrate, depth: app.session.undo.len(), a, b, distance: d }
     }
-}
-
-fn canvas_panel(app: &mut SolveApp, ctx: &egui::Context) {
-    let Some(mut m) = app.tree.canvas_panel.clone() else { return };
-    let Some(c) = app.session.doc.canvases.iter().find(|c| c.id == m.canvas).cloned() else {
-        app.tree.canvas_panel = None;
-        return;
-    };
-    let mut open = true;
-    let mut edit: Option<Value> = None;
-    let mut done = false;
-    let title = if m.calibrate { format!("Calibrate: {}", c.name) } else { format!("Edit Canvas: {}", c.name) };
-    crate::frame::window(ctx, title, crate::frame::Width::Normal)
-        .id(egui::Id::new("sc_canvas_panel"))
-        .pivot(egui::Align2::LEFT_TOP)
-        .default_pos(panel_pos(app))
-        .open(&mut open)
-        .resizable(false)
-        .collapsible(false)
-        .show(ctx, |ui| {
-            egui::Grid::new("sc_canvas_grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                if m.calibrate {
-                    for (label, p) in [("Point A", &mut m.a), ("Point B", &mut m.b)] {
-                        ui.label(label);
-                        ui.horizontal(|ui| {
-                            ui.add(crate::prefs::length_drag(&mut p[0], &app.session.doc.units, app.preferences.length_decimals));
-                            ui.add(crate::prefs::length_drag(&mut p[1], &app.session.doc.units, app.preferences.length_decimals));
-                        });
-                        ui.end_row();
-                    }
-                    ui.label(crate::i18n::tr_label("Distance"));
-                    ui.add(crate::prefs::length_drag(&mut m.distance, &app.session.doc.units, app.preferences.length_decimals).range(0.001..=1e6));
-                    ui.end_row();
-                } else {
-                    let (mut x, mut y, mut w, mut ang, mut op, mut flip) = (c.center.x, c.center.y, c.width, c.angle.to_degrees(), c.opacity, c.flip);
-                    ui.label(crate::i18n::tr_label("Center X"));
-                    let r1 = ui.add(crate::prefs::length_drag(&mut x, &app.session.doc.units, app.preferences.length_decimals));
-                    ui.end_row();
-                    ui.label(crate::i18n::tr_label("Center Y"));
-                    let r2 = ui.add(crate::prefs::length_drag(&mut y, &app.session.doc.units, app.preferences.length_decimals));
-                    ui.end_row();
-                    ui.label(crate::i18n::tr_label("Width"));
-                    let r3 = ui.add(crate::prefs::length_drag(&mut w, &app.session.doc.units, app.preferences.length_decimals).range(0.01..=1e6));
-                    ui.end_row();
-                    ui.label(crate::i18n::tr_label("Angle"));
-                    let r4 = ui.add(egui::DragValue::new(&mut ang).speed(1.0).suffix(" deg").custom_parser(crate::prefs::parse_number));
-                    ui.end_row();
-                    ui.label(crate::i18n::tr_label("Opacity"));
-                    let r5 = ui.add(egui::Slider::new(&mut op, 0.0..=1.0));
-                    ui.end_row();
-                    ui.label(crate::i18n::tr_label("Flip"));
-                    let r6 = ui.checkbox(&mut flip, "");
-                    ui.end_row();
-                    if [r1, r2, r3, r4, r5, r6].iter().any(|r| r.changed()) {
-                        edit = Some(json!({ "canvas": c.id, "center": [x, y], "width": w, "angle": ang, "opacity": op, "flip": flip }));
-                    }
-                }
-            });
-            ui.add_space(6.0);
-            if ui.button(if m.calibrate { "Calibrate" } else { "OK" }).clicked() {
-                done = true;
-            }
-        });
-    if let Some(p) = edit
-        && app.run("canvas.edit", p).is_ok()
-    {
-        // One undo step for the whole edit.
-        if app.session.undo.len() > m.depth + 1 {
-            let keep = app.session.undo.get(m.depth).cloned();
-            app.session.undo.truncate(m.depth);
-            app.session.undo.extend(keep);
-        }
-    }
-    if done && m.calibrate {
-        if app.run("canvas.calibrate", json!({ "canvas": c.id, "a": m.a, "b": m.b, "distance": m.distance })).is_ok() {
-            app.tree.canvas_panel = None;
-        }
-        return;
-    }
-    app.tree.canvas_panel = if done || !open { None } else { Some(m) };
 }
 
 /// A browser click on a plane or axis: it goes to the open dialog's input if that takes it,
@@ -1932,97 +1852,6 @@ fn apply_drop(app: &mut SolveApp, d: DropAction) {
 // Panels opened from the menus
 // ---------------------------------------------------------------------------------------------
 
-/// Move/Copy of an occurrence: offsets and a rotation about Z, pending until Capture Position.
-fn occurrence_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
-    let Some(mut m) = app.tree.occurrence_move.clone() else { return };
-    if !m.path.is_empty()
-        && let Err(error) = app.session.occurrence_placement(&m.path)
-    {
-        app.tree.occurrence_move = None;
-        app.set_status(error.to_string(), true);
-        return;
-    }
-    if m.baseline.is_none() {
-        m.had_pending = app.session.pending_moves.contains_key(&m.occurrence);
-        m.baseline = app
-            .session
-            .pending_moves
-            .get(&m.occurrence)
-            .copied()
-            .or_else(|| app.session.doc.occurrences.iter().find(|o| o.id == m.occurrence).map(|o| o.transform));
-    }
-    let ctx = ui.ctx().clone();
-    if m.pivot.is_none() {
-        m.pivot = if m.path.is_empty() {
-            occurrence_origin(app, m.occurrence)
-        } else {
-            app.session.occurrence_placement(&m.path).ok().map(|p| solidcraft_engine::doc::apply_point(&p.world, solidcraft_engine::geom::Vec3::ZERO))
-        };
-    }
-    let name = app.session.doc.occurrences.iter().find(|o| o.id == m.occurrence).map(|o| o.name.clone()).unwrap_or_default();
-    let mut open = true;
-    let mut action: Option<&str> = None;
-    let before = (m.translate, m.angles);
-    crate::frame::window(&ctx, format!("Move: {name}"), crate::frame::Width::Normal)
-        .id(egui::Id::new("sc_occ_move"))
-        .pivot(egui::Align2::LEFT_TOP)
-        .default_pos(panel_pos(app))
-        .open(&mut open)
-        .resizable(false)
-        .collapsible(false)
-        .show(&ctx, |ui| {
-            if !m.path.is_empty() && app.session.occurrence_scope_count(&m.path).is_ok_and(|n| n > 1) {
-                ui.label(crate::i18n::tr_label("This child is shared. Position changes apply to every copy of its parent."));
-            }
-            egui::Grid::new("sc_occ_grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-                for (k, axis) in ["X distance", "Y distance", "Z distance"].iter().enumerate() {
-                    ui.label(*axis);
-                    if let Some(v) = m.translate.get_mut(k) {
-                        let response = ui.add(crate::prefs::length_drag(v, &app.session.doc.units, app.preferences.length_decimals));
-                        crate::scenario::publish_handle(&format!("occurrence-move:distance:{k}"), response.rect.center());
-                    }
-                    ui.end_row();
-                }
-                for (k, axis) in ["X angle", "Y angle", "Z angle"].iter().enumerate() {
-                    ui.label(*axis);
-                    if let Some(v) = m.angles.get_mut(k) {
-                        let response = ui.add(egui::DragValue::new(v).speed(1.0).suffix(" deg").custom_parser(crate::prefs::parse_number));
-                        crate::scenario::publish_handle(&format!("occurrence-move:angle:{k}"), response.rect.center());
-                    }
-                    ui.end_row();
-                }
-            });
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                if ui.button(crate::i18n::tr_label("Capture All Positions")).clicked() {
-                    action = Some("capture");
-                }
-                if ui.button(crate::i18n::tr_label("Revert All Positions")).clicked() {
-                    action = Some("revert");
-                }
-            });
-        });
-    triad(app, ui, &mut m);
-    if (m.translate, m.angles) != before {
-        apply_occurrence_move(app, &m);
-    }
-    match action {
-        Some("capture") => {
-            let _ = app.run("component.capture_position", json!({}));
-            app.tree.occurrence_move = None;
-        }
-        Some(_) => {
-            let _ = app.run("component.revert_position", json!({}));
-            app.tree.occurrence_move = None;
-        }
-        None if !open => {
-            revert_occurrence_dialog(app, &m);
-            app.tree.occurrence_move = None;
-        }
-        None => app.tree.occurrence_move = Some(m),
-    }
-}
-
 pub(crate) fn revert_occurrence_dialog(app: &mut SolveApp, m: &OccMove) {
     if m.had_pending {
         let _ = app.run("occurrence.move", json!({"occurrence":m.occurrence,"base_transform":m.baseline,"capture":false}));
@@ -2051,7 +1880,7 @@ pub fn apply_occurrence_move(app: &mut SolveApp, m: &OccMove) {
 }
 
 /// The shared move triad at the occurrence's origin: arrows and squares move it, rings turn it.
-fn triad(app: &mut SolveApp, ui: &mut egui::Ui, m: &mut OccMove) {
+pub(crate) fn triad(app: &mut SolveApp, ui: &mut egui::Ui, m: &mut OccMove) {
     use crate::gizmo::{self, Change};
     let (Some(rect), Some(pivot)) = (app.viewport.rect, m.pivot) else { return };
     let proj = crate::viewport::projection(app, rect);
@@ -2144,7 +1973,7 @@ pub fn dims_overlay(app: &SolveApp, ctx: &egui::Context) {
 }
 
 /// Keep browser panels beside the browser and below the ribbon, including the floating shell.
-fn panel_pos(app: &SolveApp) -> Pos2 {
+pub(crate) fn panel_pos(app: &SolveApp) -> Pos2 {
     app.viewport
         .rect
         .map(|r| crate::shell::content_rect(app, r).left_top() + vec2(Tokens::get().space_16, Tokens::get().space_16))
@@ -2186,47 +2015,8 @@ pub fn answer_capture(app: &mut SolveApp, action: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn capture_prompt(app: &mut SolveApp, ctx: &egui::Context) {
-    if app.tree.capture_prompt.is_none() {
-        return;
-    }
-    let n = app.session.pending_moves.len();
-    let mut answer: Option<&str> = None;
-    crate::frame::window(ctx, crate::i18n::tr_label("Capture Position"), crate::frame::Width::Normal)
-        .id(egui::Id::new("sc_capture_prompt"))
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, -80.0))
-        .show(ctx, |ui| {
-            ui.label(if n == 1 {
-                "A component was moved but its position isn't captured.".to_string()
-            } else {
-                format!("{n} components were moved but their positions aren't captured.")
-            });
-            ui.label(RichText::new("Capture keeps the new position; Revert puts it back.").color(Tokens::get().text_dim));
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                if ui.button(crate::i18n::tr_label("Capture Position")).clicked() {
-                    answer = Some("capture");
-                }
-                if ui.button(crate::i18n::tr_label("Revert")).clicked() {
-                    answer = Some("revert");
-                }
-                if ui.button("Cancel").clicked() {
-                    answer = Some("cancel");
-                }
-            });
-            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                answer = Some("cancel");
-            }
-        });
-    if let Some(a) = answer {
-        let _ = answer_capture(app, a);
-    }
-}
-
 /// Where an occurrence's origin is now (with its pending move).
-fn occurrence_origin(app: &SolveApp, occurrence: u64) -> Option<solidcraft_engine::geom::Vec3> {
+pub(crate) fn occurrence_origin(app: &SolveApp, occurrence: u64) -> Option<solidcraft_engine::geom::Vec3> {
     let o = app.session.doc.occurrences.iter().find(|o| o.id == occurrence)?;
     let parent = app.session.doc.component_transform(o.parent);
     let own = app.session.pending_moves.get(&occurrence).copied().unwrap_or(o.transform);

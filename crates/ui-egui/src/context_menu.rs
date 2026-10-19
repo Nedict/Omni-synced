@@ -1616,7 +1616,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     crate::browser::dims_overlay(app, ctx);
     track_hold(app, ctx);
     show_rename(app, ctx);
-    show_props(app, ctx);
+    crate::design_properties::show_object(app, ctx);
     let Some(at) = app.viewport.context_menu else { return };
     let t = Tokens::get();
     let screen = ctx.content_rect();
@@ -2000,66 +2000,6 @@ pub fn finish_rename(app: &mut SolveApp, text: Option<&str>, commit: bool) -> bo
         commit_rename(app, &r);
     }
     true
-}
-
-fn show_props(app: &mut SolveApp, ctx: &egui::Context) {
-    let Some((title, v)) = app.menu.props.clone() else { return };
-    let mut open = true;
-    let f = |x: &Value, k: &str| x.get(k).and_then(Value::as_f64).unwrap_or(f64::NAN);
-    crate::frame::window(ctx, format!("Properties: {title}"), crate::frame::Width::Normal)
-        .id(egui::Id::new("sc_props"))
-        .open(&mut open)
-        .resizable(false)
-        .collapsible(false)
-        .show(ctx, |ui| {
-            egui::Grid::new("sc_props_grid").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
-                let total = &v["total"];
-                let bodies = v["bodies"].as_array().cloned().unwrap_or_default();
-                if let [b] = bodies.as_slice() {
-                    ui.label(crate::i18n::tr_label("Material"));
-                    ui.label(b["material"].as_str().unwrap_or("Default"));
-                    ui.end_row();
-                    ui.label(crate::i18n::tr_label("Density"));
-                    ui.label(format!("{:.3} g/cm³", f(b, "density_g_cm3")));
-                    ui.end_row();
-                }
-                ui.label(crate::i18n::tr_label("Mass"));
-                ui.label(format!("{:.3} g", f(total, "mass_g")));
-                ui.end_row();
-                ui.label(crate::i18n::tr_label("Volume"));
-                ui.label(crate::prefs::show_mm(app, f(total, "volume_mm3"), 3));
-                ui.end_row();
-                ui.label(crate::i18n::tr_label("Area"));
-                ui.label(crate::prefs::show_mm(app, f(total, "area_mm2"), 2));
-                ui.end_row();
-                let geometry = if total.get("center_of_mass").is_some() { Some(total) } else { bodies.first().filter(|_| bodies.len() == 1) };
-                if let Some(b) = geometry {
-                    if let Some(c) = b["center_of_mass"].as_array() {
-                        let c: Vec<String> = c.iter().map(|x| crate::prefs::show_mm_bare(app, x.as_f64().unwrap_or(f64::NAN))).collect();
-                        ui.label(crate::i18n::tr_label("Center of mass"));
-                        ui.label(format!("({}) {}", c.join(", "), crate::prefs::unit_scale(&app.session.doc.units).1));
-                        ui.end_row();
-                    }
-                    let (mn, mx) = (&b["bbox"]["min"], &b["bbox"]["max"]);
-                    if let (Some(a), Some(z)) = (mn.as_array(), mx.as_array()) {
-                        let d: Vec<String> = a
-                            .iter()
-                            .zip(z)
-                            .map(|(a, z)| crate::prefs::show_mm_bare(app, z.as_f64().unwrap_or(0.0) - a.as_f64().unwrap_or(0.0)))
-                            .collect();
-                        ui.label(crate::i18n::tr_label("Bounding box"));
-                        ui.label(format!("{} {}", d.join(" × "), crate::prefs::unit_scale(&app.session.doc.units).1));
-                        ui.end_row();
-                    }
-                }
-                ui.label(crate::i18n::tr_label("Faces / edges / vertices"));
-                ui.label(format!("{} / {} / {}", total["faces"], total["edges"], total["vertices"]));
-                ui.end_row();
-            });
-        });
-    if !open {
-        app.menu.props = None;
-    }
 }
 
 #[cfg(test)]

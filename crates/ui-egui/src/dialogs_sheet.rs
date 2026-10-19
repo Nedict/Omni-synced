@@ -12,7 +12,7 @@ use solidcraft_engine::doc::{FeatureKind, ProfileSel};
 use solidcraft_engine::geom::Vec3;
 
 use crate::SolveApp;
-use crate::dialogs::{Dialog, Kind, combo, edge_sel, face_sel, field, form_row, profile_indices, row_label};
+use crate::dialogs::{Dialog, Kind, combo, edge_sel, face_sel, field, form_row, profile_indices};
 use crate::selection::{AXES, BODIES, CURVES, EDGES, PLANAR_FACES, PROFILES, SelInput};
 use crate::theme::Tokens;
 
@@ -316,9 +316,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
             let mut names: Vec<String> = rules.iter().map(|r| r.name.clone()).collect();
             names.push("New rule…".into());
             let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-            row_label(ui, "Rule");
-            combo(ui, "sm_rules", &refs, pick);
-            ui.end_row();
+            form_row(ui, "Rule", |ui| combo(ui, "sm_rules", &refs, pick));
             if *loaded != Some(*pick) {
                 // Show the picked rule (a new one starts from the one shown before).
                 let base = rules.get(*pick).cloned().unwrap_or_else(|| rules.first().cloned().unwrap_or_else(SheetRule::steel));
@@ -340,37 +338,32 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
                 *loaded = Some(*pick);
             }
             if *pick >= rules.len() {
-                row_label(ui, "Name");
-                ui.text_edit_singleline(name);
-                ui.end_row();
+                form_row(ui, "Name", |ui| {
+                    crate::ui_kit::text_field(ui, name, "Name");
+                });
             }
             for ((key, label), v) in RULE_FIELDS.iter().zip(values.iter_mut()) {
                 if *key == "corner_relief" {
                     // The shape goes with its size, the row below.
-                    row_label(ui, "Corner Relief Shape");
-                    combo(ui, "sm_relief_shape", &RELIEF_SHAPE_LABELS, relief);
-                    ui.end_row();
+                    form_row(ui, "Corner Relief Shape", |ui| combo(ui, "sm_relief_shape", &RELIEF_SHAPE_LABELS, relief));
                 }
-                row_label(ui, label);
-                enter |= field(ui, v);
-                ui.end_row();
+                form_row(ui, label, |ui| {
+                    enter |= field(ui, v);
+                });
             }
-            row_label(ui, "Active rule");
-            ui.checkbox(active, "");
-            ui.end_row();
-            if *pick < rules.len() && !app.session.doc.sheet.rules.is_empty() {
-                row_label(ui, "");
-                if ui.button(crate::i18n::tr_label("Delete rule")).clicked() {
-                    let n = rules.get(*pick).map(|r| r.name.clone()).unwrap_or_default();
-                    match app.run("sheet.manage_rules", json!({"name": n, "delete": true})) {
-                        Ok(_) => {
-                            *pick = 0;
-                            *loaded = None;
-                        }
-                        Err(e) => app.set_status(e, true),
+            form_row(ui, "Active rule", |ui| crate::ui_kit::checkbox(ui, "", active));
+            if *pick < rules.len()
+                && !app.session.doc.sheet.rules.is_empty()
+                && crate::ui_kit::secondary_button(ui, crate::i18n::tr_label("Delete rule")).clicked()
+            {
+                let n = rules.get(*pick).map(|r| r.name.clone()).unwrap_or_default();
+                match app.run("sheet.manage_rules", json!({"name": n, "delete": true})) {
+                    Ok(_) => {
+                        *pick = 0;
+                        *loaded = None;
                     }
+                    Err(e) => app.set_status(e, true),
                 }
-                ui.end_row();
             }
         }
         Sm::FlatPattern { data, key, status } => {
@@ -387,56 +380,56 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
             match data {
                 Some(Ok(v)) => {
                     let size = &v["flat_size_mm"];
-                    row_label(ui, "Body");
-                    ui.label(v["body"].as_str().unwrap_or(""));
-                    ui.end_row();
-                    row_label(ui, "Flat size");
-                    ui.label(format!(
-                        "{} × {} × {}",
-                        crate::prefs::show_mm(app, size[0].as_f64().unwrap_or(0.0), 1),
-                        crate::prefs::show_mm(app, size[1].as_f64().unwrap_or(0.0), 1),
-                        crate::prefs::show_mm(app, size[2].as_f64().unwrap_or(0.0), 1)
-                    ));
-                    ui.end_row();
+                    form_row(ui, "Body", |ui| {
+                        ui.label(v["body"].as_str().unwrap_or(""));
+                    });
+                    form_row(ui, "Flat size", |ui| {
+                        ui.label(format!(
+                            "{} × {} × {}",
+                            crate::prefs::show_mm(app, size[0].as_f64().unwrap_or(0.0), 1),
+                            crate::prefs::show_mm(app, size[1].as_f64().unwrap_or(0.0), 1),
+                            crate::prefs::show_mm(app, size[2].as_f64().unwrap_or(0.0), 1)
+                        ));
+                    });
                     let bends = v["bends"].as_array().cloned().unwrap_or_default();
-                    row_label(ui, "Bends");
-                    ui.label(format!("{}", bends.len()));
-                    ui.end_row();
+                    form_row(ui, "Bends", |ui| {
+                        ui.label(format!("{}", bends.len()));
+                    });
                     for b in bends.iter().take(50) {
                         let up = b["direction"] == "up";
                         let (up_col, down_col) = bend_colors();
-                        row_label(ui, &format!("  Bend {}", b["bend"].as_u64().unwrap_or(0)));
-                        ui.label(
-                            RichText::new(format!(
-                                "{} {:.1}°  R{}",
-                                if up { "Up" } else { "Down" },
-                                b["angle_deg"].as_f64().unwrap_or(0.0),
-                                crate::prefs::show_mm(app, b["radius"].as_f64().unwrap_or(0.0), 1)
-                            ))
-                            .color(if up { up_col } else { down_col }),
-                        );
-                        ui.end_row();
+                        form_row(ui, &format!("  Bend {}", b["bend"].as_u64().unwrap_or(0)), |ui| {
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} {:.1}°  R{}",
+                                    if up { "Up" } else { "Down" },
+                                    b["angle_deg"].as_f64().unwrap_or(0.0),
+                                    crate::prefs::show_mm(app, b["radius"].as_f64().unwrap_or(0.0), 1)
+                                ))
+                                .color(if up { up_col } else { down_col }),
+                            );
+                        });
                     }
-                    row_label(ui, "");
-                    if ui.button("Export DXF…").clicked() {
-                        *status = Some(export_flat(app, v["body"].as_str().unwrap_or(""), "dxf"));
-                    }
-                    ui.end_row();
-                    row_label(ui, "");
-                    if ui.button("Export Bend Table…").clicked() {
-                        *status = Some(export_flat(app, v["body"].as_str().unwrap_or(""), "csv"));
-                    }
-                    ui.end_row();
+                    ui.vertical(|ui| {
+                        if crate::ui_kit::secondary_button(ui, crate::i18n::tr_label("Export DXF…")).clicked() {
+                            *status = Some(export_flat(app, v["body"].as_str().unwrap_or(""), "dxf"));
+                        }
+                    });
+                    ui.vertical(|ui| {
+                        if crate::ui_kit::secondary_button(ui, crate::i18n::tr_label("Export Bend Table…")).clicked() {
+                            *status = Some(export_flat(app, v["body"].as_str().unwrap_or(""), "csv"));
+                        }
+                    });
                     if let Some(s) = status {
-                        row_label(ui, "");
-                        ui.add(egui::Label::new(RichText::new(s.as_str()).color(t.text_dim)).wrap());
-                        ui.end_row();
+                        ui.vertical(|ui| {
+                            ui.add(egui::Label::new(RichText::new(s.as_str()).color(t.text_dim)).wrap());
+                        });
                     }
                 }
                 Some(Err(e)) => {
-                    row_label(ui, "");
-                    ui.add(egui::Label::new(RichText::new(e.as_str()).color(t.error)).wrap());
-                    ui.end_row();
+                    ui.vertical(|ui| {
+                        ui.add(egui::Label::new(RichText::new(e.as_str()).color(t.error)).wrap());
+                    });
                 }
                 None => {}
             }

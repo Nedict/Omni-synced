@@ -134,7 +134,7 @@ fn check_form(command: &str, labels: &[&str]) {
     }
     let checks: &[&str] = match command {
         "solid.shell" => &["Tangent Chain"],
-        "solid.rib" | "solid.web" | "solid.align" | "sheet.flange" | "sheet.hem" | "sheet.fold" | "joint.create" => &["Flip"],
+        "solid.rib" | "solid.web" | "solid.align" | "inspect.section" | "sheet.flange" | "sheet.hem" | "sheet.fold" | "joint.create" => &["Flip"],
         "solid.move" => &["Create Copy"],
         "solid.combine" => &["Keep Tools", "New Component"],
         "solid.thread" => &["Modeled", "Full Length", "Automatic size"],
@@ -222,6 +222,7 @@ form_case!(path_plane, "construct.plane.along_path", ["Position (0 to 1)"]);
 form_case!(split, "solid.split_body", []);
 form_case!(scale, "solid.scale", ["Scale factor"]);
 form_case!(offset_faces, "solid.offset_face", ["Distance"]);
+form_case!(section, "inspect.section", ["Distance"]);
 form_case!(move_copy, "solid.move", ["Move Type", "X Distance", "Y Distance", "Z Distance", "X Angle", "Y Angle", "Z Angle"]);
 form_case!(rib, "solid.rib", ["Direction", "Thickness", "Depth"]);
 form_case!(web, "solid.web", ["Direction", "Thickness", "Depth"]);
@@ -283,24 +284,7 @@ fn registry_dialog_inventory_has_no_unclassified_feature_forms() {
     let h = fixture();
     for spec in solidcraft_engine::command_specs() {
         let Some(d) = Dialog::for_command(&h.app, spec.id) else { continue };
-        let excluded = matches!(
-            d.kind,
-            Kind::Params { .. }
-                | Kind::Rename { .. }
-                | Kind::ConfirmDelete { .. }
-                | Kind::Measure { .. }
-                | Kind::Material { .. }
-                | Kind::Section { .. }
-                | Kind::SaveMesh(_)
-                | Kind::ViewDxf { .. }
-                | Kind::Appearance(_)
-                | Kind::Motion(_)
-                | Kind::Part(_)
-                | Kind::Sheet(crate::dialogs_sheet::Sm::Rules { .. } | crate::dialogs_sheet::Sm::FlatPattern { .. })
-                | Kind::Plastic(crate::dialogs_plastic::Pl::Rules { .. })
-                | Kind::Assembly(crate::dialogs_assembly::Asm::Drive { .. } | crate::dialogs_assembly::Asm::Interference { .. })
-        );
-        assert_eq!(super::command(&d.kind).is_some(), !excluded, "{}: {:?}", spec.id, d.kind);
+        assert!(super::command(&d.kind).is_some(), "{}: {:?}", spec.id, d.kind);
     }
 }
 
@@ -318,5 +302,37 @@ fn new_cards_settle_before_the_first_click_in_both_layouts() {
             let settled = scenario::rect_of("dialog:footer").unwrap();
             assert_eq!(first, settled, "{command} {mode:?}: footer moved under the first click");
         }
+    }
+}
+
+#[test]
+fn remaining_dialogs_keep_kit_chrome_and_cancel_restores_preview() {
+    for command in [
+        "contact.create",
+        "motion.study",
+        "explode.create",
+        "parts.insert",
+        "joint.drive",
+        "inspect.interference",
+        "file.save_mesh",
+        "file.export_view_dxf",
+        "sheet.flat_pattern",
+    ] {
+        let mut h = fixture();
+        h.call("ui.resize", json!({"width":1600,"height":1200}));
+        let design = h.app.session.doc.to_json();
+        let moves = h.app.session.pending_moves.clone();
+        h.app.start(command);
+        h.frames(4);
+        for key in ["dialog:header", "dialog:footer", "dialog:outer"] {
+            let rect = scenario::rect_of(key).unwrap_or_else(|| panic!("{command}: missing {key}"));
+            assert!(rect.is_finite() && rect.is_positive() && h.ctx.content_rect().contains_rect(rect), "{command}: {key} {rect:?}");
+        }
+        let footer = scenario::rect_of("dialog:footer").unwrap();
+        assert!(footer.contains(scenario::handle_at("dialog:cancel").unwrap()), "{command}: cancel remains in the pinned footer");
+        h.step(&json!({"click":{"handle":"dialog:cancel"}})).unwrap();
+        assert!(h.app.dialog.is_none(), "{command}");
+        assert_eq!(h.app.session.doc.to_json(), design, "{command}: opening/cancelling keeps the design");
+        assert_eq!(h.app.session.pending_moves, moves, "{command}: cancel restores display-only moves");
     }
 }

@@ -64,7 +64,7 @@
   "start": "parameters.change"
  },
  {
-  "widget": "Close window"
+  "click": {"handle": "params:close"}
  },
  {"click": {"handle": "tab:SKETCH"}},
  {

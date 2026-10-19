@@ -34,6 +34,14 @@ pub fn focused_field(ui: &mut Ui, value: &mut String) -> bool {
     enter
 }
 
+/// Plain text editor which keeps keyboard focus (a name asked for in a one-field card); returns
+/// accepted Enter. Tokens: `same as field`.
+pub fn focused_text_field(ui: &mut Ui, value: &mut String, hint: &str) -> bool {
+    let (enter, _, response) = editor(ui, value, hint, false);
+    response.request_focus();
+    enter
+}
+
 /// Multiline plain text with a stable focus ID. The caller owns Enter/Shift+Enter routing.
 /// Tokens: control_height, control_fill, form_inset and font_label.
 pub fn multiline_text_field(ui: &mut Ui, label: &str, id: egui::Id, value: &mut String) -> Response {
@@ -165,15 +173,26 @@ fn dropdown_arrow(ui: &Ui, rect: egui::Rect, _visuals: &egui::style::WidgetVisua
 pub fn dropdown(ui: &mut Ui, id: &str, selected: &mut usize, options: &[&str]) -> Response {
     let text = options.get(*selected).copied().map(crate::i18n::tr_label).unwrap_or("");
     let row = label(ui).to_string();
-    let response =
-        egui::ComboBox::from_id_salt(id).width(dimension(ui.available_width())).selected_text(text).icon(dropdown_arrow).show_ui(ui, |ui| {
-            for (index, option) in options.iter().enumerate() {
-                let response = ui.selectable_value(selected, index, crate::i18n::tr_label(option));
-                scenario::publish_handle(&format!("dialog:{row}:{option}"), response.rect.center());
-            }
-        });
-    publish(ui, &response.response, egui::WidgetType::ComboBox);
-    response.response
+    dropdown_menu(ui, id, text, |ui| {
+        for (index, option) in options.iter().enumerate() {
+            let response = ui.selectable_value(selected, index, crate::i18n::tr_label(option));
+            scenario::publish_handle(&format!("dialog:{row}:{option}"), response.rect.center());
+        }
+    })
+}
+
+/// Dropdown with caller-supplied kit choices/actions, including disabled entries and stable
+/// application handles. Tokens: dropdown tokens. Use `dropdown` for a simple indexed list.
+pub fn dropdown_menu(ui: &mut Ui, id: impl egui::AsIdSalt, current: &str, add: impl FnOnce(&mut Ui)) -> Response {
+    let response = egui::ComboBox::from_id_salt(id)
+        .width(dimension(ui.available_width()))
+        .height(Tokens::get().control_height * 14.0)
+        .selected_text(current)
+        .icon(dropdown_arrow)
+        .show_ui(ui, add)
+        .response;
+    publish(ui, &response, egui::WidgetType::ComboBox);
+    response
 }
 
 /// Filled point/curve/edge selection target. Tokens: `control_height, control_radius, selected_bg/ink, accent, form_inset, space_24/8, font_label, text_dim`.
@@ -237,3 +256,217 @@ pub fn fraction_field(ui: &mut Ui, value: &mut f64) -> Response {
 #[cfg(test)]
 #[path = "fields_tests.rs"]
 mod tests;
+
+/// Stable-ID inline editor for tables. Completion is owned by the caller so Enter can commit
+/// a cell without submitting its panel. Tokens: control_height/fill, form_inset, font_label, text/error.
+pub fn cell_editor(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str, invalid: bool) -> Response {
+    bounded_cell_editor(ui, id, value, hint, invalid, usize::MAX)
+}
+
+/// Stable-ID cell/name editor with a caller-supplied character cap. Tokens: cell_editor tokens.
+pub fn bounded_cell_editor(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str, invalid: bool, limit: usize) -> Response {
+    let t = Tokens::get();
+    let response = ui.add_sized(
+        vec2(dimension(ui.available_width()), row_height()),
+        egui::TextEdit::singleline(value)
+            .char_limit(limit)
+            .id(id)
+            .hint_text(crate::i18n::tr_label(hint))
+            .font(egui::FontId::monospace(t.font_label))
+            .background_color(t.control_fill)
+            .text_color(if invalid { t.error } else { t.text })
+            .margin(vec2(t.form_inset, 0.0))
+            .clip_text(true),
+    );
+    publish(ui, &response, egui::WidgetType::TextEdit);
+    response.widget_info(|| {
+        let mut info = egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, ui.is_enabled(), crate::i18n::tr_label(label(ui)));
+        info.current_text_value = Some(value.clone());
+        info
+    });
+    crate::theme::TabAccent::number_focus(ui, &response);
+    response
+}
+
+/// Search input with native accessibility and a stable caller ID. Tokens: cell_editor tokens.
+pub fn search_field(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str) -> Response {
+    cell_editor(ui, id, value, hint, false)
+}
+
+/// Native colour chooser under the shared form styling. Colour is document data.
+pub fn color_field(ui: &mut Ui, rgb: &mut [u8; 3]) -> Response {
+    let response = ui.color_edit_button_srgb(rgb);
+    scenario::publish_rect(&format!("dialog:color:{}", label(ui)), response.rect);
+    scenario::publish_handle(&format!("dialog:color:{}", label(ui)), response.rect.center());
+    response
+}
+
+/// Continuous scalar control. Formatting never rounds saved values during drawing.
+/// Tokens: control_height, space_24/4, scope control/font tokens.
+pub fn slider(ui: &mut Ui, value: &mut f64, range: std::ops::RangeInclusive<f64>) -> Response {
+    let t = Tokens::get();
+    ui.spacing_mut().slider_width = dimension(ui.available_width() - t.space_24 - t.space_24 - t.space_4);
+    let response = ui.add(egui::Slider::new(value, range).max_decimals_opt(None).custom_formatter(|v, _| format!("{v:.2}")));
+    scenario::publish_rect(&format!("dialog:slider:{}", label(ui)), response.rect);
+    scenario::publish_handle(&format!("dialog:slider:{}", label(ui)), response.rect.center());
+    response
+}
+
+/// Locale-aware bounded scalar field, used for dimensionless material properties.
+pub fn scalar_field(ui: &mut Ui, value: &mut f64, range: std::ops::RangeInclusive<f64>) -> Response {
+    let response = ui.add(egui::DragValue::new(value).range(range).speed(0.01).custom_parser(crate::prefs::parse_number));
+    scenario::publish_rect(&format!("dialog:scalar:{}", label(ui)), response.rect);
+    scenario::publish_handle(&format!("dialog:scalar:{}", label(ui)), response.rect.center());
+    response
+}
+
+/// Length held in millimetres, dragged or typed in the design's units ("0.5 in", "2 cm + 3 mm" parse).
+/// Tokens: control_height, scope control/font tokens.
+pub fn length_field(ui: &mut Ui, value: &mut f64, units: &str, decimals: u8) -> Response {
+    let response = ui.add(length_drag(value, units, decimals));
+    scenario::publish_rect(&format!("dialog:length:{}", label(ui)), response.rect);
+    scenario::publish_handle(&format!("dialog:length:{}", label(ui)), response.rect.center());
+    response
+}
+
+/// Angle in degrees, dragged or typed. Tokens: control_height, scope control/font tokens.
+pub fn angle_field(ui: &mut Ui, value: &mut f64) -> Response {
+    let response = ui.add(egui::DragValue::new(value).speed(1.0).suffix(" deg").custom_parser(crate::prefs::parse_number));
+    scenario::publish_rect(&format!("dialog:angle:{}", label(ui)), response.rect);
+    scenario::publish_handle(&format!("dialog:angle:{}", label(ui)), response.rect.center());
+    response
+}
+
+/// Bounded multiline data input. Caller owns validation and keyboard semantics.
+/// Tokens: control_height/fill, form_inset, font_label.
+pub fn text_area(ui: &mut Ui, label: &str, id: egui::Id, value: &mut String, rows: usize, limit: usize) -> Response {
+    let t = Tokens::get();
+    let response = ui.add_sized(
+        vec2(dimension(ui.available_width()), row_height() * rows.clamp(1, 16) as f32),
+        egui::TextEdit::multiline(value)
+            .id(id)
+            .desired_rows(rows.clamp(1, 16))
+            .char_limit(limit)
+            .font(egui::FontId::monospace(t.font_label))
+            .background_color(t.control_fill)
+            .margin(vec2(t.form_inset, 0.0)),
+    );
+    response.widget_info(|| {
+        let mut info = egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, ui.is_enabled(), label);
+        info.current_text_value = Some(value.clone());
+        info
+    });
+    response
+}
+
+/// Secret input with a stable ID. Never publishes its value in accessibility/scenario metadata.
+/// Tokens: cell_editor tokens.
+pub fn password_field(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str) -> Response {
+    let t = Tokens::get();
+    let response = ui.add_sized(
+        vec2(dimension(ui.available_width()), row_height()),
+        egui::TextEdit::singleline(value)
+            .id(id)
+            .password(true)
+            .hint_text(hint)
+            .font(egui::FontId::monospace(t.font_label))
+            .background_color(t.control_fill)
+            .margin(vec2(t.form_inset, 0.0)),
+    );
+    publish(ui, &response, egui::WidgetType::TextEdit);
+    response
+}
+
+/// Bounded integer or decimal preference with its original drag step and unit suffix.
+/// Tokens: scope control/font tokens. Values and limits are caller data.
+pub fn number_field<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T, range: std::ops::RangeInclusive<T>, speed: f64, suffix: &str) -> Response {
+    let response = ui.add(egui::DragValue::new(value).range(range).speed(speed).suffix(suffix).custom_parser(crate::prefs::parse_number));
+    response.widget_info(|| {
+        let mut info = egui::WidgetInfo::drag_value(ui.is_enabled(), value.to_f64());
+        info.label = Some(crate::i18n::tr_label(label(ui)).to_string());
+        info
+    });
+    super::layout::publish_geometry(ui, &response);
+    response
+}
+
+/// Stepped slider retaining caller units/formatting (percent, multiplier, seconds).
+/// Tokens: control_height, space_24/4, scope control/font tokens.
+pub fn formatted_slider<T: egui::emath::Numeric>(
+    ui: &mut Ui,
+    value: &mut T,
+    range: std::ops::RangeInclusive<T>,
+    step: f64,
+    format: impl Fn(f64) -> String + 'static,
+) -> Response {
+    let t = Tokens::get();
+    ui.spacing_mut().slider_width = dimension(ui.available_width() - t.space_24 * 2.0 - t.space_4);
+    let response = ui.add(egui::Slider::new(value, range).step_by(step).custom_formatter(move |v, _| format(v)));
+    response.widget_info(|| egui::WidgetInfo::slider(ui.is_enabled(), value.to_f64(), crate::i18n::tr_label(label(ui))));
+    super::layout::publish_geometry(ui, &response);
+    response
+}
+
+/// Growing plain-text message editor; its parent owns scrolling and Enter routing.
+/// Tokens: control_fill, form_inset, font_label. Use text_area for bounded data input.
+pub fn message_field(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str) -> Response {
+    let t = Tokens::get();
+    ui.add(
+        egui::TextEdit::multiline(value)
+            .id(id)
+            .hint_text(hint)
+            .desired_rows(2)
+            .desired_width(f32::INFINITY)
+            .font(egui::FontId::proportional(t.font_label))
+            .background_color(t.control_fill)
+            .margin(vec2(t.form_inset, t.space_4)),
+    )
+}
+
+/// Edit a millimetre value through a control expressed in the current design units.
+/// Keep the stored value untouched unless the user actually changes the field.
+pub fn length_drag<'a>(value: &'a mut f64, units: &str, decimals: u8) -> egui::DragValue<'a> {
+    let (scale, unit) = crate::prefs::unit_scale(units);
+    egui::DragValue::new(value)
+        .speed(0.5)
+        .suffix(format!(" {unit}"))
+        .custom_formatter(move |mm, _| crate::prefs::length_number(mm, unit, decimals))
+        .custom_parser(move |text| crate::prefs::parse_length_mm(text, scale))
+}
+
+/// Timeline/drive slider without a numeric editor; the owning surface shows its value.
+/// Whole steps round only while manipulating a timeline. Tokens: control_height, space_4.
+pub fn timeline_slider(ui: &mut Ui, value: &mut f64, range: std::ops::RangeInclusive<f64>, whole_steps: bool) -> Response {
+    ui.spacing_mut().slider_width = dimension(ui.available_width() - Tokens::get().space_4);
+    let slider = egui::Slider::new(value, range).show_value(false);
+    let response = ui.add(if whole_steps { slider.integer() } else { slider });
+    publish(ui, &response, egui::WidgetType::Slider);
+    response.widget_info(|| egui::WidgetInfo::slider(ui.is_enabled(), *value, crate::i18n::tr_label(label(ui))));
+    response
+}
+
+/// Placement editor whose owner routes Enter and Tab (including rejected expressions).
+/// Completion remains with the caller. Tokens: cell_editor tokens.
+pub fn placement_field(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str) -> Response {
+    let t = Tokens::get();
+    let response = ui.add(
+        egui::TextEdit::singleline(value)
+            .id(id)
+            .desired_width(t.control_height * 3.0 - t.space_6)
+            .return_key(None)
+            .event_filter(egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, ..Default::default() })
+            .font(egui::FontId::proportional(t.font_body))
+            .background_color(t.control_fill)
+            .text_color(t.text)
+            .margin(vec2(t.space_4, t.space_2))
+            .clip_text(true),
+    );
+    publish(ui, &response, egui::WidgetType::TextEdit);
+    response.widget_info(|| {
+        let mut info = egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, ui.is_enabled(), crate::i18n::tr_label(hint));
+        info.current_text_value = Some(value.clone());
+        info
+    });
+    crate::theme::TabAccent::number_focus(ui, &response);
+    response.on_hover_text(crate::i18n::tr_label(hint))
+}

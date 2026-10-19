@@ -192,3 +192,120 @@ fn palette_scrolls_short_views_and_retains_its_status_and_action_handles() {
         }
     }
 }
+
+#[test]
+fn wide_tables_remain_bounded_with_pinned_actions_on_small_viewports() {
+    for layout in [crate::shell::LayoutMode::Floating, crate::shell::LayoutMode::Docked] {
+        for width in [240.0, 640.0, 1200.0] {
+            let ctx = crate::fonts::test_context();
+            let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 360.0));
+            for _ in 0..3 {
+                scenario::clear_handles();
+                let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(viewport), ..Default::default() }, |_| {
+                    let side = crate::frame::Side::Right;
+                    let anchor = viewport.right_top();
+                    let panel = Panel::new("Table", egui::Id::new("wide"), anchor, viewport, side, Panel::feature_frame(&ctx, layout, side)).wide();
+                    panel.window().show(&ctx, |ui| {
+                        panel.feature(
+                            ui,
+                            FeatureOptions {
+                                icon: "fillet",
+                                title: "Table",
+                                drag_key: "wide",
+                                moved: egui::Vec2::ZERO,
+                                docked: anchor,
+                                apply_label: None,
+                            },
+                            false,
+                            true,
+                            |ui| {
+                                for _ in 0..30 {
+                                    note(ui, "row", "Table body");
+                                }
+                                ComputeStatus { text: None, busy: false, applying: false }
+                            },
+                        );
+                    });
+                });
+                output.textures_delta.clear();
+            }
+            let header = scenario::rect_of("dialog:header").unwrap();
+            let footer = scenario::rect_of("dialog:footer").unwrap();
+            assert!(viewport.expand(1.0).contains_rect(header), "{width}: {header:?}");
+            assert!(viewport.expand(1.0).contains_rect(footer), "{width}: {footer:?}");
+        }
+    }
+}
+
+#[test]
+fn prompt_is_one_and_a_half_cards_wide_with_its_actions_in_both_themes() {
+    let previous = crate::theme::is_dark();
+    for dark in [false, true] {
+        crate::theme::set_dark(dark);
+        let ctx = crate::fonts::test_context();
+        let t = Tokens::get();
+        let mut action = Action::None;
+        for _ in 0..3 {
+            scenario::clear_handles();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                    focused: true,
+                    ..Default::default()
+                },
+                |ui| {
+                    action = Prompt::new(egui::Id::new("prompt_test"), "delete", "Delete")
+                        .actions("Delete", "Cancel", Some("Keep"))
+                        .selected(Action::Apply)
+                        .show(ui.ctx(), true, |ui| {
+                            text_block(ui, "body", "Three features go with it.", false);
+                        })
+                        .1;
+                },
+            );
+            output.textures_delta.clear();
+        }
+        assert_eq!(action, Action::None);
+        let header = scenario::rect_of("dialog:header").unwrap();
+        let footer = scenario::rect_of("dialog:footer").unwrap();
+        assert!((header.width() - (t.form_card_width * 1.5 - 2.0)).abs() <= 3.0, "{dark}: {header:?}");
+        assert_eq!(header.width(), footer.width());
+        assert!(footer.top() > header.bottom());
+        let (ok, apply, cancel) =
+            (scenario::rect_of("dialog:ok").unwrap(), scenario::rect_of("dialog:apply").unwrap(), scenario::rect_of("dialog:cancel").unwrap());
+        assert!(cancel.right() < apply.left() && apply.right() < ok.left(), "Cancel, the third action, then the primary one");
+        assert!(footer.contains_rect(ok) && footer.contains_rect(cancel));
+        assert!(scenario::handle_at("dialog:Keep").is_some() && scenario::handle_at("dialog:close").is_some());
+    }
+    crate::theme::set_dark(previous);
+}
+
+#[test]
+fn escape_closes_a_prompt_unless_it_keeps_the_card_open() {
+    for keep in [false, true] {
+        let ctx = crate::fonts::test_context();
+        let mut action = Action::None;
+        for frame in 0..3 {
+            let events = if frame == 2 { crate::ui_kit::test_support::key(egui::Key::Escape) } else { Vec::new() };
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                    focused: true,
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let prompt = Prompt::new(egui::Id::new(("prompt_escape", keep)), "settings", "Report").actions("Open", "Close", None);
+                    let prompt = if keep { prompt.keep_open_on_escape() } else { prompt };
+                    action = prompt
+                        .show(ui.ctx(), true, |ui| {
+                            text_block(ui, "body", "A long text the user is editing.", false);
+                        })
+                        .1;
+                },
+            );
+            output.textures_delta.clear();
+        }
+        assert_eq!(action, if keep { Action::None } else { Action::Cancel }, "keep_open_on_escape={keep}");
+    }
+}

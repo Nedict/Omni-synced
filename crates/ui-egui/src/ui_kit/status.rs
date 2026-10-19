@@ -45,3 +45,19 @@ pub fn status_header(ui: &mut egui::Ui, key: &str, name: &str, status: StatusHea
     crate::scenario::publish_handle(&format!("{key}:status_header"), response.rect.center());
     response
 }
+
+/// Determinate progress bar for a running operation (a download, a file load), full width and
+/// `space_6` tall; `fraction` is clamped (non-finite counts as zero). Pair it with a `text_block`
+/// that names the step. Tokens: `space_3/6, dialog_rule, accent`.
+pub fn progress(ui: &mut egui::Ui, key: &str, fraction: f32) -> egui::Response {
+    let t = Tokens::get();
+    let fraction = if fraction.is_finite() { fraction.clamp(0.0, 1.0) } else { 0.0 };
+    let (bar, response) = ui.allocate_exact_size(vec2(ui.available_width().max(0.0), t.space_6), egui::Sense::hover());
+    ui.painter().rect_filled(bar, t.space_3, t.dialog_rule);
+    if fraction > 0.0 {
+        ui.painter().rect_filled(egui::Rect::from_min_size(bar.min, vec2(bar.width() * fraction, bar.height())), t.space_3, t.accent);
+    }
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ProgressIndicator, ui.is_enabled(), format!("{:.0}%", fraction * 100.0)));
+    crate::scenario::publish_rect(&format!("dialog:progress:{key}"), bar);
+    response
+}

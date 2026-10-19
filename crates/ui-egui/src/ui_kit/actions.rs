@@ -35,7 +35,6 @@ pub fn icon_button_at(ui: &mut Ui, rect: egui::Rect, icon: &str, label: &str) ->
     response.on_hover_text(crate::i18n::tr_label(label))
 }
 
-/// Enter applies only when no editor owns it. Editors report their own accepted Enter.
 /// Esc cancels; unowned Enter submits only when valid. Tokens: `none`.
 pub fn keyboard(ctx: &egui::Context, ok_enabled: bool) -> Action {
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -47,15 +46,26 @@ pub fn keyboard(ctx: &egui::Context, ok_enabled: bool) -> Action {
     }
 }
 
-/// Pinned actions; `apply_label` adds Apply without closing. Tokens: form_footer_height,
-/// form_button_height, dialog_footer/rule, control_*, accent, on_accent, font_label, spacing.
 /// Pinned OK / optional Apply / Cancel; returns Action. Tokens: `form_footer_height, form_button_height, dialog_footer/rule, radius_lg, control_*, accent, on_accent, font_label, space_6/10/12/16`.
 pub fn footer(ui: &mut Ui, ok_label: &str, cancel_label: &str, ok_enabled: bool, apply_label: Option<&str>) -> Action {
-    footer_impl(ui, ok_label, cancel_label, ok_enabled, apply_label, None)
+    footer_impl(ui, ok_label, cancel_label, ok_enabled, apply_label, None, None)
+}
+
+/// Footer whose `selected` action is marked (arrow keys move the mark in a prompt); an empty
+/// `ok_label` leaves out the OK action (a close-only card). Tokens: `footer tokens, selected_bg, accent`.
+pub(crate) fn footer_selected(
+    ui: &mut Ui,
+    ok_label: &str,
+    cancel_label: &str,
+    ok_enabled: bool,
+    apply_label: Option<&str>,
+    selected: Option<Action>,
+) -> Action {
+    footer_impl(ui, ok_label, cancel_label, ok_enabled, apply_label, None, selected)
 }
 
 /// Footer with stable button IDs and compute text. Tokens: `footer tokens, text_dim, space_4/8`.
-pub fn footer_with_status(
+pub(crate) fn footer_with_status(
     ui: &mut Ui,
     ok_label: &str,
     cancel_label: &str,
@@ -63,12 +73,21 @@ pub fn footer_with_status(
     apply_label: Option<&str>,
     status: Option<&str>,
 ) -> Action {
-    footer_impl(ui, ok_label, cancel_label, ok_enabled, apply_label, status)
+    footer_impl(ui, ok_label, cancel_label, ok_enabled, apply_label, status, None)
 }
 
 /// Shared footer implementation. Tokens: `footer tokens`.
-fn footer_impl(ui: &mut Ui, ok_label: &str, cancel_label: &str, ok_enabled: bool, apply_label: Option<&str>, status: Option<&str>) -> Action {
+fn footer_impl(
+    ui: &mut Ui,
+    ok_label: &str,
+    cancel_label: &str,
+    ok_enabled: bool,
+    apply_label: Option<&str>,
+    status: Option<&str>,
+    selected: Option<Action>,
+) -> Action {
     let t = Tokens::get();
+    let ok_enabled = ok_enabled && !ok_label.is_empty();
     // The footer is a full-width band (the card has no margin of its own): its own fill, a rule
     // on top, and the buttons right-aligned with 6 pt above/below and 10 pt at the sides.
     let (band, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), t.form_footer_height), egui::Sense::hover());
@@ -78,16 +97,18 @@ fn footer_impl(ui: &mut Ui, ok_label: &str, cancel_label: &str, ok_enabled: bool
     scenario::publish_rect("dialog:footer", band);
     scenario::publish_count("dialog:ok:enabled", f64::from(ok_enabled && ui.is_enabled()));
     let inner = band.shrink2(vec2(t.space_10, t.space_6));
+    scenario::publish_rect("dialog:footer:actions", inner);
     let mut action = if ui.is_enabled() { keyboard(ui.ctx(), ok_enabled) } else { Action::None };
     let mut actions_left = inner.right();
     let row = ui.scope_builder(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = t.space_6;
             for (label, kind) in [(ok_label, Action::Ok), (apply_label.unwrap_or(""), Action::Apply), (cancel_label, Action::Cancel)] {
-                if kind == Action::Apply && apply_label.is_none() {
+                if (kind == Action::Apply && apply_label.is_none()) || (kind == Action::Ok && ok_label.is_empty()) {
                     continue;
                 }
-                let primary = kind == Action::Ok;
+                let marked = selected == Some(kind);
+                let primary = kind == Action::Ok && selected.is_none_or(|s| s == Action::Ok);
                 let live = kind == Action::Cancel || ok_enabled;
                 ui.spacing_mut().button_padding = vec2(if primary { t.space_16 } else { t.space_12 }, 0.0);
                 let text = RichText::new(crate::i18n::tr_label(label)).size(t.font_label).color(if primary && ok_enabled {
@@ -100,8 +121,18 @@ fn footer_impl(ui: &mut Ui, ok_label: &str, cancel_label: &str, ok_enabled: bool
                 let response = ui.add_enabled(
                     live,
                     egui::Button::new(if primary && ok_enabled { text.bold_face() } else { text })
-                        .fill(if primary && ok_enabled { t.accent } else { t.control_fill })
-                        .stroke(egui::Stroke::new(if primary && ok_enabled { 0.0 } else { 1.0 }, t.control_border))
+                        .selected(marked && !primary)
+                        .fill(if primary && ok_enabled {
+                            t.accent
+                        } else if marked {
+                            t.selected_bg
+                        } else {
+                            t.control_fill
+                        })
+                        .stroke(egui::Stroke::new(
+                            if primary && ok_enabled { 0.0 } else { 1.0 },
+                            if marked && !primary { t.accent } else { t.control_border },
+                        ))
                         .wrap_mode(egui::TextWrapMode::Extend)
                         .corner_radius(t.control_radius)
                         .min_size(vec2(0.0, t.form_button_height)),
@@ -139,7 +170,6 @@ pub struct PairButton<'a> {
     pub icon: Option<&'a str>,
 }
 
-/// Equal secondary footer actions; Tokens: form_button_height, control_*, selected_bg, hover, font_label, spacing.
 /// Equal-width secondary actions with optional icons and selected state. Tokens: `form_button_height, control_*, selected_bg, hover, font_label, text, icon/fill, accent, sketch_footer_icon_size, space_4/6/10`.
 pub fn button_pair(ui: &mut egui::Ui, key: &str, states: [bool; 2], buttons: [PairButton<'_>; 2]) -> (bool, bool) {
     let t = Tokens::get();
@@ -197,7 +227,6 @@ pub fn button_pair(ui: &mut egui::Ui, key: &str, states: [bool; 2], buttons: [Pa
     (clicked.first().copied().unwrap_or(false), clicked.get(1).copied().unwrap_or(false))
 }
 
-/// Ordinary secondary action inheriting `scope`'s control and font tokens; preserves egui sizing.
 /// Ordinary secondary action preserving native sizing. Tokens: `scope font/control/spacing tokens`.
 pub fn secondary_button(ui: &mut Ui, label: impl Into<egui::WidgetText>) -> Response {
     let label = label.into();
@@ -208,7 +237,6 @@ pub fn secondary_button(ui: &mut Ui, label: impl Into<egui::WidgetText>) -> Resp
     response
 }
 
-/// Accent action. Tokens: accent, on_accent and the scope's control/font/spacing tokens.
 /// Accent action outside the footer. Tokens: `accent, on_accent; scope tokens`.
 pub fn primary_button(ui: &mut Ui, label: &str) -> Response {
     let t = Tokens::get();
@@ -219,7 +247,6 @@ pub fn primary_button(ui: &mut Ui, label: &str) -> Response {
     response
 }
 
-/// Compact inline removal action; Tokens: scope's font and control tokens, egui small padding.
 /// Compact inline action preserving native sizing. Tokens: `scope font/control tokens`.
 pub fn small_button(ui: &mut Ui, label: &str) -> Response {
     let response = ui.small_button(label);
@@ -228,7 +255,6 @@ pub fn small_button(ui: &mut Ui, label: &str) -> Response {
     response
 }
 
-/// Allocate a control-height icon action. Tokens: control_height, form_icon_inset, text/dim.
 /// Allocated control-height icon action. Tokens: `control_height; icon_button_at tokens`.
 pub fn icon_button(ui: &mut Ui, label: &str, icon: &str) -> Response {
     let (rect, _) = ui.allocate_exact_size(vec2(row_height(), row_height()), egui::Sense::hover());
@@ -247,4 +273,17 @@ fn publish_button(ui: &Ui, response: &Response, label: &str) {
     let key = format!("dialog:button:{}:{label}", super::layout::label(ui));
     scenario::publish_handle(&key, response.rect.center());
     scenario::publish_rect(&key, response.rect);
+}
+
+/// Secondary action with caller-owned enabled state, retaining the native label.
+pub fn enabled_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
+    ui.add_enabled_ui(enabled, |ui| secondary_button(ui, crate::i18n::tr_label(label))).inner
+}
+
+/// Nested action menu in a dense table. Tokens: scope control/font tokens.
+pub fn action_menu<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<Option<R>> {
+    let response = ui.menu_button(crate::i18n::tr_label(label), |ui| super::scope(ui, add));
+    scenario::publish_rect(&format!("dialog:menu:{label}"), response.response.rect);
+    scenario::publish_handle(&format!("dialog:menu:{label}"), response.response.rect.center());
+    response
 }

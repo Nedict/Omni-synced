@@ -76,3 +76,122 @@ fn searchable_dropdown_filters_selects_and_accepts_custom_values() {
         assert_eq!(chosen.as_deref(), Some(if custom { "/fonts/face.ttf" } else { "two" }));
     }
 }
+
+#[test]
+fn preference_dropdown_keeps_disabled_choices_inert_and_closes_after_selection() {
+    let ctx = crate::fonts::test_context();
+    let picked = std::cell::Cell::new(1);
+    let mut draw = |ui: &mut Ui| {
+        row(ui, "Samples", |ui| {
+            dropdown_menu(ui, "samples", &picked.get().to_string(), |ui| {
+                for (value, enabled) in [(1, true), (4, false), (8, true)] {
+                    let response =
+                        ui.add_enabled_ui(enabled, |ui| list_picker(ui, &value.to_string(), &format!("{value}×"), picked.get() == value)).inner;
+                    if response.clicked() {
+                        picked.set(value);
+                    }
+                }
+            });
+        });
+    };
+    frame(&ctx, vec![], &mut draw);
+    let at = scenario::handle_at("dialog:Samples").unwrap();
+    frame(&ctx, pointer(at, true), &mut draw);
+    frame(&ctx, pointer(at, false), &mut draw);
+    let disabled = scenario::handle_at("dialog:list:4").unwrap();
+    frame(&ctx, pointer(disabled, true), &mut draw);
+    frame(&ctx, pointer(disabled, false), &mut draw);
+    frame(&ctx, vec![], &mut draw);
+    assert_eq!(picked.get(), 1, "a disabled choice must not change the value");
+    // Reopen if the native popup closed on the inside click.
+    if scenario::handle_at("dialog:list:8").is_none() {
+        let at = scenario::handle_at("dialog:Samples").unwrap();
+        frame(&ctx, pointer(at, true), &mut draw);
+        frame(&ctx, pointer(at, false), &mut draw);
+        frame(&ctx, vec![], &mut draw);
+    }
+    let enabled = scenario::handle_at("dialog:list:8").unwrap();
+    frame(&ctx, pointer(enabled, true), &mut draw);
+    frame(&ctx, pointer(enabled, false), &mut draw);
+    frame(&ctx, vec![], &mut draw);
+    assert!(scenario::handle_at("dialog:list:8").is_none());
+    assert_eq!(picked.get(), 8);
+}
+
+#[test]
+fn secret_field_retains_focus_and_masks_paint_and_accessibility_events() {
+    let ctx = crate::fonts::test_context();
+    let id = egui::Id::new("secret_test");
+    let mut secret = String::new();
+    let mut draw = |ui: &mut Ui| {
+        row(ui, "API key", |ui| {
+            password_field(ui, id, &mut secret, "Key").request_focus();
+        });
+    };
+    frame(&ctx, vec![], &mut draw);
+    assert!(ctx.memory(|m| m.has_focus(id)));
+    let mut output = ctx
+        .run_ui(egui::RawInput { events: vec![egui::Event::Text("opaque-secret".into())], focused: true, ..Default::default() }, |ui| {
+            scope(ui, &mut draw)
+        });
+    assert!(!format!("{:?}", output.platform_output.events).contains("opaque-secret"));
+    assert!(!format!("{:?}", output.shapes).contains("opaque-secret"));
+    output.textures_delta.clear();
+    assert_eq!(secret, "opaque-secret");
+}
+
+#[test]
+fn growing_message_field_retains_its_id_and_does_not_consume_enter() {
+    let ctx = crate::fonts::test_context();
+    let id = egui::Id::new("message_test");
+    let mut message = String::new();
+    let mut enter = false;
+    let mut draw = |ui: &mut Ui| {
+        let response = message_field(ui, id, &mut message, "Message");
+        response.request_focus();
+        enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+    };
+    frame(&ctx, vec![], &mut draw);
+    frame(&ctx, vec![egui::Event::Text("First\nSecond".into())], &mut draw);
+    frame(&ctx, key(egui::Key::Enter), &mut draw);
+    assert!(enter && ctx.memory(|m| m.has_focus(id)));
+    assert_eq!(message, "First\nSecond\n");
+}
+
+#[test]
+fn placement_field_keeps_focus_for_owner_validation_on_enter() {
+    let ctx = crate::fonts::test_context();
+    let id = egui::Id::new("placement_enter");
+    let mut value = String::from("invalid expression");
+    let mut draw = |ui: &mut Ui| {
+        row(ui, "Distance", |ui| {
+            placement_field(ui, id, &mut value, "Distance");
+        });
+    };
+    frame(&ctx, vec![], &mut draw);
+    let at = scenario::handle_at("dialog:Distance").unwrap();
+    frame(&ctx, pointer(at, true), &mut draw);
+    frame(&ctx, pointer(at, false), &mut draw);
+    frame(&ctx, key(egui::Key::Enter), &mut draw);
+    assert!(ctx.memory(|m| m.has_focus(id)), "owner can reject Enter without losing the editor");
+    frame(&ctx, vec![egui::Event::Text("x".into())], &mut draw);
+    assert!(value.contains('x'));
+}
+
+#[test]
+fn bounded_name_editor_keeps_unicode_character_cap() {
+    let ctx = crate::fonts::test_context();
+    let id = egui::Id::new("bounded_name");
+    let mut value = String::new();
+    let mut draw = |ui: &mut Ui| {
+        row(ui, "Name", |ui| {
+            bounded_cell_editor(ui, id, &mut value, "", false, 3);
+        });
+    };
+    frame(&ctx, vec![], &mut draw);
+    let at = scenario::handle_at("dialog:Name").unwrap();
+    frame(&ctx, pointer(at, true), &mut draw);
+    frame(&ctx, pointer(at, false), &mut draw);
+    frame(&ctx, vec![egui::Event::Text("åβ界d".into())], &mut draw);
+    assert_eq!(value, "åβ界");
+}

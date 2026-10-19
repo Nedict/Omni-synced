@@ -15,7 +15,7 @@ use solidcraft_engine::doc::joints::JointKind;
 use solidcraft_engine::geom::{Aabb3, Mesh, Vec3};
 
 use crate::SolveApp;
-use crate::dialogs::{Dialog, Kind, combo, field, form_row, row_label};
+use crate::dialogs::{Dialog, Kind, combo, field, form_row};
 use crate::preview::{Built, Colors};
 use crate::selection::{BODIES, EDGES, FACES, SelInput, VERTICES};
 use crate::theme::Tokens;
@@ -610,18 +610,18 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             let s = &app.session;
             let list = movable(s);
             if list.is_empty() {
-                row_label(ui, "");
-                ui.label(RichText::new(crate::i18n::tr_label("no joint that moves yet")).color(t.text_dim));
-                ui.end_row();
+                ui.vertical(|ui| {
+                    ui.label(RichText::new(crate::i18n::tr_label("no joint that moves yet")).color(t.text_dim));
+                });
                 return false;
             }
             let labels: Vec<String> =
                 list.iter().filter_map(|i| s.doc.assembly.joints.get(*i)).map(|j| format!("{} ({:?})", j.name, j.kind)).collect();
             let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
             let mut pos = list.iter().position(|i| i == joint).unwrap_or(0);
-            row_label(ui, "Joint");
-            combo(ui, "drv_joint", &refs, &mut pos);
-            ui.end_row();
+            form_row(ui, "Joint", |ui| {
+                combo(ui, "drv_joint", &refs, &mut pos);
+            });
             let pick = list.get(pos).copied().unwrap_or(0);
             if pick != *joint || values.is_empty() {
                 *joint = pick;
@@ -632,25 +632,27 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
                 let angle = j.kind.is_angle(i);
                 let unit_kind = if angle { ValueKind::Angle } else { ValueKind::Length };
                 let name = j.kind.dofs().get(i).copied().unwrap_or("value");
-                row_label(ui, &capital(name));
-                if i == 0 {
-                    // Typing replaces the value at once, as in the other dialogs' value boxes.
-                    let id = egui::Id::new("sc_drive_value");
-                    let r = ui.add(egui::TextEdit::singleline(v).id(id));
-                    crate::params_dialog::complete(ui, &r, v);
-                    if std::mem::take(focus) {
-                        r.request_focus();
-                        let n = v.chars().count();
-                        let mut st = egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
-                        st.cursor
-                            .set_char_range(Some(egui::text_selection::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(n))));
-                        st.store(ui.ctx(), id);
+                form_row(ui, &capital(name), |ui| {
+                    if i == 0 {
+                        // Typing replaces the value at once, as in the other dialogs' value boxes.
+                        let id = egui::Id::new("sc_drive_value");
+                        let r = crate::ui_kit::cell_editor(ui, id, v, "", false);
+                        crate::params_dialog::complete(ui, &r, v);
+                        if std::mem::take(focus) {
+                            r.request_focus();
+                            let n = v.chars().count();
+                            let mut st = egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
+                            st.cursor.set_char_range(Some(egui::text_selection::CCursorRange::two(
+                                egui::text::CCursor::new(0),
+                                egui::text::CCursor::new(n),
+                            )));
+                            st.store(ui.ctx(), id);
+                        }
+                        enter |= r.lost_focus() && ui.input(|x| x.key_pressed(egui::Key::Enter));
+                    } else {
+                        enter |= field(ui, v);
                     }
-                    enter |= r.lost_focus() && ui.input(|x| x.key_pressed(egui::Key::Enter));
-                } else {
-                    enter |= field(ui, v);
-                }
-                ui.end_row();
+                });
                 // A slider over the limits (or a turn, or ±100 mm).
                 let (lo, hi) = match j.limits.get(i).copied().flatten() {
                     Some((a, b)) => (a.min(b), a.max(b)),
@@ -659,34 +661,34 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
                 };
                 let cur = s.doc.eval(v, unit_kind).ok().filter(|x| x.is_finite()).unwrap_or(0.0);
                 let (mut shown, scale) = if angle { (cur.to_degrees(), 1f64.to_degrees()) } else { (cur, 1.0) };
-                row_label(ui, "");
-                ui.spacing_mut().slider_width = 160.0;
-                let r = ui.add(egui::Slider::new(&mut shown, lo * scale..=hi * scale).show_value(false));
-                crate::scenario::publish_handle(&format!("drive_slider:{i}"), r.rect.center());
-                if r.changed() {
-                    *v = if angle { format!("{shown:.1} deg") } else { format!("{shown:.2} mm") };
-                }
-                ui.end_row();
+                ui.vertical(|ui| {
+                    ui.spacing_mut().slider_width = 160.0;
+                    let r = crate::ui_kit::timeline_slider(ui, &mut shown, lo * scale..=hi * scale, false);
+                    crate::scenario::publish_handle(&format!("drive_slider:{i}"), r.rect.center());
+                    if r.changed() {
+                        *v = if angle { format!("{shown:.1} deg") } else { format!("{shown:.2} mm") };
+                    }
+                });
                 // The slider's range: the joint's limits, or the default span when it has none.
                 let limited = j.limits.get(i).copied().flatten().is_some();
                 let fmt = |x: f64| {
                     let (x, unit) = if angle { (x.to_degrees(), "°") } else { (x, " mm") };
                     if x.fract().abs() < 1e-6 { format!("{x:.0}{unit}") } else { format!("{x:.1}{unit}") }
                 };
-                row_label(ui, "");
-                ui.label(
-                    RichText::new(format!("{} … {}{}", fmt(lo), fmt(hi), if limited { "  (limits)" } else { "  (no limits)" }))
-                        .size(crate::theme::Tokens::get().font_small)
-                        .color(if limited { t.text } else { t.text_dim }),
-                );
-                ui.end_row();
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new(format!("{} … {}{}", fmt(lo), fmt(hi), if limited { "  (limits)" } else { "  (no limits)" }))
+                            .size(crate::theme::Tokens::get().font_small)
+                            .color(if limited { t.text } else { t.text_dim }),
+                    );
+                });
             }
             // The preview drove the joint: where it stopped short, and why (a closed loop or a
             // contact set), so the values asked for are not taken for where it is.
             if let Some(why) = app.preview.stopped.as_ref().and_then(drive_stop) {
-                row_label(ui, "");
-                ui.label(RichText::new(why).color(t.warning));
-                ui.end_row();
+                ui.vertical(|ui| {
+                    ui.label(RichText::new(why).color(t.warning));
+                });
             }
         }
         Asm::MotionLink { a, b, ia, ib, ratio, offset } => {
@@ -1215,20 +1217,20 @@ fn joint_menu(
     open: &mut Option<Dialog>,
     run: &mut Option<(&'static str, Value)>,
 ) {
-    if ui.button(crate::i18n::tr_label("Edit Joint")).clicked() {
+    if crate::ui_kit::secondary_button(ui, crate::i18n::tr_label("Edit Joint")).clicked() {
         *open = edit_joint(app, id);
         ui.close();
     }
-    if kind != JointKind::Rigid && ui.button(crate::i18n::tr_label("Drive Joint")).clicked() {
+    if kind != JointKind::Rigid && crate::ui_kit::secondary_button(ui, crate::i18n::tr_label("Drive Joint")).clicked() {
         *open = drive_joint(app, id);
         ui.close();
     }
-    if ui.button(if suppressed { "Unsuppress" } else { "Suppress" }).clicked() {
+    if crate::ui_kit::secondary_button(ui, crate::i18n::tr_label(if suppressed { "Unsuppress" } else { "Suppress" })).clicked() {
         *run = Some(("joint.edit", json!({"joint": id, "suppressed": !suppressed})));
         ui.close();
     }
     ui.separator();
-    if ui.button("Delete").clicked() {
+    if crate::ui_kit::secondary_button(ui, crate::i18n::tr_label("Delete")).clicked() {
         *run = Some(("joint.delete", json!({ "joint": id })));
         ui.close();
     }
