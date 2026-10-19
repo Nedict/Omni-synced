@@ -564,11 +564,15 @@ pub(crate) fn suggestions_for(ctx: &egui::Context, word: &str, explicit: bool) -
         return Vec::new();
     }
     let w = word.to_ascii_lowercase();
-    all.iter()
-        .filter(|s| s.text.to_ascii_lowercase().starts_with(&w) && (explicit || s.text.trim_end_matches('(') != word))
-        .take(8)
-        .cloned()
-        .collect()
+    let offered = |s: &&Suggestion| explicit || s.text.trim_end_matches('(') != word;
+    // Names that start with the word first, then those that only contain it: a name half
+    // remembered still comes up (#2925).
+    let starts = all.iter().filter(|s| s.text.to_ascii_lowercase().starts_with(&w)).filter(offered);
+    let inside = all.iter().filter(|s| {
+        let t = s.text.to_ascii_lowercase();
+        !t.starts_with(&w) && t.contains(&w)
+    });
+    starts.chain(inside.filter(offered)).take(8).cloned().collect()
 }
 
 /// Offer keyboard and pointer completions under a focused expression box.
@@ -595,6 +599,15 @@ mod tests {
         assert_eq!(s.first().map(|x| x.text.as_str()), Some("width"));
         assert!(suggestions(&ctx, "ata").iter().any(|x| x.text == "atan2("));
         assert!(suggestions(&ctx, "1").is_empty());
+        // #2925: names that start with the word, then names that only contain it.
+        for (name, value) in [("thickness_total", "3 mm"), ("clip_base_thickness", "1 mm")] {
+            let _ = app.run("parameters.add", json!({"name": name, "expression": value}));
+        }
+        publish(&mut app, &ctx);
+        let names = |word: &str| suggestions(&ctx, word).into_iter().map(|x| x.text).filter(|t| t.contains("thick")).collect::<Vec<_>>();
+        assert_eq!(names("thickness"), ["thickness_total", "clip_base_thickness"]);
+        assert_eq!(names("_thick"), ["clip_base_thickness"]);
+        assert_eq!(names("THICK"), ["thickness_total", "clip_base_thickness"], "any case");
         // The dialog's rows come from the engine.
         let r = rows(&mut app);
         assert!(r.iter().any(|x| x.name == "width" && x.source == "user"));
