@@ -276,7 +276,9 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
         return true;
     }
     let command = id.to_string();
-    app.pick_open(move |app, path| {
+    // The images `canvas.insert` reads. The picker must list them: on macOS, files of a type
+    // no filter names can't be picked (#3216).
+    app.pick_open_for(&["png", "jpg", "jpeg"], move |app, path| {
         if let Some(path) = path {
             IMAGE.with(|i| *i.borrow_mut() = Some(path));
             app.last_command = solidcraft_engine::find_command(&command).map(|spec| (spec.id.into(), spec.label.into()));
