@@ -794,11 +794,10 @@ fn build_sketch_scene(app: &SolveApp, proj: &Proj) -> GpuScene {
                 unit,
             );
             for (a, b) in segs {
-                // Visible sketch geometry is an annotation on the model: keep it legible when
-                // its plane is behind an opaque body. The depth-tested path makes contours
-                // disappear as soon as the body is shown, even though the sketch itself is
-                // still enabled in the browser.
-                sc.line(a.to_f32(), b.to_f32(), sketch_color(&tk, col), if cons { 1.2 } else { 2.0 }, true);
+                // Active sketches retain their existing through-body display. Inactive sketches
+                // can opt into the same behaviour in Preferences.
+                let through = active || app.preferences.reference_geometry_through_bodies;
+                sc.line(a.to_f32(), b.to_f32(), sketch_color(&tk, col), if cons { 1.2 } else { 2.0 }, through);
             }
         }
     }
@@ -1857,17 +1856,25 @@ pub(crate) fn profile_fill(sc: &mut GpuScene, app: &SolveApp, sketch: u64, index
 }
 
 /// An origin or construction plane: reference geometry, which a section does not cut (#1229).
-/// Keep the plane visible through shaded bodies so the full datum remains legible and pickable.
-fn quad(sc: &mut GpuScene, q: &[Vec3; 4], fill: Color32, edge: Color32) {
+/// Keep the plane visible through shaded bodies when requested, otherwise depth-test it normally.
+fn quad(sc: &mut GpuScene, q: &[Vec3; 4], fill: Color32, edge: Color32, through: bool) {
     let col = c4(fill);
     for i in [0, 1, 2, 0, 2, 3] {
         if let Some(p) = q.get(i) {
-            sc.xray_tri(p.to_f32(), [0.0; 3], col);
+            if through {
+                sc.xray_tri(p.to_f32(), [0.0; 3], col);
+            } else {
+                sc.guide_tri(p.to_f32(), col);
+            }
         }
     }
     for i in 0..4 {
         let (a, b) = (q[i].to_f32(), q[(i + 1) % 4].to_f32());
-        sc.line(a, b, c4(edge), 1.2, true);
+        if through {
+            sc.line(a, b, c4(edge), 1.2, true);
+        } else {
+            sc.guide_line(a, b, c4(edge), 1.2);
+        }
     }
 }
 
@@ -1892,6 +1899,7 @@ fn highlight_geometry_key(app: &SolveApp) -> u64 {
     crate::theme::vision().hash(&mut h);
     app.preview.replaced.hash(&mut h);
     app.origin_visible().hash(&mut h);
+    app.preferences.reference_geometry_through_bodies.hash(&mut h);
     app.picking_sketch_plane().hash(&mut h);
     app.session.visibility.hidden_origin.hash(&mut h);
     app.session.visibility.hidden_bodies.hash(&mut h);
@@ -1949,6 +1957,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
     };
     let mut planes: Vec<(String, [Vec3; 4], Color32)> = origin_planes(app).into_iter().map(|(n, _, q)| (n.to_string(), q, t.origin_plane)).collect();
     planes.extend(construction_quads(app).into_iter().map(|(n, _, q)| (n, q, t.construction_plane)));
+    let through = app.picking_sketch_plane() || app.preferences.reference_geometry_through_bodies;
     for (name, q, base) in &planes {
         let (selected, hovered) = plane_state(name);
         let fill = if hovered {
@@ -1958,7 +1967,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
         } else {
             *base
         };
-        quad(&mut sc, q, fill, if selected { t.sel_edge } else { t.origin_plane_edge });
+        quad(&mut sc, q, fill, if selected { t.sel_edge } else { t.origin_plane_edge }, through);
     }
     // Origin axes: solid near the origin, dashed beyond.
     for (name, dir) in origin_axes(app) {
@@ -5181,6 +5190,7 @@ mod tests {
         h.app.run("solid.box", json!({"length":20,"width":20,"height":20,"corner":[-10,-10,-10]})).unwrap();
         h.app.run("inspect.section", json!({"plane": "XZ", "offset": 0})).unwrap();
         h.app.ui.show_origin = true;
+        h.app.preferences.reference_geometry_through_bodies = true;
         h.frames(2);
         assert!(section_plane(&h.app).is_some());
         let sc = build_highlight(&h.app).merged();
@@ -6281,8 +6291,8 @@ mod grid_plane_tests {
         assert!(projection(&app, rect).cam.fov > 0.0);
     }
 
-    /// Create Sketch shows the Origin even when the browser hides it. Reference planes draw
-    /// through bodies in any mode so their extents remain visible.
+    /// Create Sketch shows the Origin through bodies; the preference opts into that outside the
+    /// tool while remaining off by default.
     #[test]
     fn create_sketch_shows_the_origin_planes_through_the_model() {
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
@@ -6300,7 +6310,11 @@ mod grid_plane_tests {
         assert!(origin_planes(&app).is_empty());
         app.ui.show_origin = true;
         let sc = build_highlight(&app);
-        assert_eq!(sc.xray.len(), 3 * 6 * crate::gpu::TRI_SIZE, "reference planes remain visible through bodies after Create Sketch closes");
+        assert!(sc.xray.is_empty(), "through-body reference geometry is off by default");
+        assert_eq!(sc.guide_trans.len(), 3 * 6 * crate::gpu::TRI_SIZE, "planes use the ordinary depth-tested path by default");
+        app.preferences.reference_geometry_through_bodies = true;
+        let sc = build_highlight(&app);
+        assert_eq!(sc.xray.len(), 3 * 6 * crate::gpu::TRI_SIZE, "the preference draws reference planes through bodies");
         assert!(sc.guide_trans.is_empty());
     }
 }
