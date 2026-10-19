@@ -128,6 +128,19 @@ fn ca_roots(ca_der: &[u8]) -> Result<ureq::tls::RootCerts, Error> {
     Ok(ureq::tls::RootCerts::new_with_certs(&[ureq::tls::Certificate::from_der(ca_der).to_owned()]))
 }
 
+fn validate_identity(identity: crate::AuthenticatedIdentity, expected: &str) -> Result<crate::AuthenticatedIdentity, Error> {
+    if server_identity(&identity.server_id)? != expected || identity.server_id != expected {
+        return Err(Error::Server("server_identity_mismatch".into()));
+    }
+    let id = &identity.principal.id;
+    // Match the configured-principal boundary and reject the legacy local-owner
+    // identity, which is never a configured HTTPS principal.
+    if id.is_empty() || id.len() > 128 || id.chars().any(char::is_control) || id == "owner" {
+        return Err(Error::Invalid("authenticated principal identity"));
+    }
+    Ok(identity)
+}
+
 impl Client {
     pub fn new(port: u16, token: AuthToken) -> Self {
         Self { transport: Transport::Loopback(port), token }
@@ -277,6 +290,25 @@ impl Client {
                 _ => Err(Error::Invalid("PDM HTTPS response error code")),
             },
             other => Ok(other),
+        }
+    }
+
+    /// Resolve the actual configured principal over verified HTTPS. Initial
+    /// catalog discovery establishes the shared immutable server pin, and the
+    /// identity operation itself is sent with that per-request atomic fence.
+    pub fn authenticated_identity(&self) -> Result<crate::AuthenticatedIdentity, Error> {
+        let Transport::Https { server_id, .. } = &self.transport else {
+            return Err(Error::Invalid("authenticated identity requires HTTPS"));
+        };
+        let response = self.request(Request::Identity {})?;
+        let expected = server_id
+            .lock()
+            .map_err(|_| Error::Invalid("HTTPS identity state unavailable"))?
+            .clone()
+            .ok_or(Error::Invalid("HTTPS server identity required"))?;
+        match response {
+            Response::Identity { identity } => validate_identity(identity, &expected),
+            _ => Err(Error::Invalid("unexpected authenticated identity response")),
         }
     }
 
@@ -505,5 +537,29 @@ mod https_tests {
         });
         assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
         assert_eq!(outcomes.iter().filter(|result| matches!(result, Err(Error::Server(code)) if code == "server_identity_mismatch")).count(), 1);
+    }
+
+    #[test]
+    fn authenticated_identity_rejects_unbound_owner_and_malformed_principals() {
+        let expected = "11".repeat(32);
+        let identity = |id: &str| crate::AuthenticatedIdentity {
+            server_id: expected.clone(),
+            principal: crate::managed::Principal { id: id.into(), role: crate::managed::Role::Contributor },
+        };
+        assert!(validate_identity(identity("alice"), &expected).is_ok());
+        for invalid in ["", "owner", "alice\nadmin", "alice\0"] {
+            assert!(validate_identity(identity(invalid), &expected).is_err());
+        }
+        assert!(validate_identity(identity(&"a".repeat(129)), &expected).is_err());
+        assert!(matches!(validate_identity(identity("alice"), &"22".repeat(32)), Err(Error::Server(code)) if code == "server_identity_mismatch"));
+        let mut invalid = identity("alice");
+        invalid.server_id = "invalid server".into();
+        assert!(validate_identity(invalid, &expected).is_err());
+        let unknown_role = serde_json::json!({"server_id":expected,"principal":{"id":"alice","role":"superuser"}});
+        assert!(serde_json::from_value::<crate::AuthenticatedIdentity>(unknown_role).is_err());
+        let injected = serde_json::json!({"server_id":expected,"principal":{"id":"alice","role":"viewer","token":"secret"}});
+        assert!(serde_json::from_value::<crate::AuthenticatedIdentity>(injected).is_err());
+        let local = Client::new(1, AuthToken::parse("00".repeat(32)).unwrap());
+        assert!(matches!(local.authenticated_identity(), Err(Error::Invalid("authenticated identity requires HTTPS"))));
     }
 }

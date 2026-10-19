@@ -6,12 +6,33 @@ use solidcraft_pdm::{
     client::{Client, read_file},
     read_frame, serve_connection,
 };
-use std::{io, path::Path};
+use std::{
+    io::{self, BufRead, Read, Write},
+    path::Path,
+};
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     let argument = |index| args.get(index).map(String::as_str).ok_or(Error::Invalid("missing argument"));
     match args.get(1).map(String::as_str) {
+        Some("rehearse-https") if args.len() == 3 => {
+            let config = solidcraft_pdm::deployment::DeploymentConfig::load(Path::new(argument(2)?))?;
+            let server = solidcraft_pdm::deployment::start_loopback_rehearsal(config)?;
+            {
+                let mut output = io::stdout().lock();
+                serde_json::to_writer(&mut output, server.receipt())?;
+                writeln!(output)?;
+                output.flush()?;
+            }
+            // The private launcher owns stdin for this isolated rehearsal.
+            // Closing it or sending one shutdown line stops only this server.
+            let mut command = Vec::new();
+            io::stdin().lock().take(1025).read_until(b'\n', &mut command)?;
+            if command.len() > 1024 || !matches!(command.as_slice(), b"" | b"shutdown\n" | b"shutdown\r\n") {
+                return Err(Error::Invalid("deployment rehearsal control").into());
+            }
+            server.shutdown()?;
+        }
         Some("backup") if args.len() == 4 => {
             let store = Store::open(Path::new(argument(2)?))?;
             let receipt = store.backup(Path::new(argument(3)?))?;
@@ -75,7 +96,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             serde_json::to_writer_pretty(io::stdout().lock(), &snapshot)?;
             println!();
         }
-        _ => return Err("usage: solidcraft-pdm token | serve STORE PORT | backup STORE NEW_BACKUP | restore BACKUP NEW_STORE | verify-backup BACKUP | request PORT | list PORT [DOCUMENT] | check-in PORT DOCUMENT PARENT_OR_- FILE [DEPENDENCIES_JSON] | retrieve PORT DOCUMENT VERSION NEW_DIRECTORY".into()),
+        _ => return Err("usage: solidcraft-pdm token | serve STORE PORT | rehearse-https CONFIG | backup STORE NEW_BACKUP | restore BACKUP NEW_STORE | verify-backup BACKUP | request PORT | list PORT [DOCUMENT] | check-in PORT DOCUMENT PARENT_OR_- FILE [DEPENDENCIES_JSON] | retrieve PORT DOCUMENT VERSION NEW_DIRECTORY".into()),
     }
     Ok(())
 }

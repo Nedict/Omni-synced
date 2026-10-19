@@ -17,6 +17,7 @@ pub mod blob_store;
 pub mod bootstrap;
 pub mod client;
 pub mod connector;
+pub mod deployment;
 mod http_listener;
 pub mod http_server;
 pub mod managed;
@@ -25,6 +26,7 @@ pub mod pairing;
 pub mod relay;
 pub mod relay_client;
 pub mod relay_http;
+pub mod s3_blob_store;
 pub mod workspace;
 
 pub const PROTOCOL: &str = "solidcraft-pdm/2";
@@ -139,9 +141,19 @@ pub struct Version {
     pub dependencies: Vec<VersionRef>,
 }
 
+/// Authenticated server identity and role, with no bearer or checkout secrets.
+/// The principal is selected by server authentication, never a request field.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthenticatedIdentity {
+    pub server_id: String,
+    pub principal: managed::Principal,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    Identity {},
     ManagedCatalog,
     ManagedCreate { logical_path: String },
     ManagedCheckout { document: String, workspace: String, machine: String },
@@ -157,6 +169,7 @@ pub enum Request {
 impl std::fmt::Debug for Request {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let operation = match self {
+            Self::Identity {} => "Identity",
             Self::ManagedCatalog => "ManagedCatalog",
             Self::ManagedCreate { .. } => "ManagedCreate",
             Self::ManagedCheckout { .. } => "ManagedCheckout",
@@ -175,6 +188,7 @@ impl std::fmt::Debug for Request {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum Response {
+    Identity { identity: AuthenticatedIdentity },
     ManagedCatalog { catalog: managed::ManagedCatalog },
     ManagedDocument { entry: managed::CatalogEntry },
     ManagedCheckout { grant: managed::CheckoutGrant },
@@ -413,6 +427,9 @@ impl Store {
 
     pub fn execute_as(&mut self, request: Request, principal: &managed::Principal) -> Response {
         let result = match request {
+            Request::Identity {} => Ok(Response::Identity {
+                identity: AuthenticatedIdentity { server_id: self.managed.server_id().to_owned(), principal: principal.clone() },
+            }),
             Request::ManagedCatalog => Ok(Response::ManagedCatalog { catalog: self.managed.catalog() }),
             Request::ManagedCreate { logical_path } => self.managed.create(principal, logical_path).map(|entry| Response::ManagedDocument { entry }),
             Request::ManagedCheckout { document, workspace, machine } => {
@@ -597,6 +614,78 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_identity_is_authenticated_fenced_and_preserves_each_role_over_https() {
+        let root = std::env::temp_dir().join(format!("solidcraft-identity-{}", AuthToken::generate().unwrap()));
+        std::fs::create_dir(&root).unwrap();
+        let accounts = [
+            ("reader", managed::Role::Viewer, AuthToken::generate().unwrap()),
+            ("writer", managed::Role::Contributor, AuthToken::generate().unwrap()),
+            ("administrator", managed::Role::Administrator, AuthToken::generate().unwrap()),
+        ];
+        let credentials = accounts
+            .iter()
+            .map(|(id, role, bearer)| managed::PrincipalCredential {
+                principal: managed::Principal { id: (*id).into(), role: *role },
+                token_sha256: digest(bearer.as_bytes()),
+            })
+            .collect::<Vec<_>>();
+        std::fs::write(root.join("managed-principals.json"), serde_json::to_vec(&credentials).unwrap()).unwrap();
+        let mut store = Store::open(&root).unwrap();
+        let server_id = store.managed.server_id().to_owned();
+        let wrong_server = if server_id == "00".repeat(32) { "11".repeat(32) } else { "00".repeat(32) };
+        let unknown = AuthToken::generate().unwrap();
+        assert!(
+            matches!(store.execute_configured_for(Request::Identity {}, &unknown, Some(&server_id)), Response::Error { code } if code == "unauthorized")
+        );
+        assert!(
+            matches!(store.execute_configured_for(Request::Identity {}, &accounts[0].2, None), Response::Error { code } if code == "server_identity_required")
+        );
+        assert!(
+            matches!(store.execute_configured_for(Request::Identity {}, &accounts[0].2, Some(&wrong_server)), Response::Error { code } if code == "server_identity_mismatch")
+        );
+        assert!(matches!(serde_json::from_str::<Request>(r#"{"operation":"identity"}"#).unwrap(), Request::Identity {}));
+        for field in ["username", "principal", "principal_id", "role", "secret", "token"] {
+            let fake = serde_json::json!({"operation":"identity", (field):"administrator"});
+            assert!(serde_json::from_value::<Request>(fake).is_err());
+        }
+        for (id, role, bearer) in &accounts {
+            match store.execute_configured_for(Request::Identity {}, bearer, Some(&server_id)) {
+                Response::Identity { identity } => {
+                    assert_eq!(identity.server_id, server_id);
+                    assert_eq!(identity.principal, managed::Principal { id: (*id).into(), role: *role });
+                    assert!(!serde_json::to_string(&identity).unwrap().contains(bearer));
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        let tls = http_server::HttpsConfig::from_der(
+            "127.0.0.1:0".parse().unwrap(),
+            vec![include_bytes!("../tests/fixtures/pdm-https/server.der").to_vec()],
+            include_bytes!("../tests/fixtures/pdm-https/server-key.der").to_vec(),
+        )
+        .unwrap();
+        let server = http_server::HttpsServer::start(store, tls).unwrap();
+        let endpoint = format!("https://{}", server.address());
+        let ca = include_bytes!("../tests/fixtures/pdm-https/ca.der");
+        for (id, role, bearer) in &accounts {
+            let client = client::Client::https_with_ca(&endpoint, AuthToken::parse(bearer.clone()).unwrap(), ca).unwrap();
+            let identity = client.authenticated_identity().unwrap();
+            assert_eq!(identity.server_id, server_id);
+            assert_eq!(identity.principal.id, *id);
+            assert_eq!(identity.principal.role, *role);
+        }
+        let unknown_client = client::Client::https_with_ca(&endpoint, AuthToken::parse(unknown).unwrap(), ca).unwrap();
+        assert!(matches!(unknown_client.authenticated_identity(), Err(Error::Server(code)) if code == "unauthorized"));
+        let wrong = client::Client::https_with_ca(&endpoint, AuthToken::parse(accounts[0].2.clone()).unwrap(), ca)
+            .unwrap()
+            .bind_server(&wrong_server)
+            .unwrap();
+        assert!(matches!(wrong.authenticated_identity(), Err(Error::Server(code)) if code == "server_identity_mismatch"));
+        server.shutdown().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn configured_dispatch_requires_enrollment_and_rejects_unregistered_owner() {
         let root = std::env::temp_dir().join(format!("solidcraft-configured-auth-{}", AuthToken::generate().unwrap()));

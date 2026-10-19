@@ -170,10 +170,24 @@ The authoritative PDM service owns identities, authorization, reservations,
 version manifests and relationships. Blob storage is a separate replaceable
 boundary: put immutable content by digest, read verified bytes, test existence,
 and report durable completion. Filesystem storage is implemented in this slice.
-An S3-compatible implementation and a separate Azure Blob adapter are future
-options, not current capabilities. Metadata publication must never reference
-an unavailable blob; provider retries need idempotency and integrity checks.
+A standalone experimental S3-compatible adapter is implemented separately from
+the authoritative store. It uses signed conditional creation, read-back digest
+verification and bounded inventory; it never overwrites or deletes objects.
+Its tests use the published AWS signature vector and an original loopback HTTPS
+mock with conflict, lost-acknowledgment, corruption, quota and pagination faults.
+No provider account was accessed and compatibility with an actual provider is
+unverified. The authoritative service and offline backup still use filesystem
+storage; provider-aware coordinated backup is required before this adapter can
+be selected. Azure Blob requires a separate adapter. Metadata publication must
+never reference an unavailable blob; provider retries need idempotency and
+integrity checks.
 No provider account or cloud dependency is required by the local deployment.
+
+The S3 adapter assumes one writer exclusively owns its configured bucket prefix.
+Inventory is neither a cross-object transaction nor a multi-writer quota fence.
+It supports bounded single-object transfers, not multipart or resumable uploads.
+Storage credentials are supplied explicitly by the service operator and remain
+separate from user and connector capabilities.
 
 Remote access to an on-premises service should use an outbound connector to an
 HTTPS relay, guided pairing and authenticated user login. Clients should not
@@ -195,6 +209,38 @@ No public listener, remote deployment, external identity provider, approvals or
 revision lifecycle is implied by this increment. Backup
 must include the complete service store and metadata; version history alone is
 not a backup. Any incomplete behavior remains disabled or explicitly reported.
+
+### Local HTTPS packaging rehearsal
+
+`solidcraft-pdm rehearse-https CONFIG` starts a disposable, already enrolled
+service from a bounded configuration file. The configuration contains only
+absolute paths to the existing store, DER certificate-chain files, a PKCS8 key
+file, and a loopback bind address. It rejects unknown fields, embedded tokens,
+public addresses, links/reparse paths, oversized TLS material and missing
+enrollment before starting the service. It never enrolls or resets an archive.
+
+```json
+{
+  "store": "/private/pdm/store",
+  "bind": "127.0.0.1:0",
+  "certificate_chain": ["/private/pdm/service.der"],
+  "private_key": "/private/pdm/service-key.der"
+}
+```
+
+The launcher reads one credential-free readiness receipt containing the bound
+address and existing server identity. Its private stdin stays open for the
+rehearsal; sending `shutdown` followed by a newline, or closing stdin, stops
+that process. This is a packaging test entry point, not an installed daemon or
+a hosted deployment. An installer must supply its own trusted certificate and
+private key; repository test fixtures are intentionally public test material.
+
+The expanded backend suite passed 114 tests, including the real CLI subprocess,
+authenticated HTTPS publication, clean shutdown/store-lock release and rejection
+of a public bind without creating an archive. Strict Clippy and resolved licence
+checks passed; the licence report notes the expected generated-file update on
+main. The authenticated identity operation returns the actual configured
+principal and role; it accepts no caller-selected account or permission fields.
 
 ## Verified offline backup and restore foundation
 
