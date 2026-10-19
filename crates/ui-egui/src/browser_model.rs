@@ -17,6 +17,7 @@ pub(super) struct Model {
     pub bodies: HashMap<u64, Vec<usize>>,
     pub sketches: HashMap<u64, Vec<usize>>,
     pub planes: HashMap<u64, Vec<usize>>,
+    pub features: HashMap<u64, Vec<usize>>,
     pub children: HashMap<u64, Vec<u64>>,
     placements: HashMap<Vec<u64>, Option<Arc<OccurrencePlacement>>>,
 }
@@ -30,7 +31,9 @@ impl Model {
         }
         let mut sketches: HashMap<u64, Vec<usize>> = HashMap::new();
         let mut planes: HashMap<u64, Vec<usize>> = HashMap::new();
+        let mut features: HashMap<u64, Vec<usize>> = HashMap::new();
         for (i, feature) in session.doc.features.iter().enumerate() {
+            features.entry(feature.component).or_default().push(i);
             let index = match feature.kind {
                 FeatureKind::Sketch { .. } => &mut sketches,
                 FeatureKind::ConstructionPlane { .. } => &mut planes,
@@ -49,6 +52,7 @@ impl Model {
             bodies,
             sketches,
             planes,
+            features,
             children,
             placements: HashMap::new(),
         }

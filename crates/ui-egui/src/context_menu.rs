@@ -37,6 +37,10 @@ pub enum Target {
     Plane {
         id: u64,
     },
+    /// A native feature row in a component's Features folder.
+    Feature {
+        id: u64,
+    },
     /// An origin plane (XY, XZ or YZ).
     OriginPlane {
         name: String,
@@ -270,6 +274,7 @@ pub fn target_bodies(app: &SolveApp, target: &Target) -> Vec<String> {
         Target::Occurrence { path } => app.session.occurrence_bodies(path, true).unwrap_or_default(),
         Target::Group { id, .. } => crate::browser::group_bodies(app, *id),
         Target::Sketch { .. }
+        | Target::Feature { .. }
         | Target::Plane { .. }
         | Target::OriginPlane { .. }
         | Target::Folder { .. }
@@ -329,6 +334,10 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
         Target::Viewport => viewport_items(app),
         Target::Body { name } => body_items(app, std::slice::from_ref(name), true),
         Target::Sketch { id } => sketch_items(app, *id),
+        Target::Feature { id } => vec![
+            act("ui.editFeature", "Edit Feature", "").with(json!({"feature":id})).on(app.session.doc.feature(*id).is_some()),
+            act("ui.findTimeline", "Find in Timeline", "").with(json!({"feature":id})).on(app.session.doc.feature(*id).is_some()),
+        ],
         Target::Plane { id } => plane_items(app, *id),
         Target::OriginPlane { name } => origin_plane_items(app, name),
         Target::Component { id } => component_items(app, *id),
@@ -386,7 +395,13 @@ fn picked_face_feature(app: &SolveApp) -> Option<u64> {
     let name = names.get(index)?;
     let (creator, _) = name.strip_prefix('F')?.split_once(':')?;
     let id = creator.parse::<u64>().ok()?;
-    app.session.doc.feature(id).map(|f| f.id)
+    let owner = app.session.doc.feature(body.feature)?;
+    if matches!(owner.kind, solidcraft_engine::doc::FeatureKind::Import { .. } | solidcraft_engine::doc::FeatureKind::MeshImport { .. })
+        && id != owner.id
+    {
+        return None;
+    }
+    app.session.doc.feature(id).filter(|f| f.component == app.session.doc.model_body_component(body)).map(|f| f.id)
 }
 
 /// A feature and its profile sketch, if it has one.
@@ -452,7 +467,7 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
         v.push(act("ui.delete", "Delete", "delete").key("Del"));
         v.push(act(if hidden { "ui.show" } else { "ui.hide" }, "Show/Hide", "eye").key("V").with(json!({ "bodies": [face] })));
         v.push(Item::sep());
-        v.push(act("ui.findBrowser", "Find in Browser", "").with(json!({ "body": face })));
+        v.push(act("ui.findBrowser", "Find in Browser", "").with(json!({ "body": face, "feature": feature })).on(feature.is_some()));
         v.push(act("ui.findTimeline", "Find in Timeline", "").with(json!({ "feature": feature })).on(feature.is_some()));
         v.push(Item::sep());
         v.push(cmd(app, "solid.press_pull", "Press Pull"));
@@ -989,8 +1004,16 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
             app.pick_save_command(&format!("{name}.step"), &["step", "stp", "igs", "stl", "3mf", "obj"], "file.export", json!({"bodies": bodies}));
         }
         "ui.findBrowser" => {
+            if let Some(feature) = id_of(&p, "feature") {
+                if let Some(body) = p.get("body").and_then(Value::as_str) {
+                    crate::browser::reveal_feature(app, feature, body);
+                }
+                return;
+            }
             if let Some(b) = p.get("body").and_then(Value::as_str) {
                 app.ui.show_browser = true;
+                app.preferences.timeline_left_browser_collapsed = false;
+                app.tree.reveal_feature = None;
                 app.tree.reveal = Some(b.to_string());
                 let _ = app.run("select.set", json!({"items": [{"type": "body", "name": b}]}));
             }

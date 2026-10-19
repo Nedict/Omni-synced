@@ -13,6 +13,12 @@ mod occurrence_ui_tests;
 #[path = "browser_model.rs"]
 mod model;
 
+mod features;
+
+pub(crate) fn reveal_feature(app: &mut SolveApp, id: u64, body: &str) {
+    features::reveal(app, id, body);
+}
+
 #[cfg(test)]
 #[path = "browser_model_tests.rs"]
 mod model_tests;
@@ -57,6 +63,8 @@ pub struct TreeState {
     pub expanded: BTreeSet<String>,
     /// Scroll to this body's row and open its folders (Find in Browser).
     pub reveal: Option<String>,
+    /// A native feature to reveal in its placed component's Features folder.
+    pub(super) reveal_feature: Option<features::Reveal>,
     /// The Move/Copy panel of an occurrence.
     pub occurrence_move: Option<OccMove>,
     /// The Redefine Sketch Plane panel (sketch id).
@@ -461,7 +469,7 @@ fn sel_of_key(k: &str) -> Option<Sel> {
     if let Some(b) = k.strip_prefix("b:") {
         return Some(Sel::Body { name: b.to_string() });
     }
-    if let Some(s) = k.strip_prefix("s:") {
+    if let Some(s) = k.strip_prefix("s:").or_else(|| k.strip_prefix("f:")) {
         return s.parse().ok().map(|id| Sel::Feature { id });
     }
     None
@@ -795,6 +803,7 @@ fn component_rows(app: &mut SolveApp, ui: &mut egui::Ui, id: u64, depth: usize, 
     for folder in ["bodies", "sketches", "construction"] {
         folder_rows(app, ui, id, folder, d, acts);
     }
+    features::rows(app, ui, id, &[], d, acts);
     if id == 0 {
         crate::dialogs_assembly::browser_joints(app, ui, d);
     }
@@ -895,6 +904,7 @@ fn occurrence_rows(app: &mut SolveApp, ui: &mut egui::Ui, path: Vec<u64>, depth:
     for folder in ["bodies", "sketches", "construction"] {
         occurrence_folder_rows(app, ui, placement.component, &path, folder, depth + 1, acts);
     }
+    features::rows(app, ui, placement.component, &path, depth + 1, acts);
     let children = model_children(app, placement.component);
     if path.len() < 64 {
         for occurrence in children {
