@@ -87,6 +87,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     #[cfg(not(target_arch = "wasm32"))]
     if app.preferences.agent_chat_popped {
         window(app, &ctx);
+        show_drop_hint(app, &ctx);
         return;
     }
     let t = Tokens::get();
@@ -304,12 +305,24 @@ fn window(app: &mut SolveApp, ctx: &egui::Context) {
         // The picture viewer opens over this window, where the click was, not over the main one.
         gallery_window(app, ui.ctx());
         if class == egui::ViewportClass::EmbeddedWindow {
-            // Floating inside the app: its handles are the main window's, as the panel's are.
+            // Floating inside the app: its handles are the main window's, as the panel's are. The
+            // app's own drop handling sees the drops, so the window counts as the chat's place
+            // (the hint is drawn by the caller).
             crate::scenario::publish_rect("agent_chat:window", r.response.rect);
             app.agent_chat.panel_rect = Some(r.response.rect);
+            app.agent_chat.drop_rect = Some(r.response.rect);
             return;
         }
         let ctx = ui.ctx().clone();
+        // A window of its own gets the drops made on it: the whole window is the chat, so there
+        // is no pointer to ask about (the main window's handling never sees them).
+        let dropped = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));
+        if !dropped.is_empty() {
+            attach_dropped(app, dropped.iter().map(|f| f.path().to_path_buf()));
+        }
+        if ctx.input(|i| !i.raw.hovered_files.is_empty()) {
+            drop_hint(&ctx, r.response.rect);
+        }
         if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT)) {
             toggle(app);
         }
