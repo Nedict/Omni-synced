@@ -226,9 +226,10 @@ impl Recording {
     /// any step: an axis with a wider range doesn't win through cross-talk alone. A raw axis that
     /// only wandered scores low, since its share is of at least four times its wander at rest.
     ///
-    /// A device that doesn't come back to the same place after each release (spacenavd keeps a
-    /// relative-axis device's last small report, #2778) rests, here, at the middle of where it
-    /// settled, and its dead zone covers the furthest of those, so a stuck value doesn't creep.
+    /// A device that doesn't come back to the same place after each release (a drifting stick, or
+    /// spacenavd keeping a relative-axis device's last small report, #2778) rests, here, at the
+    /// middle of where it settled, and its dead zone covers the furthest of those plus its rest
+    /// wander, so where it stops doesn't creep.
     pub fn solve(&self) -> Result<Calibration, Problem> {
         let rest = self.rest.mean().ok_or(Problem::NoRest)?;
         let mut means = [[0.0; 6]; 12];
@@ -271,16 +272,16 @@ impl Recording {
 impl Recording {
     /// Raw axis `r`'s rest and dead zone, given the rest stage's: unchanged while every release
     /// came back within the wander; otherwise the mean of the rest stage and every settled
-    /// reading, with a dead zone out to the furthest of them.
+    /// reading, with a dead zone out to the furthest of them and the wander on top, since each was
+    /// one noisy reading.
     fn settled_rest(&self, r: usize, rest: f64, wander: f64) -> (f64, f64) {
         let settled: Vec<f64> = self.settled.iter().flatten().filter_map(|raw| raw.get(r)).map(|&value| f64::from(value)).collect();
         if settled.iter().all(|value| (value - rest).abs() <= wander) {
             return (rest, wander);
         }
         let middle = ((rest + settled.iter().sum::<f64>()) / (settled.len() + 1) as f64).round();
-        // The rest stage's whole wander moves with its centre, so both its extremes stay inside.
-        let furthest = settled.iter().map(|value| (value - middle).abs()).fold(wander + (rest - middle).abs(), f64::max);
-        (middle, furthest)
+        let furthest = settled.iter().chain([&rest]).map(|value| (value - middle).abs()).fold(0.0, f64::max);
+        (middle, furthest + wander)
     }
 }
 
@@ -317,9 +318,10 @@ pub const MIN_SHARE: f64 = 1.0 / 12.0;
 pub const REST_SECONDS: f64 = 1.5;
 /// Seconds the cap has to be held out in a step's direction before letting go finishes it.
 pub const HOLD_SECONDS: f64 = 0.4;
-/// Seconds a reading has to stay exactly the same, at most [`SETTLED_SHARE`] of the step's peak
-/// from rest, to count as let go even outside the rest wander, on a source that sends nothing at
-/// rest ([`Wizard::quiet_at_rest`]): it may have stopped short of rest (#2778).
+/// Seconds a reading has to stay steady (each raw axis within twice its rest wander, so exactly
+/// still on a source that sends nothing at rest), at most [`SETTLED_SHARE`] of the step's peak
+/// from rest, to count as let go even outside the rest wander: the cap stopped short of rest, as a
+/// drifting stick does, or spacenavd with a relative-axis device (#2778).
 pub const SETTLE_SECONDS: f64 = 0.3;
 /// How far from rest, as a share of the furthest a step went, a reading may have stopped and
 /// still count as let go.
@@ -343,8 +345,8 @@ pub enum Stage {
 /// wandered at rest, each axis measured against its own wander: the least [`Recording::solve`]
 /// accepts. So whatever the solver would accept can be recorded, a noisy axis doesn't hold up a
 /// quiet one, and the solver judges whether each direction went far enough. "Let go" means every
-/// raw axis is back within its rest wander, or, from a source that sends nothing at rest, the
-/// reading has stopped changing close to rest ([`SETTLE_SECONDS`], [`SETTLED_SHARE`]).
+/// raw axis is back within its rest wander, or the reading has gone steady close to rest
+/// ([`SETTLE_SECONDS`], [`SETTLED_SHARE`]).
 #[derive(Clone, Debug)]
 pub struct Wizard {
     stage: Stage,
@@ -353,16 +355,13 @@ pub struct Wizard {
     seconds: f64,
     /// The dead zone the user set while calibrating, which the result carries.
     dead_zone_share: f32,
-    /// The previous reading, and for how long it has stayed exactly the same.
-    last: Option<[i16; 6]>,
-    unchanged: f64,
-    /// The furthest any raw axis went from rest in this step, in rest wanders (as [`Wizard::away`]).
+    /// Where the reading has stayed steady since, and for how long.
+    anchor: Option<[i16; 6]>,
+    steady: f64,
+    /// The furthest any raw axis went from rest in this step, in raw units.
     peak: f64,
     /// Where the previous step settled: while the reading stays there, nobody has touched the cap.
     settled: Option<[i16; 6]>,
-    /// The source sends nothing while the cap is still, so a reading that stops changing may be
-    /// the cap let go short of rest.
-    quiet_at_rest: bool,
 }
 
 impl Default for Wizard {
@@ -372,23 +371,15 @@ impl Default for Wizard {
             recording: Recording::default(),
             seconds: 0.0,
             dead_zone_share: 0.0,
-            last: None,
-            unchanged: 0.0,
+            anchor: None,
+            steady: 0.0,
             peak: 0.0,
             settled: None,
-            quiet_at_rest: false,
         }
     }
 }
 
 impl Wizard {
-    /// For a source that sends nothing while the cap is still, such as a driver that reports only
-    /// changes (spacenavd, 3DxWare). A device it reads may stop short of rest after a release, and
-    /// stay there (#2778). One that keeps reporting, as a HID device does, uses [`Wizard::default`].
-    pub fn quiet_at_rest() -> Self {
-        Self { quiet_at_rest: true, ..Self::default() }
-    }
-
     pub fn stage(&self) -> Stage {
         self.stage
     }
@@ -406,8 +397,10 @@ impl Wizard {
     pub fn feed(&mut self, raw: [i16; 6], seconds: f64) {
         // A stalled frame shouldn't finish a stage on its own.
         let seconds = if seconds.is_finite() { seconds.clamp(0.0, 0.1) } else { 0.0 };
-        self.unchanged = if self.last == Some(raw) { self.unchanged + seconds } else { 0.0 };
-        self.last = Some(raw);
+        match self.anchor {
+            Some(anchor) if self.near(anchor, raw) => self.steady += seconds,
+            _ => (self.anchor, self.steady) = (Some(raw), 0.0),
+        }
         match self.stage {
             Stage::Rest => {
                 self.recording.rest(raw);
@@ -420,15 +413,16 @@ impl Wizard {
                 // Still where the last step settled: the cap hasn't been touched yet. Deliberately
                 // skips the peak and hold bookkeeping; a device that rests exactly there reads as
                 // untouched until it moves, which is what it is.
-                if self.settled == Some(raw) {
+                if self.settled.is_some_and(|settled| self.near(settled, raw)) {
                     return;
                 }
                 self.settled = None;
                 let away = self.away(raw);
-                self.peak = self.peak.max(away);
-                // A reading that repeats close to rest is the cap settling, not held.
-                let settling = self.quiet_at_rest && self.unchanged > 0.0 && away <= SETTLED_SHARE * self.peak;
-                if away <= 0.5 || settling && self.unchanged >= SETTLE_SECONDS {
+                let distance = self.distance(raw);
+                self.peak = self.peak.max(distance);
+                // A reading that stays steady close to rest is the cap settling, not held.
+                let settling = self.steady > 0.0 && distance <= SETTLED_SHARE * self.peak;
+                if away <= 0.5 || settling && self.steady >= SETTLE_SECONDS {
                     if self.seconds >= HOLD_SECONDS {
                         self.recording.settled(index, raw);
                         self.enter(if index + 1 < STEPS.len() { Stage::Step(index + 1) } else { Stage::Done });
@@ -452,7 +446,7 @@ impl Wizard {
     pub fn back(&mut self) {
         match self.stage {
             Stage::Rest => {}
-            Stage::Step(0) => *self = Self { quiet_at_rest: self.quiet_at_rest, ..Self::default() },
+            Stage::Step(0) => *self = Self::default(),
             Stage::Step(index) => {
                 self.recording.clear_step(index);
                 self.recording.clear_step(index - 1);
@@ -485,6 +479,24 @@ impl Wizard {
         self.stage = stage;
         self.seconds = 0.0;
         self.peak = 0.0;
+    }
+
+    /// How far the reading is from rest, in raw units, on the raw axis furthest out.
+    fn distance(&self, raw: [i16; 6]) -> f64 {
+        raw.iter()
+            .enumerate()
+            .map(|(r, &value)| (f64::from(value) - self.recording.rest.rest_and_wander(r).map_or(0.0, |(rest, _)| rest)).abs())
+            .fold(0.0, f64::max)
+    }
+
+    /// Whether two readings are the same position, give or take the noise: each raw axis within
+    /// twice its rest wander (the noise's whole spread), so exactly equal on an axis that didn't
+    /// wander.
+    fn near(&self, a: [i16; 6], b: [i16; 6]) -> bool {
+        a.iter().zip(b).enumerate().all(|(r, (&a, b))| {
+            let wander = self.recording.rest.rest_and_wander(r).map_or(0.0, |(_, wander)| wander);
+            (f64::from(a) - f64::from(b)).abs() <= 2.0 * wander
+        })
     }
 
     /// How far the reading is from rest, on the raw axis furthest out, as a share of what counts as
@@ -850,7 +862,7 @@ mod tests {
     fn a_device_that_stops_short_of_rest_after_each_release_finishes_and_doesnt_creep() {
         // Nothing arrives at rest, so the reading stays exactly where the last report left it:
         // first wherever the cap was last let go, then after each step a different place.
-        let mut wizard = Wizard::quiet_at_rest();
+        let mut wizard = Wizard::default();
         hold(&mut wizard, STUCK[0], REST_SECONDS + 0.1);
         for (index, reading) in PRO.into_iter().enumerate() {
             assert_eq!(wizard.stage(), Stage::Step(index));
@@ -875,7 +887,7 @@ mod tests {
     fn a_steady_hold_that_repeats_one_reading_is_still_a_hold() {
         // spacenavd sends only on change, so a cap held still at full deflection repeats one
         // reading for far longer than SETTLE_SECONDS; it is held, not let go.
-        let mut wizard = Wizard::quiet_at_rest();
+        let mut wizard = Wizard::default();
         hold(&mut wizard, STUCK[0], REST_SECONDS + 0.1);
         hold(&mut wizard, PRO[0], 1.0);
         assert_eq!((wizard.stage(), wizard.progress()), (Stage::Step(0), 1.0));
@@ -883,29 +895,54 @@ mod tests {
         assert_eq!(wizard.stage(), Stage::Step(1));
     }
 
+    /// `reading` and `reading + jitter` in turn, for `seconds`, a frame every 20 ms.
+    fn jitter(wizard: &mut Wizard, reading: [i16; 6], jitter: [i16; 6], seconds: f64) {
+        let shaken: [i16; 6] = std::array::from_fn(|r| reading[r] + jitter[r]);
+        for frame in 0..(seconds / 0.02).round() as usize {
+            wizard.feed(if frame % 2 == 0 { reading } else { shaken }, 0.02);
+        }
+    }
+
     #[test]
-    fn a_low_steady_hold_after_the_peak_ends_a_step_only_from_a_source_quiet_at_rest() {
-        // Pushed all the way, then held exactly still at a fifth of the way out.
-        let low = PRO[0].map(|value| value / 5);
-        let mut reporting = Wizard::default();
-        rest_then(&mut reporting);
-        hold(&mut reporting, PRO[0], 0.5);
-        hold(&mut reporting, low, 1.0);
-        assert_eq!(reporting.stage(), Stage::Step(0));
-        let mut quiet = Wizard::quiet_at_rest();
-        rest_then(&mut quiet);
-        hold(&mut quiet, PRO[0], 0.5);
-        hold(&mut quiet, low, SETTLE_SECONDS + 0.1);
-        assert_eq!(quiet.stage(), Stage::Step(1));
-        // Starting over from the first step keeps the kind of source.
-        quiet.back();
-        quiet.back();
-        assert!(quiet.quiet_at_rest);
+    fn a_drifting_device_that_settles_off_centre_after_each_release_finishes_and_doesnt_creep() {
+        // It keeps reporting, noisily, but after each release settles somewhere off its rest:
+        // a worn stick, not only spacenavd. The noise stays within its rest wander (`STILL`).
+        const NOISE: [i16; 6] = [3, -2, 0, 1, 2, 0];
+        let mut wizard = Wizard::default();
+        rest_then(&mut wizard);
+        for (index, reading) in PRO.into_iter().enumerate() {
+            assert_eq!(wizard.stage(), Stage::Step(index));
+            if index > 0 {
+                // Sitting where the last step settled isn't a hold.
+                jitter(&mut wizard, STUCK[index], NOISE, 1.0);
+                assert_eq!((wizard.stage(), wizard.progress()), (Stage::Step(index), 0.0));
+            }
+            hold(&mut wizard, reading, 0.5);
+            jitter(&mut wizard, STUCK[index + 1], NOISE, SETTLE_SECONDS + 0.1);
+        }
+        assert_eq!(wizard.stage(), Stage::Done);
+        let calibration = wizard.result().unwrap().unwrap();
+        assert!(calibration.axes.iter().enumerate().all(|(c, axis)| axis.source == c && !axis.reversed), "{calibration:?}");
+        for stuck in &STUCK[1..] {
+            let shaken: [i16; 6] = std::array::from_fn(|r| stuck[r] + NOISE[r]);
+            assert_eq!((calibration.apply(*stuck), calibration.apply(shaken)), ([0; 6], [0; 6]), "{stuck:?} {calibration:?}");
+        }
+        assert!(calibration.apply(PRO[0])[0] >= FULL_SCALE - 1, "{calibration:?}");
+    }
+
+    #[test]
+    fn a_reading_still_moving_close_to_rest_doesnt_end_a_step() {
+        // Past the peak and close to rest, but moving more than the noise: still on the way back.
+        let mut wizard = Wizard::default();
+        rest_then(&mut wizard);
+        hold(&mut wizard, PRO[0], 0.5);
+        jitter(&mut wizard, PRO[0].map(|value| value / 5), [20, 0, 0, 0, 0, 0], 1.0);
+        assert_eq!(wizard.stage(), Stage::Step(0));
     }
 
     #[test]
     fn two_steps_in_a_row_that_stop_at_the_same_place_both_finish() {
-        let mut wizard = Wizard::quiet_at_rest();
+        let mut wizard = Wizard::default();
         hold(&mut wizard, STUCK[0], REST_SECONDS + 0.1);
         for reading in &PRO[..2] {
             hold(&mut wizard, *reading, 0.5);
