@@ -108,6 +108,8 @@ the clean-room and licence rules, and where help is wanted most. Open work is in
 
 ## Sponsors
 
+[![CI powered by Blacksmith](docs/sponsors/blacksmith-ci-powered.png)](https://www.blacksmith.sh)
+
 SolidCraft's continuous integration runs on [Blacksmith](https://www.blacksmith.sh), which
 sponsors its CI minutes.
 
