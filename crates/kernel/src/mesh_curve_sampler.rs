@@ -385,3 +385,7 @@ mod tests {
         assert!(budget.cells.lock().unwrap().is_empty());
     }
 }
+
+#[cfg(test)]
+#[path = "mesh_curve_sampler_mesh_tests.rs"]
+mod mesh_tests;
