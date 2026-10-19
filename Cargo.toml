@@ -123,6 +123,9 @@ incremental = false
 
 [profile.ci.package."*"]
 opt-level = 2
+# No line tables for dependencies: they were over a third of the test archive every CI shard
+# downloads. Our own crates keep theirs, so a backtrace still names file:line in them.
+debug = false
 
 [profile.release]
 opt-level = 3
