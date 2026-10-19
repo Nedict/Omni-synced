@@ -1305,6 +1305,7 @@
   "ui.newSketchGroup": "Nouveau groupe d'esquisses",
   "ui.new_body": "Nouveau corps",
   "ui.new_design": "Nouvelle conception",
+  "ui.no_geometry_yet": "Aucune géométrie pour l'instant",
   "ui.no_slicer_found": "Aucun slicer trouvé",
   "ui.normal": "Normal",
   "ui.normalConstruction": "Normal / Construction",
