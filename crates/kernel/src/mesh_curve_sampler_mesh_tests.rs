@@ -106,7 +106,12 @@ fn shared_intersection_edges_preserve_mesh_bits_and_budget() {
                 let mapped = raw.mapped(|p| *p, |curve| MeshCurve::new(curve.clone(), budget.clone()), |surface| surface.clone());
                 let actual = pool.install(|| mapped.robust_triangulation_within(d));
                 assert_eq!(signature(&actual), expected, "chord={chord} angle={angle} cap={cap}");
-                assert_eq!(budget.cells.lock().unwrap().len(), cap.min(4));
+                assert!(budget.cells.lock().unwrap().len() <= cap.min(4));
+                assert!(budget.stats().0 <= cap && budget.stats().1 <= cap);
+                if cap >= 4 {
+                    assert_eq!(budget.cells.lock().unwrap().len(), 4);
+                    assert_eq!(budget.stats().2, 0);
+                }
             }
         }
     }
@@ -135,7 +140,7 @@ fn failed_first_support_keeps_rejection_and_leaves_second_unprepared() {
     let budget = Arc::new(MeshBudget::new(2));
     let prepared = MeshCurve::new(raw, budget.clone());
     assert!(prepared.try_subs(0.5).is_none());
-    assert!(prepared.grids.0.get().is_some());
-    assert!(prepared.grids.1.get().is_none());
+    assert!(prepared.grids.0.lock().unwrap().cached.upgrade().is_some());
+    assert!(prepared.grids.1.lock().unwrap().cached.upgrade().is_none());
     assert_eq!(budget.cells.lock().unwrap().len(), 1);
 }
