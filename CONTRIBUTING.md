@@ -148,6 +148,8 @@ the most complete description of the house style.
 A geometry change that changes the robustness goldens re-records them in the same pull request:
 `ROBUSTNESS_GOLDENS_BLESS="why it changed" cargo test --profile ci -p solidcraft-engine --lib robustness_goldens::`
 (see [docs/robustness.md](docs/robustness.md)); CI runs every seed on pull requests that touch geometry.
+[docs/mutation-testing.md](docs/mutation-testing.md) shows how to find kernel behaviour these
+black-box suites miss.
 
 **UI scenarios** drive the real app headless: start a tool, click a plane or a sketch point,
 press keys, then assert on the result.
@@ -189,17 +191,17 @@ the same commit; otherwise it runs the full suite.
 **CI shards the tests.** One job builds them into a cargo-nextest archive; two shards run on
 pull requests and four during full validation. Every test runs in its own process: don't rely
 on state left by another test.
-Pull requests skip a few heavy tests (one to four minutes each), which run in full validation
+Pull requests skip a few heavy tests (one to twelve minutes each), which run in full validation
 (the merge queue, nightly, manual runs and pushes to `main` not already tested by the queue).
 Check that validation after merging. They are listed in
 `.config/nextest.toml` and the [testing page](docs/book/src/dev/testing.md):
 
 - `solidcraft-engine`: `tests::hostile_params_never_panic`, everything in `tests::robustness` and
-  the seeds of `tests::robustness_goldens` (`seed_00` … `seed_95`; pull requests matching the workflow's geometry paths run all seeds),
+  the seeds of `tests::robustness_goldens` (`seed_00` … `seed_95`; pull requests matching the workflow's geometry paths run all but the slowest, `SLOW_SEEDS` in `ci.yml`),
   `pattern_suppress_tests::enclosure_arc_extinction_keeps_a_real_sharp_inner_lip_after_resize_and_reopen`,
   `pattern_suppress_tests::enclosure_datums_follow_wall_height_and_board_depth_with_material_proofs`,
   `cmd::plastic::tests::enclosure_snap_fit_follows_resized_front_wall`, the `atomic_commands` contract tests
-- `solidcraft-kernel`: `tests::boolean_identity_on_tangent_primitives`, and the `boolean_props` property tests
+- `solidcraft-kernel`: `tests::boolean_identity_on_tangent_primitives`, `tspline::tests::hostile_tsplines_never_panic`, and the `boolean_props` property tests
   (these run only in the nightly "Property tests" job: their inputs are random, so main skips them too)
 - `solidcraft-ui-egui` scenarios: `acceptance_sensor_enclosure`
 

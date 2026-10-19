@@ -119,7 +119,7 @@ fn solid(i: TOut, front: bool) -> vec4<f32> {
     let fw = fwidth(ndv);
     if (clipped(i.wp)) { discard; }
     if (!front && length(u.clip.xyz) > 0.5) {
-        // The cut face in its body's colour (as Fusion's "from component"), tinted toward the
+        // The cut face in its body's colour ("from component" colouring), tinted toward the
         // cap colour so it reads as a cut, hatched at 45 degrees on screen.
         let base = mix(i.c.rgb, u.cap.rgb, 0.35);
         let h = fract((i.pos.x + i.pos.y) / 9.0);

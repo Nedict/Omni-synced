@@ -91,16 +91,8 @@ fn continuous(mut cam: Camera, p: &Value) -> Result<Value> {
                 cam.pan(delta.x, delta.y, viewport()?.y);
             } else if p.get("pivot").is_some() {
                 let pivot = req_vec3(cmd, p, "pivot")?;
-                let size = viewport()?;
-                let before = cam.to_screen(pivot, size.x, size.y, 1.0);
-                cam.orbit(delta.x, delta.y);
-                let after = cam.to_screen(pivot, size.x, size.y, 1.0);
-                if let (Some((ax, ay, _)), Some((bx, by, _))) = (before, after) {
-                    // Pan operates at target depth. Perspective screen correction must instead
-                    // use the pivot's depth after orbiting; lateral pan leaves that depth fixed.
-                    let scale = if cam.fov > 0.0 { (cam.eye() - pivot).dot(cam.back()) / cam.distance } else { 1.0 };
-                    cam.pan((ax - bx) * scale, (ay - by) * scale, size.y);
-                }
+                viewport()?;
+                cam.orbit_about(delta.x, delta.y, pivot);
             } else {
                 cam.orbit(delta.x, delta.y);
             }
