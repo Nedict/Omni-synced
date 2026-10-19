@@ -88,6 +88,9 @@ left are checked in parallel. `inspect.interference` remains for the overlaps al
 pairs whose meshes stay apart without intersecting them, intersects the rest in parallel, and
 returns after `budget_s` seconds (default 240) at most, listing the pairs it had no time for as
 not checked.
+Mesh bodies (STL, 3MF and OBJ imports) are not checked by either command: each is listed in
+`unchecked` as `{a: name, b: null, reason: "mesh body: not checked"}`, so `count: 0` or an empty
+`overlaps` is not mistaken for "no overlap" when a mesh body was in the design.
 
 **Gear**, **Rack and Pinion** and **Screw** (on the **ASSEMBLE** panel) are motion links whose
 ratio comes from the parts rather than a typed number:
