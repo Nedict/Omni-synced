@@ -270,15 +270,44 @@ impl Store {
     }
 
     pub fn open(root: &Path) -> Result<Self, Error> {
+        Self::open_inner(root, None)
+    }
+    /// Experimental explicit provider selection. Never migrates a filesystem
+    /// archive or discovers credentials/configuration from the environment.
+    pub fn open_with_blob_store(root: &Path, blobs: Box<dyn blob_store::BlobStore>) -> Result<Self, Error> {
+        if !root.is_absolute() || root.components().any(|part| matches!(part, std::path::Component::ParentDir)) {
+            return Err(Error::Invalid("external store requires absolute path without parent traversal"));
+        }
+        let binding = blobs.binding();
+        binding.validate()?;
+        if !matches!(binding, blob_store::BlobBinding::External { .. }) {
+            return Err(Error::Invalid("external blob binding required"));
+        }
+        Self::open_inner(root, Some(blobs))
+    }
+    fn open_inner(root: &Path, blobs: Option<Box<dyn blob_store::BlobStore>>) -> Result<Self, Error> {
         reject_symlink_ancestors(root)?;
+        reject_symlink_ancestors(&root.join("writer.lock"))?;
         fs::create_dir_all(root)?;
         let lock = OpenOptions::new().create(true).truncate(false).read(true).write(true).open(root.join("writer.lock"))?;
         lock.try_lock().map_err(|_| Error::Invalid("store is already open"))?;
         if root.join("restore.pending").try_exists()? {
             return Err(Error::Invalid("interrupted restore; preserve this directory and restore to a new destination"));
         }
-        let managed = managed::ManagedStore::open(root)?;
+        let managed = match blobs {
+            Some(blobs) => managed::ManagedStore::open_external(root, blobs)?,
+            None => managed::ManagedStore::open(root)?,
+        };
         Ok(Self { root: root.to_path_buf(), _lock: lock, managed })
+    }
+    pub(crate) fn managed_snapshot(&self) -> Result<managed::ManagedSnapshot, Error> {
+        self.managed.snapshot()
+    }
+    pub(crate) fn blob_inventory(&self) -> Result<Vec<blob_store::BlobReceipt>, Error> {
+        self.managed.blob_inventory()
+    }
+    pub(crate) fn get_verified_blob(&self, hash: &str) -> Result<Vec<u8>, Error> {
+        self.managed.get_verified_blob(hash)
     }
 
     fn document_path(&self, document: &str) -> Result<PathBuf, Error> {
@@ -471,7 +500,17 @@ pub(crate) fn reject_symlink_ancestors(path: &Path) -> Result<(), Error> {
     for ancestor in path.ancestors() {
         match fs::symlink_metadata(ancestor) {
             Ok(metadata) if metadata.file_type().is_symlink() => return Err(Error::Invalid("symlink store path")),
-            Ok(_) => {}
+            Ok(metadata) => {
+                #[cfg(windows)]
+                {
+                    use std::os::windows::fs::MetadataExt;
+                    if metadata.file_attributes() & 0x400 != 0 {
+                        return Err(Error::Invalid("reparse store path"));
+                    }
+                }
+                #[cfg(not(windows))]
+                let _ = metadata;
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }

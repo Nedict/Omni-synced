@@ -98,7 +98,7 @@ impl LoginTarget {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProfileData {
     target: TargetData,
@@ -109,7 +109,7 @@ struct ProfileData {
 /// field. An identity label in a saved profile never establishes authentication.
 /// Prefer `from_json` for bounded input; direct Deserialize callers must bound
 /// input before invoking serde (including certificate array allocation).
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(transparent)]
 pub struct Profile(ProfileData);
 impl<'de> Deserialize<'de> for Profile {
@@ -186,7 +186,7 @@ fn verified_profile(target: LoginTarget, identity: &AuthenticatedIdentity) -> Re
 /// Bind the expected server before the first request and reauthenticate identity.
 pub fn resume(profile: Profile, credentials: &impl CredentialStore) -> Result<AuthenticatedSession, LoginError> {
     let profile = Profile::from_data(profile.0)?;
-    let secret = credentials.get(&profile.key()?).map_err(|_| LoginError::CredentialUnavailable)?.ok_or(LoginError::CredentialMissing)?;
+    let secret = captured_user_credential(&profile, credentials)?;
     let client = LoginTarget(profile.0.target.clone()).client(&secret)?;
     let identity = client.authenticated_identity().map_err(|_| LoginError::AuthenticationFailed)?;
     if identity.server_id != profile.server_id() || identity.principal.id != profile.principal_id() {
@@ -210,6 +210,20 @@ pub fn enroll_local(
     trust: Trust,
     credentials: &impl CredentialStore,
 ) -> Result<(solidcraft_pdm::bootstrap::EnrollmentReceipt, Profile), LoginError> {
+    enroll_local_with_hook(root, administrator, origin, trust, credentials, |_, _| Ok(()))
+}
+
+/// Trusted installer hook after native credential capture and before registry
+/// publication. Persist only bounded public metadata; a hook failure keeps the
+/// captured credential and never publishes the administrator registry.
+pub fn enroll_local_with_hook(
+    root: &std::path::Path,
+    administrator: &str,
+    origin: &str,
+    trust: Trust,
+    credentials: &impl CredentialStore,
+    before_registry: impl FnOnce(&solidcraft_pdm::bootstrap::EnrollmentReceipt, &Profile) -> Result<(), LoginError>,
+) -> Result<(solidcraft_pdm::bootstrap::EnrollmentReceipt, Profile), LoginError> {
     if !root.is_absolute() || root.components().any(|part| matches!(part, std::path::Component::ParentDir)) {
         return Err(LoginError::InvalidProfile);
     }
@@ -228,11 +242,18 @@ pub fn enroll_local(
             credential_failure = true;
             return Err(solidcraft_pdm::Error::Invalid("native credential storage unavailable"));
         }
+        before_registry(receipt, &candidate).map_err(|_| solidcraft_pdm::Error::Invalid("native enrollment metadata persistence"))?;
         profile = Some(candidate);
         Ok(())
     })
     .map_err(|_| if credential_failure { LoginError::CredentialUnavailable } else { LoginError::EnrollmentFailed })?;
     Ok((receipt, profile.ok_or(LoginError::EnrollmentFailed)?))
+}
+
+/// Retrieve a captured scoped user bearer for a local installer's narrowly fenced
+/// enrollment recovery. This performs no network request and never uses legacy slots.
+pub(crate) fn captured_user_credential(profile: &Profile, credentials: &impl CredentialStore) -> Result<BearerSecret, LoginError> {
+    credentials.get(&profile.key()?).map_err(|_| LoginError::CredentialUnavailable)?.ok_or(LoginError::CredentialMissing)
 }
 
 #[cfg(test)]

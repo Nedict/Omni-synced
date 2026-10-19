@@ -8,7 +8,7 @@ use hyper::{
     body::{Bytes, Incoming},
 };
 use std::{
-    net::SocketAddr,
+    net::{SocketAddr, TcpListener},
     sync::{Arc, mpsc},
     thread,
     time::Duration,
@@ -23,7 +23,18 @@ pub struct HttpsServer {
     writer: Option<thread::JoinHandle<()>>,
 }
 impl HttpsServer {
-    pub fn start(mut store: Store, config: HttpsConfig) -> Result<Self, Error> {
+    pub fn start(store: Store, config: HttpsConfig) -> Result<Self, Error> {
+        Self::start_impl(store, config, None)
+    }
+    /// Keep an installer-selected loopback port reserved throughout enrollment.
+    /// This consumes the socket and never closes/rebinds it during startup.
+    pub fn start_loopback_with_listener(store: Store, config: HttpsConfig, listener: TcpListener) -> Result<Self, Error> {
+        if !listener.local_addr()?.ip().is_loopback() {
+            return Err(Error::Invalid("reserved HTTPS listener requires loopback"));
+        }
+        Self::start_impl(store, config, Some(listener))
+    }
+    fn start_impl(mut store: Store, config: HttpsConfig, reserved: Option<TcpListener>) -> Result<Self, Error> {
         if !store.has_configured_principals() {
             return Err(Error::Invalid("HTTPS requires configured principals"));
         }
@@ -43,7 +54,11 @@ impl HttpsServer {
                 }
             })
         });
-        match HttpListener::start(config, handler, 16, Duration::from_secs(15)) {
+        let listener = match reserved {
+            Some(listener) => HttpListener::start_with_listener(config, listener, handler, 16, Duration::from_secs(15)),
+            None => HttpListener::start(config, handler, 16, Duration::from_secs(15)),
+        };
+        match listener {
             Ok(listener) => Ok(Self { address: listener.address(), listener: Some(listener), writer: Some(writer) }),
             Err(error) => {
                 let _ = writer.join();

@@ -105,6 +105,34 @@ fn occupied_listener_startup_releases_the_writer_and_store_lock() {
     assert!(Store::open(&root.0).is_ok());
 }
 #[test]
+fn reserved_loopback_socket_is_used_without_closing_and_rebinding() {
+    let root = Temp::new();
+    server(&root).shutdown().unwrap();
+    let reserved = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = reserved.local_addr().unwrap();
+    let service = HttpsServer::start_loopback_with_listener(Store::open(&root.0).unwrap(), config(), reserved).unwrap();
+    assert_eq!(service.address(), address);
+    assert!(std::net::TcpListener::bind(address).is_err());
+    let client =
+        solidcraft_pdm::client::Client::https_with_ca(&format!("https://{address}"), solidcraft_pdm::AuthToken::parse(ALICE.into()).unwrap(), CA)
+            .unwrap();
+    assert_eq!(client.authenticated_identity().unwrap().principal.id, "alice");
+    service.shutdown().unwrap();
+    assert!(Store::open(&root.0).is_ok());
+}
+#[test]
+fn mismatched_reserved_socket_releases_port_and_store_without_public_binding() {
+    let root = Temp::new();
+    server(&root).shutdown().unwrap();
+    let reserved = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = reserved.local_addr().unwrap();
+    // Merely construct a public-address configuration; never bind that address.
+    let mismatch = HttpsConfig::from_der("0.0.0.0:0".parse().unwrap(), vec![CERT.to_vec()], KEY.to_vec()).unwrap();
+    assert!(HttpsServer::start_loopback_with_listener(Store::open(&root.0).unwrap(), mismatch, reserved).is_err());
+    assert!(std::net::TcpListener::bind(address).is_ok());
+    assert!(Store::open(&root.0).is_ok());
+}
+#[test]
 fn configured_roles_checkout_cas_and_receipt_survive_https() {
     let root = Temp::new();
     let server = server(&root);

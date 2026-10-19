@@ -176,9 +176,10 @@ verification and bounded inventory; it never overwrites or deletes objects.
 Its tests use the published AWS signature vector and an original loopback HTTPS
 mock with conflict, lost-acknowledgment, corruption, quota and pagination faults.
 No provider account was accessed and compatibility with an actual provider is
-unverified. The authoritative service and offline backup still use filesystem
-storage; provider-aware coordinated backup is required before this adapter can
-be selected. Azure Blob requires a separate adapter. Metadata publication must
+unverified. The default service constructor and launch configuration still select
+filesystem storage. Explicit provider injection is available as a library API;
+its coordinated backup is verified with memory-only external providers. Azure
+Blob requires a separate adapter. Metadata publication must
 never reference an unavailable blob; provider retries need idempotency and
 integrity checks.
 No provider account or cloud dependency is required by the local deployment.
@@ -188,6 +189,16 @@ Inventory is neither a cross-object transaction nor a multi-writer quota fence.
 It supports bounded single-object transfers, not multipart or resumable uploads.
 Storage credentials are supplied explicitly by the service operator and remain
 separate from user and connector capabilities.
+
+`Store::open_with_blob_store` requires a fresh managed root or the matching
+persisted external binding. The binding identifies the endpoint, bucket, prefix
+and region without including storage credentials, so credential rotation does
+not retarget the archive. A mismatched or partial marker, an attempted implicit
+filesystem fallback, or mixed local/external blobs fails closed. Startup checks
+one bounded provider inventory and rejects missing committed digests before
+making the store available. Existing filesystem archives are never migrated by
+this API. An interrupted initial external setup remains preserved for explicit
+recovery; there is no automatic reset.
 
 Remote access to an on-premises service should use an outbound connector to an
 HTTPS relay, guided pairing and authenticated user login. Clients should not
@@ -278,6 +289,14 @@ checked across both TLS hops before its historical v1/v2/v3 publication cycle.
 Repository CI again passed formatting/assets before the existing Windows icon
 hash failure. These foundations are not part of the frozen user trial.
 
+Saved profiles now have a bounded, versioned public-metadata directory with
+deterministic identifiers. Reads never create a missing directory. Installation
+uses a private staging file, the OS writer lock and no-replace publication;
+corrupt records, links, unknown files and quota violations fail closed. It stores
+no bearer and never signs in as a side effect of listing or importing a profile.
+All 23 native PDM tests and strict native Clippy passed with this persistence
+boundary, including interrupted staging, corruption and capacity checks.
+
 ## Verified offline backup and restore foundation
 
 Stop the local service before using these commands. The backup command acquires
@@ -313,5 +332,22 @@ use mode 0700; Windows inherits its destination-parent ACL. Choose a private par
 directory. The owner bearer credential comes from the service environment and is
 not included; preserve it separately or explicitly configure replacement ownership.
 This foundation does not encrypt/sign backups, schedule retention, compact metadata,
-provide remote/object storage, or establish recovery objectives. File sync and
+configure a remote provider, or establish recovery objectives. File sync and
 interrupted-process tests do not establish power-loss durability on every filesystem.
+
+The provider-aware backup holds the same authoritative writer lock while
+capturing identity, metadata generation and referenced digests. It obtains all
+blobs, including published orphans, from the active provider and independently
+checks their hashes, sizes and quotas. It ignores any stale local blob cache.
+It writes a portable filesystem copy, verifies domain/dependency closure and the
+captured generation, then publishes the completion manifest. Provider bindings,
+configuration and storage credentials are excluded. Restore remains a new
+filesystem destination; restoring into an object-store prefix is unsupported.
+
+The expanded service suite passed 127 tests and strict Clippy. Tests cover
+external-provider backup/restore with identity, history, checkout and retry
+receipts preserved; missing/corrupt content; invalid inventories and quotas;
+orphan upload recovery; wrong-provider/fallback rejection; and reserved
+loopback-listener startup without closing and rebinding its port. No actual
+external storage account or provider was used. Exclusive ownership of the remote
+prefix remains required: an OS lock does not coordinate other independent hosts.

@@ -29,6 +29,7 @@ mod pdm;
 pub mod pdm_credentials;
 pub mod pdm_login;
 mod pdm_managed;
+pub mod pdm_profiles;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 mod space_mouse;
 mod startup;

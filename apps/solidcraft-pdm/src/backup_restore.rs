@@ -1,6 +1,6 @@
 //! Offline, bounded, verified backup/restore foundation. No power-loss durability claim.
 //! Backups contain private metadata, including checkout capabilities; protect their directory.
-use crate::{Error, Store, digest};
+use crate::{Error, MAX_CONTENT, MAX_STORED_CONTENT, MAX_VERSIONS, Store, blob_store::BlobReceipt, digest};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -97,6 +97,8 @@ fn collect(
         // Unpublished stages and the process lock are not part of a committed snapshot.
         if ignore_uncommitted
             && (relative == "writer.lock"
+                || relative == "managed/blobs"
+                || relative == "managed/blob-provider.json"
                 || relative == "managed/blobs/pending"
                 || relative == "managed/generations/pending"
                 || (relative.starts_with("d-") && relative.ends_with("/pending")))
@@ -152,7 +154,19 @@ impl Store {
     /// The caller holds this store's exclusive process lock for the entire copy.
     /// CLI callers must stop the service; an in-process caller cannot mutate via `&self`.
     pub fn backup(&self, destination: &Path) -> Result<BackupReceipt, Error> {
-        verify_domain(self)?;
+        // The OS writer lock is owned by self throughout. Metadata and provider
+        // inventory are captured before reading any blob; no service mutation can
+        // interleave. Another independent writer of the same remote prefix is not
+        // supported or made safe by this process-local lock.
+        let snapshot = self.managed_snapshot()?;
+        let mut inventory = self.blob_inventory()?;
+        validate_inventory(&inventory)?;
+        let referenced: BTreeSet<_> = snapshot.digests.iter().collect();
+        let available: BTreeSet<_> = inventory.iter().map(|blob| &blob.sha256).collect();
+        if !referenced.is_subset(&available) {
+            return Err(Error::Integrity);
+        }
+        inventory.sort_by(|left, right| left.sha256.cmp(&right.sha256));
         let source = fs::canonicalize(&self.root)?;
         crate::reject_symlink_ancestors(destination)?;
         // Avoid recursively copying a destination nested inside its own store.
@@ -179,15 +193,39 @@ impl Store {
             crate::write_synced(&target, &bytes)?;
             files.push(BackupFile { path, bytes: bytes.len() as u64, sha256: digest(&bytes) });
         }
+        // Never copy a local managed/blobs cache. The active provider is the only
+        // authority for both referenced bytes and complete published orphan blobs.
+        fs::create_dir_all(data.join("managed/blobs"))?;
+        for blob in inventory {
+            let bytes = self.get_verified_blob(&blob.sha256)?;
+            if bytes.len() > MAX_CONTENT || bytes.len() as u64 != blob.bytes || digest(&bytes) != blob.sha256 {
+                return Err(Error::Integrity);
+            }
+            total = total.checked_add(blob.bytes).ok_or(Error::Invalid("backup size quota"))?;
+            if total > MAX_BYTES || files.len() >= MAX_FILES {
+                return Err(Error::Invalid("backup quota"));
+            }
+            let path = format!("managed/blobs/{}", blob.sha256);
+            crate::write_synced(&data.join(&path), &bytes)?;
+            files.push(BackupFile { path, bytes: blob.bytes, sha256: blob.sha256 });
+        }
         // Re-open copied metadata without creating a lock file in the immutable backup.
         // The original lock remains held, and no public Store exposes this copy.
-        let copied = Store { root: data, _lock: self._lock.try_clone()?, managed: crate::managed::ManagedStore::open(&destination.join("data"))? };
+        let copied = Store {
+            root: data,
+            _lock: self._lock.try_clone()?,
+            managed: crate::managed::ManagedStore::open_portable_snapshot(&destination.join("data"))?,
+        };
         verify_domain(&copied)?;
-        let server_id = self.managed.catalog().server_id;
-        if copied.managed.catalog().server_id != server_id {
+        let copied_snapshot = copied.managed_snapshot()?;
+        if copied_snapshot.server_id != snapshot.server_id
+            || copied_snapshot.generation != snapshot.generation
+            || copied_snapshot.digests != snapshot.digests
+        {
             return Err(Error::Integrity);
         }
-        let manifest = Manifest { format: FORMAT.into(), server_id, files };
+        files.sort_by(|left, right| left.path.cmp(&right.path));
+        let manifest = Manifest { format: FORMAT.into(), server_id: snapshot.server_id, files };
         let bytes = serde_json::to_vec_pretty(&manifest)?;
         if bytes.len() > MAX_MANIFEST {
             return Err(Error::Invalid("backup manifest quota"));
@@ -196,6 +234,24 @@ impl Store {
         crate::write_synced(&destination.join("backup.json"), &bytes)?;
         verify_backup(destination)
     }
+}
+
+fn validate_inventory(inventory: &[BlobReceipt]) -> Result<(), Error> {
+    if inventory.len() > MAX_VERSIONS {
+        return Err(Error::Invalid("backup blob count"));
+    }
+    let mut hashes = BTreeSet::new();
+    let mut total = 0u64;
+    for blob in inventory {
+        if !hex(&blob.sha256) || blob.bytes > MAX_CONTENT as u64 || !hashes.insert(&blob.sha256) {
+            return Err(Error::Integrity);
+        }
+        total = total.checked_add(blob.bytes).ok_or(Error::Integrity)?;
+        if total > MAX_STORED_CONTENT {
+            return Err(Error::Invalid("backup blob quota"));
+        }
+    }
+    Ok(())
 }
 
 fn manifest(root: &Path) -> Result<(Manifest, Vec<u8>), Error> {

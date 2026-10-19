@@ -1,6 +1,6 @@
 //! Managed catalog, fenced exclusive checkout and atomic receipt-bearing check-in.
 //! Credentials are resolved by the server; request fields never choose a principal.
-use crate::blob_store::{BlobStore, FsBlobStore};
+use crate::blob_store::{BlobBinding, BlobReceipt, BlobStore, FsBlobStore, validate_digest};
 use crate::{Error, MAX_CONTENT, MAX_DEPENDENCIES, MAX_STORED_CONTENT, MAX_VERSIONS, Version, VersionRef, digest};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -224,10 +224,21 @@ impl State {
 
 pub(crate) struct ManagedStore {
     root: PathBuf,
-    blobs: FsBlobStore,
+    blobs: Box<dyn BlobStore>,
     generation: u64,
     state: State,
     credentials: Vec<PrincipalCredential>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProviderMarker {
+    version: u32,
+    binding: BlobBinding,
+}
+pub(crate) struct ManagedSnapshot {
+    pub server_id: String,
+    pub generation: u64,
+    pub digests: Vec<String>,
 }
 
 fn now() -> Result<u64, Error> {
@@ -265,15 +276,126 @@ pub fn validate_logical_path(path: &str) -> Result<(), Error> {
     Ok(())
 }
 
+fn validate_inventory(inventory: &[BlobReceipt]) -> Result<(), Error> {
+    if inventory.len() > MAX_VERSIONS {
+        return Err(Error::Invalid("blob inventory quota"));
+    }
+    let mut seen = BTreeSet::new();
+    let mut total = 0u64;
+    for item in inventory {
+        validate_digest(&item.sha256)?;
+        if !seen.insert(&item.sha256) || item.bytes > MAX_CONTENT as u64 {
+            return Err(Error::Integrity);
+        }
+        total = total.checked_add(item.bytes).ok_or(Error::Integrity)?;
+        if total > MAX_STORED_CONTENT {
+            return Err(Error::Invalid("blob inventory quota"));
+        }
+    }
+    Ok(())
+}
+
 impl ManagedStore {
+    pub(crate) fn blob_inventory(&self) -> Result<Vec<BlobReceipt>, Error> {
+        let inventory = self.blobs.inventory()?;
+        validate_inventory(&inventory)?;
+        Ok(inventory)
+    }
+    pub(crate) fn get_verified_blob(&self, hash: &str) -> Result<Vec<u8>, Error> {
+        validate_digest(hash)?;
+        let bytes = self.blobs.get_verified(hash)?;
+        if bytes.len() > MAX_CONTENT || digest(&bytes) != hash {
+            return Err(Error::Integrity);
+        }
+        Ok(bytes)
+    }
+    pub(crate) fn snapshot(&self) -> Result<ManagedSnapshot, Error> {
+        self.state.validate()?;
+        let inventory = self.blob_inventory()?;
+        self.snapshot_from_inventory(&inventory)
+    }
+    fn snapshot_from_inventory(&self, inventory: &[BlobReceipt]) -> Result<ManagedSnapshot, Error> {
+        self.state.validate()?;
+        let available: BTreeSet<_> = inventory.iter().map(|item| item.sha256.as_str()).collect();
+        let digests: BTreeSet<_> = self.state.versions.iter().map(|version| version.version.sha256.clone()).collect();
+        if digests.iter().any(|hash| !available.contains(hash.as_str())) {
+            return Err(Error::Integrity);
+        }
+        Ok(ManagedSnapshot { server_id: self.state.server_id.clone(), generation: self.generation, digests: digests.into_iter().collect() })
+    }
     pub(crate) fn open(store_root: &Path) -> Result<Self, Error> {
         let root = store_root.join("managed");
+        let blobs = Box::new(FsBlobStore::open(&root)?);
+        Self::open_inner(root, blobs, true)
+    }
+    pub(crate) fn open_portable_snapshot(store_root: &Path) -> Result<Self, Error> {
+        let root = store_root.join("managed");
+        crate::reject_symlink_ancestors(&root.join("blobs"))?;
+        if !fs::symlink_metadata(root.join("blobs"))?.is_dir() {
+            return Err(Error::Integrity);
+        }
+        let blobs = Box::new(FsBlobStore::open(&root)?);
+        Self::open_inner(root, blobs, false)
+    }
+    pub(crate) fn open_external(store_root: &Path, blobs: Box<dyn BlobStore>) -> Result<Self, Error> {
+        let binding = blobs.binding();
+        binding.validate()?;
+        if !matches!(binding, BlobBinding::External { .. }) {
+            return Err(Error::Invalid("external blob binding required"));
+        }
+        let root = store_root.join("managed");
+        let marker = root.join("blob-provider.json");
+        crate::reject_symlink_ancestors(&marker)?;
+        let fresh = match fs::symlink_metadata(&marker) {
+            Ok(_) => {
+                let saved: ProviderMarker = serde_json::from_slice(&crate::client::read_file(&marker, 1024)?)?;
+                saved.binding.validate()?;
+                if saved.version != 1 || saved.binding != binding {
+                    return Err(Error::Invalid("blob provider binding mismatch"));
+                }
+                false
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if root.try_exists()? {
+                    return Err(Error::Invalid("external provider requires fresh managed metadata"));
+                }
+                fs::create_dir_all(&root)?;
+                crate::write_synced(&marker, &serde_json::to_vec(&ProviderMarker { version: 1, binding })?)?;
+                true
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let local = root.join("blobs");
+        crate::reject_symlink_ancestors(&local)?;
+        match fs::symlink_metadata(&local) {
+            Ok(metadata) => {
+                if !metadata.is_dir() || fs::read_dir(&local)?.next().is_some() {
+                    return Err(Error::Invalid("mixed local and external blobs"));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        // One bounded inventory call covers the whole startup preflight. No
+        // per-version GET loop or fallback can hide a missing provider namespace.
+        let inventory = blobs.inventory()?;
+        validate_inventory(&inventory)?;
+        let store = Self::open_inner(root, blobs, fresh)?;
+        store.snapshot_from_inventory(&inventory)?;
+        Ok(store)
+    }
+    fn open_inner(root: PathBuf, blobs: Box<dyn BlobStore>, initialize: bool) -> Result<Self, Error> {
         crate::reject_symlink_ancestors(&root)?;
         crate::reject_symlink_ancestors(&root.join("generations"))?;
-        let blobs = FsBlobStore::open(&root)?;
-        fs::create_dir_all(root.join("generations"))?;
+        if initialize {
+            fs::create_dir_all(root.join("generations"))?;
+        }
+        let store_root = root.parent().ok_or(Error::Integrity)?;
         let mut generation = 0;
-        for entry in fs::read_dir(root.join("generations"))? {
+        for (index, entry) in fs::read_dir(root.join("generations"))?.enumerate() {
+            if index >= MAX_GENERATIONS as usize {
+                return Err(Error::Invalid("metadata generation entry quota"));
+            }
             let entry = entry?;
             if entry.file_type()?.is_dir()
                 && let Some(n) = entry.file_name().to_str().and_then(|n| n.parse::<u64>().ok())
@@ -285,6 +407,9 @@ impl ManagedStore {
             return Err(Error::Integrity);
         }
         let state: State = if generation == 0 {
+            if !initialize {
+                return Err(Error::Invalid("incomplete managed metadata"));
+            }
             State { server_id: crate::AuthToken::generate()?, ..State::default() }
         } else {
             serde_json::from_slice(&crate::client::read_file(&root.join("generations").join(generation.to_string()).join("state.json"), MAX_STATE)?)?
@@ -459,7 +584,7 @@ impl ManagedStore {
 
     pub(crate) fn download(&self, reference: &VersionRef) -> Result<(Version, Vec<u8>), Error> {
         let version = &self.state.versions.iter().find(|v| v.version.reference == *reference).ok_or(Error::NotFound)?.version;
-        let content = self.blobs.get_verified(&version.sha256)?;
+        let content = self.get_verified_blob(&version.sha256)?;
         Ok((version.clone(), content))
     }
 
@@ -518,7 +643,10 @@ impl ManagedStore {
             comment: input.comment,
             request_id: input.request_id.clone(),
         };
-        self.blobs.put_verified_if_absent(&version.version.sha256, &input.content)?;
+        let receipt = self.blobs.put_verified_if_absent(&version.version.sha256, &input.content)?;
+        if receipt.sha256 != version.version.sha256 || receipt.bytes != input.content.len() as u64 {
+            return Err(Error::Integrity);
+        }
         // The receipt, head, immutable version metadata and unlock share one publication.
         // A failed metadata commit leaves the old checkout intact and only an orphan blob.
         entry.head = Some(number);
@@ -537,5 +665,182 @@ impl ManagedStore {
 
     pub(crate) fn where_used(&self, reference: &VersionRef) -> Vec<VersionRef> {
         self.state.versions.iter().filter(|v| v.version.dependencies.contains(reference)).map(|v| v.version.reference.clone()).collect()
+    }
+}
+
+#[cfg(test)]
+mod provider_tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+    use super::*;
+    use crate::{Request, Response, Store};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+    struct Temp(PathBuf);
+    impl Temp {
+        fn new() -> Self {
+            Self(std::env::temp_dir().join(format!("pdm-provider-{}", crate::AuthToken::generate().unwrap())))
+        }
+    }
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    #[derive(Clone)]
+    struct Fake {
+        fingerprint: String,
+        data: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+        mode: Arc<AtomicUsize>,
+        reads: Arc<AtomicUsize>,
+    }
+    impl Fake {
+        fn new() -> Self {
+            Self {
+                fingerprint: "a".repeat(64),
+                data: Arc::new(Mutex::new(BTreeMap::new())),
+                mode: Arc::new(AtomicUsize::new(0)),
+                reads: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+    }
+    impl BlobStore for Fake {
+        fn binding(&self) -> BlobBinding {
+            BlobBinding::External { fingerprint: self.fingerprint.clone() }
+        }
+        fn put_verified_if_absent(&mut self, hash: &str, content: &[u8]) -> Result<BlobReceipt, Error> {
+            if self.mode.load(Ordering::Relaxed) == 1 {
+                return Err(Error::Integrity);
+            }
+            self.data.lock().unwrap().insert(hash.into(), content.to_vec());
+            Ok(BlobReceipt { sha256: hash.into(), bytes: content.len() as u64 + u64::from(self.mode.load(Ordering::Relaxed) == 2) })
+        }
+        fn get_verified(&self, hash: &str) -> Result<Vec<u8>, Error> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            self.data.lock().unwrap().get(hash).cloned().ok_or(Error::NotFound)
+        }
+        fn inventory(&self) -> Result<Vec<BlobReceipt>, Error> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            match self.mode.load(Ordering::Relaxed) {
+                3 => return Ok(vec![BlobReceipt { sha256: "invalid".into(), bytes: 0 }]),
+                4 => return Ok((0..MAX_VERSIONS + 1).map(|i| BlobReceipt { sha256: digest(&i.to_be_bytes()), bytes: 0 }).collect()),
+                5 => return Ok((0..65usize).map(|i| BlobReceipt { sha256: digest(&i.to_be_bytes()), bytes: MAX_CONTENT as u64 }).collect()),
+                _ => {}
+            }
+            Ok(self.data.lock().unwrap().iter().map(|(hash, data)| BlobReceipt { sha256: hash.clone(), bytes: data.len() as u64 }).collect())
+        }
+    }
+    #[test]
+    fn external_binding_reopens_without_filesystem_fallback_and_rejects_mismatch_before_io() {
+        let temp = Temp::new();
+        let fake = Fake::new();
+        let store = Store::open_with_blob_store(&temp.0, Box::new(fake.clone())).unwrap();
+        let id = store.managed.server_id().to_owned();
+        drop(store);
+        assert!(Store::open(&temp.0).is_err());
+        assert!(!temp.0.join("managed/blobs").exists());
+        fake.reads.store(0, Ordering::Relaxed);
+        let mut wrong = fake.clone();
+        wrong.fingerprint = "b".repeat(64);
+        assert!(Store::open_with_blob_store(&temp.0, Box::new(wrong)).is_err());
+        assert_eq!(fake.reads.load(Ordering::Relaxed), 0);
+        let store = Store::open_with_blob_store(&temp.0, Box::new(fake.clone())).unwrap();
+        assert_eq!(store.managed.server_id(), id);
+        drop(store);
+        fs::create_dir(temp.0.join("managed/blobs")).unwrap();
+        fs::write(temp.0.join("managed/blobs/garbage"), b"x").unwrap();
+        assert!(Store::open_with_blob_store(&temp.0, Box::new(fake)).is_err());
+    }
+    #[test]
+    fn filesystem_roots_and_partial_external_markers_are_never_migrated() {
+        let temp = Temp::new();
+        drop(Store::open(&temp.0).unwrap());
+        assert!(Store::open_with_blob_store(&temp.0, Box::new(Fake::new())).is_err());
+        assert!(!temp.0.join("managed/blob-provider.json").exists());
+        let partial = Temp::new();
+        fs::create_dir_all(partial.0.join("managed")).unwrap();
+        fs::write(partial.0.join("managed/blob-provider.json"), b"{").unwrap();
+        assert!(Store::open(&partial.0).is_err());
+        assert!(!partial.0.join("managed/blobs").exists());
+        assert!(Store::open_with_blob_store(&partial.0, Box::new(Fake::new())).is_err());
+    }
+    #[test]
+    fn failed_or_mismatched_put_receipts_preserve_checkout_and_retry_authority() {
+        for mode in [1, 2] {
+            let temp = Temp::new();
+            let fake = Fake::new();
+            let mut store = Store::open_with_blob_store(&temp.0, Box::new(fake.clone())).unwrap();
+            let entry = match store.execute(Request::ManagedCreate { logical_path: "parts/toy.solidcraft".into() }) {
+                Response::ManagedDocument { entry } => entry,
+                other => panic!("{other:?}"),
+            };
+            let grant = match store.execute(Request::ManagedCheckout {
+                document: entry.document.clone(),
+                workspace: "work".into(),
+                machine: "machine".into(),
+            }) {
+                Response::ManagedCheckout { grant } => grant,
+                other => panic!("{other:?}"),
+            };
+            let input = ManagedCheckIn {
+                document: entry.document.clone(),
+                workspace: "work".into(),
+                machine: "machine".into(),
+                checkout_token: grant.token,
+                request_id: "retry".into(),
+                parent: None,
+                content: b"toy".to_vec(),
+                dependencies: vec![],
+                comment: "Toy".into(),
+            };
+            fake.mode.store(mode, Ordering::Relaxed);
+            assert!(matches!(store.execute(Request::ManagedCheckIn { input: input.clone() }), Response::Error { .. }));
+            let catalog = store.managed.catalog();
+            assert!(catalog.entries.iter().all(|entry| entry.checkout.is_some() && entry.head.is_none()));
+            assert!(store.managed.state.receipts.is_empty());
+            fake.mode.store(0, Ordering::Relaxed);
+            assert!(matches!(store.execute(Request::ManagedCheckIn { input }), Response::ManagedCheckedIn { .. }));
+            let snapshot = store.managed_snapshot().unwrap();
+            assert_eq!(snapshot.digests, vec![digest(b"toy")]);
+            assert!(snapshot.generation > 0);
+            let next_grant =
+                store.execute(Request::ManagedCheckout { document: entry.document.clone(), workspace: "work".into(), machine: "machine".into() });
+            assert!(matches!(next_grant, Response::ManagedCheckout { .. }));
+            let generation = store.managed.generation;
+            let metadata_path = temp.0.join("managed/generations").join(generation.to_string()).join("state.json");
+            let metadata = fs::read(&metadata_path).unwrap();
+            let marker = fs::read(temp.0.join("managed/blob-provider.json")).unwrap();
+            let catalog = serde_json::to_value(store.managed.catalog()).unwrap();
+            drop(store);
+            // Same location fingerprint with an empty/wrong account namespace
+            // must fail before any caller can publish over the existing head.
+            let wrong_namespace = Fake::new();
+            assert!(Store::open_with_blob_store(&temp.0, Box::new(wrong_namespace.clone())).is_err());
+            assert_eq!(wrong_namespace.reads.load(Ordering::Relaxed), 1);
+            for invalid in [3, 4, 5] {
+                wrong_namespace.mode.store(invalid, Ordering::Relaxed);
+                assert!(Store::open_with_blob_store(&temp.0, Box::new(wrong_namespace.clone())).is_err());
+            }
+            assert_eq!(fs::read(&metadata_path).unwrap(), metadata);
+            assert_eq!(fs::read(temp.0.join("managed/blob-provider.json")).unwrap(), marker);
+            assert_eq!(fs::read_dir(temp.0.join("managed/generations")).unwrap().count(), generation as usize);
+            let reopened = Store::open_with_blob_store(&temp.0, Box::new(fake)).unwrap();
+            assert_eq!(serde_json::to_value(reopened.managed.catalog()).unwrap(), catalog);
+            assert_eq!(reopened.managed.state.versions.len(), 1);
+            assert_eq!(reopened.managed.download(&VersionRef { document: entry.document, version: 1 }).unwrap().1, b"toy");
+        }
+    }
+    #[test]
+    fn fresh_external_startup_rejects_bad_inventory_before_initial_metadata_publication() {
+        for mode in [3, 4, 5] {
+            let temp = Temp::new();
+            let fake = Fake::new();
+            fake.mode.store(mode, Ordering::Relaxed);
+            assert!(Store::open_with_blob_store(&temp.0, Box::new(fake.clone())).is_err());
+            assert_eq!(fake.reads.load(Ordering::Relaxed), 1);
+            assert!(!temp.0.join("managed/generations").exists());
+            assert!(!temp.0.join("managed/blobs").exists());
+        }
     }
 }

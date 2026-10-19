@@ -44,13 +44,30 @@ pub(crate) struct HttpListener {
 }
 impl HttpListener {
     pub(crate) fn start(config: HttpsConfig, handler: Handler, connections: usize, lifetime: Duration) -> Result<Self, Error> {
+        Self::validate_limits(connections, lifetime)?;
+        let listener = std::net::TcpListener::bind(config.bind)?;
+        Self::start_with_listener(config, listener, handler, connections, lifetime)
+    }
+    fn validate_limits(connections: usize, lifetime: Duration) -> Result<(), Error> {
         if connections == 0 || connections > 32 || lifetime > Duration::from_secs(20) || lifetime.is_zero() {
             return Err(Error::Invalid("HTTPS listener limits"));
         }
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().max_blocking_threads(32).build()?;
-        let listener = std::net::TcpListener::bind(config.bind)?;
-        listener.set_nonblocking(true)?;
+        Ok(())
+    }
+    pub(crate) fn start_with_listener(
+        config: HttpsConfig,
+        listener: std::net::TcpListener,
+        handler: Handler,
+        connections: usize,
+        lifetime: Duration,
+    ) -> Result<Self, Error> {
+        Self::validate_limits(connections, lifetime)?;
         let address = listener.local_addr()?;
+        if address.ip() != config.bind.ip() || (config.bind.port() != 0 && config.bind.port() != address.port()) {
+            return Err(Error::Invalid("HTTPS reserved listener does not match configuration"));
+        }
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().max_blocking_threads(32).build()?;
+        listener.set_nonblocking(true)?;
         let (stop, mut stopped) = oneshot::channel();
         let (ready, readiness) = mpsc::sync_channel(1);
         let thread = thread::Builder::new().name("pdm-https-listener".into()).spawn(move || {

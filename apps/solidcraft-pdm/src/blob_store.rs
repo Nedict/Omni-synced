@@ -17,10 +17,25 @@ pub struct BlobReceipt {
     pub sha256: String,
     pub bytes: u64,
 }
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "provider", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BlobBinding {
+    Filesystem,
+    External { fingerprint: String },
+}
+impl BlobBinding {
+    pub(crate) fn validate(&self) -> Result<(), Error> {
+        if let Self::External { fingerprint } = self {
+            validate_digest(fingerprint)?;
+        }
+        Ok(())
+    }
+}
 
 /// Bounded enumeration for a coordinated backup. Callers must also capture the
 /// matching catalog generation; a blob listing alone is not a complete backup.
-pub trait BlobStore {
+pub trait BlobStore: Send {
+    fn binding(&self) -> BlobBinding;
     fn put_verified_if_absent(&mut self, sha256: &str, content: &[u8]) -> Result<BlobReceipt, Error>;
     fn get_verified(&self, sha256: &str) -> Result<Vec<u8>, Error>;
     fn inventory(&self) -> Result<Vec<BlobReceipt>, Error>;
@@ -31,7 +46,7 @@ pub struct FsBlobStore {
     directory: PathBuf,
 }
 
-fn validate_digest(value: &str) -> Result<(), Error> {
+pub(crate) fn validate_digest(value: &str) -> Result<(), Error> {
     if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)) {
         return Err(Error::Invalid("blob digest"));
     }
@@ -62,6 +77,11 @@ impl FsBlobStore {
         // Preserve Store::open's existing support for trusted relative roots,
         // without canonicalizing away a pre-existing symlink or junction.
         let directory = std::path::absolute(managed_root)?.join("blobs");
+        match fs::symlink_metadata(managed_root.join("blob-provider.json")) {
+            Ok(_) => return Err(Error::Invalid("external or partial blob provider binding")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
         reject_links(&directory)?;
         fs::create_dir_all(&directory)?;
         reject_links(&directory)?;
@@ -117,6 +137,9 @@ impl FsBlobStore {
 }
 
 impl BlobStore for FsBlobStore {
+    fn binding(&self) -> BlobBinding {
+        BlobBinding::Filesystem
+    }
     fn put_verified_if_absent(&mut self, sha256: &str, content: &[u8]) -> Result<BlobReceipt, Error> {
         let path = self.path(sha256)?;
         if content.len() > MAX_CONTENT {

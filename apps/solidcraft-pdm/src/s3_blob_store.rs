@@ -8,7 +8,7 @@
 //! single-chunk authorization specification; no SDK/provider source was adapted.
 use crate::{
     Error, MAX_CONTENT, MAX_STORED_CONTENT, MAX_VERSIONS,
-    blob_store::{BlobReceipt, BlobStore},
+    blob_store::{BlobBinding, BlobReceipt, BlobStore},
     digest,
 };
 use hmac::{Hmac, Mac};
@@ -456,6 +456,16 @@ impl S3BlobStore {
 }
 
 impl BlobStore for S3BlobStore {
+    fn binding(&self) -> BlobBinding {
+        use sha2::Digest;
+        let mut hash = sha2::Sha256::new();
+        hash.update(b"solidcraft-pdm-s3-binding-v1\0");
+        for value in [&self.config.origin, &self.config.bucket, &self.config.prefix, &self.config.region] {
+            hash.update((value.len() as u64).to_be_bytes());
+            hash.update(value.as_bytes());
+        }
+        BlobBinding::External { fingerprint: format!("{:x}", hash.finalize()) }
+    }
     fn put_verified_if_absent(&mut self, sha256: &str, content: &[u8]) -> Result<BlobReceipt, Error> {
         valid_digest(sha256)?;
         if content.len() > MAX_CONTENT {
@@ -710,6 +720,19 @@ fn parse_page(body: &[u8], config: &S3Config, sent_token: Option<&str>) -> Resul
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+    #[test]
+    fn binding_is_derived_from_storage_location_not_credentials() {
+        let config = || S3Config::new("https://example.test", "toy-bucket", "owned/", "us-test-1").unwrap();
+        let first = S3BlobStore::new(config(), StorageCredentials::new("access-a".into(), "secret-a".into(), None).unwrap()).unwrap();
+        let second = S3BlobStore::new(config(), StorageCredentials::new("access-b".into(), "secret-b".into(), None).unwrap()).unwrap();
+        assert_eq!(first.binding(), second.binding());
+        let moved = S3BlobStore::new(
+            S3Config::new("https://example.test", "toy-bucket", "other/", "us-test-1").unwrap(),
+            StorageCredentials::new("access-a".into(), "secret-a".into(), None).unwrap(),
+        )
+        .unwrap();
+        assert_ne!(first.binding(), moved.binding());
+    }
     use crate::http_listener::{Handler, HttpListener, HttpsConfig, Reply as HttpReply};
     use http_body_util::{BodyExt, Full, Limited};
     use hyper::{Response as HttpResponse, body::Bytes};
