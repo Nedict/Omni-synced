@@ -41,69 +41,6 @@ fn face_sums(m: &Mesh, nf: usize, o: Vec3) -> Vec<(f64, f64, Vec3, Vec3)> {
     out
 }
 
-/// Whether the mesh is closed: every edge, its ends matched by position to within `quantum`,
-/// is crossed as often one way as the other.
-fn is_closed(m: &Mesh, quantum: f64) -> bool {
-    let key = |p: Vec3| [p.x, p.y, p.z].map(|x| (x / quantum).round() as i64);
-    let mut net: std::collections::HashMap<([i64; 3], [i64; 3]), i32> = std::collections::HashMap::new();
-    for t in &m.triangles {
-        let Some([a, b, c]) = m.tri(t) else { return false };
-        for (p, q) in [(a, b), (b, c), (c, a)] {
-            let (p, q) = (key(p), key(q));
-            if p < q {
-                *net.entry((p, q)).or_insert(0) += 1;
-            } else if q < p {
-                *net.entry((q, p)).or_insert(0) -= 1;
-            }
-        }
-    }
-    !m.triangles.is_empty() && net.values().all(|n| *n == 0)
-}
-
-/// Area, 6 × volume and 24 × first moments of a closed mesh, taken about `o` (near the body,
-/// so that a body far from the origin does not cancel its terms in rounding) and returned about
-/// the origin.
-fn closed_sums(m: &Mesh, o: Vec3) -> (f64, f64, Vec3) {
-    let (mut area, mut v6, mut mom) = (0.0, 0.0, Vec3::ZERO);
-    for t in &m.triangles {
-        let Some([a, b, c]) = m.tri(t) else { continue };
-        area += (b - a).cross(c - a).len() * 0.5;
-        let (a, b, c) = (a - o, b - o, c - o);
-        let d = a.dot(b.cross(c));
-        v6 += d;
-        mom += (a + b + c) * d;
-    }
-    (area, v6, o * (4.0 * v6) + mom)
-}
-
-/// The sums `(area, 6 × volume, 24 × first moments about the origin, area vector)` of a body
-/// `size` across, taken about its box's centre, or those of its display plan (`plan`) when they
-/// show a gap and the plan is closed.
-///
-/// A closed surface's area vectors sum to zero. Where they don't, the meshes leave a gap: the
-/// reference mesher can leave a crack where a trimmed face meets a hole cut into it (a notch
-/// through a cone). The volume beside the gap is then left out, and the sums close the gap by a
-/// cone to the point they are taken about (a crack of 0.3 mm² moved a part ring's volume by 7 %
-/// 1000 mm from the origin; about the box's centre, by 0.1 %). When the gap could move the
-/// volume by more than 1e-5 of it within the body's size, and the display plan, which shares
-/// every edge's nodes between its faces, is closed and agrees with the sums to within what the gap
-/// could move, it is measured instead; otherwise the sums about the centre stand.
-fn gap_closed((area, v6, mom, normal): (f64, f64, Vec3, Vec3), size: f64, plan: impl FnOnce() -> Option<Mesh>) -> (f64, f64, Vec3) {
-    // The most the gap can move 6 × the volume: its area vector times twice the body's size.
-    let reach = normal.len() * size * 2.0;
-    if reach > 1e-5 * v6.abs()
-        && let Some(plan) = plan().filter(|m| is_closed(m, (size * 1e-9).max(1e-12)))
-    {
-        // A plan that differs by more than the gap can account for is meshed less finely than
-        // the sums (its own chord error), not closing the gap: the sums stand.
-        let sums = closed_sums(&plan, plan.bounds().center());
-        if (sums.1 - v6).abs() <= reach {
-            return sums;
-        }
-    }
-    (area, v6, mom)
-}
-
 /// Smallest radius of curvature along the mesh's edge polylines (straight edges ignored).
 fn min_edge_radius(m: &Mesh) -> Option<f64> {
     let mut best: Option<f64> = None;
@@ -225,7 +162,7 @@ fn mass(b: &Body, topology: bool) -> Result<(MassMeasure, Option<Mesh>)> {
     let o = Some(fine.bounds().center()).filter(|c| c.is_finite()).unwrap_or(Vec3::ZERO);
     let (sf, sm, sc) = (face_sums(&fine, nf, o), face_sums(&medium, nf, o), face_sums(&coarse, nf, o));
     let close = |x: f64, y: f64| (x - y).abs() <= 0.01 * x.abs().max(y.abs()) + 1e-9;
-    let (mut area, mut v6, mut mom, mut normal) = (0.0, 0.0, Vec3::ZERO, Vec3::ZERO);
+    let (mut area, mut v6, mut mom) = (0.0, 0.0, Vec3::ZERO);
     for ((f, m), c) in sf.iter().zip(&sm).zip(&sc) {
         // Trust the finest tessellation that agrees with the next coarser one.
         let pick = if close(f.0, m.0) {
@@ -238,9 +175,14 @@ fn mass(b: &Body, topology: bool) -> Result<(MassMeasure, Option<Mesh>)> {
         area += pick.0;
         v6 += pick.1;
         mom += pick.2;
-        normal += pick.3;
     }
-    (area, v6, mom) = gap_closed((area, v6, o * (4.0 * v6) + mom, normal), size, || b.display_plan(fine_tol).ok().map(|p| p.evaluate()));
+    // The moments back about the origin. A gap the meshes leave (a crack where a trimmed face
+    // meets a hole cut into it) is closed by a cone to the box's centre, which keeps it small
+    // (a crack of 0.3 mm² moved a part ring's volume by 7 % about the origin 1000 mm away; about
+    // the centre, by 0.1 %). Every body is measured by the same meshes this way, so a body and the
+    // pieces a boolean cuts it into add up: a closed display plan measured instead would mesh
+    // some faces more coarsely than the sums do and break that.
+    let mom = o * (4.0 * v6) + mom;
     let volume = v6 / 6.0;
     let centroid = if v6.abs() > 1e-12 { mom / (4.0 * v6) } else { fine.bounds().center() };
     Ok((MassMeasure { volume, area, centroid, bbox: coarse.bounds().union(&fine.bounds()) }, topo))
@@ -270,11 +212,6 @@ mod tests {
         assert!((got - want).abs() < 1e-3 * want, "{got} against {want}");
         assert!(measure(&ring).unwrap().merged.faces > 0);
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
 
     /// A 10 mm cube at `at`, each side in n × n squares of two triangles, one face per side;
     /// without its first `open` triangles.
@@ -313,53 +250,25 @@ mod tests {
         (area, v6, o * (4.0 * v6) + mom, normal)
     }
 
-    /// A cube 1000 mm from the origin with one 0.5 mm² facet left out: the gap is seen, a closed
-    /// display plan is measured instead, and without one the sums about the box's centre stand,
-    /// which miss a cone of that facet to the centre (0.08 %), where about the origin they are
-    /// 17 % over.
+    /// A cube 1000 mm from the origin with one 0.5 mm² facet left out: about the box's centre
+    /// the sums miss a cone of that facet to the centre (0.08 %), where about the origin they are
+    /// 17 % over. Closed, it measures the same about either.
     #[test]
-    fn a_mesh_left_open_is_measured_on_a_closed_plan_or_about_its_centre() {
+    fn a_mesh_left_open_is_measured_about_its_centre() {
         let at = Vec3::new(1000.0, 1000.0, 1000.0);
         let (closed, open) = (cube(at, 10, 0), cube(at, 10, 1));
-        let quantum = 1e-9;
-        assert!(is_closed(&closed, quantum) && !is_closed(&open, quantum));
-        assert!(!is_closed(&Mesh::default(), quantum));
         let centre = at + Vec3::new(5.0, 5.0, 5.0);
-        // About the origin and about the centre, the closed cube measures the same.
         for o in [Vec3::ZERO, centre] {
             let (area, v6, mom, normal) = sums(&closed, o);
             assert!((area - 600.0).abs() < 1e-9 && (v6 / 6.0 - 1000.0).abs() < 1e-6 && normal.len() < 1e-9);
             assert!((mom / (4.0 * v6) - centre).len() < 1e-6 * at.len(), "{o:?}");
         }
-        // Left open: about the origin the volume is far off, about the centre close.
         let (_, v6_origin, _, normal) = sums(&open, Vec3::ZERO);
         assert!((normal.len() - 0.5).abs() < 1e-9);
         // The facet faces the origin: leaving it out adds its cone to the origin, 167 mm³.
         assert!((v6_origin / 6.0 - (1000.0 + 0.5 * 1000.0 / 3.0)).abs() < 1e-3, "{}", v6_origin / 6.0);
-        let about_centre = sums(&open, centre);
-        let off = 1000.0 - 0.5 * 5.0 / 3.0;
-        assert!((about_centre.1 / 6.0 - off).abs() < 1e-6, "{}", about_centre.1 / 6.0);
-        let size = 10.0 * 3f64.sqrt();
-        // A closed plan is measured; an open plan, or none, leaves the sums about the centre.
-        let (a, v, _) = gap_closed(about_centre, size, || Some(closed.clone()));
-        assert!((a - 600.0).abs() < 1e-9 && (v / 6.0 - 1000.0).abs() < 1e-6);
-        for plan in [Some(open.clone()), None] {
-            let (_, v, m) = gap_closed(about_centre, size, || plan);
-            assert!((v / 6.0 - off).abs() < 1e-6 && (v / 6.0 - 1000.0).abs() < 1e-3 * 1000.0);
-            assert!((m / (4.0 * v) - centre).len() < 0.01, "{:?}", m / (4.0 * v));
-        }
-        // No gap: the plan is not asked for.
-        let (_, v, _) = gap_closed(sums(&closed, centre), size, || panic!("no gap, no plan"));
-        assert!((v / 6.0 - 1000.0).abs() < 1e-6);
-        // A closed plan further off than the gap could move the volume (a cube 1 % smaller:
-        // 29.7 mm³ less, where the facet can account for at most 2.9 mm³) is a coarser mesh, not
-        // the gap closed: the sums about the centre stand.
-        let mut coarse = closed.clone();
-        for p in &mut coarse.positions {
-            *p = centre + (*p - centre) * 0.99;
-        }
-        assert!(is_closed(&coarse, quantum));
-        let (_, v, _) = gap_closed(about_centre, size, || Some(coarse));
-        assert!((v / 6.0 - off).abs() < 1e-6, "{}", v / 6.0);
+        let (_, v6, mom, _) = sums(&open, centre);
+        assert!((v6 / 6.0 - (1000.0 - 0.5 * 5.0 / 3.0)).abs() < 1e-6, "{}", v6 / 6.0);
+        assert!((mom / (4.0 * v6) - centre).len() < 0.01, "{:?}", mom / (4.0 * v6));
     }
 }
