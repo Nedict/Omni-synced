@@ -189,6 +189,7 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
                     Task::Managed(
                         ManagedTask::Connect { .. }
                             | ManagedTask::Recover { .. }
+                            | ManagedTask::Restore { .. }
                             | ManagedTask::Archive { .. }
                             | ManagedTask::Checkout { .. }
                             | ManagedTask::CancelCheckout { .. }
@@ -507,39 +508,42 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     if app.pdm.open {
         let mut open = true;
         let mut action = None;
-        egui::Window::new(app.tr("ui.pdm_connect")).id(egui::Id::new("pdm_connection")).open(&mut open).show(ctx, |ui| {
-            ui.label(app.tr("ui.pdm_credential_hint"));
-            ui.label(app.tr("ui.pdm_port"));
-            let response = ui.text_edit_singleline(&mut app.pdm.port);
-            handle("port", &response);
-            ui.label(app.tr("ui.pdm_working_folder"));
-            let response = ui.text_edit_singleline(&mut app.pdm.root);
-            handle("root", &response);
-            let status = app.pdm.runtime.status().unwrap_or_default();
-            let response =
-                ui.add_enabled(status.busy.is_none() && status.available && status.port.is_none(), egui::Button::new(app.tr("ui.pdm_connect")));
-            handle("connect", &response);
-            if response.clicked() {
-                let mut params = json!({"port":app.pdm.port.parse::<u16>().ok()});
-                if !app.pdm.root.trim().is_empty() {
-                    params["root"] = json!(app.pdm.root);
+        crate::frame::window(ctx, app.tr("ui.pdm_connect"), crate::frame::Width::Normal).id(egui::Id::new("pdm_connection")).open(&mut open).show(
+            ctx,
+            |ui| {
+                ui.label(app.tr("ui.pdm_credential_hint"));
+                ui.label(app.tr("ui.pdm_port"));
+                let response = ui.text_edit_singleline(&mut app.pdm.port);
+                handle("port", &response);
+                ui.label(app.tr("ui.pdm_working_folder"));
+                let response = ui.text_edit_singleline(&mut app.pdm.root);
+                handle("root", &response);
+                let status = app.pdm.runtime.status().unwrap_or_default();
+                let response =
+                    ui.add_enabled(status.busy.is_none() && status.available && status.port.is_none(), egui::Button::new(app.tr("ui.pdm_connect")));
+                handle("connect", &response);
+                if response.clicked() {
+                    let mut params = json!({"port":app.pdm.port.parse::<u16>().ok()});
+                    if !app.pdm.root.trim().is_empty() {
+                        params["root"] = json!(app.pdm.root);
+                    }
+                    action = Some(("pdm.connect", params));
                 }
-                action = Some(("pdm.connect", params));
-            }
-            let response = ui.add_enabled(
-                status.available && status.busy.is_none() && status.port.is_none() && !app.pdm.root.trim().is_empty(),
-                egui::Button::new(app.tr("ui.pdm_recover_workspace")),
-            );
-            handle("recover_workspace", &response);
-            if response.clicked() {
-                app.pdm.recovery_confirmation = true;
-            }
-            let response = ui.add_enabled(status.busy.is_none() && status.port.is_some(), egui::Button::new(app.tr("ui.pdm_disconnect")));
-            handle("disconnect", &response);
-            if response.clicked() {
-                action = Some(("pdm.disconnect", json!({})));
-            }
-        });
+                let response = ui.add_enabled(
+                    status.available && status.busy.is_none() && status.port.is_none() && !app.pdm.root.trim().is_empty(),
+                    egui::Button::new(app.tr("ui.pdm_recover_workspace")),
+                );
+                handle("recover_workspace", &response);
+                if response.clicked() {
+                    app.pdm.recovery_confirmation = true;
+                }
+                let response = ui.add_enabled(status.busy.is_none() && status.port.is_some(), egui::Button::new(app.tr("ui.pdm_disconnect")));
+                handle("disconnect", &response);
+                if response.clicked() {
+                    action = Some(("pdm.disconnect", json!({})));
+                }
+            },
+        );
         app.pdm.open = open;
         if let Some((id, params)) = action {
             dispatch(app, id, params);

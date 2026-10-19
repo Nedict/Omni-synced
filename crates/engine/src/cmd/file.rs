@@ -327,10 +327,7 @@ fn rename_design(s: &mut Session, from: &str, to: &str) {
 }
 
 fn write(s: &mut Session, path: &str, format: &str, compression: &str, preview: bool, cache: bool) -> Result<Value> {
-    s.pdm.may_save(path).map_err(EngineError::Other)?;
-    if s.pdm_read_only && s.path.as_deref().is_some_and(|original| crate::pdm::same_file_path(original, path)) {
-        return Err(EngineError::Other("Historical copies are read-only; Save As a separate design".into()));
-    }
+    s.check_output_path(path)?;
     let historical_copy = s.pdm_read_only;
     solidcraft_io::vfs::check(path).map_err(|e| EngineError::Other(e.to_string()))?;
     // Saving an unnamed design, or one named after the file it was saved as, names it after its
@@ -474,10 +471,7 @@ fn save_as(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn export_to(s: &Session, path: &str, format: Format, bodies: &[String]) -> Result<Value> {
-    s.pdm.may_save(path).map_err(EngineError::Other)?;
-    if s.pdm_read_only && s.path.as_deref().is_some_and(|original| crate::pdm::same_file_path(original, path)) {
-        return Err(EngineError::Other("Historical copies are read-only; export to a separate file".into()));
-    }
+    s.check_output_path(path)?;
     let name = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| s.doc.name.clone());
     // A design with components exports as a STEP assembly; otherwise bodies as placed.
     let bytes = if format == Format::Design {
@@ -509,6 +503,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
 /// anything is written; the meshes go first and the `.urdf` last.
 fn export_urdf(s: &Session, path: &str, p: &Value) -> Result<Value> {
     let cmd = "file.export";
+    s.check_output_path(path)?;
     if !string_list(p, "bodies").is_empty() {
         return Err(bad(cmd, "urdf exports the whole assembly; omit bodies"));
     }
@@ -548,6 +543,7 @@ fn export_urdf(s: &Session, path: &str, p: &Value) -> Result<Value> {
     let mut targets: Vec<(String, &[u8])> = pkg.meshes.iter().map(|(n, b)| (dir.join(n).to_string_lossy().to_string(), b.as_slice())).collect();
     targets.push((path.to_string(), pkg.xml.as_bytes()));
     for (t, _) in &targets {
+        s.check_output_path(t)?;
         solidcraft_io::vfs::check(t).map_err(|e| EngineError::Other(format!("{t}: {e}")))?;
     }
     let mut written: Vec<String> = Vec::new();

@@ -441,3 +441,52 @@ fn restore_version_confirmation_captures_selection_and_cancel_queues_nothing() {
     assert!(matches!(&requests[0], Task::Managed(ManagedTask::Restore { reference }) if *reference == version().reference));
     assert!(h.app.pdm.restore_confirmation.is_none());
 }
+
+#[test]
+fn restore_completion_clears_temporary_ram_permission_and_reuses_its_editor() {
+    use solidcraft_engine::pdm::{LocalEntry, ManagedState};
+    let mut h = app();
+    connect(&mut h);
+    h.app.session.path = Some("part.solidcraft".into());
+    h.app.session.mark_saved();
+    let state = |base_version| ManagedState {
+        local: vec![LocalEntry {
+            document: "part".into(),
+            path: "part.solidcraft".into(),
+            relative_path: "part.solidcraft".into(),
+            base_version,
+            sha256: "00".repeat(32),
+            checked_out: false,
+            modified: false,
+            present: true,
+        }],
+        ..Default::default()
+    };
+    let id = h.app.pdm.runtime.enqueue(Task::Refresh).unwrap();
+    h.app.pdm.runtime.finish(id, Ok(Outcome::Managed { port: 48231, state: state(2) })).unwrap();
+    let key = solidcraft_engine::pdm::cached_path_key("part.solidcraft");
+    h.app.pdm.ram_paths.insert(key.clone());
+    let held = Arc::new(Mutex::new(None));
+    h.app.services.pdm = Some(backend(Some(held.clone())));
+    let count = h.app.docs.count();
+    h.app.run("pdm.restore_version", json!({"document":"part","version":1,"restore":true})).unwrap();
+    h.frames(3);
+    assert!(h.app.pdm.runtime.status().unwrap().blocking);
+    assert!(h.app.run("solid.box", json!({"length":2,"width":3,"height":4})).is_err());
+    let mut restored = Session::default();
+    restored.path = Some("part.solidcraft".into());
+    restored.mark_saved();
+    held.lock()
+        .unwrap()
+        .take()
+        .unwrap()
+        .send(Completion { result: Ok(Outcome::Managed { port: 48231, state: state(3) }), open: Some(Box::new(restored)) })
+        .unwrap();
+    h.frames(5);
+    assert!(!h.app.pdm.runtime.status().unwrap().blocking);
+    assert!(!h.app.pdm.ram_paths.contains(&key));
+    assert_eq!(h.app.docs.count(), count);
+    assert_eq!(h.app.session.path.as_deref(), Some("part.solidcraft"));
+    assert!(!h.app.session.is_dirty());
+    assert_eq!(h.app.pdm.runtime.status().unwrap().managed.local.first().unwrap().base_version, 3);
+}

@@ -7,16 +7,16 @@ use crate::{
 use serde_json::{Value, json};
 
 pub static COMMANDS: &[CommandSpec] = &[
-    CommandSpec::new("pdm.restore_version", "Restore Archived Version", restore_version).noundo().doc_only().params("document,version,restore:true; publish historical content as a new head version and restore the clean normal working copy"),
-    CommandSpec::new("pdm.recover_workspace", "Recover PDM Workspace", recover_workspace).noundo().doc_only().params("port,root,restore:true; explicitly recover an interrupted local update after server verification, preserving recovery copies"),
-    CommandSpec::new("pdm.preview", "PDM Preview", preview).noundo().doc_only().params("document,version; retrieves the embedded thumbnail for that exact version, if available"),
+    CommandSpec::new("pdm.restore_version", "Restore as New Version", restore_version).icon("restore").noundo().doc_only().params("document,version,restore:true; publish historical content as a new head version and restore the clean normal working copy"),
+    CommandSpec::new("pdm.recover_workspace", "Recover Interrupted Local Update", recover_workspace).icon("restore").noundo().doc_only().params("port,root,restore:true; explicitly recover an interrupted local update after server verification, preserving recovery copies"),
+    CommandSpec::new("pdm.preview", "Preview", preview).icon("render_image").noundo().doc_only().params("document,version; retrieves the embedded thumbnail for that exact version, if available"),
     CommandSpec::new("pdm.archive", "Check In", archive).at("PDM", "WORKSPACE").icon("save").noundo().doc_only().params("logical_path?: path relative to the managed workspace; automatically discovers document identity and native dependencies"),
     CommandSpec::new("pdm.checkout", "Check Out", checkout).at("PDM", "WORKSPACE").icon("open").noundo().doc_only().params("document?: selected stable identity; otherwise active managed design"),
-    CommandSpec::new("pdm.cancel_checkout", "Undo Check Out", cancel_checkout).at("PDM", "WORKSPACE").icon("undo").noundo().doc_only().params("document?: selected stable identity; discard:true explicitly restores archived content, preserving a recovery copy"),
+    CommandSpec::new("pdm.cancel_checkout", "Undo Checkout", cancel_checkout).at("PDM", "WORKSPACE").icon("undo").noundo().doc_only().params("document?: selected stable identity; discard:true explicitly restores archived content, preserving a recovery copy"),
     CommandSpec::new("pdm.get_latest", "Get Latest", get_latest).at("PDM", "WORKSPACE").icon("update").noundo().doc_only().params("document?: selected stable identity; refuses unsaved local edits"),
-    CommandSpec::new("pdm.open_document", "Open from Archive", open_document).at("PDM", "ARCHIVE").icon("open").noundo().doc_only().params("document: selected stable identity; opens its normal workspace path"),
-    CommandSpec::new("pdm.open_archived", "Open As Archived", retrieve).at("PDM", "ARCHIVE").icon("open").noundo().doc_only().params("document,version; opens a separate read-only historical snapshot"),
-    CommandSpec::new("pdm.history", "PDM History", history).noundo().doc_only().params("document: stable identity; loads version history and where-used metadata"),
+    CommandSpec::new("pdm.open_document", "Open Working Copy", open_document).at("PDM", "ARCHIVE").icon("open").noundo().doc_only().params("document: selected stable identity; opens its normal workspace path"),
+    CommandSpec::new("pdm.open_archived", "Open as Archived", retrieve).at("PDM", "ARCHIVE").icon("open").noundo().doc_only().params("document,version; opens a separate read-only historical snapshot"),
+    CommandSpec::new("pdm.history", "Document versions", history).icon("list").noundo().doc_only().params("document: stable identity; loads version history and where-used metadata"),
     CommandSpec::new("pdm.panel", "Local PDM", status).icon("library").noundo().doc_only().params("none; programmatic calls return status, only interactive start opens the panel"),
     CommandSpec::new("pdm.status", "Local PDM Status", status).icon("library").noundo().doc_only().params("none; host-only connection/job/version state, never credentials"),
     CommandSpec::new("pdm.connect", "Connect Local PDM", connect).icon("library").noundo().doc_only().params("port: local TCP port; credential comes from the native host, never params"),

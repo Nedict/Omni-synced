@@ -1,5 +1,6 @@
 //! Host-only local PDM work queue. No credentials, sockets or document serialization live here.
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +67,9 @@ pub struct ManagedState {
     pub history: Vec<ManagedVersion>,
     pub where_used: Vec<Reference>,
     pub preview: Option<Preview>,
+    /// Immutable snapshot destinations, including their dependency files.
+    #[serde(default)]
+    pub historical_paths: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -174,6 +178,59 @@ struct State {
     next: u64,
     job: Option<Job>,
     blocked_paths: Vec<String>,
+    known_paths: BTreeMap<String, KnownPath>,
+    historical_paths: BTreeMap<String, String>,
+    protection_failed: bool,
+}
+
+struct KnownPath {
+    server_id: Option<String>,
+    workspace: Option<String>,
+    entry: LocalEntry,
+}
+
+// A bounded, session-long protection ledger survives workspace and tab switches.
+// Exhaustion disables further PDM jobs and writes rather than dropping a guard.
+const MAX_PROTECTED_PATHS: usize = 8192;
+const MAX_PROTECTED_PATH_BYTES: usize = 4096;
+
+impl State {
+    fn remember(&mut self, managed: &ManagedState) -> Result<(), String> {
+        let additions = managed.local.len().saturating_add(managed.historical_paths.len());
+        if additions > MAX_PROTECTED_PATHS {
+            return Err("PDM path protection limit reached; restart the application before continuing".into());
+        }
+        for entry in &managed.local {
+            if entry.path.is_empty() || entry.path.len() > MAX_PROTECTED_PATH_BYTES {
+                return Err("Invalid PDM protected path".into());
+            }
+            let key = cached_path_key(&entry.path);
+            if let Some(previous) = self.known_paths.get(&key) {
+                if previous.server_id != managed.server_id || previous.workspace != managed.workspace || previous.entry.document != entry.document {
+                    return Err("A PDM path belongs to a different workspace or document".into());
+                }
+            } else if self.known_paths.len().saturating_add(self.historical_paths.len()) >= MAX_PROTECTED_PATHS {
+                return Err("PDM path protection limit reached; restart the application before continuing".into());
+            }
+            let mut entry = entry.clone();
+            // Only the active, freshly verified snapshot may authorize writes.
+            // Inactive workspace grants remain reserved on the server.
+            entry.checked_out = false;
+            self.known_paths.insert(key, KnownPath { server_id: managed.server_id.clone(), workspace: managed.workspace.clone(), entry });
+        }
+        for path in &managed.historical_paths {
+            if path.is_empty() || path.len() > MAX_PROTECTED_PATH_BYTES {
+                return Err("Invalid PDM historical path".into());
+            }
+            let key = cached_path_key(path);
+            if !self.historical_paths.contains_key(&key) && self.known_paths.len().saturating_add(self.historical_paths.len()) >= MAX_PROTECTED_PATHS
+            {
+                return Err("PDM path protection limit reached; restart the application before continuing".into());
+            }
+            self.historical_paths.insert(key, path.clone());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Default)]
@@ -186,7 +243,20 @@ pub fn valid_document(id: &str) -> bool {
 /// Cached display-path identity, without filesystem access on UI frames.
 pub fn cached_path_key(value: &str) -> String {
     let normalized = value.replace('\\', "/");
-    let normalized = if cfg!(target_os = "windows") { normalized.strip_prefix("//?/").unwrap_or(&normalized) } else { &normalized };
+    let normalized = if cfg!(target_os = "windows") {
+        normalized
+            .strip_prefix("//?/")
+            .map(|rest| {
+                if rest.get(..4).is_some_and(|prefix| prefix.eq_ignore_ascii_case("UNC/")) {
+                    format!("//{}", rest.get(4..).unwrap_or_default())
+                } else {
+                    rest.to_owned()
+                }
+            })
+            .unwrap_or(normalized)
+    } else {
+        normalized
+    };
     let rooted = normalized.starts_with('/');
     let mut parts = Vec::new();
     for part in normalized.split('/') {
@@ -211,6 +281,15 @@ pub fn cached_path_key(value: &str) -> String {
 /// Save-time identity check. The UI uses cached paths; filesystem resolution is
 /// limited to operations that already perform filesystem writes.
 pub fn same_file_path(a: &str, b: &str) -> bool {
+    // Canonical names do not detect hardlinks. Restrict native handle opens to
+    // regular files so pipes and devices are not opened for an identity probe.
+    #[cfg(not(target_arch = "wasm32"))]
+    if std::fs::metadata(a).is_ok_and(|metadata| metadata.is_file())
+        && std::fs::metadata(b).is_ok_and(|metadata| metadata.is_file())
+        && same_file::is_same_file(a, b).is_ok_and(|same| same)
+    {
+        return true;
+    }
     fn resolve(value: &str) -> std::path::PathBuf {
         let path = std::path::Path::new(value);
         std::fs::canonicalize(path).unwrap_or_else(|_| {
@@ -247,6 +326,9 @@ impl Runtime {
         if !state.status.available {
             return Err("Local PDM is unavailable in this host".into());
         }
+        if state.protection_failed {
+            return Err("PDM path protection is unavailable; restart the application before continuing".into());
+        }
         if state.status.busy.is_some() {
             return Err("A local PDM operation is in progress".into());
         }
@@ -273,6 +355,7 @@ impl Runtime {
                             | ManagedTask::GetLatest { .. }
                             | ManagedTask::Open { .. }
                             | ManagedTask::Recover { .. }
+                            | ManagedTask::Restore { .. }
                     )
             )
         });
@@ -292,6 +375,14 @@ impl Runtime {
         state.status.blocking = false;
         state.blocked_paths.clear();
         state.job = None;
+        if let Ok(Outcome::Managed { state: managed, .. } | Outcome::ManagedRefreshed { state: managed, .. }) = &result
+            && let Err(error) = state.remember(managed)
+        {
+            state.protection_failed = true;
+            state.status.port = None;
+            state.status.error = Some(error.clone());
+            return Err(error);
+        }
         match result {
             Err(failure) => {
                 state.status.error = Some(failure.message);
@@ -310,7 +401,7 @@ impl Runtime {
                 state.status.managed = managed;
             }
             Ok(Outcome::ManagedRefreshed { port, state: mut managed }) => {
-                if state.status.managed.server_id == managed.server_id {
+                if state.status.managed.server_id == managed.server_id && state.status.managed.workspace == managed.workspace {
                     managed.history = state.status.managed.history.clone();
                     managed.where_used = state.status.managed.where_used.clone();
                     managed.preview = state.status.managed.preview.clone();
@@ -335,7 +426,19 @@ impl Runtime {
 
     pub fn managed_for_path(&self, path: &str) -> Option<LocalEntry> {
         let key = cached_path_key(path);
-        self.status().ok()?.managed.local.into_iter().find(|entry| cached_path_key(&entry.path) == key)
+        let state = self.0.lock().ok()?;
+        let mut entry = state
+            .status
+            .managed
+            .local
+            .iter()
+            .find(|entry| cached_path_key(&entry.path) == key)
+            .cloned()
+            .or_else(|| state.known_paths.get(&key).map(|known| known.entry.clone()))?;
+        if state.protection_failed || state.historical_paths.contains_key(&key) {
+            entry.checked_out = false;
+        }
+        Some(entry)
     }
 
     pub fn blocks_path(&self, path: &str) -> bool {
@@ -345,13 +448,38 @@ impl Runtime {
     }
 
     pub fn may_save(&self, path: &str) -> Result<(), String> {
-        let status = self.status()?;
-        let blocked = self.0.lock().map_err(|_| "Local PDM state unavailable")?.blocked_paths.clone();
-        if status.blocking && blocked.iter().any(|blocked| same_file_path(blocked, path)) {
+        let state = self.0.lock().map_err(|_| "Local PDM state unavailable")?;
+        if state.protection_failed {
+            return Err("PDM path protection is unavailable; restart the application before saving".into());
+        }
+        if state.status.blocking && state.blocked_paths.iter().any(|blocked| same_file_path(blocked, path)) {
             return Err("Wait for the managed operation before saving this file".into());
         }
-        if status.managed.local.iter().any(|entry| !entry.checked_out && same_file_path(&entry.path, path)) {
+        if state.historical_paths.values().any(|historical| same_file_path(historical, path)) {
+            return Err("Historical copies are read-only; export to a separate file".into());
+        }
+        if state.known_paths.values().any(|known| {
+            same_file_path(&known.entry.path, path)
+                && !state
+                    .status
+                    .managed
+                    .local
+                    .iter()
+                    .any(|active| active.checked_out && cached_path_key(&active.path) == cached_path_key(&known.entry.path))
+        }) {
             return Err("Extract this managed design before saving, or Save As a separate copy".into());
+        }
+        Ok(())
+    }
+}
+
+impl crate::Session {
+    /// Check each destination before an export writes, creates or removes files.
+    /// Multi-file exports must check every target before their first side effect.
+    pub fn check_output_path(&self, path: &str) -> crate::Result<()> {
+        self.pdm.may_save(path).map_err(crate::EngineError::Other)?;
+        if self.pdm_read_only && self.path.as_deref().is_some_and(|original| same_file_path(original, path)) {
+            return Err(crate::EngineError::Other("Historical copies are read-only; export to a separate file".into()));
         }
         Ok(())
     }

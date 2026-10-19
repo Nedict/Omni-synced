@@ -87,6 +87,7 @@ impl Host {
             history: vec![],
             where_used: vec![],
             preview: None,
+            historical_paths: vec![],
         };
         if let Some(document) = selected {
             state.history = convert(client.managed_history(document.into()).map_err(error)?)?;
@@ -314,7 +315,14 @@ impl Host {
                 let mut session = load(&history.path(&reference.document).map_err(error)?)?;
                 session.pdm_read_only = true;
                 opened = Some(session);
-                Some(reference.document)
+                let mut state = self.state(&ws, Some(&reference.document))?;
+                state.historical_paths = history
+                    .manifest()
+                    .documents
+                    .keys()
+                    .map(|document| history.path(document).map(|path| path.to_string_lossy().into_owned()).map_err(error))
+                    .collect::<Result<_, _>>()?;
+                return Ok((Outcome::Managed { port: self.port, state }, opened));
             }
             ManagedTask::Connect { .. } => return Err(fail("Invalid connection state")),
             ManagedTask::History { document } => Some(document),
@@ -674,10 +682,12 @@ mod tests {
         archive(&mut host, &session);
         assert_eq!(host.client().unwrap().managed_history(document.clone()).unwrap().len(), 2);
         assert!(fs::metadata(&path).unwrap().permissions().readonly());
-        let (_, loaded) = run(&mut host, ManagedTask::OpenArchived { reference: Reference { document, version: 1 } });
+        let (outcome, loaded) = run(&mut host, ManagedTask::OpenArchived { reference: Reference { document, version: 1 } });
         let historic = loaded.unwrap();
         assert_ne!(historic.path.as_ref(), session.path.as_ref());
         assert!(historic.pdm_read_only);
+        let Outcome::Managed { state, .. } = outcome else { panic!("expected managed snapshot") };
+        assert_eq!(state.historical_paths, vec![historic.path.clone().unwrap()]);
         assert_eq!(fs::read(historic.path.unwrap()).unwrap(), original);
         assert_ne!(fs::read(&path).unwrap(), original);
     }

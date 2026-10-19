@@ -14,6 +14,18 @@ and previously supplied trial binaries are not migrated or modified.
   Its private manifest records server/workspace identity, base version and hash.
   Unchecked files are read-only; only a successful server reservation enables
   managed saves. A separate Save As is an unmanaged copy.
+  Save and export destinations share the same protected-path check, including
+  equivalent paths, native hardlink aliases and explicit output formats.
+  Multi-file exports preflight
+  every destination, including stale animation frames to be removed, before
+  their first write or deletion. Exporting to a separate file does not detach
+  a historical design from its read-only state.
+  A session-long ledger retains known managed paths and historical dependency
+  destinations across tab changes, disconnects and workspace switches. A checkout
+  in an inactive workspace requires verified reconnection before further saves;
+  its server reservation is retained. The ledger holds at most 8,192 paths of
+  4,096 bytes each. Conflicting identities or exhaustion disable further PDM
+  operations and file outputs until restart rather than discarding protection.
 - Local Save does not publish. Check In validates the saved native document,
   reservation, expected base and actual dependency versions; durable publication
   precedes reservation release. A repeated operation returns its original result.
@@ -34,6 +46,9 @@ and previously supplied trial binaries are not migrated or modified.
   preserving earlier versions and the normal workspace path. It does not roll
   back other component files. Receipt reconciliation prevents an acknowledged
   restore from creating another version when retried.
+  While the restore is in flight, editors sharing the managed runtime cannot
+  modify designs or write managed destinations. Completion clears temporary
+  RAM-edit permissions before reloading the restored normal tab.
 
 ## Incremental slices and validation
 
