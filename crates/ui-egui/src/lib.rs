@@ -167,6 +167,7 @@ mod sketch_guidance_ui_tests;
 pub mod sketch_modify_ui;
 #[cfg(test)]
 mod sketch_modify_ui_tests;
+mod sketch_move_ui;
 pub mod sketch_palette;
 mod sketch_pattern_tree;
 #[cfg(test)]
