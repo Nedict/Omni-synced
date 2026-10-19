@@ -303,6 +303,17 @@ pub enum ConstraintKind {
         l: usize,
         value: f64,
     },
+    /// Distance from line `l` to the edge of circle or arc `c`, along the line's normal: the
+    /// gap `|distance from the centre to the line| − radius` while the line misses the circle,
+    /// or, `inside`, how far the edge reaches past the line, `radius − |distance|`, while the
+    /// line cuts it. Zero is tangency either way. An arc is measured to its whole circle.
+    LineCircleDistance {
+        l: usize,
+        c: usize,
+        value: f64,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        inside: bool,
+    },
     Length {
         l: usize,
         value: f64,
@@ -380,6 +391,7 @@ impl ConstraintKind {
             | DistanceX { value, .. }
             | DistanceY { value, .. }
             | PointLineDistance { value, .. }
+            | LineCircleDistance { value, .. }
             | Length { value, .. }
             | LineAngle { value, .. }
             | ArcSweep { value, .. }
@@ -400,6 +412,7 @@ impl ConstraintKind {
             | DistanceX { value, .. }
             | DistanceY { value, .. }
             | PointLineDistance { value, .. }
+            | LineCircleDistance { value, .. }
             | Length { value, .. }
             | LineAngle { value, .. }
             | ArcSweep { value, .. }
@@ -433,7 +446,9 @@ impl ConstraintKind {
             Midpoint { .. } => "MidPoint",
             Symmetric { .. } => "Symmetry",
             Fix { .. } => "Fix",
-            Distance { .. } | DistanceX { .. } | DistanceY { .. } | PointLineDistance { .. } | Length { .. } => "LinearDimension",
+            Distance { .. } | DistanceX { .. } | DistanceY { .. } | PointLineDistance { .. } | LineCircleDistance { .. } | Length { .. } => {
+                "LinearDimension"
+            }
             Radius { .. } => "RadialDimension",
             Diameter { .. } => "DiameterDimension",
             Angle { .. } | LineAngle { .. } | ArcSweep { .. } => "AngularDimension",
@@ -466,6 +481,7 @@ impl ConstraintKind {
             }
             Angle { a, b, .. } | SlotOverallLength { a, b, .. } => (vec![], vec![a, b]),
             Midpoint { p, l } | PointLineDistance { p, l, .. } => (vec![p], vec![l]),
+            LineCircleDistance { l, c, .. } => (vec![], vec![l, c]),
             Symmetric { p, q, l } => (vec![p, q], vec![l]),
             Fix { p } => (vec![p], vec![]),
             Smooth { a, b } => (vec![], vec![a, b]),
@@ -528,6 +544,10 @@ impl ConstraintKind {
             Midpoint { p, l } | PointLineDistance { p, l, .. } => {
                 fp(p);
                 fc(l);
+            }
+            LineCircleDistance { l, c, .. } => {
+                fc(l);
+                fc(c);
             }
             Symmetric { p, q, l } => {
                 fp(p);
@@ -968,6 +988,10 @@ impl Sketch {
                 if value <= radius(a) + radius(b) + 1e-9 {
                     return Err(SketchError::Invalid("overall slot length must exceed its width".into()));
                 }
+            }
+            LineCircleDistance { l, c, .. } => {
+                need_line(l)?;
+                need_round(c)?;
             }
             Tangent { a, b } => {
                 let free = |i: usize| self.curves.get(i).is_some_and(|c| c.kind.is_freeform());
