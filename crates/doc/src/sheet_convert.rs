@@ -227,7 +227,7 @@ fn outline(b: &Body, mesh: &Mesh, f: usize, tol: f64) -> Result<Face> {
         loops.push(lp);
     }
     let mut walls = std::collections::HashMap::new();
-    let mut wall = |g: u32| *walls.entry(g).or_insert_with(|| round_wall(b, &plane, n, g));
+    let mut wall = |g: u32| *walls.entry(g).or_insert_with(|| round_wall(b, &plane, *n, g));
     // Each loop with the faces of its walls.
     let mut shaped: Vec<(Vec<(Seg2, Option<u32>)>, Vec<usize>)> = loops
         .iter()
