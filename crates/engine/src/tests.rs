@@ -3744,3 +3744,159 @@ fn a_sketch_on_one_piece_stays_attached_when_the_side_joins() {
     let sketch = run(&mut s, "timeline.inspect", json!({"feature": "Sketch2"}));
     assert!(sketch["error"].is_null() && sketch["warning"].is_null(), "{sketch}");
 }
+
+/// #3044: undo and redo of a rename take the same path as the rename: nothing is evaluated,
+/// every body keeps its mesh, and the model is the one evaluating that design gives.
+#[test]
+fn undo_and_redo_of_a_rename_evaluate_nothing() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "A", "name": "Block"}));
+    run(&mut s, "solid.box", json!({"length": 5, "width": 5, "height": 5, "center": [20, 0, 2.5], "operation": "new", "body_name": "B"}));
+    let names = |s: &Session| {
+        (
+            s.model.state().bodies.iter().map(|b| b.name.clone()).collect::<Vec<_>>(),
+            s.model.results.iter().map(|r| r.name.clone()).collect::<Vec<_>>(),
+        )
+    };
+    let meshes = |s: &Session| s.model.state().bodies.iter().map(|b| std::sync::Arc::as_ptr(&b.mesh())).collect::<Vec<_>>();
+    let shown = meshes(&s);
+    let original = names(&s);
+    run(&mut s, "body.rename", json!({"body": "A", "name": "Plate"}));
+    run(&mut s, "timeline.rename", json!({"feature": "Block", "name": "Base"}));
+    let renamed = names(&s);
+    s.evaluations = 0;
+    run(&mut s, "edit.undo", json!({}));
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(names(&s), original);
+    let mut fresh = Session::new((*s.doc).clone());
+    fresh.refresh();
+    assert_eq!(names(&fresh), original, "the same as evaluating the design undone to");
+    run(&mut s, "edit.redo", json!({}));
+    run(&mut s, "edit.redo", json!({}));
+    assert_eq!(names(&s), renamed);
+    assert_eq!(s.evaluations, 0, "undo and redo of renames evaluate nothing");
+    assert_eq!(meshes(&s), shown, "every body keeps its mesh");
+    s.refresh();
+    assert_eq!(s.model.last_recomputed, 0, "and the next evaluation reuses every result");
+}
+
+/// #3044: renaming a body of an imported assembly (a part placed twice, so the file has more
+/// solids than the part has bodies, like the Prusa Core One) evaluates nothing, not even the
+/// file again, and its undo and redo don't either.
+#[test]
+fn renaming_an_imported_assembly_body_reads_nothing_again() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-step-rename-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut a = Session::default();
+    run(&mut a, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Cube"}));
+    run(&mut a, "solid.box", json!({"length": 4, "width": 4, "height": 4, "center": [30, 0, 2], "operation": "new", "body_name": "Pin"}));
+    run(&mut a, "component.from_bodies", json!({"bodies": ["Cube"]}));
+    run(&mut a, "occurrence.copy", json!({"component": "Cube", "translate": [0, 40, 0]}));
+    let p = dir.join("Assembly.step");
+    run(&mut a, "file.export", json!({"path": p.to_string_lossy()}));
+    let mut s = Session::default();
+    run(&mut s, "doc.open", json!({"path": p.to_string_lossy()}));
+    let names = |s: &Session| s.model.state().bodies.iter().map(|b| b.name.clone()).collect::<Vec<_>>();
+    let before = names(&s);
+    let body = before.first().cloned().unwrap();
+    s.evaluations = 0;
+    run(&mut s, "body.rename", json!({"body": body, "name": "Renamed"}));
+    assert_eq!(s.evaluations, 0, "a rename evaluates nothing");
+    let after = names(&s);
+    assert_eq!(after.first().map(String::as_str), Some("Renamed"));
+    let mut fresh = Session::new((*s.doc).clone());
+    fresh.refresh();
+    assert_eq!(names(&fresh), after, "the same names as evaluating the renamed design");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(names(&s), before);
+    run(&mut s, "edit.redo", json!({}));
+    assert_eq!(names(&s), after);
+    assert_eq!(s.evaluations, 0, "nor do its undo and redo");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #3044: on a design with thousands of bodies the cheap commands stay cheap: selecting,
+/// hiding, showing, colouring and renaming a body or a feature, and undoing them, recompute no
+/// feature (renames and their undo don't even look over the timeline) and leave every body's
+/// display mesh as it was, so nothing is meshed or uploaded again.
+#[test]
+fn cheap_commands_on_thousands_of_bodies_evaluate_nothing() {
+    let mut s = Session::default();
+    for k in 0..2 {
+        run(
+            &mut s,
+            "solid.box",
+            json!({"length": 4, "width": 4, "height": 4, "center": [0, 6 * k, 2], "operation": "new", "name": format!("Seed{k}")}),
+        );
+        run(
+            &mut s,
+            "solid.pattern.rectangular",
+            json!({"features": [format!("Seed{k}")], "dir1": [1, 0, 0], "count1": 1000, "spacing1": 6, "name": format!("Row{k}")}),
+        );
+    }
+    assert_eq!(s.model.state().bodies.len(), 2000);
+    let meshes = |s: &Session| s.model.state().bodies.iter().map(|b| std::sync::Arc::as_ptr(&b.mesh())).collect::<Vec<_>>();
+    let shown = meshes(&s);
+    s.refresh();
+    for (command, params, evaluates) in [
+        ("select.set", json!({"items": [{"type": "body", "name": "Body7"}]}), true),
+        ("browser.visibility", json!({"visible": false, "items": ["Body7"]}), true),
+        ("browser.visibility", json!({"visible": true, "items": ["Body7"]}), true),
+        ("appearance.assign", json!({"bodies": ["Body7"], "appearance": "Aluminum - Satin"}), true),
+        ("body.rename", json!({"body": "Body7", "name": "Renamed"}), false),
+        ("timeline.rename", json!({"feature": "Row1", "name": "Second row"}), false),
+        ("edit.undo", json!({}), false),
+        ("edit.undo", json!({}), false),
+        ("edit.redo", json!({}), false),
+    ] {
+        s.evaluations = 0;
+        run(&mut s, command, params);
+        // The rest may look over the timeline, which then finds every result as it was.
+        assert_eq!(s.model.last_recomputed, 0, "{command} recomputed a feature");
+        if !evaluates {
+            assert_eq!(s.evaluations, 0, "{command} evaluated the design");
+        }
+    }
+    assert_eq!(meshes(&s), shown, "every body keeps its mesh");
+}
+
+/// #3044: an imported file's warnings quote its solids' labels (the Prusa Core One's name `Body1`
+/// as its bodies are named), which a rename doesn't change: renaming such a body still
+/// evaluates nothing, and gives what evaluating the renamed design gives.
+#[test]
+fn renaming_a_body_an_import_warning_names_evaluates_nothing() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-step-warned-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut a = Session::default();
+    run(&mut a, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Cube"}));
+    let p = dir.join("Warned.step");
+    run(&mut a, "file.export", json!({"path": p.to_string_lossy()}));
+    // A second solid labelled `Cube` whose shell is missing: the import warns about `Cube`.
+    let text = std::fs::read_to_string(&p).unwrap();
+    let brep = text.lines().find(|l| l.contains("=MANIFOLD_SOLID_BREP('Cube'")).and_then(|l| l.split('=').next()).unwrap().to_string();
+    let text = text.replacen(&format!("({brep},"), &format!("({brep},#999990,"), 1).replacen(
+        "ENDSEC;\nEND-ISO",
+        "#999990=MANIFOLD_SOLID_BREP('Cube',#999991);\nENDSEC;\nEND-ISO",
+        1,
+    );
+    std::fs::write(&p, text).unwrap();
+    let mut s = Session::default();
+    run(&mut s, "doc.open", json!({"path": p.to_string_lossy()}));
+    assert!(
+        s.model.results.iter().any(|r| r.warning.as_deref().is_some_and(|w| w.contains("Cube"))),
+        "{:?}",
+        s.model.results.iter().map(|r| r.warning.clone()).collect::<Vec<_>>()
+    );
+    s.evaluations = 0;
+    run(&mut s, "body.rename", json!({"body": "Cube", "name": "Block"}));
+    assert_eq!(s.evaluations, 0, "a rename evaluates nothing");
+    let mut fresh = Session::new((*s.doc).clone());
+    fresh.refresh();
+    let names = |s: &Session| s.model.state().bodies.iter().map(|b| b.name.clone()).collect::<Vec<_>>();
+    assert_eq!(names(&s), names(&fresh));
+    assert_eq!(
+        s.model.results.iter().map(|r| r.warning.clone()).collect::<Vec<_>>(),
+        fresh.model.results.iter().map(|r| r.warning.clone()).collect::<Vec<_>>()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

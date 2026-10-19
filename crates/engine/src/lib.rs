@@ -232,6 +232,9 @@ pub struct Session {
     world_cache: std::sync::Mutex<Option<WorldCache>>,
     occurrence_visibility_cache: std::sync::Mutex<Option<occurrences::VisibilityCache>>,
     removed_later_cache: std::sync::Mutex<Option<occurrences::RemovedLaterCache>>,
+    /// Recent renames the model followed in place, with the designs either side, so undo and
+    /// redo of one take the same path instead of evaluating the design again.
+    renames: Vec<RenameStep>,
     /// Features copied with `timeline.copy` (pasted by `timeline.paste`).
     pub clipboard: Vec<solidcraft_doc::Feature>,
     /// Sketch geometry copied with `sketch.copy` (pasted by `sketch.paste`).
@@ -346,9 +349,28 @@ impl Default for Session {
 
 /// What a rename command renamed (from its result and the document before it), so the model
 /// can take the new name without building anything again (#3044).
+#[derive(Clone)]
 enum Renamed {
     Body { old: String, new: String },
     Feature { id: u64, old: String, new: String },
+}
+
+impl Renamed {
+    /// The rename that undoes this one.
+    fn reversed(&self) -> Renamed {
+        match self {
+            Renamed::Body { old, new } => Renamed::Body { old: new.clone(), new: old.clone() },
+            Renamed::Feature { id, old, new } => Renamed::Feature { id: *id, old: new.clone(), new: old.clone() },
+        }
+    }
+}
+
+/// A rename followed in place: the design before and after it (held weakly: the undo history
+/// holds them while they can come back).
+struct RenameStep {
+    before: std::sync::Weak<Document>,
+    after: std::sync::Weak<Document>,
+    renamed: Renamed,
 }
 
 impl Renamed {
@@ -390,6 +412,7 @@ impl Session {
             world_cache: Default::default(),
             occurrence_visibility_cache: Default::default(),
             removed_later_cache: Default::default(),
+            renames: Vec::new(),
             clipboard: Vec::new(),
             sketch_clipboard: None,
             section: None,
@@ -608,10 +631,30 @@ impl Session {
             Renamed::Feature { id, old, new } => self.model.rename_feature(&self.doc, *id, old, new),
         };
         if in_place {
+            self.renames.retain(|r| r.before.strong_count() > 0 && r.after.strong_count() > 0);
+            self.renames.push(RenameStep { before: Arc::downgrade(previous), after: Arc::downgrade(&self.doc), renamed: renamed.clone() });
+            if self.renames.len() > MAX_UNDO {
+                self.renames.remove(0);
+            }
             self.after_evaluation();
         } else {
             self.refresh();
         }
+    }
+
+    /// The rename that turned `previous` into the design when undo or redo went across one this
+    /// session followed in place (either way round).
+    fn renamed_across(&self, previous: &Arc<Document>) -> Option<Renamed> {
+        let holds = |w: &std::sync::Weak<Document>, d: &Arc<Document>| w.upgrade().is_some_and(|x| Arc::ptr_eq(&x, d));
+        self.renames.iter().rev().find_map(|r| {
+            if holds(&r.before, previous) && holds(&r.after, &self.doc) {
+                Some(r.renamed.clone())
+            } else if holds(&r.after, previous) && holds(&r.before, &self.doc) {
+                Some(r.renamed.reversed())
+            } else {
+                None
+            }
+        })
     }
 
     /// What follows a new model: a new revision, and what depends on the model brought up to it.
@@ -758,7 +801,8 @@ impl Session {
         let changed = !Arc::ptr_eq(&self.doc, &before.doc);
         match r {
             Ok((v, live_edit)) => {
-                let renamed = Renamed::of(spec.id, &v, &before.doc);
+                // A rename, or undo or redo across one.
+                let renamed = Renamed::of(spec.id, &v, &before.doc).or_else(|| self.renamed_across(&before.doc));
                 let v = if changed { self.with_created(spec.id, params, &before, v) } else { v };
                 if changed {
                     let render_only = self.render_only_change(&before);
@@ -880,6 +924,7 @@ impl Session {
             world_cache: std::sync::Mutex::new(self.world_cache.lock().ok().and_then(|cache| cache.clone())),
             occurrence_visibility_cache: Default::default(),
             removed_later_cache: Default::default(),
+            renames: Vec::new(),
             clipboard: self.clipboard.clone(),
             sketch_clipboard: self.sketch_clipboard.clone(),
             section: None,

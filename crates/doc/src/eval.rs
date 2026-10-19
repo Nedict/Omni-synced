@@ -1428,7 +1428,10 @@ impl Model {
         let kept = |b: &ModelBody| after.feature(b.feature).is_some_and(|f| f.body_names.contains(&b.name));
         let names_old = |m: &Option<String>| m.as_deref().is_some_and(|m| m.contains(old));
         for (r, f) in self.results.iter().zip(&after.features) {
-            if r.id != f.id || r.stale || names_old(&r.error) || names_old(&r.warning) {
+            // An imported file's warnings quote its own solids' labels, which no rename changes
+            // (the Prusa Core One's warnings name `Body1` as its bodies are called).
+            let warning_names_old = names_old(&r.warning) && !matches!(f.kind, FeatureKind::Import { .. });
+            if r.id != f.id || r.stale || names_old(&r.error) || warning_names_old {
                 return false;
             }
             if r.state.bodies.iter().any(|b| b.name == new || b.source_name.is_some() || (made_from_old(&b.name) && !kept(b))) {
