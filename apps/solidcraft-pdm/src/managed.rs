@@ -1,5 +1,6 @@
 //! Managed catalog, fenced exclusive checkout and atomic receipt-bearing check-in.
 //! Credentials are resolved by the server; request fields never choose a principal.
+use crate::blob_store::{BlobStore, FsBlobStore};
 use crate::{Error, MAX_CONTENT, MAX_DEPENDENCIES, MAX_STORED_CONTENT, MAX_VERSIONS, Version, VersionRef, digest};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -223,6 +224,7 @@ impl State {
 
 pub(crate) struct ManagedStore {
     root: PathBuf,
+    blobs: FsBlobStore,
     generation: u64,
     state: State,
     credentials: Vec<PrincipalCredential>,
@@ -267,9 +269,8 @@ impl ManagedStore {
     pub(crate) fn open(store_root: &Path) -> Result<Self, Error> {
         let root = store_root.join("managed");
         crate::reject_symlink_ancestors(&root)?;
-        crate::reject_symlink_ancestors(&root.join("blobs"))?;
         crate::reject_symlink_ancestors(&root.join("generations"))?;
-        fs::create_dir_all(root.join("blobs"))?;
+        let blobs = FsBlobStore::open(&root)?;
         fs::create_dir_all(root.join("generations"))?;
         let mut generation = 0;
         for entry in fs::read_dir(root.join("generations"))? {
@@ -308,7 +309,7 @@ impl ManagedStore {
                 return Err(Error::Invalid("principal configuration"));
             }
         }
-        let mut store = Self { root, generation, state, credentials };
+        let mut store = Self { root, blobs, generation, state, credentials };
         if generation == 0 {
             store.publish(store.state.clone())?;
         }
@@ -450,10 +451,7 @@ impl ManagedStore {
 
     pub(crate) fn download(&self, reference: &VersionRef) -> Result<(Version, Vec<u8>), Error> {
         let version = &self.state.versions.iter().find(|v| v.version.reference == *reference).ok_or(Error::NotFound)?.version;
-        let content = crate::client::read_file(&self.root.join("blobs").join(&version.sha256), MAX_CONTENT)?;
-        if digest(&content) != version.sha256 {
-            return Err(Error::Integrity);
-        }
+        let content = self.blobs.get_verified(&version.sha256)?;
         Ok((version.clone(), content))
     }
 
@@ -512,33 +510,7 @@ impl ManagedStore {
             comment: input.comment,
             request_id: input.request_id.clone(),
         };
-        let blob = self.root.join("blobs").join(&version.version.sha256);
-        if blob.exists() {
-            if crate::client::read_file(&blob, MAX_CONTENT)? != input.content {
-                return Err(Error::Integrity);
-            }
-        } else {
-            // Count orphan blobs as well: failed publication must not bypass disk quotas.
-            let mut bytes = input.content.len() as u64;
-            let mut count = 0;
-            for item in fs::read_dir(self.root.join("blobs"))? {
-                let item = item?;
-                if item.file_name() == "pending" {
-                    continue;
-                }
-                count += 1;
-                bytes = bytes.checked_add(item.metadata()?.len()).ok_or(Error::Invalid("blob storage quota"))?;
-                if count >= MAX_VERSIONS || bytes > MAX_STORED_CONTENT {
-                    return Err(Error::Invalid("blob storage quota"));
-                }
-            }
-            let pending = self.root.join("blobs/pending");
-            if pending.exists() {
-                fs::remove_file(&pending)?;
-            }
-            crate::write_synced(&pending, &input.content)?;
-            fs::rename(&pending, &blob)?;
-        }
+        self.blobs.put_verified_if_absent(&version.version.sha256, &input.content)?;
         // The receipt, head, immutable version metadata and unlock share one publication.
         // A failed metadata commit leaves the old checkout intact and only an orphan blob.
         entry.head = Some(number);

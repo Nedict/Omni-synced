@@ -83,6 +83,22 @@ baseline failure accurately. Keep the PR draft until the user trial is complete.
 
 ## Explicit limits
 
+The local milestone was verified with 34 focused native/engine/UI tests and 40
+service/workspace/backup tests, strict Clippy, and a separate native UI trial.
+The trial exercised the actual restore confirmation, historical v1 content
+published as v3, unchanged historical versions, same-path normal-tab reuse,
+read-only saves after publication, and retry without an additional version.
+The delivered executable and demo are frozen separately from further development.
+The repository CI entry point passes formatting and asset attribution, then stops
+at the independently reproduced Windows accepted-icon hash mismatch. Final Wasm
+and latest-upstream integration checks remain follow-up work.
+
+The next increment exports and verifies the filesystem BlobStore boundary and
+one-time local first-administrator enrollment. It does not enable a network
+provider, remote login or a non-loopback listener. The legacy loopback owner
+credential remains an explicit compatibility path; any secure transport must
+exclude it and authenticate configured principals only.
+
 ### Storage and remote access contracts
 
 The authoritative PDM service owns identities, authorization, reservations,

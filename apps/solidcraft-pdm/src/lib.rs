@@ -13,6 +13,8 @@ use std::{
 };
 
 pub mod backup_restore;
+pub mod blob_store;
+pub mod bootstrap;
 pub mod client;
 pub mod managed;
 pub mod managed_workspace;
