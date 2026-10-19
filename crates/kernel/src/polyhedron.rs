@@ -432,7 +432,7 @@ pub fn round_all_edges(b: &Body, r: f64) -> Result<Body> {
             let (np, sp, back) = (*c + side * r, *c - side * r, *c - axis * r);
             let meridian = builder::circle_arc(&builder::vertex(p3(np)), &builder::vertex(p3(sp)), p3(back));
             let surf =
-                mt::Surface::RevolutedCurve(mt::Processor::new(mt::RevolutedCurve::by_revolution(meridian.oriented_curve(), p3(*c), v3(side))));
+                mt::Surface::RevolutedCurve(mt::Processor::new(mt::RevolutedCurve::by_revolution(meridian.oriented_curve(), p3(*c), v3(*side))));
             let surf = orient(surf, *c + axis * r, *axis);
             out.push(mt::Face::try_new(vec![w.into()], surf).map_err(|e| KernelError::Failed(format!("rounded corner: {e}")))?);
             let mut corner: Vec<FaceOrigin> =

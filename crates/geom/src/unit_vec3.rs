@@ -26,10 +26,14 @@ impl UnitVec3 {
     pub fn vec(self) -> Vec3 {
         self.0
     }
+    /// Any unit vector square to this one.
+    pub fn any_perp(self) -> UnitVec3 {
+        UnitVec3(self.0.any_perp())
+    }
     /// Two unit vectors square to this one and to each other, `(u, v)` with `u × v` along it.
     pub fn perp_pair(self) -> (UnitVec3, UnitVec3) {
-        let u = self.0.any_perp();
-        (UnitVec3(u), UnitVec3(self.0.cross(u)))
+        let u = self.any_perp();
+        (u, UnitVec3(self.0.cross(u.0)))
     }
     /// The angle to `o`, 0 to π.
     pub fn angle_to(self, o: UnitVec3) -> f64 {
@@ -128,6 +132,7 @@ mod tests {
     #[test]
     fn frames_turns_and_angles() {
         let n = Vec3::new(1.0, 2.0, 2.0).unit().unwrap();
+        assert!(n.any_perp().dot(n).abs() < 1e-12);
         let (u, v) = n.perp_pair();
         assert!(u.dot(n).abs() < 1e-12 && v.dot(n).abs() < 1e-12 && u.dot(v).abs() < 1e-12);
         assert!((u.len() - 1.0).abs() < 1e-12 && (v.len() - 1.0).abs() < 1e-12);
