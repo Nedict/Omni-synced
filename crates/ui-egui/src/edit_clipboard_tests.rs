@@ -232,6 +232,75 @@ fn contribution_occurrence_move_panel_belongs_to_its_document() {
 }
 
 #[test]
+fn contribution_linked_paste_uses_the_pointer_and_pending_numeric_move() {
+    use solidcraft_engine::geom::Vec3;
+    let file = ContributionPart::new();
+    let mut h = crate::scenario::Harness::new();
+    h.app = contribution_saved_part(&file);
+    assert!(super::copy(&mut h.app));
+    crate::documents::open_tab(&mut h.app, solidcraft_engine::Session::default()).unwrap();
+    h.app.run("solid.box", json!({"length":80,"width":50,"height":8,"body_name":"Destination"})).unwrap();
+    h.app.fit_view();
+    h.frames(3);
+    let projection = crate::viewport::projection(&h.app, h.app.viewport.rect.unwrap());
+    let pointed = Vec3::new(40., 25., 8.);
+    let at = projection.to_screen(pointed).unwrap();
+    let undo = h.app.session.undo.len();
+    assert!(super::paste(&mut h.app, Some(at)));
+    h.frames(3);
+    let path = h.app.tree.occurrence_move.as_ref().unwrap().path.clone();
+    let initial = solidcraft_engine::doc::apply_point(&h.app.session.occurrence_placement(&path).unwrap().world, Vec3::ZERO);
+    assert!((initial - pointed).len() < 1e-5, "{initial:?}");
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+    let camera = h.app.cam;
+    let field = h.call("ui.at", json!({"handle":"occurrence-move:distance:0"}));
+    h.call("ui.click", json!({"x":field["result"][0],"y":field["result"][1],"double":true}));
+    h.frames(2);
+    h.step(&json!({"key":"A","cmd":true})).unwrap();
+    h.step(&json!({"text":"12"})).unwrap();
+    h.step(&json!({"key":"Enter"})).unwrap();
+    h.frames(3);
+    let moved = solidcraft_engine::doc::apply_point(&h.app.session.occurrence_placement(&path).unwrap().world, Vec3::ZERO);
+    assert!(moved.x > initial.x + 10., "numeric move must retain the pasted occurrence: {initial:?} -> {moved:?}");
+    assert_eq!(h.app.cam, camera, "numeric editing does not move the camera");
+    let movement = h.app.tree.occurrence_move.as_ref().unwrap();
+    assert!((movement.translate[0] - (moved.x - initial.x)).abs() < 1e-5);
+    assert_eq!(h.app.session.undo.len(), undo + 1, "pending movement does not split the initial paste undo");
+    h.app.run("edit.undo", json!({})).unwrap();
+    h.frames(3);
+    assert!(h.app.session.doc.links.is_empty());
+    assert!(h.app.tree.occurrence_move.is_none());
+    crate::documents::switch(&mut h.app, 0);
+    assert_eq!(h.app.session.doc.features.len(), 1, "source geometry stays untouched");
+}
+
+#[test]
+fn contribution_paste_pointer_uses_parent_coordinates_and_safe_fallbacks() {
+    use solidcraft_engine::{doc, geom::Vec3};
+    let mut h = crate::scenario::Harness::new();
+    let parent = h.app.run("component.create", json!({"name":"Parent"})).unwrap();
+    h.app
+        .run("occurrence.move", json!({"occurrence":parent["occurrence"],"translate":[20,30,10],"axis":[1,0,0],"angle":"45 deg","capture":true}))
+        .unwrap();
+    h.frames(3);
+    let path = vec![parent["occurrence"].as_u64().unwrap()];
+    h.app.run("component.activate", json!({"component":parent["component"],"occurrence":parent["occurrence"],"path":path})).unwrap();
+    let (actual, zero) = super::paste_placement(&h.app, None);
+    assert_eq!(actual, path);
+    assert_eq!(zero, [0.; 3]);
+    assert_eq!(super::paste_placement(&h.app, Some(egui::pos2(-100., -100.))).1, [0.; 3]);
+    let frame = h.app.session.occurrence_placement(&path).unwrap().world;
+    let target = doc::apply_point(&frame, Vec3::new(5., 7., 0.));
+    h.app.cam.target = target;
+    h.app.cam.distance = 100.;
+    h.frames(2);
+    let projection = crate::viewport::projection(&h.app, h.app.viewport.rect.unwrap());
+    let at = projection.to_screen(target).unwrap();
+    let (_, local) = super::paste_placement(&h.app, Some(at));
+    assert!((Vec3::new(local[0], local[1], local[2]) - Vec3::new(5., 7., 0.)).len() < 1e-5, "{local:?}");
+}
+
+#[test]
 fn contribution_linked_clipboard_refuses_unsaved_dirty_self_and_missing_sources() {
     let file = ContributionPart::new();
     let mut app = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());

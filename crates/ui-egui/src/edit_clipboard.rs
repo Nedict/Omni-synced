@@ -152,9 +152,12 @@ pub fn paste(app: &mut SolveApp, at: Option<Pos2>) -> bool {
         return true;
     }
     if let Some(path) = app.linked_design_clipboard.clone() {
-        let Ok(out) = app.run("component.insert_design", json!({"path": path, "reuse": true})) else { return false };
+        let (parent_path, translate) = paste_placement(app, at);
+        let Ok(out) = app.run("component.insert_design", json!({"path": path, "reuse": true, "translate":translate})) else { return false };
         if let Some(id) = out.get("occurrence").and_then(Value::as_u64) {
             let mut movement = crate::browser::OccMove::new(id);
+            movement.path = parent_path;
+            movement.path.push(id);
             movement.baseline = app.session.doc.occurrences.iter().find(|o| o.id == id).map(|o| o.transform);
             app.tree.occurrence_move = Some(movement);
         }
@@ -166,6 +169,38 @@ pub fn paste(app: &mut SolveApp, at: Option<Pos2>) -> bool {
         return false;
     }
     app.run("timeline.paste", json!({})).is_ok()
+}
+
+/// Place the copied design's origin on the pointed solid surface, otherwise its parent's
+/// XY plane. With no viewport point or a parallel/behind-camera ray, use the parent origin.
+fn paste_placement(app: &SolveApp, at: Option<Pos2>) -> (Vec<u64>, [f64; 3]) {
+    use solidcraft_engine::{doc, geom::Vec3};
+    let path = app.session.active_occurrence_path.clone().unwrap_or_else(|| app.session.doc.first_path(app.session.active_component));
+    let frame = app.session.occurrence_placement(&path).map(|p| p.world).unwrap_or(doc::IDENTITY);
+    let origin = doc::apply_point(&frame, Vec3::ZERO);
+    let at = at.zip(app.viewport.rect).filter(|(point, rect)| rect.contains(*point));
+    let point = at
+        .and_then(|(at, rect)| {
+            let projection = crate::viewport::projection(app, rect);
+            if let Some(point) = crate::viewport::pick_all(app, &projection, at).into_iter().find_map(|hit| match hit {
+                crate::viewport::Hit::Face { point, .. } => Some(point),
+                _ => None,
+            }) {
+                return point.is_finite().then_some(point);
+            }
+            let (ray_origin, ray_direction) = projection.ray(at);
+            let normal = doc::apply_vector(&frame, Vec3::Z);
+            let denominator = ray_direction.dot(normal);
+            if denominator.abs() < 1e-9 {
+                return None;
+            }
+            let distance = (origin - ray_origin).dot(normal) / denominator;
+            let point = ray_origin + ray_direction * distance;
+            (distance >= 0.0 && point.is_finite()).then_some(point)
+        })
+        .unwrap_or(origin);
+    let local = doc::mat_inverse(&frame).map(|inverse| doc::apply_point(&inverse, point)).filter(|p| p.is_finite()).unwrap_or(Vec3::ZERO);
+    (path, [local.x, local.y, local.z])
 }
 
 /// The frame's Copy, Cut and Paste events (and Ctrl+C / Ctrl+X / Ctrl+V sent as key presses), plus any
