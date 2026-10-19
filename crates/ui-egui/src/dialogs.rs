@@ -10,7 +10,7 @@ use solidcraft_engine::Sel;
 use solidcraft_engine::Session;
 use solidcraft_engine::doc::expr::Kind as ValueKind;
 use solidcraft_engine::doc::{AxisRef, Direction, FeatureKind, FilletStyle, HoleKind, Operation, PatternKind, PlaneRef, ProfileSel, ThinSide};
-use solidcraft_engine::geom::{Aabb3, Vec3};
+use solidcraft_engine::geom::{Aabb3, Plane, Vec3};
 
 use crate::SolveApp;
 use crate::selection::{self, AXES, Accept, BODIES, CURVES, EDGES, FACES, PLANAR_FACES, PLANES, PROFILES, SelInput};
@@ -848,6 +848,7 @@ impl Dialog {
 
     /// The main value (shown on the canvas too): label, kind and the expression.
     pub fn primary(&mut self) -> Option<(&'static str, ValueKind, &mut String)> {
+        let second_section = self.section_input_index() == Some(1);
         Some(match &mut self.kind {
             Kind::Extrude { to_offset, .. } if to_object_on(&self.inputs) => ("To Offset", ValueKind::Length, to_offset),
             Kind::Extrude { distance, .. } => ("Distance", ValueKind::Length, distance),
@@ -874,6 +875,7 @@ impl Dialog {
             },
             Kind::PatternRect { spacing, .. } => ("Spacing", ValueKind::Length, spacing),
             Kind::PatternCirc { angle, .. } => ("Angle", ValueKind::Angle, angle),
+            Kind::Section { second_offset, .. } if second_section => ("Distance", ValueKind::Length, second_offset),
             Kind::Section { offset, .. } => ("Distance", ValueKind::Length, offset),
             Kind::OffsetPlane { offset } => ("Distance", ValueKind::Length, offset),
             Kind::PathPlane { t, .. } => ("Position (0 to 1)", ValueKind::Unitless, t),
@@ -902,6 +904,14 @@ impl Dialog {
 
     pub fn wants_picks(&self) -> bool {
         !self.inputs.is_empty()
+    }
+
+    /// The visible section manipulator edits the selected plane, including kept plane references.
+    pub(crate) fn section_input_index(&self) -> Option<usize> {
+        match &self.kind {
+            Kind::Section { quarter, .. } => Some(usize::from(*quarter && self.active == 1)),
+            _ => None,
+        }
     }
 
     pub fn active_input(&self) -> Option<&SelInput> {
@@ -1345,9 +1355,9 @@ fn pt(v: Vec3) -> Value {
 }
 
 /// Both section inputs share the same plane/planar-face resolution and validation.
-fn section_input_plane(s: &Session, d: &Dialog, index: usize, stored: &str) -> Result<Value, String> {
-    match sels(d, index).first() {
-        Some(Sel::Plane { name }) if matches!(name.as_str(), "XY" | "XZ" | "YZ") => Ok(json!(name)),
+fn section_reference(s: &Session, d: &Dialog, index: usize, stored: &str) -> Result<(Value, Plane), String> {
+    let value = match sels(d, index).first() {
+        Some(Sel::Plane { name }) if matches!(name.as_str(), "XY" | "XZ" | "YZ") => Ok::<Value, String>(json!(name)),
         Some(Sel::Face { body, index, point }) => {
             let (_, normal) = planar_face(s, body, *index).ok_or("the face must be planar")?;
             Ok(json!({"origin":pt(*point),"normal":pt(normal)}))
@@ -1361,7 +1371,33 @@ fn section_input_plane(s: &Session, d: &Dialog, index: usize, stored: &str) -> R
             Ok(json!({"origin":pt(plane.origin),"normal":pt(plane.normal())}))
         }
         _ => d.extra.get(stored).cloned().ok_or_else(|| "pick a plane or a planar face".into()),
-    }
+    }?;
+    let plane = if let Some(name) = value.as_str() {
+        Plane::named(name).ok_or("unknown plane")?
+    } else {
+        let origin: Vec3 = serde_json::from_value(value.get("origin").cloned().ok_or("invalid plane origin")?).map_err(|_| "invalid plane origin")?;
+        let normal: Vec3 = serde_json::from_value(value.get("normal").cloned().ok_or("invalid plane normal")?).map_err(|_| "invalid plane normal")?;
+        if !origin.is_finite() || !normal.is_finite() {
+            return Err("invalid plane".into());
+        }
+        Plane::from_normal(origin, normal).ok_or("invalid plane normal")?
+    };
+    Ok((value, plane))
+}
+
+fn section_input_plane(s: &Session, d: &Dialog, index: usize, stored: &str) -> Result<Value, String> {
+    section_reference(s, d, index, stored).map(|(value, _)| value)
+}
+
+/// The same reference frame used by the section command's distance parameter.
+pub(crate) fn section_reference_frame(s: &Session, d: &Dialog, index: usize) -> Option<(Vec3, Vec3)> {
+    let key = match index {
+        0 => "section_plane",
+        1 => "section_second_plane",
+        _ => return None,
+    };
+    let (_, plane) = section_reference(s, d, index, key).ok()?;
+    Some((plane.origin, plane.normal()))
 }
 
 /// A plane input as a command parameter: an origin/construction plane name or a face plane.
@@ -1731,6 +1767,74 @@ fn selection_label(s: &Session, item: &Sel) -> String {
 /// makes it the active input.
 fn input_rows(d: &mut Dialog, ui: &mut egui::Ui, s: &Session) {
     input_rows_range(d, ui, s, 0..d.inputs.len());
+}
+
+/// Keep each section plane beside its own values and activate the plane being edited.
+fn section_plane_fields(ui: &mut egui::Ui, d: &mut Dialog, index: usize) -> bool {
+    let Kind::Section { offset, flip, second_offset, second_flip, .. } = &mut d.kind else { return false };
+    let (offset, flip) = if index == 1 { (second_offset, second_flip) } else { (offset, flip) };
+    row_label(ui, "Distance");
+    if index == 1 {
+        ROW.with(|r| *r.borrow_mut() = "Second offset".into());
+    }
+    let response = ui.text_edit_singleline(offset);
+    publish_row(&response);
+    crate::params_dialog::complete(ui, &response, offset);
+    let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    let mut activate = response.clicked() || response.gained_focus() || response.changed();
+    ui.end_row();
+    row_label(ui, "Flip");
+    if index == 1 {
+        ROW.with(|r| *r.borrow_mut() = "Second flip".into());
+    }
+    let response = ui.checkbox(flip, "");
+    publish_row(&response);
+    activate |= response.clicked();
+    ui.end_row();
+    if activate {
+        d.active = index;
+    }
+    enter
+}
+
+fn section_rows(app: &mut SolveApp, d: &mut Dialog, ui: &mut egui::Ui) -> (bool, bool) {
+    input_rows_range(d, ui, &app.session, 0..1);
+    let mut enter = section_plane_fields(ui, d, 0);
+    let Kind::Section { quarter, .. } = &mut d.kind else { return (enter, false) };
+    row_label(ui, "Quarter section");
+    let changed = ui.checkbox(quarter, "");
+    publish_row(&changed);
+    let enabled = *quarter;
+    if changed.changed() {
+        if enabled {
+            let mut input = SelInput::new("Second plane", PLANES | PLANAR_FACES, false);
+            input.items = d.extra.get("section_second_selection").cloned().and_then(|value| serde_json::from_value(value).ok()).unwrap_or_default();
+            d.inputs.truncate(1);
+            d.inputs.push(input);
+            d.active = 1;
+        } else {
+            if let Some(input) = d.inputs.get(1) {
+                d.extra.insert("section_second_selection".into(), json!(input.items));
+            }
+            d.inputs.truncate(1);
+            d.active = 0;
+        }
+    }
+    ui.end_row();
+    if enabled {
+        input_rows_range(d, ui, &app.session, 1..2);
+        enter |= section_plane_fields(ui, d, 1);
+    }
+    row_label(ui, "");
+    let remove = ui.button(tr("Remove Section"));
+    crate::scenario::publish_handle("dialog:Remove Section", remove.rect.center());
+    let removed = remove.clicked() && app.run("inspect.section", json!({"clear": true})).is_ok();
+    if removed {
+        app.tree.hidden_section = None;
+        app.tree.hidden_section_second = None;
+    }
+    ui.end_row();
+    (enter, removed)
 }
 
 /// Saved vectors/axes are real inputs even when they have no origin-axis selection chip.
@@ -2398,7 +2502,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     ui.label(tr("dialog.selection_guidance"));
                     ui.end_row();
                 }
-                input_rows(&mut d, ui, &app.session);
+                if matches!(d.kind, Kind::Section { .. }) {
+                    let (submitted, removed) = section_rows(app, &mut d, ui);
+                    enter |= submitted;
+                    cancel |= removed;
+                } else {
+                    input_rows(&mut d, ui, &app.session);
+                }
                 match &mut d.kind {
                     Kind::Sketch => {
                         if d.error.is_some()
@@ -2922,54 +3032,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         combo(ui, "mat", &names, index);
                         ui.end_row();
                     }
-                    Kind::Section { offset, flip, quarter, second_offset, second_flip } => {
-                        row_label(ui, "");
-                        let remove = ui.button(tr("Remove Section"));
-                        crate::scenario::publish_handle("dialog:Remove Section", remove.rect.center());
-                        if remove.clicked() && app.run("inspect.section", json!({"clear": true})).is_ok() {
-                            app.tree.hidden_section = None;
-                            app.tree.hidden_section_second = None;
-                            cancel = true;
-                        }
-                        ui.end_row();
-                        row_label(ui, "Quarter section");
-                        let changed = ui.checkbox(quarter, "");
-                        crate::scenario::publish_handle("dialog:Quarter section", changed.rect.center());
-                        if changed.changed() {
-                            if *quarter {
-                                let mut input = SelInput::new("Second plane", PLANES | PLANAR_FACES, false);
-                                input.items = d
-                                    .extra
-                                    .get("section_second_selection")
-                                    .cloned()
-                                    .and_then(|value| serde_json::from_value(value).ok())
-                                    .unwrap_or_default();
-                                d.inputs.push(input);
-                                d.active = 1;
-                            } else {
-                                if let Some(input) = d.inputs.get(1) {
-                                    d.extra.insert("section_second_selection".into(), json!(input.items));
-                                }
-                                d.inputs.truncate(1);
-                                d.active = 0;
-                            }
-                        }
-                        ui.end_row();
-                        if *quarter {
-                            row_label(ui, "Second offset");
-                            enter |= field(ui, second_offset);
-                            ui.end_row();
-                            row_label(ui, "Second flip");
-                            check(ui, second_flip);
-                            ui.end_row();
-                        }
-                        row_label(ui, "Distance");
-                        enter |= field(ui, offset);
-                        ui.end_row();
-                        row_label(ui, "Flip");
-                        check(ui, flip);
-                        ui.end_row();
-                    }
+                    Kind::Section { .. } => {}
                     Kind::PatternRect { count, spacing, count2, spacing2 } => {
                         for (l, v) in [("Quantity", count), ("Spacing", spacing), ("Quantity 2", count2), ("Spacing 2", spacing2)] {
                             row_label(ui, l);
