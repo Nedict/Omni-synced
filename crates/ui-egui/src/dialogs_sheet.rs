@@ -286,7 +286,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
             row_label(ui, "Length");
             enter |= field(ui, length);
             ui.end_row();
-            row_label(ui, "Gap");
+            row_label(ui, "ui.sheet_gap");
             enter |= hint_field(ui, gap, crate::i18n::tr_label("from the rule"));
             ui.end_row();
             row_label(ui, "Flip");
