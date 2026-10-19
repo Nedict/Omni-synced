@@ -211,17 +211,15 @@ fn halton(mut i: usize, b: usize) -> f64 {
 
 /// Fraction of sample points where `result` disagrees with `op` applied to `a` and `b`
 /// (membership by ray parity). Samples cover the overlap box densely and the union box lightly.
-/// Points within `band` of any of the three meshes are not counted: each mesh lies within its
-/// chord of its faces, so there two facetings of one face can disagree about a point although
-/// the faces agree. Where the bodies only just overlap, the overlap box is no thicker than that
-/// band, and the samples in it read the facetings rather than the result (an arm reaching
-/// 0.1 mm into a round rim meshed at 0.03 mm).
+/// Points within `band` of any of the three meshes (when it is positive) are not counted: each
+/// mesh lies within its chord of its faces, so there two facetings of one face can disagree
+/// about a point although the faces agree (see [`thin_meeting`]).
 fn mismatch(a: &solidcraft_geom::Mesh, b: &solidcraft_geom::Mesh, result: &solidcraft_geom::Mesh, op: BoolOp, band: f64) -> Option<f64> {
     if a.triangles.len() + b.triangles.len() + result.triangles.len() > 60_000 {
         return None;
     }
-    let near = [a, b, result].map(|m| crate::boolean_guard::Near::new(m, band));
-    let uncertain = |p: Vec3| band > 0.0 && near.iter().any(|n| n.as_ref().is_some_and(|n| n.close(p)));
+    let near = if band > 0.0 { [a, b, result].map(|m| crate::boolean_guard::Near::new(m, band)) } else { [None, None, None] };
+    let uncertain = |p: Vec3| near.iter().any(|n| n.as_ref().is_some_and(|n| n.close(p)));
     let (ba, bb) = (a.bounds(), b.bounds());
     let lo = ba.min.max(bb.min);
     let hi = ba.max.min(bb.max);
@@ -255,6 +253,17 @@ fn mismatch(a: &solidcraft_geom::Mesh, b: &solidcraft_geom::Mesh, result: &solid
         }
     }
     Some(bad as f64 / n.max(1) as f64)
+}
+
+/// Whether two meshes' boxes overlap by no more than a few times `band` (or not at all): bodies
+/// that only just meet. The membership samples in so thin an overlap would read the facetings
+/// rather than the result (an arm reaching 0.1 mm into a round rim meshed at 0.03 mm), so the
+/// check leaves out those within `band` of a surface ([`mismatch`]), and refuses instead a
+/// result with a face that does not mesh, whose hole the samples no longer see.
+fn thin_meeting(a: &solidcraft_geom::Mesh, b: &solidcraft_geom::Mesh, band: f64) -> bool {
+    let (ba, bb) = (a.bounds(), b.bounds());
+    let s = solidcraft_geom::Aabb3 { min: ba.min.max(bb.min), max: ba.max.min(bb.max) }.size();
+    s.x.min(s.y).min(s.z) < 4.0 * band
 }
 
 /// How one body sits relative to another, from sample points: (fraction of `b`'s samples
@@ -1075,7 +1084,10 @@ fn boolean_whole_inner(a: &Body, b: &Body, op: BoolOp, refine: bool) -> Result<O
             return (false, v);
         }
         let consistent = match &meshes {
-            (Some(ma), Some(mb)) => mismatch(ma, mb, &mr, op, 2.0 * tol_m).is_none_or(|f| f < 0.004),
+            (Some(ma), Some(mb)) if thin_meeting(ma, mb, 2.0 * tol_m) => {
+                r.unmeshed_faces() == 0 && mismatch(ma, mb, &mr, op, 2.0 * tol_m).is_none_or(|f| f < 0.004)
+            }
+            (Some(ma), Some(mb)) => mismatch(ma, mb, &mr, op, 0.0).is_none_or(|f| f < 0.004),
             _ => true,
         };
         (consistent, v)
@@ -1330,7 +1342,8 @@ fn boolean_whole_inner(a: &Body, b: &Body, op: BoolOp, refine: bool) -> Result<O
         // reaching a hundredth of a millimetre into a rim): traced at the tolerances above, a
         // step coarser than the overlap is deep, the crossing is lost. Finer steps find it,
         // before the shifted tries.
-        if attempt == 1 && crossing {
+        // Not again inside a nudge (which leaves how deep they overlap as it was).
+        if attempt == 1 && crossing && !APART.with(|c| c.get()) {
             // How deep they overlap is not known: from an eighth of the finer step above, each
             // try four times finer than the last.
             for k in [6e-5, 1.5e-5, 4e-6] {
@@ -1572,8 +1585,10 @@ fn boolean_whole_inner(a: &Body, b: &Body, op: BoolOp, refine: bool) -> Result<O
         }
     }
     // The tries at the meeting region's scale come last, after every strategy that answered
-    // before them, so a result any of those gave is kept as it was.
-    if let Some(body) = fine(&mut last) {
+    // before them, so a result any of those gave is kept as it was. Faces crossing each other
+    // had tries of their own, down to a fraction of how far they can overlap; these, finer
+    // still, take tens of seconds each on the round faces such contacts have.
+    if !crossing && let Some(body) = fine(&mut last) {
         return Ok(Some(body));
     }
     match doubted {
