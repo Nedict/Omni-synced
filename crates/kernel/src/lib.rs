@@ -142,6 +142,8 @@ mod touching_walls;
 mod tspline;
 #[cfg(test)]
 mod untouched_faces_tests;
+#[cfg(test)]
+mod wall_join_tests;
 pub mod watch;
 
 pub use blend::{ChamferSide, chamfer, chamfer_sides, fillet, fillet_each, fillet_g2, fillet_g2_corners, fillet_max, fillet_max_each};

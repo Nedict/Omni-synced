@@ -550,6 +550,7 @@ pub(crate) fn outline_union(a: &Body, b: &Body, accept: &dyn Fn(&Body) -> bool) 
             hb = crate::boolean_record::through(&b4, 0, hb.as_ref());
             (a2, b2) = (a4, b4);
         }
+        let ((a2, ha), (b2, hb)) = crate::coplanar::cylinders_imprinted((a2, ha), (b2, hb), tol)?;
         let Some(r) = crate::coplanar::glue(&a2, &b2) else { return Ok(None) };
         let r = r?;
         let (ha, hb) = (crate::boolean_record::placed(ha, 0, 2), crate::boolean_record::placed(hb, 1, 2));

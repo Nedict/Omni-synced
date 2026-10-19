@@ -327,6 +327,7 @@ mod robustness;
 mod robustness_goldens;
 mod spiral_join;
 mod step_import_options;
+mod wall_round_floor;
 mod xz_plane;
 
 /// Plan area a round of radius `r` fills at the concave corner `x` where circles (c1, r1) and

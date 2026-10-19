@@ -457,8 +457,9 @@ pub(crate) fn fit(pts: &[mt::Point3], scale: f64) -> Result<mt::Curve> {
 }
 
 /// The curve of a split line: an exact circular arc when a cylinder meets a plane square to its
-/// axis (a sketch arc splitting a planar face), else [`fit`].
-fn fit_on(g: &Field, face: &mt::Face, pts: &[mt::Point3], scale: f64) -> Result<mt::Curve> {
+/// axis (a sketch arc splitting a planar face; with `across`, a plane splitting a round side),
+/// else [`fit`].
+fn fit_on(g: &Field, face: &mt::Face, pts: &[mt::Point3], scale: f64, across: bool) -> Result<mt::Curve> {
     if let (Field::Cylinder { axis, .. }, mt::Surface::Plane(pl)) = (g, face.surface())
         && let (Some(a), Some(b), Some(m)) = (pts.first(), pts.last(), pts.get(pts.len() / 2))
         && a.distance(*b) > scale * 1e-9
@@ -470,7 +471,44 @@ fn fit_on(g: &Field, face: &mt::Face, pts: &[mt::Point3], scale: f64) -> Result<
             return Ok(e.curve());
         }
     }
+    // A plane square to a round side's axis: the traced points lie on the face's mesh, a chord's
+    // sag inside the cylinder, so the arc is taken from the cylinder itself between the ends
+    // (where the split meets the face's edges), on the side the traced points run.
+    if across
+        && let Field::Plane { n, .. } = g
+        && let Field::Cylinder { o, axis, r, .. } = surface_field(&face.surface())
+        && n.cross(axis.vec()).len() < 1e-9
+        && let (Some(a), Some(b)) = (pts.first(), pts.last())
+        && a.distance(*b) > scale * 1e-9
+        && let Some(m) = arc_middle(o, axis.vec(), r, pts)
+    {
+        let (va, vb) = (mt::Vertex::new(*a), mt::Vertex::new(*b));
+        let e = guard("split arc", || Ok(mt::builder::circle_arc(&va, &vb, p3(m))))?;
+        return Ok(e.curve());
+    }
     fit(pts, scale)
+}
+
+/// The middle of the arc of the circle about `axis` (through `o`, radius `r`) from the first of
+/// `pts` to the last, the way the points between them run (the shorter way when there are none).
+fn arc_middle(o: Vec3, axis: Vec3, r: f64, pts: &[mt::Point3]) -> Option<Vec3> {
+    let radial = |p: &mt::Point3| {
+        let v = from_p3(*p) - o;
+        (v - axis * v.dot(axis)).normalized()
+    };
+    let (a, b) = (pts.first()?, pts.last()?);
+    let (ua, ub) = (radial(a)?, radial(b)?);
+    let inner = pts.get(1..pts.len().saturating_sub(1)).unwrap_or_default();
+    let run = inner.iter().filter_map(radial).fold(Vec3::ZERO, |s, u| s + u);
+    let sum = ua + ub;
+    let dir = if sum.len() > 1e-6 {
+        let bisector = sum * (1.0 / sum.len());
+        if run.dot(bisector) >= 0.0 { bisector } else { -bisector }
+    } else {
+        // Half a turn: the half the points run through.
+        (run - ua * run.dot(ua)).normalized()?
+    };
+    Some(o + axis * (from_p3(*a) - o).dot(axis) + dir * r)
 }
 
 /// Cut an edge at a parameter (none when the point is already a vertex): the vertex and the
@@ -665,7 +703,15 @@ fn inside(poly: &[(f64, f64)], q: (f64, f64)) -> bool {
 /// by its pieces, boundary edges cut in every face).
 /// Returns how many lines split it and how many faces now stand in its place (at `fi`). The
 /// pieces of cut edges are recorded in `rec`.
-fn split_one(faces: &mut Vec<mt::Face>, fi: usize, g: &Field, size: f64, new_edges: &mut Vec<mt::Edge>, rec: &mut Rebuild) -> Result<(usize, usize)> {
+fn split_one(
+    faces: &mut Vec<mt::Face>,
+    fi: usize,
+    g: &Field,
+    size: f64,
+    across: bool,
+    new_edges: &mut Vec<mt::Edge>,
+    rec: &mut Rebuild,
+) -> Result<(usize, usize)> {
     let Some(face) = faces.get(fi).cloned() else { return Ok((0, 1)) };
     let chains = trace(&face, g, size)?;
     if chains.is_empty() {
@@ -782,7 +828,7 @@ fn split_one(faces: &mut Vec<mt::Face>, fi: usize, g: &Field, size: f64, new_edg
                 edges.iter().skip(k).chain(edges.iter().take(k)).cloned().collect()
             };
             let (Some(w1), Some(w2)) = (ws.get(wa_i), ws.get(wb_i)) else { continue };
-            let slit = mt::Edge::new_unchecked(&va, &vb, fit_on(g, &face, &pts, size)?);
+            let slit = mt::Edge::new_unchecked(&va, &vb, fit_on(g, &face, &pts, size, across)?);
             new_edges.push(slit.clone());
             let mut joined = from(w1, &va);
             joined.push(slit.clone());
@@ -823,7 +869,7 @@ fn split_one(faces: &mut Vec<mt::Face>, fi: usize, g: &Field, size: f64, new_edg
         else {
             continue;
         };
-        let split = mt::Edge::new_unchecked(&va, &vb, fit_on(g, &face, &pts, size)?);
+        let split = mt::Edge::new_unchecked(&va, &vb, fit_on(g, &face, &pts, size, across)?);
         new_edges.push(split.clone());
         let run = |from: usize, to: usize| -> Vec<mt::Edge> {
             let mut out = Vec::new();
@@ -1039,7 +1085,7 @@ pub(crate) struct Imprint {
     rec: Rebuild,
 }
 
-fn imprint(body: &Body, faces: &[usize], fields: &[Field], size: f64) -> Result<Imprint> {
+fn imprint(body: &Body, faces: &[usize], fields: &[Field], size: f64, across: bool) -> Result<Imprint> {
     let mut out = Imprint { shells: Vec::new(), origin: Vec::new(), new_edges: Vec::new(), made: HashMap::new(), rec: Rebuild::default() };
     let body_faces: Vec<&mt::Face> = body.solid.face_iter().collect();
     let mut base = 0;
@@ -1058,7 +1104,7 @@ fn imprint(body: &Body, faces: &[usize], fields: &[Field], size: f64) -> Result<
                     continue;
                 }
                 let src = origin.get(k).copied().unwrap_or(0);
-                let (m, pieces) = split_one(&mut fs, k, g, size, &mut out.new_edges, &mut out.rec)?;
+                let (m, pieces) = split_one(&mut fs, k, g, size, across, &mut out.new_edges, &mut out.rec)?;
                 *out.made.entry(src).or_default() += m;
                 // The pieces stand at k..k + pieces; positions after shift.
                 target = target.iter().take(k).copied().chain(std::iter::repeat_n(true, pieces)).chain(target.iter().skip(k + 1).copied()).collect();
@@ -1105,6 +1151,17 @@ pub fn split_faces_with_map(body: &Body, faces: &[usize], tool: &SplitTool) -> R
 
 /// Split where the tool meets the listed faces (missing some is fine; missing all is an error).
 pub(crate) fn split_any(body: &Body, faces: &[usize], tool: &SplitTool) -> Result<(Body, Imprint)> {
+    split_with(body, faces, tool, false)
+}
+
+/// [`split_any`] by a plane square to the axis of the round sides among the listed faces, each
+/// cut along an exact arc of its circle (not a curve fitted to the face's mesh), so that it
+/// matches another body's edge on that circle (see [`crate::coplanar::cylinders_imprinted`]).
+pub(crate) fn split_across(body: &Body, faces: &[usize], plane: Plane) -> Result<(Body, Imprint)> {
+    split_with(body, faces, &SplitTool::Plane(plane), true)
+}
+
+fn split_with(body: &Body, faces: &[usize], tool: &SplitTool, across: bool) -> Result<(Body, Imprint)> {
     body.require_brep("split face")?;
     let size = body.size();
     let fields = fields(tool)?;
@@ -1113,7 +1170,7 @@ pub(crate) fn split_any(body: &Body, faces: &[usize], tool: &SplitTool) -> Resul
         return Err(KernelError::Invalid("no such face".into()));
     }
     guard("split face", || {
-        let mut imp = imprint(body, faces, &fields, size)?;
+        let mut imp = imprint(body, faces, &fields, size, across)?;
         if imp.made.values().all(|m| *m == 0) {
             return Err(KernelError::Invalid("the tool does not cross the selected faces".into()));
         }
@@ -1276,7 +1333,7 @@ pub fn split_body(body: &Body, tool: &SplitTool) -> Result<Vec<Body>> {
     let total = body.solid.face_iter().count();
     let all: Vec<usize> = (0..total).collect();
     guard("split body", || {
-        let imp = imprint(body, &all, &fields, size)?;
+        let imp = imprint(body, &all, &fields, size, false)?;
         let new_edges = imp.new_edges;
         if imp.made.values().all(|m| *m == 0) || new_edges.is_empty() {
             return Ok(vec![crate::boolean_record::operand(body, 0, &crate::record::counts(&[body]))]);
