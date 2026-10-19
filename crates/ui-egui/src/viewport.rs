@@ -5926,6 +5926,33 @@ mod tests {
         }
     }
 
+    /// An orbit drag that starts on the model turns about the point under the cursor, which
+    /// stays on its pixel, in perspective as in parallel views. The perspective view used to
+    /// correct with a pan at the target's depth, so the point slid away and the view swung
+    /// about the camera instead.
+    #[test]
+    fn cursor_orbit_keeps_the_picked_point_on_its_pixel() {
+        for perspective in [false, true] {
+            for offset in [vec2(30.0, 20.0), vec2(-60.0, 10.0), vec2(120.0, -40.0)] {
+                let mut h = crate::scenario::Harness::new();
+                h.app.preferences.orbit_around = crate::prefs::OrbitAround::Cursor;
+                h.app.ui.perspective = perspective;
+                h.app.run("solid.box", json!({"length":80,"width":50,"height":20})).unwrap();
+                h.app.fit_view();
+                let rect = h.app.viewport.rect.unwrap();
+                let at = rect.center() + offset;
+                let proj = projection(&h.app, rect);
+                assert!(pick(&h.app, &proj, at).iter().any(|hit| matches!(hit, Hit::Face { .. })), "the drag starts on the box");
+                let pivot = crate::prefs::pivot_under(&h.app, &proj, at);
+                let before = h.app.cam;
+                h.call("ui.drag", json!({"x0":at.x,"y0":at.y,"x1":at.x+150.0,"y1":at.y+60.0,"button":"middle","shift":true,"steps":20}));
+                assert!((h.app.cam.yaw - before.yaw).abs() > 0.5, "the view turned");
+                let after = projection(&h.app, rect).to_screen(pivot).unwrap();
+                assert!(after.distance(at) < 0.5, "perspective={perspective}: {at:?} -> {after:?}");
+            }
+        }
+    }
+
     #[test]
     fn shift_orbit_keeps_cursor_pivot_and_default_middle_pan() {
         let mut h = crate::scenario::Harness::new();
