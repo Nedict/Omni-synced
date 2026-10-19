@@ -1380,16 +1380,25 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.checkbox(&mut app.preferences.offer_stand_up, "")
                 .on_hover_text(crate::i18n::tr_label("After a STEP or IGES file opens with Z up, offer a quarter turn about X"));
             ui.end_row();
-            ui.label(crate::i18n::tr_label("Hole placement snaps"));
-            let r = ui.checkbox(&mut app.preferences.hole_snaps, "");
-            crate::scenario::publish_rect("prefs:hole_snaps", r.rect);
-            r.on_hover_text(crate::i18n::tr_label("A Single hole snaps to the middle of its face and to the centres of its round edges"));
+            // The Hole command's own settings, grouped under its name.
+            ui.label("");
             ui.end_row();
-            ui.label(crate::i18n::tr_label("Move holes by clicking or dragging"));
-            let r = ui.checkbox(&mut app.preferences.hole_moves, "");
-            crate::scenario::publish_rect("prefs:hole_moves", r.rect);
-            r.on_hover_text(crate::i18n::tr_label("A placed Single hole has a handle to drag it, and picking its face again moves the hole there instead of taking it out"));
+            ui.label(RichText::new(crate::i18n::tr_label("Create Hole")).strong());
+            ui.label("");
             ui.end_row();
+            for (label, on, id, help) in [
+                ("Snap to face and edge centres", &mut app.preferences.hole_snaps, "prefs:hole_snaps", "A Single hole snaps to the middle of its face and to the centres of its round edges"),
+                ("Move holes by clicking or dragging", &mut app.preferences.hole_moves, "prefs:hole_moves", "A placed Single hole has a handle to drag it, and picking its face again moves the hole there instead of taking it out"),
+            ] {
+                ui.horizontal(|ui| {
+                    ui.add_space(12.0);
+                    ui.label(crate::i18n::tr_label(label));
+                });
+                let r = ui.checkbox(on, "");
+                crate::scenario::publish_rect(id, r.rect);
+                ui.end_row();
+                note(ui, crate::i18n::tr_label(help));
+            }
         }
         4 => {
             ui.label(app.tr("ui.graphics_preset"));

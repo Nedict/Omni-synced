@@ -2,13 +2,13 @@
 //! settings, off by default, so a hole goes where it is clicked and a second pick on its face
 //! takes it out, as it always did.
 //!
-//! Hole placement snaps (`hole_snaps`): the planar face under the cursor offers snap points, the
+//! Create Hole › Snap to face and edge centres (`hole_snaps`): the planar face under the cursor offers snap points, the
 //! middle of the face and the centres of its round edges (a boss standing on it, a rounded
 //! corner, a hole already in it). While the cursor is over the face they show as small marks; a
 //! pick within reach of one, or on one of those round edges, is taken at that point, and the mark
 //! it takes is named. Sketch points on the face (#657) still come first. Ctrl or Alt held: no snap.
 //!
-//! Move holes by clicking or dragging (`hole_moves`): every placed hole has a handle at its
+//! Create Hole › Move holes by clicking or dragging (`hole_moves`): every placed hole has a handle at its
 //! centre that drags it across the model (snapping as a pick would) and takes it out when
 //! clicked, and a pick elsewhere on a face that already has a hole moves the hole there.
 

@@ -1,4 +1,4 @@
-//! Placing a Single hole (#2171, #1047). With Hole placement snaps on (Preferences, off by
+//! Placing a Single hole (#2171, #1047). With Snap to face and edge centres on (Preferences, off by
 //! default), a pick near the middle of a face or on a round edge snaps there, and Alt held places
 //! it where it was clicked. With Move holes by clicking or dragging on (also off by default), the
 //! handle drags a placed hole (also one being edited) and a second pick on its face moves it.
