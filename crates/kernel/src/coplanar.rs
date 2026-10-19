@@ -1179,13 +1179,13 @@ pub(crate) fn imprint_union(a: &Body, b: &Body, accept: &dyn Fn(&Body) -> bool) 
             };
             let (pa, pb) = (corners(&a2, *n, *d), corners(&b2, -*n, -*d));
             let a3 = crate::splitface::split_edges_at(&a2, &pb)?;
-            ha = crate::boolean_record::through(&a3, 0, ha.as_ref());
+            ha = crate::boolean_record::step(&a2, &a3, ha);
             let b3 = crate::splitface::split_edges_at(&b2, &pa)?;
-            hb = crate::boolean_record::through(&b3, 0, hb.as_ref());
+            hb = crate::boolean_record::step(&b2, &b3, hb);
             (a2, b2) = (a3, b3);
         }
         let ((a2, ha), (b2, hb)) = cylinders_imprinted((a2, ha), (b2, hb), tol)?;
-        let Some(r) = glue(&a2, &b2) else { return Ok(None) };
+        let Some(r) = glue_round(&a2, &b2) else { return Ok(None) };
         let r = r?;
         let (ha, hb) = (crate::boolean_record::placed(ha, 0, 2), crate::boolean_record::placed(hb, 1, 2));
         let h = crate::boolean_record::of_pair(&r, &ha, &hb);
@@ -1202,15 +1202,22 @@ pub(crate) fn imprint_union(a: &Body, b: &Body, accept: &dyn Fn(&Body) -> bool) 
 /// faces): every such pair of faces goes and the shells are stitched along their edges. `None`
 /// when no such pair of faces exists.
 pub(crate) fn glue(a: &Body, b: &Body) -> Option<Result<Body>> {
-    glue_impl(a, b, false)
+    glue_impl(a, b, false, false)
+}
+
+/// [`glue`] of round faces too: faces back to back on a common cylinder, as
+/// [`cylinders_imprinted`] leaves them. Only for unions whose result is held to [`slit_free`]: a
+/// round pair glued where a planar one could not be leaves a slit along the planar contact.
+pub(crate) fn glue_round(a: &Body, b: &Body) -> Option<Result<Body>> {
+    glue_impl(a, b, false, true)
 }
 
 /// Glue every certified start cap, retaining each tool's original contact tolerance.
 pub(crate) fn glue_all_caps(a: &Body, b: &Body) -> Option<Result<Body>> {
-    glue_impl(a, b, true)
+    glue_impl(a, b, true, false)
 }
 
-fn glue_impl(a: &Body, b: &Body, all_caps: bool) -> Option<Result<Body>> {
+fn glue_impl(a: &Body, b: &Body, all_caps: bool, round: bool) -> Option<Result<Body>> {
     use mt::{BoundedCurve, ParametricCurve};
     let size = a.size().max(b.size());
     let tol = (size * 1e-7).max(1e-9) * 10.0;
@@ -1247,8 +1254,8 @@ fn glue_impl(a: &Body, b: &Body, all_caps: bool) -> Option<Result<Body>> {
     if all_caps && pa.len().saturating_mul(pb.len()) > 2_000_000 {
         return None;
     }
-    // Candidates: faces in one plane facing each other, and (not for caps) faces back to back on
-    // one cylinder (a ring's inner wall on a plate's rounded corner).
+    // Candidates: faces in one plane facing each other, and (`round`) faces back to back on one
+    // cylinder (a ring's inner wall on a plate's rounded corner).
     let mut pairs: Vec<(usize, usize, f64)> = Vec::new();
     for (ia, x) in &pa {
         for (ib, y) in &pb {
@@ -1263,7 +1270,7 @@ fn glue_impl(a: &Body, b: &Body, all_caps: bool) -> Option<Result<Body>> {
             }
         }
     }
-    if !all_caps {
+    if round {
         let (ca, cb) = common_cylinders(a, b, tol);
         for x in &ca {
             for y in &cb {
@@ -1605,8 +1612,8 @@ fn split_levels(
         }
         let plane = solidcraft_geom::Plane::from_normal(c.origin + c.axis * *s, c.axis)
             .ok_or_else(|| KernelError::Failed("a cylinder with no axis".into()))?;
-        let (split, _) = crate::splitface::split_across(body, &faces, plane)?;
-        *h = crate::boolean_record::through(&split, 0, h.as_ref());
+        let (split, _) = crate::splitface::split_across(body, &faces, plane, (c.origin, c.axis.vec(), c.radius))?;
+        *h = crate::boolean_record::step(body, &split, h.take());
         *cyl = cylinders_on(&split, common, tol);
         *body = split;
     }
@@ -1650,26 +1657,31 @@ pub(crate) fn cylinders_imprinted((mut a, mut ha): Traced, (mut b, mut hb): Trac
         split_levels(&mut b, &mut hb, &mut cb, &common, c, &levels(&pa, c), tol)?;
         split_levels(&mut a, &mut ha, &mut ca, &common, c, &levels(&pb, c), tol)?;
         let (pa, pb) = (on(&a, &ca, c), on(&b, &cb, c));
-        let (ea, eb) = (a.solid.edge_iter().count(), b.solid.edge_iter().count());
         let a2 = crate::splitface::split_edges_at(&a, &pb)?;
-        ha = crate::boolean_record::through(&a2, 0, ha.as_ref());
-        let b2 = crate::splitface::split_edges_at(&b, &pa)?;
-        hb = crate::boolean_record::through(&b2, 0, hb.as_ref());
-        if a2.solid.edge_iter().count() != ea {
+        if !std::sync::Arc::ptr_eq(&a2.solid, &a.solid) {
+            ha = crate::boolean_record::step(&a, &a2, ha);
             ca = cylinders_on(&a2, &common, tol);
+            a = a2;
         }
-        if b2.solid.edge_iter().count() != eb {
+        let b2 = crate::splitface::split_edges_at(&b, &pa)?;
+        if !std::sync::Arc::ptr_eq(&b2.solid, &b.solid) {
+            hb = crate::boolean_record::step(&b, &b2, hb);
             cb = cylinders_on(&b2, &common, tol);
+            b = b2;
         }
-        (a, b) = (a2, b2);
     }
     Ok(((a, ha), (b, hb)))
 }
 
+/// Most triangles of the contact faces [`slit_free`] compares pairwise.
+const MAX_SLIT_TRIANGLES: usize = 20_000;
+
 /// Is `r`, the union of `a` and `b` that touched back to back, free of slits: of faces of one
 /// operand left lying on the other's where they touched, a crack of no width that no volume or
-/// shell check sees? Each face of `r` on a plane or cylinder the operands touched on must have
-/// no material of `r` just in front of it, as `r` meshes to `chord`.
+/// shell check sees? No two faces of `r` on a plane or cylinder the operands touched on may face
+/// each other over a common area: as `r` meshes to `chord`, the middle of a triangle of one lies
+/// on a triangle of the other facing the other way (within the two meshes' sag of each other).
+/// Material merely in front of a face (a gap, a fillet under a pad's edge) is no slit.
 pub(crate) fn slit_free(r: &Body, a: &Body, b: &Body, chord: f64) -> bool {
     let size = a.size().max(b.size());
     let tol = (size * 1e-7).max(1e-9) * 10.0;
@@ -1681,17 +1693,44 @@ pub(crate) fn slit_free(r: &Body, a: &Body, b: &Body, chord: f64) -> bool {
         .map(|(i, _)| i)
         .chain(cylinders_on(r, &common, tol).into_iter().map(|x| x.index))
         .collect();
-    if contact.is_empty() {
+    if contact.len() < 2 {
         return true;
     }
     let Ok(m) = r.tessellate_with(chord, true) else { return false };
-    let inside = m.inside_index();
-    let ahead = chord * 4.0;
-    m.triangles.iter().zip(&m.tri_face).filter(|(_, f)| contact.contains(&(**f as usize))).all(|(t, _)| {
-        m.tri(t).is_some_and(|[p, q, s]| {
-            let Some(n) = (q - p).cross(s - p).normalized() else { return true };
-            !inside.contains((p + q + s) / 3.0 + n * ahead)
+    // (face, corners, unit normal) of each triangle of a contact face.
+    let tris: Vec<(u32, [Vec3; 3], Vec3)> = m
+        .triangles
+        .iter()
+        .zip(&m.tri_face)
+        .filter(|(_, f)| contact.contains(&(**f as usize)))
+        .filter_map(|(t, f)| {
+            let [p, q, s] = m.tri(t)?;
+            Some((*f, [p, q, s], (q - p).cross(s - p).normalized()?))
         })
+        .collect();
+    if tris.len() > MAX_SLIT_TRIANGLES {
+        return false;
+    }
+    let near = chord * 2.0 + tol;
+    let on = |c: Vec3, [p, q, s]: &[Vec3; 3], n: Vec3| {
+        let h = (c - *p).dot(n);
+        if h.abs() > near {
+            return false;
+        }
+        // Barycentric coordinates of c's foot on the triangle's plane.
+        let x = c - n * h;
+        let (e1, e2, w) = (*q - *p, *s - *p, x - *p);
+        let (d11, d12, d22, w1, w2) = (e1.dot(e1), e1.dot(e2), e2.dot(e2), w.dot(e1), w.dot(e2));
+        let det = d11 * d22 - d12 * d12;
+        if !(det > 0.0) {
+            return false;
+        }
+        let (u, v) = ((d22 * w1 - d12 * w2) / det, (d11 * w2 - d12 * w1) / det);
+        u >= -1e-6 && v >= -1e-6 && u + v <= 1.0 + 1e-6
+    };
+    !tris.iter().any(|(f, t, n)| {
+        let c = (t[0] + t[1] + t[2]) / 3.0;
+        tris.iter().any(|(g, u, k)| g != f && n.dot(*k) < -0.9 && on(c, u, *k))
     })
 }
 

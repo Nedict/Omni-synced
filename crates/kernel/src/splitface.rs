@@ -456,10 +456,13 @@ pub(crate) fn fit(pts: &[mt::Point3], scale: f64) -> Result<mt::Curve> {
     Ok(mt::Curve::BSplineCurve(bsp))
 }
 
+/// A cylinder: a point on its axis, the unit axis, and the radius.
+pub(crate) type Round = (Vec3, Vec3, f64);
+
 /// The curve of a split line: an exact circular arc when a cylinder meets a plane square to its
-/// axis (a sketch arc splitting a planar face; with `across`, a plane splitting a round side),
-/// else [`fit`].
-fn fit_on(g: &Field, face: &mt::Face, pts: &[mt::Point3], scale: f64, across: bool) -> Result<mt::Curve> {
+/// axis (a sketch arc splitting a planar face; with `across`, the cylinder a split face lies on,
+/// a plane splitting that round side), else [`fit`].
+fn fit_on(g: &Field, face: &mt::Face, pts: &[mt::Point3], scale: f64, across: Option<Round>) -> Result<mt::Curve> {
     if let (Field::Cylinder { axis, .. }, mt::Surface::Plane(pl)) = (g, face.surface())
         && let (Some(a), Some(b), Some(m)) = (pts.first(), pts.last(), pts.get(pts.len() / 2))
         && a.distance(*b) > scale * 1e-9
@@ -473,14 +476,13 @@ fn fit_on(g: &Field, face: &mt::Face, pts: &[mt::Point3], scale: f64, across: bo
     }
     // A plane square to a round side's axis: the traced points lie on the face's mesh, a chord's
     // sag inside the cylinder, so the arc is taken from the cylinder itself between the ends
-    // (where the split meets the face's edges), on the side the traced points run.
-    if across
+    // (where the split meets the face's edges).
+    if let Some((o, axis, r)) = across
         && let Field::Plane { n, .. } = g
-        && let Field::Cylinder { o, axis, r, .. } = surface_field(&face.surface())
-        && n.cross(axis.vec()).len() < 1e-9
+        && n.cross(axis).len() < 1e-9
         && let (Some(a), Some(b)) = (pts.first(), pts.last())
         && a.distance(*b) > scale * 1e-9
-        && let Some(m) = arc_middle(o, axis.vec(), r, pts)
+        && let Some(m) = arc_middle(face, (o, axis, r), pts, scale)
     {
         let (va, vb) = (mt::Vertex::new(*a), mt::Vertex::new(*b));
         let e = guard("split arc", || Ok(mt::builder::circle_arc(&va, &vb, p3(m))))?;
@@ -489,26 +491,37 @@ fn fit_on(g: &Field, face: &mt::Face, pts: &[mt::Point3], scale: f64, across: bo
     fit(pts, scale)
 }
 
-/// The middle of the arc of the circle about `axis` (through `o`, radius `r`) from the first of
-/// `pts` to the last, the way the points between them run (the shorter way when there are none).
-fn arc_middle(o: Vec3, axis: Vec3, r: f64, pts: &[mt::Point3]) -> Option<Vec3> {
-    let radial = |p: &mt::Point3| {
-        let v = from_p3(*p) - o;
-        (v - axis * v.dot(axis)).normalized()
+/// Points along each curved edge of a face, sampled so that a face's side of its cylinder shows.
+const EDGE_SAMPLES: usize = 720;
+
+/// The middle of the arc of the circle `round` makes in the plane of the first of `pts`, from
+/// that point to the last, on the side `face` covers: the side where the points between them, or
+/// else the face's own edges, come nearest the arc's middle (a small face's traced chain may keep
+/// only its ends). `None` when the ends are off the circle.
+fn arc_middle(face: &mt::Face, (o, axis, r): Round, pts: &[mt::Point3], scale: f64) -> Option<Vec3> {
+    let off_axis = |p: Vec3| {
+        let v = p - o;
+        v - axis * v.dot(axis)
     };
-    let (a, b) = (pts.first()?, pts.last()?);
-    let (ua, ub) = (radial(a)?, radial(b)?);
-    let inner = pts.get(1..pts.len().saturating_sub(1)).unwrap_or_default();
-    let run = inner.iter().filter_map(radial).fold(Vec3::ZERO, |s, u| s + u);
+    let (a, b) = (from_p3(*pts.first()?), from_p3(*pts.last()?));
+    let on_circle = |p: Vec3| (off_axis(p).len() - r).abs() <= scale * 1e-6;
+    if !on_circle(a) || !on_circle(b) {
+        return None;
+    }
+    let (ua, ub) = (off_axis(a).normalized()?, off_axis(b).normalized()?);
     let sum = ua + ub;
-    let dir = if sum.len() > 1e-6 {
-        let bisector = sum * (1.0 / sum.len());
-        if run.dot(bisector) >= 0.0 { bisector } else { -bisector }
-    } else {
-        // Half a turn: the half the points run through.
-        (run - ua * run.dot(ua)).normalized()?
-    };
-    Some(o + axis * (from_p3(*a) - o).dot(axis) + dir * r)
+    // The two arcs' middles: either side of the chord, or of the diameter for half a turn.
+    let middle = if sum.len() > 1e-6 { sum * (1.0 / sum.len()) } else { axis.cross(ua).normalized()? };
+    let mut samples: Vec<Vec3> = pts.get(1..pts.len().saturating_sub(1)).unwrap_or_default().iter().map(|p| from_p3(*p)).collect();
+    for e in face.edge_iter() {
+        let c = e.curve();
+        let (t0, t1) = c.range_tuple();
+        let n = if matches!(c, mt::Curve::Line(_)) { 1 } else { EDGE_SAMPLES };
+        samples.extend((0..=n).map(|k| from_p3(c.subs(t0 + (t1 - t0) * k as f64 / n as f64))));
+    }
+    let nearest = |d: Vec3| samples.iter().filter_map(|p| off_axis(*p).normalized()).map(|u| u.dot(d)).fold(f64::NEG_INFINITY, f64::max);
+    let dir = if nearest(middle) >= nearest(-middle) { middle } else { -middle };
+    Some(o + axis * (a - o).dot(axis) + dir * r)
 }
 
 /// Cut an edge at a parameter (none when the point is already a vertex): the vertex and the
@@ -708,7 +721,7 @@ fn split_one(
     fi: usize,
     g: &Field,
     size: f64,
-    across: bool,
+    across: Option<Round>,
     new_edges: &mut Vec<mt::Edge>,
     rec: &mut Rebuild,
 ) -> Result<(usize, usize)> {
@@ -1085,7 +1098,7 @@ pub(crate) struct Imprint {
     rec: Rebuild,
 }
 
-fn imprint(body: &Body, faces: &[usize], fields: &[Field], size: f64, across: bool) -> Result<Imprint> {
+fn imprint(body: &Body, faces: &[usize], fields: &[Field], size: f64, across: Option<Round>) -> Result<Imprint> {
     let mut out = Imprint { shells: Vec::new(), origin: Vec::new(), new_edges: Vec::new(), made: HashMap::new(), rec: Rebuild::default() };
     let body_faces: Vec<&mt::Face> = body.solid.face_iter().collect();
     let mut base = 0;
@@ -1151,17 +1164,18 @@ pub fn split_faces_with_map(body: &Body, faces: &[usize], tool: &SplitTool) -> R
 
 /// Split where the tool meets the listed faces (missing some is fine; missing all is an error).
 pub(crate) fn split_any(body: &Body, faces: &[usize], tool: &SplitTool) -> Result<(Body, Imprint)> {
-    split_with(body, faces, tool, false)
+    split_with(body, faces, tool, None)
 }
 
-/// [`split_any`] by a plane square to the axis of the round sides among the listed faces, each
-/// cut along an exact arc of its circle (not a curve fitted to the face's mesh), so that it
-/// matches another body's edge on that circle (see [`crate::coplanar::cylinders_imprinted`]).
-pub(crate) fn split_across(body: &Body, faces: &[usize], plane: Plane) -> Result<(Body, Imprint)> {
-    split_with(body, faces, &SplitTool::Plane(plane), true)
+/// [`split_any`] of faces on the cylinder `round` by a plane square to its axis, each cut along an
+/// exact arc of its circle (not a curve fitted to the face's mesh), so that it matches another
+/// body's edge on that circle (see [`crate::coplanar::cylinders_imprinted`]). The cylinder is
+/// given, so a round side swept or revolved (or read from STEP) is cut as one extruded is.
+pub(crate) fn split_across(body: &Body, faces: &[usize], plane: Plane, round: Round) -> Result<(Body, Imprint)> {
+    split_with(body, faces, &SplitTool::Plane(plane), Some(round))
 }
 
-fn split_with(body: &Body, faces: &[usize], tool: &SplitTool, across: bool) -> Result<(Body, Imprint)> {
+fn split_with(body: &Body, faces: &[usize], tool: &SplitTool, across: Option<Round>) -> Result<(Body, Imprint)> {
     body.require_brep("split face")?;
     let size = body.size();
     let fields = fields(tool)?;
@@ -1333,7 +1347,7 @@ pub fn split_body(body: &Body, tool: &SplitTool) -> Result<Vec<Body>> {
     let total = body.solid.face_iter().count();
     let all: Vec<usize> = (0..total).collect();
     guard("split body", || {
-        let imp = imprint(body, &all, &fields, size, false)?;
+        let imp = imprint(body, &all, &fields, size, None)?;
         let new_edges = imp.new_edges;
         if imp.made.values().all(|m| *m == 0) || new_edges.is_empty() {
             return Ok(vec![crate::boolean_record::operand(body, 0, &crate::record::counts(&[body]))]);
