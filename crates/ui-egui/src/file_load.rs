@@ -793,6 +793,7 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
             Ok(made) if running.matches(&app.session) => {
                 // Not meshed yet: framing it while it goes in must not mesh it here.
                 app.open_meshing_next = true;
+                crate::frame_watch::step(app, "before the open");
                 if request.insert() {
                     app.session.accept_computed(made.session);
                     app.big_operation = true;
@@ -803,13 +804,16 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
                     }
                 }
                 app.home.open = false;
+                crate::frame_watch::step(app, "adopt the design");
                 // Shown as its bodies are meshed, framed from their outlines meanwhile; its Home
                 // picture is drawn once they all are.
                 crate::open_meshing::start(app, request.kind == Kind::Open && made.thumbnail);
+                crate::frame_watch::step(app, "start meshing and frame");
                 // A caller that said which way is up has been answered: no offer to stand the part up.
                 if (request.kind == Kind::Open || request.insert()) && !request.options.contains_key("up") {
                     crate::stand_up::offer(app, &request.path, &running.before, Some(&made.result));
                 }
+                crate::frame_watch::step(app, "stand-up offer");
                 let warnings = made.result.get("warnings").and_then(Value::as_array);
                 if let Kind::Recover { .. } = request.kind {
                     recovered(app, request);

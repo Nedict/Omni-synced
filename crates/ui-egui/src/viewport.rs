@@ -2405,7 +2405,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     painter.add(Shape::mesh(mesh));
 
     // ---- model ----
+    crate::frame_watch::step(app, "viewport before the model");
     update_refinement(app, ui.ctx(), &proj);
+    crate::frame_watch::step(app, "display refinement");
     let key = scene_key(app);
     let t0 = crate::now_ms();
     // Drawn on the GPU; without one (the headless harness, tests) the model is not drawn.
@@ -2417,6 +2419,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
             app.viewport.key = key;
             app.viewport.build_ms = crate::now_ms() - t0;
+            crate::frame_watch::step(app, "model scene");
         }
         let sk = sketch_scene_key(app, &proj);
         if sk != app.viewport.sketch_key {

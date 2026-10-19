@@ -299,12 +299,22 @@ fn an_opened_design_shows_its_bodies_as_they_are_meshed() {
     }
     assert!(seen.windows(2).all(|p| p[0] <= p[1]), "the picture only grows: {seen:?}");
     let world = w.app.session.world_state();
-    assert!(std::sync::Arc::ptr_eq(&crate::open_meshing::shown_world(&w.app), &world), "then the whole design");
+    // Then the whole design (in the order its bodies came, kept until the design changes).
+    let names = |st: &solidcraft_engine::doc::ModelState| {
+        let mut n: Vec<String> = st.bodies.iter().map(|b| b.name.clone()).collect();
+        n.sort();
+        n
+    };
+    assert_eq!(names(&crate::open_meshing::shown_world(&w.app)), names(&world), "then the whole design");
     assert!(world.bodies.iter().all(|b| b.cached_mesh().is_some()));
     // Framed from the meshes now, as a synchronous open frames it.
     let framed = w.app.cam;
     w.app.fit_view();
     assert_eq!(w.app.cam, framed);
+    // An edit after that: the viewport draws the session's world again.
+    w.app.session.execute("solid.box", &json!({"length": 5, "width": 5, "height": 5, "operation": "new"})).unwrap();
+    w.frame(vec![]);
+    assert!(std::sync::Arc::ptr_eq(&crate::open_meshing::shown_world(&w.app), &w.app.session.world_state()));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -343,5 +353,70 @@ fn a_screenshot_after_an_open_waits_for_the_whole_design() {
         w.frame(vec![]);
     }
     assert!(count_rx.try_recv().is_ok(), "answered once the design is meshed");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An assembly of a few rounded parts placed many times, as a STEP file: an import that takes a
+/// while to read, place and mesh.
+fn step_assembly(dir: &std::path::Path) -> String {
+    let mut s = Session::default();
+    // Distinct parts (each meshed on its own), each placed a few times (placed copies share it).
+    for k in 0..40 {
+        let len = 30.0 + k as f64;
+        let part = s.execute("component.create", &json!({"name": format!("Bracket {k}")})).unwrap()["component"].as_u64().unwrap();
+        s.execute("solid.box", &json!({"length": len, "width": 20, "height": 8, "operation": "new"})).unwrap();
+        s.execute("solid.cylinder", &json!({"radius": 6, "height": 20, "base": [10, 10, 0], "operation": "join"})).unwrap();
+        s.execute("solid.cylinder", &json!({"radius": 2.5, "height": 40, "base": [len - 10.0, 10, -10], "operation": "cut"})).unwrap();
+        s.execute("solid.fillet", &json!({"edges": [[len / 2.0, 0, 8]], "radius": 3})).unwrap();
+        s.execute("solid.sphere", &json!({"radius": 4, "center": [10, 10, 24], "operation": "join"})).unwrap();
+        s.execute("component.activate", &json!({"component": 0})).unwrap();
+        for i in 1..5 {
+            s.execute("occurrence.copy", &json!({"component": part, "translate": [i as f64 * 80.0, k as f64 * 40.0, 0]})).unwrap();
+        }
+    }
+    let path = dir.join("assembly.step").to_string_lossy().to_string();
+    s.execute("file.export", &json!({"path": path})).unwrap();
+    path
+}
+
+/// Open `path` through the window as a person would, every frame timed, until it is in and meshed.
+/// The slowest frame: ms and the phase it was in.
+fn open_timed(path: &str) -> (Win, (f64, &'static str)) {
+    let mut w = Win::new();
+    w.app.frame_watch.slowest = (0.0, "idle");
+    let (tx, rx) = std::sync::mpsc::channel();
+    w.app.control_rx = Some(rx);
+    let (open, open_rx) = crate::control::ControlRequest::new("engine.execute", json!({"command": "doc.open", "params": {"path": path}}));
+    tx.send(open).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+    let mut answered = false;
+    while !answered || crate::open_meshing::active(&w.app) || !w.app.file_load.idle() {
+        w.frame(vec![]);
+        answered |= open_rx.try_recv().is_ok();
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        assert!(std::time::Instant::now() < deadline, "{path} opens");
+    }
+    let slowest = w.app.frame_watch.slowest;
+    eprintln!("{path}: slowest frame {:.1} ms while {}, {} bodies", slowest.0, slowest.1, w.app.session.world_state().bodies.len());
+    (w, slowest)
+}
+
+/// The window stays responsive through every phase of opening a design: a STEP assembly imported,
+/// the design saved with its model and opened again, and saved without it and opened again. No
+/// frame on the window thread takes longer than 250 ms (the test names the phase that did).
+#[test]
+fn opening_a_large_design_never_stalls_the_window() {
+    const BUDGET_MS: f64 = 250.0;
+    let dir = scratch("watchdog");
+    let step = step_assembly(&dir);
+    let (mut w, (ms, phase)) = open_timed(&step);
+    assert!(ms < BUDGET_MS, "STEP import: a {ms:.0} ms frame while {phase}");
+    assert!(w.app.session.world_state().bodies.len() >= 200);
+    for (name, cache) in [("cached.solidcraft", true), ("plain.solidcraft", false)] {
+        let path = dir.join(name).to_string_lossy().to_string();
+        w.app.session.execute("file.save_as", &json!({"path": path, "cache": cache})).unwrap();
+        let (_, (ms, phase)) = open_timed(&path);
+        assert!(ms < BUDGET_MS, "{name}: a {ms:.0} ms frame while {phase}");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -8,24 +8,35 @@
 //! the bodies' outlines meanwhile, and framed again from the meshes when they are all made, unless
 //! the camera was moved in between. Editing the design meanwhile meshes the new world instead.
 //!
+//! The picture lists the bodies in the order they were meshed, and is kept once complete until
+//! the design changes: the viewport's scene keeps the blocks it built for the bodies already
+//! shown and builds only the new ones, and finishing does not build the whole scene again. It is
+//! remade at most every [`REFRESH`] seconds, and less often while a remake takes longer.
+//!
 //! Display only: commands, picking of what is drawn and exports read the session's world as ever.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use solidcraft_engine::doc::ModelState;
 
 use crate::SolveApp;
 
-/// How often a growing picture is rebuilt at most (s): each rebuild uploads every shown body.
+/// How often a growing picture is remade at most (s).
 const REFRESH: f64 = 0.25;
+/// A remake waits this many times as long as the last scene build took, so remakes take at most
+/// a small share of the window thread.
+const REFRESH_SHARE: f64 = 6.0;
 
 pub(crate) struct Meshing {
     /// The world being meshed (the session's when it started).
     world: Arc<ModelState>,
-    /// Per body of `world`: its display (mesh, and plans when drawn from them) is made.
-    ready: Arc<Vec<AtomicBool>>,
+    /// The bodies of `world` whose display (mesh, and plans when drawn from them) is made, in
+    /// the order they were made.
+    ready: Arc<Mutex<Vec<usize>>>,
     done: Arc<AtomicUsize>,
+    /// All are meshed and framed: the picture is kept until the design changes.
+    complete: bool,
     stop: Arc<AtomicBool>,
     /// The picture so far: the bodies shown, and how many were ready when it was made.
     shown: Option<(usize, Arc<ModelState>)>,
@@ -42,7 +53,7 @@ pub(crate) struct Meshing {
 impl Meshing {
     fn start(world: Arc<ModelState>, plans: bool) -> Meshing {
         let n = world.bodies.len();
-        let ready: Arc<Vec<AtomicBool>> = Arc::new((0..n).map(|_| AtomicBool::new(false)).collect());
+        let ready = Arc::new(Mutex::new(Vec::with_capacity(n)));
         let (done, stop) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicBool::new(false)));
         // The first placement of each part first: the others only move its mesh.
         let mut seen = std::collections::HashSet::new();
@@ -65,8 +76,8 @@ impl Meshing {
                         let _ = b.plan_mesh();
                     }
                 }
-                if let Some(r) = ready.get(i) {
-                    r.store(true, Ordering::Release);
+                if let Ok(mut r) = ready.lock() {
+                    r.push(i);
                 }
                 done.fetch_add(1, Ordering::Release);
             });
@@ -75,7 +86,19 @@ impl Meshing {
             // No thread: the viewport meshes as it draws, as before.
             done.store(n, Ordering::Release);
         }
-        Meshing { world, ready, done, stop, shown: None, shown_at: f64::NEG_INFINITY, framed: None, remember: false, began: None, first_shown: false }
+        Meshing {
+            world,
+            ready,
+            done,
+            stop,
+            complete: false,
+            shown: None,
+            shown_at: f64::NEG_INFINITY,
+            framed: None,
+            remember: false,
+            began: None,
+            first_shown: false,
+        }
     }
 
     fn finished(&self) -> bool {
@@ -105,7 +128,7 @@ pub(crate) fn start(app: &mut SolveApp, remember: bool) {
 
 /// How far the meshing is: bodies done, and of how many.
 pub(crate) fn progress(app: &SolveApp) -> Option<(usize, usize)> {
-    app.open_meshing.as_ref().map(|m| (m.done.load(Ordering::Acquire).min(m.world.bodies.len()), m.world.bodies.len()))
+    app.open_meshing.as_ref().filter(|m| !m.complete).map(|m| (m.done.load(Ordering::Acquire).min(m.world.bodies.len()), m.world.bodies.len()))
 }
 
 /// A small "Loading parts n/N" note at the foot of the viewport while bodies are being meshed:
@@ -131,12 +154,12 @@ pub(crate) fn show(app: &SolveApp, ctx: &egui::Context) {
 
 /// Whether bodies are still being meshed after an open.
 pub(crate) fn active(app: &SolveApp) -> bool {
-    app.open_meshing.is_some()
+    app.open_meshing.as_ref().is_some_and(|m| !m.complete)
 }
 
 /// Whether the view is framed from outlines: bodies being meshed, or about to be.
 pub(crate) fn framing(app: &SolveApp) -> bool {
-    app.open_meshing.is_some() || app.open_meshing_next
+    active(app) || app.open_meshing_next
 }
 
 /// Per frame: follow the session's world, show more as it is meshed, and frame the finished
@@ -145,33 +168,45 @@ pub(crate) fn tick(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(m) = app.open_meshing.as_ref() else { return };
     let world = app.session.world_state();
     if !Arc::ptr_eq(&world, &m.world) {
+        if m.complete {
+            // The design changed after its open: the viewport draws it as ever.
+            app.open_meshing = None;
+            return;
+        }
         // The design changed (an edit, an undo): mesh the new world; what is made is kept.
         let (framed, remember) = (m.framed, m.remember);
         let plans = app.viewport.gpu.is_some_and(|g| g.tess);
-        let mut next = Meshing::start(world, plans);
+        let mut next = Meshing::start(world.clone(), plans);
         (next.framed, next.remember) = (framed, remember);
         app.open_meshing = Some(next);
     }
-    let finished = app.open_meshing.as_ref().is_some_and(Meshing::finished);
-    if finished {
-        let Some(m) = app.open_meshing.take() else { return };
+    let Some(m) = app.open_meshing.as_ref().filter(|m| !m.complete) else { return };
+    if m.finished() && m.shown.as_ref().is_some_and(|(n, _)| *n >= m.world.bodies.len()) {
+        let (framed, remember, began) = (m.framed, m.remember, m.began);
+        if let Some(m) = app.open_meshing.as_mut() {
+            m.complete = true;
+        }
         if profiling() {
-            let ms = m.began.map_or(0.0, |t| (ctx.input(|i| i.time) - t) * 1000.0);
-            eprintln!("SolidCraft open meshing: all {} bodies shown after {ms:.0} ms", m.world.bodies.len());
+            let ms = began.map_or(0.0, |t| (ctx.input(|i| i.time) - t) * 1000.0);
+            eprintln!("SolidCraft open meshing: all {} bodies shown after {ms:.0} ms", world.bodies.len());
         }
         // Framed from outlines and not moved since: frame the meshes.
-        if m.framed == Some(app.cam) {
+        if framed == Some(app.cam) {
             app.fit_view();
         }
-        if m.remember {
+        crate::frame_watch::step(app, "frame the meshes");
+        if remember {
             crate::home::remember_session(&mut app.home, &app.session);
         }
+        crate::frame_watch::step(app, "home picture");
+        return;
     }
     ctx.request_repaint();
 }
 
-/// The world the viewport draws: while an opened design is still being meshed, the bodies meshed
-/// so far (the picture grows a few times a second); otherwise the session's.
+/// The world the viewport draws: while an opened design is being meshed, the bodies meshed so
+/// far (the picture grows a few times a second), then all of them, in the order they came, until
+/// the design changes; otherwise the session's.
 pub(crate) fn shown_world(app: &SolveApp) -> Arc<ModelState> {
     let Some(m) = app.open_meshing.as_ref() else { return app.session.world_state() };
     if !Arc::ptr_eq(&app.session.world_state(), &m.world) {
@@ -180,21 +215,25 @@ pub(crate) fn shown_world(app: &SolveApp) -> Arc<ModelState> {
     m.shown.as_ref().map(|(_, st)| st.clone()).unwrap_or_else(|| Arc::new(ModelState::default()))
 }
 
-/// Remake the picture so far, at most every [`REFRESH`] seconds (each remake uploads it again).
+/// Remake the picture so far, at most every [`REFRESH`] seconds and no sooner than
+/// [`REFRESH_SHARE`] times the last scene build (the bodies shown before keep their place, so the
+/// viewport builds only the new ones).
 pub(crate) fn refresh(app: &mut SolveApp, now: f64) {
-    let Some(m) = app.open_meshing.as_mut() else { return };
-    let done = m.done.load(Ordering::Acquire);
-    if m.shown.as_ref().is_some_and(|(n, _)| *n == done) || now - m.shown_at < REFRESH {
+    let build_s = app.viewport.build_ms / 1000.0;
+    let Some(m) = app.open_meshing.as_mut().filter(|m| !m.complete) else { return };
+    let order: Vec<usize> = match m.ready.lock() {
+        Ok(r) => r.clone(),
+        Err(_) => return,
+    };
+    let done = order.len();
+    let all = done >= m.world.bodies.len();
+    let wait = REFRESH.max(build_s * REFRESH_SHARE);
+    if m.shown.as_ref().is_some_and(|(n, _)| *n == done) || (now - m.shown_at < wait && !all) {
         return;
     }
-    let mut st = (*m.world).clone();
-    let mut i = 0;
-    st.bodies.retain(|_| {
-        let keep = m.ready.get(i).is_some_and(|r| r.load(Ordering::Acquire));
-        i += 1;
-        keep
-    });
     let began = *m.began.get_or_insert(now);
+    let mut st = (*m.world).clone();
+    st.bodies = order.iter().filter_map(|&i| m.world.bodies.get(i).cloned()).collect();
     if !m.first_shown && !st.bodies.is_empty() {
         m.first_shown = true;
         if profiling() {
