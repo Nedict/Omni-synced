@@ -55,6 +55,8 @@ pub struct ModelBody {
     /// [`Body::retained_bytes`] of `body`, measured when a feature made or changed it (0: not
     /// measured), so the evaluation cache's budget does not walk every body after every feature.
     bytes: usize,
+    /// In a world state: the [`ModelBody::geometry_key`] of the model body this one places (0: none).
+    source_key: u64,
 }
 
 impl ModelBody {
@@ -76,7 +78,23 @@ impl ModelBody {
             transferred: false,
             imported: None,
             bytes: 0,
+            source_key: 0,
         }
+    }
+
+    /// Identity of this body's geometry where it stands: the same for a body evaluated or
+    /// placed again from the same inputs at the same place, so work measured on it can be
+    /// reused (none for a body the evaluation cache does not key).
+    pub fn geometry_key(&self) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        let key = if self.key != 0 { self.key } else { self.source_key };
+        if key == 0 {
+            return None;
+        }
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        key.hash(&mut h);
+        self.source_transform.iter().flatten().for_each(|v| v.to_bits().hash(&mut h));
+        Some(h.finish())
     }
     pub fn definition_name(&self) -> &str {
         self.source_name.as_deref().unwrap_or(&self.name)
@@ -1341,6 +1359,16 @@ impl Model {
                 }),
             });
             if r.is_ok() {
+                // Profiles picked by curves that no longer bound a profile exactly were found
+                // by their best match: say which.
+                let thin = matches!(&f.kind, FeatureKind::Extrude { thin: Some(_), .. });
+                for (sketch, sel) in f.kind.profile_sels() {
+                    if let (false, Some(ss)) = (thin, state.sketch(sketch)) {
+                        for note in crate::profile_fallback_notes(ss, sel) {
+                            append_warning(&mut warning, note);
+                        }
+                    }
+                }
                 if let Some(note) = boolean_diagnostics.warning() {
                     append_warning(&mut warning, note);
                 }
@@ -1462,8 +1490,11 @@ pub fn select_profiles(ss: &SolvedSketch, sel: &ProfileSel) -> Result<Vec<Region
             }
             v
         }
+        // A curve loop that no longer bounds a profile exactly falls back to the best match; the
+        // feature's warning says so (`profile_fallback_notes`).
         ProfileSel::Curves { .. } | ProfileSel::OffsetBoundaries { .. } | ProfileSel::WholeBoundaries { .. } => {
-            crate::profile_selection_indices(ss, sel)?
+            crate::profile_selection_indices_lenient(ss, sel)?
+                .0
                 .into_iter()
                 .map(|index| {
                     ps.get(index)
@@ -4814,7 +4845,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 None => state_in_frame(doc, st, f.component),
             };
             let (plane, face_warning) = match (anchor, plane) {
-                (Some(_), plane) => (doc.resolve_attached_plane(vals, plane, f.component, st, &fst)?, None),
+                (Some(_), plane) => doc.resolve_attached_plane_noted(vals, plane, f.component, st, &fst)?,
                 // A flat face of a sheet: the panel's exact plane, from its flat region and fold.
                 (None, plane) if crate::sheet::plane_sheet_face(plane).is_some() => {
                     (doc.resolve_plane_in(vals, &sheet_face_plane_in_frame(doc, st, f.component, plane)?, 0, Some(&fst))?, None)
@@ -4973,7 +5004,11 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             let pl = match crate::face_anchor::plane_face_anchor(plane) {
                 Some(anchor) => {
                     let fst = crate::state_in_face_anchor_frame(doc, st, anchor, f.component)?;
-                    doc.resolve_attached_plane(vals, plane, f.component, st, &fst)?
+                    let (pl, note) = doc.resolve_attached_plane_noted(vals, plane, f.component, st, &fst)?;
+                    if let Some(note) = note {
+                        append_warning(warning, note);
+                    }
+                    pl
                 }
                 // A plane of numbers alone reads no body: placing them all is the design's size.
                 None if plane_is_fixed(plane) => doc.resolve_plane_in(vals, plane, 0, Some(st))?,
@@ -5843,6 +5878,8 @@ pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut 
             };
             // World states keep their previous display-only evaluation-key semantics.
             placed.key = 0;
+            // With the model body's own frame, so its place is told apart from the placement's.
+            placed.source_key = b.geometry_key().unwrap_or(0);
             placed.source_name = Some(b.definition_name().to_string());
             placed.source_transform = crate::mat_mul(&bm, &b.source_transform);
             placed.component = comp;
@@ -5951,6 +5988,8 @@ mod world_placement_cache_tests {
         assert!(Arc::ptr_eq(&source.mesh, &first.mesh), "unchanged geometry must retain the shared display mesh cell");
         assert_eq!(first.key, 0);
         assert_eq!(placed.key, 0);
+        // Each placement has its own geometry identity, for work measured on it.
+        assert!(first.geometry_key().is_some() && first.geometry_key() != placed.geometry_key());
         assert!(!Arc::ptr_eq(&source.mesh, &placed.mesh), "a transformed mesh cannot be reused without mapping coordinates");
         assert_eq!(first.source_name.as_deref(), Some("Block"));
         assert_eq!(placed.source_name.as_deref(), Some("Block"));
