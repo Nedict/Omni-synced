@@ -51,13 +51,20 @@ answered within 60 seconds (3600 seconds for `engine.batch`) is replied to with
 `{"ok": false, "running": true, "error": "timeout: … is still running …"}`. The same 16 MiB line
 limit applies to the MCP server.
 
-A timed-out request has not failed: it is still running in the app and will still apply (a long
-fillet, say), so don't simply send it again. The connection keeps its reply (#1618). Ask for it
+A timed-out request has not failed: it is still running in the app, and a change still applies
+when it finishes (a long fillet, say), so don't simply send it again. The timeout's text says
+what it still does: a request that only reads (`ui.inspect`, `document.inspect`, an inspection
+command) "only reads: nothing changes"; one that only writes a file (`file.export`,
+`file.save`, `file.save_as`, `file.save_mesh`, another export given a `path`, `ui.render`, or
+`ui.screenshot` with a `path`) "will still write the file when it finishes" and leaves the design
+as it is; any other request "will still apply when it finishes". The connection keeps its reply (#1618). Ask for it
 with `control.pending`: `{"pending": <id>, "method": …, "done": false}` while it runs, then
 `{"pending": <id>, "method": …, "done": true, "reply": {…}}` (its own reply, once), and
 `{"pending": null}` when nothing is outstanding. Until it lands, any other request on that
 connection is refused at once with `{"ok": false, "busy": true, "error": "busy: …"}` and not
-run, so nothing is queued to apply unseen behind it.
+run, so nothing is queued to apply unseen behind it. `control.pending` belongs to the
+connection: a new connection has nothing pending. The bridged MCP server does this itself
+([mcp.md](mcp.md#long-running-requests)).
 
 Any request's `params` may carry `allow_paths: ["/abs/folder", …]`: every file that request
 reads, writes or deletes (command paths such as `file.export`'s `path` or `doc.recovery_*`'s
@@ -74,7 +81,7 @@ MCP server sends its folders this way on every request ([mcp.md](mcp.md)). Witho
 |---|---|---|
 | `engine.execute` | `command`: command id, `params`: JSON object | the command's result |
 | `engine.script` | `commands`: `[{command, params}, …]` | results, stops at the first error |
-| `engine.batch` | `commands`: `[{command, params}, …]` (at most 10 000), `rollback?`: bool (default true), `timings?`, `profile?`: bool (default false) | `{completed, results, undone}`, plus `failed: {index, command, error}` when a step fails, and with `timings` `timings: [{index, command, ms}]` (the failing step included) and `total_ms`; `profile` adds each step's `profile: {boolean_ms, tessellate_ms, other_ms}`. Runs the steps in one request, so within one frame, each as `engine.execute` runs it. The first failure stops the batch, and with `rollback` the design goes back to how it was before it (`undone`: the steps taken back). Refused before anything runs, with an error starting `engine.batch unavailable`, while the agent cursor is shown or when a step loads a file (`doc.open`, `file.insert_step`, `file.insert_mesh`). Send such steps one by one. Answered when done, for up to 3600 s |
+| `engine.batch` | `commands`: `[{command, params}, …]` (at most 10 000), `rollback?`: bool (default true), `timings?`, `profile?`: bool (default false) | `{completed, results, undone}`, plus `failed: {index, command, error}` when a step fails, and with `timings` `timings: [{index, command, ms}]` (the failing step included) and `total_ms`; `profile` adds each step's `profile: {boolean_ms, tessellate_ms, other_ms}`. Runs the steps in one request, so within one frame, each as `engine.execute` runs it. The first failure stops the batch, and with `rollback` the design goes back to how it was before it (`undone`: the steps taken back; `rolled_back`: whether the design really is back at its checkpoint). Refused before anything runs, with an error starting `engine.batch unavailable`, while the agent cursor is shown or when a step loads a file (`doc.open`, `file.insert_step`, `file.insert_mesh`). Send such steps one by one. Answered when done, for up to 3600 s |
 | `engine.commands` | — | every command: id, label, tab, panel, icon, shortcut, params doc, enabled |
 | `document.inspect` | `measure?`: bool | parameters, timeline (errors, timings), bodies, sketches, selection |
 
