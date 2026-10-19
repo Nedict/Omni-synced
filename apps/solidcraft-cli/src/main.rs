@@ -630,10 +630,14 @@ pub(crate) fn cmd_bench_open(args: &[String]) -> Result<(), String> {
     }
     let t = std::time::Instant::now();
     let st = s.world_state();
+    let place_ms = t.elapsed().as_secs_f64() * 1000.0;
     // As the desktop app prepares a design it opened.
     st.warm_meshes(|| true);
     let triangles: usize = st.bodies.iter().map(|b| b.mesh().triangles.len()).sum();
-    println!("{}", json!({"step": "mesh", "ms": t.elapsed().as_secs_f64() * 1000.0, "bodies": st.bodies.len(), "triangles": triangles}));
+    println!(
+        "{}",
+        json!({"step": "mesh", "ms": t.elapsed().as_secs_f64() * 1000.0, "place_ms": place_ms, "bodies": st.bodies.len(), "triangles": triangles})
+    );
     // `--display LEVEL`: the display plans the viewport draws at that display quality, made as
     // the GPU viewport makes them; `--edit NAME EXPR` then changes a parameter and times the
     // evaluation and the plans of the bodies it changed.

@@ -1823,8 +1823,8 @@ fn a_rim_clicked_once_is_one_item_not_its_pieces() {
         let (top, bottom) = (rim_at(20.0), rim_at(0.0));
         (body.name.clone(), top, bottom, crate::viewport::polyline_mid(&mesh.edges[top]), crate::viewport::polyline_mid(&mesh.edges[bottom]))
     };
-    crate::viewport::select(&mut app, Some(Sel::Edge { body: name.clone(), index: top, point: mid_top }), false);
-    crate::viewport::select(&mut app, Some(Sel::Edge { body: name, index: bottom, point: mid_bottom }), true);
+    crate::viewport::select(&mut app, Some(Sel::Edge { body: name.clone(), index: top, point: mid_top }), false, false);
+    crate::viewport::select(&mut app, Some(Sel::Edge { body: name, index: bottom, point: mid_bottom }), true, false);
     assert_eq!(app.session.selection.len(), 4, "two clicks selected four halves");
     assert_eq!(selected_count(&mut app), 2, "the checkbox counts the two clicks");
 
@@ -1854,7 +1854,12 @@ fn a_split_wall_clicked_once_is_one_item() {
         .expect("the wall");
     let at = &wall["point"];
     let point = solidcraft_engine::geom::Vec3::new(at[0].as_f64().unwrap_or(0.0), at[1].as_f64().unwrap_or(0.0), at[2].as_f64().unwrap_or(0.0));
-    crate::viewport::select(&mut app, Some(Sel::Face { body: "Body1".into(), index: wall["index"].as_u64().unwrap_or(0) as usize, point }), false);
+    crate::viewport::select(
+        &mut app,
+        Some(Sel::Face { body: "Body1".into(), index: wall["index"].as_u64().unwrap_or(0) as usize, point }),
+        false,
+        false,
+    );
     assert!(!app.session.selection.is_empty());
     assert_eq!(selected_count(&mut app), 1, "one click, however many patches it selected: {:?}", app.session.selection);
     app.agent_chat.attach_selection = true;
