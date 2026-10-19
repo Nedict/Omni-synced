@@ -316,14 +316,15 @@ Changes with no useful observable behavior do not need screenshot or video evide
 small example without private designs or sensitive details; attach the media or link to an
 accessible recording rather than committing generated review artifacts.
 
-Keep an eye on your PR's status, but don't bring `main` into it to keep it current: no merge of
-`main`, no Update branch button, no rebase. CI already tests your PR merged with the latest
-`main`, and every update restarts the whole run for everyone waiting behind it. Only when GitHub
-reports a conflict, merge `main` in once and resolve it without losing others' changes; never
-force-push. Don't re-run CI on an unchanged commit either: a real failure fails again. Re-run
-only a job that runner trouble cancelled, with "Re-run failed jobs". While a task remains active,
-follow an open PR through its status changes; at handoff, clearly identify anything still
-awaiting merge.
+Keep an eye on your PR's status, but don't push to it only to catch up with `main` (no merge of
+`main`, no Update branch button, no rebase for that alone): every push restarts the whole CI
+run for everyone waiting behind it, and `main`'s own run catches what lands in between. When you
+push a change anyway, or GitHub reports a conflict, rebase onto the latest `main` (push your
+branch with `--force-with-lease`) or merge `main` in once, and resolve conflicts without losing
+others' changes. Don't re-run CI on an unchanged commit either: a real failure fails again.
+Re-run only a job that runner trouble cancelled, with "Re-run failed jobs". While a task remains
+active, follow an open PR through its status changes; at handoff, clearly identify anything
+still awaiting merge.
 
 Much of SolidCraft so far was written by AI coding agents (Claude) working in parallel, each
 owning one area, with a human setting direction and reporting bugs. Their working notes are in
