@@ -72,6 +72,7 @@ fn docked_ribbon_geometry_and_search() {
     use solidcraft_ui_egui::{scenario::handle_at, toolbar};
     for theme in ["light", "dark"] {
         let mut h = harness();
+        h.call("ui.set", json!({"layout":"docked"}));
         h.app.preferences.theme = theme.into();
         for width in [1600.0, 640.0, 320.0] {
             h.call("ui.resize", json!({"width":width,"height":1000}));
@@ -85,7 +86,7 @@ fn docked_ribbon_geometry_and_search() {
             assert_eq!(workspace.width(), 88.0);
             assert_eq!(workspace.top(), ribbon.top());
             assert_eq!(workspace.bottom(), ribbon.bottom() - 1.0);
-            assert_eq!(search.height(), 24.0);
+            assert_eq!(search.height(), 22.0);
             assert_eq!(search.width(), if width == 1600.0 { 188.0 } else { 24.0 });
             assert!(ribbon.contains_rect(search));
             assert!(search.left() > workspace.right());
@@ -123,19 +124,22 @@ fn docked_ribbon_geometry_and_search() {
 #[test]
 fn finish_sketch_stays_at_the_right_when_groups_collapse() {
     use solidcraft_ui_egui::scenario::handle_at;
-    let mut h = Harness::new();
-    h.call("engine.execute", json!({"command":"sketch.create","params":{"plane":"XY"}}));
-    for width in [1600.0, 640.0, 320.0] {
-        h.call("ui.resize", json!({"width":width,"height":1000}));
-        h.frames(5);
-        let ribbon = rect_of("toolbar").unwrap();
-        let exit = rect_of("ribbon:section:SKETCH:FINISH SKETCH").unwrap();
-        let finish = rect_of("button:sketch.finish").unwrap();
-        assert_eq!(exit.right(), ribbon.right() - 3.0);
-        assert!(ribbon.contains_rect(finish));
-        assert!(finish.bottom() < exit.top());
-        assert!(handle_at("tab:SKETCH").is_some(), "the selected contextual tab scrolls into view");
+    for layout in ["docked", "floating"] {
+        let mut h = Harness::new();
+        h.call("ui.set", json!({"layout":layout}));
+        h.call("engine.execute", json!({"command":"sketch.create","params":{"plane":"XY"}}));
+        for width in [1600.0, 640.0, 320.0] {
+            h.call("ui.resize", json!({"width":width,"height":1000}));
+            h.frames(5);
+            let ribbon = rect_of("toolbar").unwrap();
+            let exit = rect_of("ribbon:section:SKETCH:FINISH SKETCH").unwrap();
+            let finish = rect_of("button:sketch.finish").unwrap();
+            assert_eq!(exit.right(), ribbon.right() - 4.0);
+            assert!(ribbon.contains_rect(finish));
+            assert!(finish.bottom() < exit.top());
+            assert!(handle_at("tab:SKETCH").is_some(), "the selected contextual tab scrolls into view");
+        }
+        h.step(&json!({"click":{"handle":"button:sketch.finish"}})).unwrap();
+        assert!(h.app.session.active_sketch.is_none());
     }
-    h.step(&json!({"click":{"handle":"button:sketch.finish"}})).unwrap();
-    assert!(h.app.session.active_sketch.is_none());
 }

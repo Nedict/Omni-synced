@@ -2278,8 +2278,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     // Physical materials: the library's, then the design's own (material.create).
     let material_names = app.session.doc.material_names();
     let t = Tokens::get();
-    let vp = app.viewport.rect.unwrap_or_else(|| ctx.content_rect());
-    let top = (vp.top() + crate::viewport::AXIS_VIEW_CLEARANCE).min((vp.bottom() - 360.0).max(vp.top()));
+    let vp = crate::shell::content_rect(app, app.viewport.rect.unwrap_or_else(|| ctx.content_rect()));
     // The Sketch Palette owns the right edge for as long as a sketch is being edited. A dialog
     // started there docks at the left instead, so neither panel hides the other.
     let side = if crate::sketch_palette::editing(app) && crate::sketch_palette::fits_beside_a_dialog(app, ctx) {
@@ -2287,6 +2286,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     } else {
         crate::frame::Side::Right
     };
+    let top = crate::shell::panel_top(app, vp, vp.bottom(), side);
     // Dragged by its title band, the dialog keeps that offset from its docked place while it
     // is open (#1335), kept inside the viewport.
     let moved = crate::frame::dock_offset(ctx, title(&d.kind));

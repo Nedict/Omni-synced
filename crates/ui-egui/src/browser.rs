@@ -573,8 +573,8 @@ fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
 }
 
 /// The tree on a translucent card over the workspace, instead of a column that takes width from
-/// it (Preferences: "Float it over the workspace"). Drawn before the central view, in a layer
-/// above it, so the viewport keeps the whole window and the card sits on top of it.
+/// it (Preferences: "Float it over the workspace"). The card occupies the content below the
+/// ribbon in either shell layout, leaving the viewport projection unchanged.
 pub fn floating(app: &mut SolveApp, ui: &mut egui::Ui, viewport: egui::Rect) {
     let t = Tokens::get();
     app.tree.order.clear();
@@ -603,6 +603,7 @@ pub fn floating(app: &mut SolveApp, ui: &mut egui::Ui, viewport: egui::Rect) {
                 });
         },
     );
+    app.shell.browser = Some(card.response.rect);
     crate::scenario::publish_rect("browser:float", card.response.rect);
     finish_browser(app, ui, acts);
 }
@@ -2072,7 +2073,7 @@ pub fn dims_overlay(app: &SolveApp, ctx: &egui::Context) {
 
 /// Where the browser's panels open: the viewport's top left corner.
 fn panel_pos(app: &SolveApp) -> Pos2 {
-    app.viewport.rect.map(|r| r.left_top() + vec2(16.0, 16.0)).unwrap_or(pos2(270.0, 140.0))
+    app.viewport.rect.map(|r| crate::shell::content_rect(app, r).left_top() + vec2(16.0, 16.0)).unwrap_or(pos2(270.0, 140.0))
 }
 
 /// The Capture Position question stands for saving.

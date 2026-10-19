@@ -403,6 +403,11 @@ pub struct Tokens {
 }
 
 impl Tokens {
+    /// Subtle shell elevation, derived from the semantic application-bar colour.
+    pub(crate) fn shell_shadow(self) -> egui::Shadow {
+        egui::Shadow { offset: [0, self.space_2 as i8], blur: self.space_8 as u8, spread: 0, color: self.app_bar.gamma_multiply(0.18) }
+    }
+
     /// The tokens of the current theme and colour vision mode.
     pub fn get() -> Tokens {
         Tokens::themed(is_dark(), vision())
