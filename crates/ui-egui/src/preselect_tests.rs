@@ -1266,7 +1266,10 @@ fn thread_choices_can_start_without_a_face_and_recover_from_invalid_text() {
     for handle in ["dialog:Size", "dialog:Size:8 mm"] {
         h.step(&json!({"click":{"handle":handle}})).unwrap();
     }
-    assert!(matches!(&h.app.dialog.as_ref().unwrap().kind, Kind::Thread { designation, .. } if designation == "M8x1.25"));
+    assert!(matches!(&h.app.dialog.as_ref().unwrap().kind, Kind::Thread { designation, .. } if designation == "M8"));
+    if let Kind::Thread { designation, .. } = &h.app.dialog.as_ref().unwrap().kind {
+        assert_eq!(solidcraft_engine::doc::parse_metric_thread(designation), Some((8.0, 1.25)));
+    }
     assert!(apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).is_err(), "a face is still required");
 }
 
