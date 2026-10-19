@@ -19,9 +19,12 @@ pub(crate) fn domain(s: &EvalSurface) -> Domain {
     let tau = std::f64::consts::TAU;
     match s {
         EvalSurface::Plane { .. } => Domain { range: [None, None], period: [None, None] },
-        EvalSurface::Nurbs { degree, knots, count, .. } => {
-            let r = |d: usize| Some((*knots[d].get(degree[d])?, *knots[d].get(count[d])?));
-            Domain { range: [r(0), r(1)], period: [None, None] }
+        EvalSurface::Nurbs { degree, knots, count, closed, .. } => {
+            let r = |d: usize| Some((*knots.get(d)?.get(*degree.get(d)?)?, *knots.get(d)?.get(*count.get(d)?)?));
+            // A direction the surface joins itself along is periodic: a boundary that runs
+            // across the join is unwrapped past the range's end, and the evaluator wraps it back.
+            let p = |d: usize| closed.get(d).copied().unwrap_or(false).then(|| r(d).map(|(a, b)| b - a)).flatten().filter(|x| *x > 0.0);
+            Domain { range: [r(0), r(1)], period: [p(0), p(1)] }
         }
         EvalSurface::Revolved { profile, swap, .. } => {
             let r = (|| Some((*profile.knots.get(profile.degree)?, *profile.knots.get(profile.ctrl.len())?)))();
@@ -288,15 +291,37 @@ mod tests {
     #[test]
     fn divides_the_turn_but_not_the_straight_direction() {
         let s = cylinder();
-        let turn =
-            divide(&s, 1, (0.0, std::f64::consts::TAU), (0.0, 1.0), &Rules { tol: 0.01, max_len: f64::INFINITY, turn: None }, f64::INFINITY, 10_000);
-        let along =
-            divide(&s, 0, (0.0, 1.0), (0.0, std::f64::consts::TAU), &Rules { tol: 0.01, max_len: f64::INFINITY, turn: None }, f64::INFINITY, 10_000);
+        let turn = divide(
+            &s,
+            1,
+            (0.0, std::f64::consts::TAU),
+            (0.0, 1.0),
+            &Rules { tol: 0.01, max_len: f64::INFINITY, extent: 0.0, turn: None, boundary_tol: None },
+            f64::INFINITY,
+            10_000,
+        );
+        let along = divide(
+            &s,
+            0,
+            (0.0, 1.0),
+            (0.0, std::f64::consts::TAU),
+            &Rules { tol: 0.01, max_len: f64::INFINITY, extent: 0.0, turn: None, boundary_tol: None },
+            f64::INFINITY,
+            10_000,
+        );
         assert_eq!(along, vec![0.0, 1.0]);
         // Chord sag r(1 − cos(θ/2)) ≤ 0.01 with r = 3 needs θ ≤ 0.163: at least 39 segments.
         assert!(turn.len() >= 40 && turn.len() < 80, "{}", turn.len());
         // With a longest side the straight direction is divided too: 4 mm in sides ≤ 0.5.
-        let along = divide(&s, 0, (0.0, 1.0), (0.0, std::f64::consts::TAU), &Rules { tol: 0.01, max_len: f64::INFINITY, turn: None }, 0.5, 10_000);
+        let along = divide(
+            &s,
+            0,
+            (0.0, 1.0),
+            (0.0, std::f64::consts::TAU),
+            &Rules { tol: 0.01, max_len: f64::INFINITY, extent: 0.0, turn: None, boundary_tol: None },
+            0.5,
+            10_000,
+        );
         assert_eq!(along.len(), 9);
     }
 
@@ -306,7 +331,15 @@ mod tests {
     #[test]
     fn divides_with_the_ends_exactly() {
         let (a0, a1) = (-1.010485317689877, 1.083909784703316);
-        let lines = divide(&cylinder(), 1, (a0, a1), (0.0, 1.0), &Rules { tol: 0.01, max_len: f64::INFINITY, turn: None }, f64::INFINITY, 10_000);
+        let lines = divide(
+            &cylinder(),
+            1,
+            (a0, a1),
+            (0.0, 1.0),
+            &Rules { tol: 0.01, max_len: f64::INFINITY, extent: 0.0, turn: None, boundary_tol: None },
+            f64::INFINITY,
+            10_000,
+        );
         assert_eq!(lines.first().copied(), Some(a0));
         assert_eq!(lines.last().copied(), Some(a1));
     }

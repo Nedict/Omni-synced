@@ -4,6 +4,11 @@ use super::{Body, Result, guard, mt};
 pub(super) struct Job {
     pub solid: mt::Solid,
     pub check_mesh: bool,
+    /// The file's point-on-surface tolerance (`super::Units::tol`) for the representation this
+    /// solid was read from: how far its boundaries may lie off their surfaces (mm). The body
+    /// keeps it, so the tessellator holds an imported boundary to the file's own uncertainty
+    /// rather than to a fraction of the part's size (see `crate::body::Body::boundary_tol`).
+    pub tol: f64,
 }
 
 type Prepared = Result<(Body, usize)>;
@@ -22,7 +27,9 @@ pub(super) fn workers() -> usize {
 fn prepare(job: &Job, placement: &mt::Matrix4) -> Prepared {
     guard("STEP body preparation", || {
         let solid = if *placement == mt::Matrix4::from_scale(1.0) { job.solid.clone() } else { mt::builder::transformed(&job.solid, *placement) };
-        let body = Body::new(solid)?;
+        // The budget is set before anything meshes the body: the unmeshed-face count below is
+        // the import's own warning, and it must judge the body by the file's tolerance too.
+        let body = Body::new(solid)?.with_boundary_tol(Some(job.tol));
         let missing = if job.check_mesh { body.unmeshed_faces() } else { 0 };
         Ok((body, missing))
     })
