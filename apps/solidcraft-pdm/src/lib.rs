@@ -16,11 +16,21 @@ pub mod backup_restore;
 pub mod blob_store;
 pub mod bootstrap;
 pub mod client;
+pub mod http_server;
 pub mod managed;
 pub mod managed_workspace;
 pub mod workspace;
 
 pub const PROTOCOL: &str = "solidcraft-pdm/2";
+pub const HTTP_RPC_PATH: &str = "/pdm/v2/rpc";
+
+/// HTTPS carries authentication in a bearer header, separate from this payload.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RpcEnvelope {
+    pub protocol: String,
+    pub request: Request,
+}
 pub const TOKEN_ENV: &str = "SOLIDCRAFT_PDM_TOKEN";
 
 /// A local owner credential. Never include its contents in Debug or error messages.
@@ -365,6 +375,18 @@ impl Store {
         self.execute_as(request, &managed::Principal { id: "owner".into(), role: managed::Role::Administrator })
     }
 
+    /// Secure transports require configured accounts and never the loopback owner.
+    pub(crate) fn has_configured_principals(&self) -> bool {
+        self.managed.has_configured_principals()
+    }
+
+    pub(crate) fn execute_configured(&mut self, request: Request, bearer: &str) -> Response {
+        match self.managed.authenticate(bearer) {
+            Some(principal) => self.execute_as(request, &principal),
+            None => Response::Error { code: "unauthorized".into() },
+        }
+    }
+
     pub fn execute_as(&mut self, request: Request, principal: &managed::Principal) -> Response {
         let result = match request {
             Request::ManagedCatalog => Ok(Response::ManagedCatalog { catalog: self.managed.catalog() }),
@@ -551,6 +573,30 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn configured_dispatch_requires_enrollment_and_rejects_unregistered_owner() {
+        let root = std::env::temp_dir().join(format!("solidcraft-configured-auth-{}", AuthToken::generate().unwrap()));
+        let unknown_owner = AuthToken::generate().unwrap();
+        let mut store = Store::open(&root).unwrap();
+        assert!(!store.has_configured_principals());
+        assert!(matches!(
+            store.execute_configured(Request::ManagedCatalog, &unknown_owner),
+            Response::Error { code } if code == "unauthorized"
+        ));
+        drop(store);
+        let (_, enrolled) = bootstrap::initialize(&root, "administrator").unwrap();
+        let enrolled = enrolled.into_bearer();
+        let mut store = Store::open(&root).unwrap();
+        assert!(store.has_configured_principals());
+        assert!(matches!(store.execute_configured(Request::ManagedCatalog, &enrolled), Response::ManagedCatalog { .. }));
+        assert!(matches!(
+            store.execute_configured(Request::ManagedCatalog, &unknown_owner),
+            Response::Error { code } if code == "unauthorized"
+        ));
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn interrupted_write_retries_with_remaining_budget_and_preserves_bytes() {
         let elapsed = std::cell::Cell::new(Duration::ZERO);

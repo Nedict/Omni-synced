@@ -1,4 +1,4 @@
-//! Authenticated loopback client. The transport stays native and account-free.
+//! Authenticated native client with loopback and verified HTTPS transports.
 use crate::{AuthToken, AuthenticatedRequest, Error, MAX_CONTENT, Request, Response, Version, VersionRef, read_socket_frame, write_socket_frame};
 use std::{
     fs::File,
@@ -10,13 +10,122 @@ use std::{
 
 #[derive(Clone)]
 pub struct Client {
-    port: u16,
+    transport: Transport,
     token: AuthToken,
+}
+
+#[derive(Clone)]
+enum Transport {
+    Loopback(u16),
+    Https { endpoint: String, agent: ureq::Agent },
+}
+
+impl std::fmt::Debug for Client {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Client")
+            .field(
+                "transport",
+                &match self.transport {
+                    Transport::Loopback(_) => "loopback",
+                    Transport::Https { .. } => "https",
+                },
+            )
+            .field("token", &"[redacted]")
+            .finish()
+    }
+}
+
+/// Accept an HTTPS origin (optional trailing slash) or that origin with the
+/// exact shared RPC path. Normalize the host's case; preserve an explicit port.
+/// No userinfo, escaping, query, fragment or alternate path is accepted.
+fn https_endpoint(endpoint: &str) -> Result<String, Error> {
+    if endpoint.len() > 2048
+        || !endpoint.is_ascii()
+        || endpoint.bytes().any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control())
+        || endpoint.contains(['@', '\\', '?', '#', '%'])
+    {
+        return Err(Error::Invalid("HTTPS endpoint"));
+    }
+    let uri: ureq::http::Uri = endpoint.parse().map_err(|_| Error::Invalid("HTTPS endpoint"))?;
+    if uri.scheme_str() != Some("https") || !matches!(uri.path(), "" | "/") && uri.path() != crate::HTTP_RPC_PATH {
+        return Err(Error::Invalid("HTTPS endpoint origin or RPC path required"));
+    }
+    let authority = uri.authority().ok_or(Error::Invalid("HTTPS endpoint authority"))?;
+    let host = authority.host();
+    if host.is_empty() {
+        return Err(Error::Invalid("HTTPS endpoint authority"));
+    }
+    let suffix = authority.as_str().strip_prefix(host).ok_or(Error::Invalid("HTTPS endpoint authority"))?;
+    let port = if suffix.is_empty() {
+        String::new()
+    } else {
+        let digits = suffix.strip_prefix(':').ok_or(Error::Invalid("HTTPS endpoint port"))?;
+        if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(Error::Invalid("HTTPS endpoint port"));
+        }
+        let port: u16 = digits.parse().map_err(|_| Error::Invalid("HTTPS endpoint port"))?;
+        if port == 0 {
+            return Err(Error::Invalid("HTTPS endpoint port"));
+        }
+        format!(":{port}")
+    };
+    Ok(format!("https://{}{port}{}", host.to_ascii_lowercase(), crate::HTTP_RPC_PATH))
+}
+
+fn https_network_error() -> Error {
+    // Never retain transport errors: they can contain remote-controlled URLs,
+    // response text or headers. The caller gets a stable, credential-free error.
+    Error::Network(std::io::Error::other("PDM HTTPS transport failed"))
+}
+
+fn authorization_header(token: &AuthToken) -> Result<ureq::http::HeaderValue, Error> {
+    let mut authorization = ureq::http::HeaderValue::from_str(&format!("Bearer {}", token.0)).map_err(|_| Error::Invalid("HTTPS credential"))?;
+    authorization.set_sensitive(true);
+    Ok(authorization)
 }
 
 impl Client {
     pub fn new(port: u16, token: AuthToken) -> Self {
-        Self { port, token }
+        Self { transport: Transport::Loopback(port), token }
+    }
+
+    /// Verify the peer through the platform certificate verifier. HTTPS only;
+    /// redirects and environment/system proxies are disabled.
+    pub fn https(endpoint: &str, token: AuthToken) -> Result<Self, Error> {
+        Self::with_https_roots(endpoint, token, ureq::tls::RootCerts::PlatformVerifier)
+    }
+
+    /// Explicit private-CA trust for self-hosted deployments. This CA replaces
+    /// platform roots; standard hostname, validity and chain checks stay enabled.
+    pub fn https_with_ca(endpoint: &str, token: AuthToken, ca_der: &[u8]) -> Result<Self, Error> {
+        if ca_der.is_empty() || ca_der.len() > 64 * 1024 {
+            return Err(Error::Invalid("HTTPS CA size"));
+        }
+        let mut validation = rustls::RootCertStore::empty();
+        validation.add(rustls::pki_types::CertificateDer::from(ca_der.to_vec())).map_err(|_| Error::Invalid("HTTPS CA certificate"))?;
+        let certificate = ureq::tls::Certificate::from_der(ca_der).to_owned();
+        Self::with_https_roots(endpoint, token, ureq::tls::RootCerts::new_with_certs(&[certificate]))
+    }
+
+    fn with_https_roots(endpoint: &str, token: AuthToken, roots: ureq::tls::RootCerts) -> Result<Self, Error> {
+        let endpoint = https_endpoint(endpoint)?;
+        let tls = ureq::tls::TlsConfig::builder()
+            .root_certs(roots)
+            .unversioned_rustls_crypto_provider(std::sync::Arc::new(rustls::crypto::ring::default_provider()))
+            .build();
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .tls_config(tls)
+            .https_only(true)
+            .proxy(None)
+            .http_status_as_error(false)
+            .max_redirects(0)
+            .timeout_connect(Some(Duration::from_secs(5)))
+            .timeout_global(Some(Duration::from_secs(30)))
+            .user_agent("SolidCraft PDM")
+            .build()
+            .into();
+        Ok(Self { transport: Transport::Https { endpoint, agent }, token })
     }
 
     pub fn request(&self, request: Request) -> Result<Response, Error> {
@@ -27,7 +136,11 @@ impl Client {
     }
 
     fn request_impl(&self, request: Request) -> Result<Response, Error> {
-        let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, self.port);
+        let port = match &self.transport {
+            Transport::Loopback(port) => *port,
+            Transport::Https { endpoint, agent } => return self.https_request(endpoint, agent, request),
+        };
+        let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
         let mut stream = TcpStream::connect_timeout(&address.into(), Duration::from_secs(5))?;
         let envelope = AuthenticatedRequest::new(&self.token, request);
         let bytes = serde_json::to_vec(&envelope)?;
@@ -35,6 +148,44 @@ impl Client {
         let response: Response = serde_json::from_slice(&read_socket_frame(&stream, Duration::from_secs(5))?)?;
         match response {
             Response::Error { code } => Err(Error::Server(code)),
+            other => Ok(other),
+        }
+    }
+
+    fn https_request(&self, endpoint: &str, agent: &ureq::Agent, request: Request) -> Result<Response, Error> {
+        let body = serde_json::to_vec(&crate::RpcEnvelope { protocol: crate::PROTOCOL.into(), request })?;
+        if body.len() as u64 > crate::MAX_FRAME {
+            return Err(Error::Invalid("HTTPS request size"));
+        }
+        let mut response = agent
+            .post(endpoint)
+            .header(ureq::http::header::AUTHORIZATION, authorization_header(&self.token)?)
+            .header(ureq::http::header::CONTENT_TYPE, "application/json")
+            .header(ureq::http::header::ACCEPT, "application/json")
+            .send(body.as_slice())
+            .map_err(|_| https_network_error())?;
+        if response.status() != ureq::http::StatusCode::OK {
+            return Err(Error::Invalid("PDM HTTPS response status"));
+        }
+        let content_type =
+            response.headers().get(ureq::http::header::CONTENT_TYPE).and_then(|value| value.to_str().ok()).and_then(|value| value.split(';').next());
+        if !content_type.is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json")) {
+            return Err(Error::Invalid("PDM HTTPS response content type"));
+        }
+        let bytes = response.body_mut().with_config().limit(crate::MAX_FRAME).read_to_vec().map_err(|_| https_network_error())?;
+        let response: Response = serde_json::from_slice(&bytes).map_err(|_| Error::Invalid("PDM HTTPS response JSON"))?;
+        match response {
+            Response::Error { code } => match code.as_str() {
+                "forbidden"
+                | "conflict"
+                | "not_found"
+                | "invalid_request"
+                | "integrity"
+                | "storage_error"
+                | "unsupported_protocol"
+                | "unauthorized" => Err(Error::Server(code)),
+                _ => Err(Error::Invalid("PDM HTTPS response error code")),
+            },
             other => Ok(other),
         }
     }
@@ -129,4 +280,89 @@ pub fn read_file(path: &Path, limit: usize) -> Result<Vec<u8>, Error> {
         return Err(Error::Invalid("source exceeds size limit"));
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod https_tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_https_origin_or_exact_rpc_path() {
+        let expected = format!("https://example.test{}", crate::HTTP_RPC_PATH);
+        assert_eq!(https_endpoint("https://EXAMPLE.test").unwrap(), expected);
+        assert_eq!(https_endpoint("https://example.test/").unwrap(), expected);
+        assert_eq!(https_endpoint(&expected).unwrap(), expected);
+        assert_eq!(https_endpoint("https://localhost:04443").unwrap(), format!("https://localhost:4443{}", crate::HTTP_RPC_PATH));
+        assert_eq!(https_endpoint("https://[::1]:4443").unwrap(), format!("https://[::1]:4443{}", crate::HTTP_RPC_PATH));
+    }
+
+    #[test]
+    fn rejects_downgrades_credentials_queries_escapes_and_other_paths() {
+        for endpoint in [
+            "http://localhost",
+            "//example.test",
+            "example.test",
+            "https://",
+            "https://user:secret@example.test",
+            "https://example.test?token=secret",
+            "https://example.test#secret",
+            "https://example.test/?",
+            "https://example.test/other",
+            "https://example.test//pdm/v2/rpc",
+            "https://example.test/pdm/v2/rpc/",
+            "https://example.test/%2e%2e",
+            "https://%65xample.test",
+            "https://example.test\\evil",
+            "https://example.test\n",
+            " https://example.test",
+            "https://example.test:0",
+            "https://example.test:65536",
+            "https://example.test:",
+            "https://example.test:invalid",
+            "https://example.test:+443",
+            "https://éxample.test",
+        ] {
+            assert!(https_endpoint(endpoint).is_err(), "accepted {endpoint:?}");
+        }
+        assert!(https_endpoint(&format!("https://{}", "a".repeat(2048))).is_err());
+    }
+
+    #[test]
+    fn credential_is_sensitive_and_absent_from_debug_url_and_rpc_body() {
+        let secret = "ab".repeat(32);
+        let token = AuthToken::parse(secret.clone()).unwrap();
+        let header = authorization_header(&token).unwrap();
+        assert!(header.is_sensitive());
+        assert_eq!(header.to_str().unwrap(), format!("Bearer {secret}"));
+        assert!(!format!("{header:?}").contains(&secret));
+        let client = Client::https("https://example.test", token).unwrap();
+        assert!(!format!("{client:?}").contains(&secret));
+        let body = serde_json::to_string(&crate::RpcEnvelope { protocol: crate::PROTOCOL.into(), request: Request::ManagedCatalog }).unwrap();
+        assert!(!body.contains(&secret));
+        assert!(!body.contains("token"));
+        let error = Client::https(&format!("https://{secret}@example.test"), AuthToken::parse(secret.clone()).unwrap()).unwrap_err();
+        assert!(!format!("{error:?}: {error}").contains(&secret));
+        assert!(!format!("{:?}", https_network_error()).contains(&secret));
+    }
+
+    #[test]
+    fn explicit_ca_rejects_empty_oversized_and_invalid_der() {
+        for bytes in [Vec::new(), vec![0; 64 * 1024 + 1], b"invalid certificate".to_vec()] {
+            let token = AuthToken::parse("00".repeat(32)).unwrap();
+            assert!(Client::https_with_ca("https://localhost", token, &bytes).is_err());
+        }
+    }
+
+    #[test]
+    fn https_agent_enforces_direct_bounded_verified_transport() {
+        let client = Client::https("https://example.test", AuthToken::parse("00".repeat(32)).unwrap()).unwrap();
+        let Transport::Https { agent, .. } = client.transport else { panic!("HTTPS transport expected") };
+        let config = agent.config();
+        assert!(config.https_only());
+        assert!(config.proxy().is_none());
+        assert_eq!(config.max_redirects(), 0);
+        assert_eq!(config.timeouts().global, Some(Duration::from_secs(30)));
+        assert_eq!(config.timeouts().connect, Some(Duration::from_secs(5)));
+    }
 }

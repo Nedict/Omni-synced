@@ -316,6 +316,10 @@ impl ManagedStore {
         Ok(store)
     }
 
+    pub(crate) fn has_configured_principals(&self) -> bool {
+        !self.credentials.is_empty()
+    }
+
     pub(crate) fn authenticate(&self, token: &str) -> Option<Principal> {
         use subtle::ConstantTimeEq;
         if token.len() != 64 {

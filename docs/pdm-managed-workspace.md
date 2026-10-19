@@ -99,6 +99,25 @@ provider, remote login or a non-loopback listener. The legacy loopback owner
 credential remains an explicit compatibility path; any secure transport must
 exclude it and authenticate configured principals only.
 
+The subsequent HTTPS library increment uses Hyper's HTTP/1 implementation with
+rustls and the existing ring provider, plus a native ureq client. It carries the
+same protocol in `POST /pdm/v2/rpc`, with a separate bearer header. Configured
+principals are mandatory; the legacy loopback owner credential has no fallback
+in this transport. The production client validates platform trust, or an
+explicit private CA, including certificate validity and hostname. Redirects and
+implicit proxies are disabled, and errors do not echo credentials or remote text.
+
+The server serializes domain writes on a dedicated worker and bounds connections,
+queued requests, headers, streamed bodies and handshake/body/response deadlines.
+It reports readiness only after listener registration and writer startup. Sixty-
+eight service tests, including six isolated HTTPS integration tests, passed along
+with strict Clippy. The network tests bind only loopback ephemeral ports and
+exercise invalid trust/hostname, configured roles, competing checkouts, stale
+bases, retry receipts, oversized chunked input and stalled connections. Original
+public test keys are confined to fixtures and never enter a production trust store.
+These changes are not in the frozen trial. There is no HTTPS CLI, login wizard,
+relay, remote provisioning or cloud provider enabled by this increment.
+
 ### Storage and remote access contracts
 
 The authoritative PDM service owns identities, authorization, reservations,
