@@ -6,11 +6,14 @@ name: Generated files
 on:
   push:
     branches: [main]
-    # THIRD-PARTY-LICENSES.txt follows the manifests and the lockfile; docs/features.md follows the
-    # command registry (crates/engine), read through solidcraft-cli. Other pushes regenerate nothing.
+    # THIRD-PARTY-LICENSES.txt follows the manifests, the lockfile, the vendored crates' licence
+    # files and the fonts' licences; docs/features.md follows the command registry (crates/engine),
+    # read through solidcraft-cli. Other pushes regenerate nothing.
     paths:
       - "Cargo.lock"
       - "**/Cargo.toml"
+      - "vendor/**"
+      - "assets/fonts/**"
       - "crates/engine/**"
       - "apps/solidcraft-cli/**"
       - "xtask/**"

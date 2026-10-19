@@ -16,7 +16,9 @@ on:
     branches: [main]
     # The image holds the web app only: documentation, test data and the GitHub bots' scripts can't
     # change it, so a push touching only those builds nothing (edge stays at the last code change).
-    paths-ignore: ["docs/**", "**/*.md", "tests/**", "scripts/claim/**", "scripts/triage/**"]
+    # ATTRIBUTION.md is the exception among the Markdown files: the app embeds it (Help, About).
+    # The last matching pattern wins.
+    paths: ["**", "!docs/**", "!**/*.md", "ATTRIBUTION.md", "!tests/**", "!scripts/claim/**", "!scripts/triage/**"]
   release:
     types: [published]
   pull_request:
