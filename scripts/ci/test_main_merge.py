@@ -68,6 +68,21 @@ class MergeOfMain(unittest.TestCase):
         head = self.merge_main()
         self.assertEqual(main_merge.merge_of_main(base, head), self.change)
 
+    def test_consecutive_merges_of_main_chain_back_to_the_change(self):
+        self.main_commit(**{"b.txt": LINES.replace("line 30\n", "line thirty\n")})
+        first = self.merge_main()
+        base = self.main_commit(**{"b.txt": LINES.replace("line 30\n", "line thirty\n").replace("line 35\n", "line 35b\n")})
+        head = self.merge_main()
+        self.assertEqual(main_merge.merge_chain(base, head), [first, self.change])
+
+    def test_chain_stops_at_an_ordinary_commit(self):
+        self.main_commit(**{"b.txt": LINES.replace("line 30\n", "line thirty\n")})
+        self.merge_main()
+        later = self.r.commit("more work", **{"a.txt": LINES.replace("line 5\n", "line five\n").replace("line 20\n", "line twenty\n")})
+        base = self.main_commit(**{"b.txt": LINES.replace("line 30\n", "line thirty\n").replace("line 35\n", "line 35b\n")})
+        head = self.merge_main()
+        self.assertEqual(main_merge.merge_chain(base, head), [later])
+
     def test_conflict_resolution_is_not_carried(self):
         base = self.main_commit(**{"a.txt": LINES.replace("line 5\n", "line 5 on main\n")})
         subprocess.run(["git", "merge", "-q", "main"], cwd=self.tmp.name, capture_output=True)

@@ -8,7 +8,9 @@ Prints `carried=<url of the passing run>` when all of these hold, else `carried=
     'main'", or GitHub's Update branch button;
   - the pull request's own change is the same before and after the merge (equal `git patch-id`),
     so the merge resolved no conflict and brought nothing into the change itself;
-  - a ci.yml run of the first parent (the change before the merge) passed with the test shards.
+  - a ci.yml run of the change before the merge passed with the test shards. When that change was
+    itself only a merge of main (a run that carried, its shards skipped), the walk goes on down
+    the first parents, through at most MAX_CHAIN merges, to the run where the shards ran.
 
 Then the run needs only the repository checks: the change was tested, and main tests the merged
 result after it lands. Any doubt (an error, an API failure, an unexpected shape) prints
@@ -23,6 +25,8 @@ import urllib.request
 
 API = "https://api.github.com"
 SHARD_PREFIX = "Native Linux tests"
+# Consecutive merges of main followed back to a run whose shards ran.
+MAX_CHAIN = 10
 
 
 def git(*args):
@@ -51,6 +55,19 @@ def merge_of_main(base, head):
     return change if before and before == after else None
 
 
+def merge_chain(base, head):
+    """The changes HEAD carries from, nearest first: the first parent of each consecutive merge of
+    main that left the change's own patch as it was (each one equals the next, so all equal HEAD's)."""
+    chain, cur = [], head
+    for _ in range(MAX_CHAIN):
+        change = merge_of_main(base, cur)
+        if change is None:
+            break
+        chain.append(change)
+        cur = change
+    return chain
+
+
 def get(url, token):
     req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}"})
     with urllib.request.urlopen(req, timeout=20) as r:
@@ -76,12 +93,12 @@ def main():
     a = ap.parse_args()
     carried = ""
     try:
-        change = merge_of_main(a.base, a.head)
         token = os.environ.get("GH_TOKEN", "")
-        if change and token:
+        for change in merge_chain(a.base, a.head) if token else []:
             carried = passing_run(a.repo, change, token)
             if carried:
                 print(f"{a.head} merges main into {change}, which passed: {carried}", file=sys.stderr)
+                break
     except (subprocess.CalledProcessError, OSError, ValueError, KeyError) as e:
         print(f"not carried ({e})", file=sys.stderr)
         carried = ""
