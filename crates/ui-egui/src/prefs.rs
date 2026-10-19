@@ -350,6 +350,13 @@ pub struct Prefs {
     pub up_axis: String,
     /// After a STEP or IGES file opens, offer to stand a Y-up part up (`stand_up`).
     pub offer_stand_up: bool,
+    /// Placing a Single hole snaps to the middle of the face and the centres of its round edges
+    /// (`hole_place`). Off by default: a hole goes where it is clicked.
+    pub hole_snaps: bool,
+    /// A placed Single hole has a handle that drags it, and a pick elsewhere on a face that has a
+    /// hole moves the hole there (`hole_place`). Off by default: a second pick on its face takes
+    /// the hole out, and a hole is moved by taking it out and picking again.
+    pub hole_moves: bool,
     /// What a middle-button double-click in the view does: `home`, `fit` or `off`.
     pub middle_double_click: String,
     /// Colour vision mode (#778): `off`, `protan`, `deutan` or `tritan`.
@@ -479,6 +486,8 @@ impl Default for Prefs {
             look_at_speed: 1.0,
             up_axis: "z".into(),
             offer_stand_up: true,
+            hole_snaps: false,
+            hole_moves: false,
             middle_double_click: "home".into(),
             color_vision: crate::theme::ColorVision::Off,
             check_updates: true,
@@ -777,6 +786,8 @@ fn defaults(app: &mut SolveApp, page: usize) {
         PAGE_DESIGN => {
             p.up_axis = d.up_axis;
             p.offer_stand_up = d.offer_stand_up;
+            p.hole_snaps = d.hole_snaps;
+            p.hole_moves = d.hole_moves;
         }
         PAGE_GRAPHICS => {
             let msaa = p.msaa != d.msaa;
@@ -1454,6 +1465,25 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.checkbox(&mut app.preferences.offer_stand_up, "")
                 .on_hover_text(crate::i18n::tr_label("After a STEP or IGES file opens with Z up, offer a quarter turn about X"));
             ui.end_row();
+            // The Hole command's own settings, grouped under its name.
+            ui.label("");
+            ui.end_row();
+            ui.label(RichText::new(crate::i18n::tr_label("Create Hole")).strong());
+            ui.label("");
+            ui.end_row();
+            for (label, on, id, help) in [
+                ("Snap to face and edge centres", &mut app.preferences.hole_snaps, "prefs:hole_snaps", "A Single hole snaps to the middle of its face and to the centres of its round edges"),
+                ("Move holes by clicking or dragging", &mut app.preferences.hole_moves, "prefs:hole_moves", "A placed Single hole has a handle to drag it, and picking its face again moves the hole there instead of taking it out"),
+            ] {
+                ui.horizontal(|ui| {
+                    ui.add_space(12.0);
+                    ui.label(crate::i18n::tr_label(label));
+                });
+                let r = ui.checkbox(on, "");
+                crate::scenario::publish_rect(id, r.rect);
+                ui.end_row();
+                note(ui, crate::i18n::tr_label(help));
+            }
         }
         4 => {
             ui.label(app.tr("ui.graphics_preset"));

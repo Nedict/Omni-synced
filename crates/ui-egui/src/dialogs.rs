@@ -1472,6 +1472,12 @@ fn tr(text: &str) -> &str {
     crate::i18n::tr_label(text)
 }
 
+/// Name the row being laid out without drawing its label (a row of its own layout): its
+/// widgets publish `dialog:<text>` handles as [`row_label`]'s would.
+pub(crate) fn set_row(text: &str) {
+    ROW.with(|r| *r.borrow_mut() = text.to_string());
+}
+
 /// A dialog row's widget, for scenarios and demos: the handle `dialog:<row label>`.
 pub(crate) fn publish_row(r: &egui::Response) {
     ROW.with(|row| crate::scenario::publish_handle(&format!("dialog:{}", row.borrow()), r.rect.center()));
@@ -3008,7 +3014,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         extra_check(ui, &mut d.extra, "copy");
                         ui.end_row();
                     }
-                    Kind::Hole { diameter, depth, kind, cb_diameter, cb_depth, cs_diameter, cs_angle, opts } => {
+                    Kind::Hole { kind, opts, .. } => {
                         row_label(ui, "Extents");
                         let cur = if to_object_on(&d.inputs) { 1 } else { usize::from(opts.all) * 2 };
                         let mut ext = cur;
@@ -3042,42 +3048,19 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                             ui.end_row();
                         }
-                        if *kind == 0 {
+                        // Through all, the tip lies past the part.
+                        if *kind == 0 && !opts.all {
                             row_label(ui, "Drill Point");
                             let mut tip = usize::from(opts.angled);
                             combo(ui, "hole_tip", &["Flat", "Angle"], &mut tip);
                             opts.angled = tip == 1;
                             ui.end_row();
                         }
-                        if !opts.all {
-                            row_label(ui, "Depth");
-                            enter |= field(ui, depth);
-                            ui.end_row();
-                        }
-                        if *kind == 0 && opts.angled {
-                            row_label(ui, "Tip Angle");
-                            enter |= field(ui, &mut opts.tip_angle);
-                            ui.end_row();
-                        }
-                        row_label(ui, "Diameter");
-                        enter |= field(ui, diameter);
+                        // The section through the hole, each size beside its dimension (#2171).
+                        let to_object = to_object_on(&d.inputs);
+                        let doc = &app.session.doc;
+                        enter |= crate::dialogs_hole::rows(ui, &mut d.kind, to_object, &|e, k| doc.eval(e, k).ok());
                         ui.end_row();
-                        if *kind == 1 {
-                            row_label(ui, "Counterbore Ø");
-                            enter |= field(ui, cb_diameter);
-                            ui.end_row();
-                            row_label(ui, "Counterbore depth");
-                            enter |= field(ui, cb_depth);
-                            ui.end_row();
-                        }
-                        if *kind == 2 {
-                            row_label(ui, "Countersink Ø");
-                            enter |= field(ui, cs_diameter);
-                            ui.end_row();
-                            row_label(ui, "Countersink angle");
-                            enter |= field(ui, cs_angle);
-                            ui.end_row();
-                        }
                     }
                     Kind::Primitive { fields, operation, at, .. } => {
                         for (k, v) in fields.iter_mut() {
