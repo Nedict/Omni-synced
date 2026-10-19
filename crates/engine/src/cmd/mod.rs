@@ -20,6 +20,7 @@ macro_rules! planned {
     };
 }
 
+mod bom;
 mod browser;
 mod clearance;
 mod clipboard;
@@ -41,6 +42,7 @@ mod config;
 mod file;
 pub(crate) mod hole_stacks;
 mod inspect;
+mod interference;
 pub(crate) mod joints;
 mod libraries;
 mod material_properties;
@@ -263,6 +265,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(config::COMMANDS.iter());
     v.extend(parts::COMMANDS.iter());
     v.extend(fasten::COMMANDS.iter());
+    v.extend(bom::COMMANDS.iter());
     v.extend(browser::COMMANDS.iter());
     v.extend(delete::COMMANDS.iter());
     v.extend(edit::COMMANDS.iter());
