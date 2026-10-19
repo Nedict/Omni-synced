@@ -556,9 +556,11 @@ impl Wizard {
         (2.0 * wander).max(4.0).max(STEADY_SHARE * self.reach.get(r).copied().unwrap_or(0.0))
     }
 
-    /// Whether two readings are the same position, give or take the noise.
+    /// Whether two readings are the same position, give or take the noise. `b` is where a steady
+    /// run settled, its middle, so readings of that run are within half of [`Self::tolerance`] (the
+    /// run's whole width) of it: the same band the steadiness check accepts.
     fn near(&self, a: [i16; 6], b: [i16; 6]) -> bool {
-        a.iter().zip(b).enumerate().all(|(r, (&a, b))| (f64::from(a) - f64::from(b)).abs() <= self.tolerance(r))
+        a.iter().zip(b).enumerate().all(|(r, (&a, b))| (f64::from(a) - f64::from(b)).abs() <= self.tolerance(r) / 2.0)
     }
 
     /// How far the reading is from rest, on the raw axis furthest out, as a share of what counts as
@@ -1043,6 +1045,32 @@ mod tests {
         cycle(&mut wizard, &[[37, 0, 0, 0, 0, 0], [40, 0, 0, 0, 0, 0], [43, 0, 0, 0, 0, 0]], SETTLE_SECONDS + 0.1);
         assert_eq!(wizard.stage(), Stage::Step(1));
         assert_eq!(wizard.recording.settled[0].mean().map(|mean| mean[0].round()), Some(40.0));
+    }
+
+    #[test]
+    fn the_four_unit_floor_alone_lets_a_two_unit_dither_settle_on_a_short_range() {
+        // Flat at rest, and the biggest push only reaches 100, so the reach share is 2 and only
+        // the floor (4, i.e. ±2) lets this ±2 dither count as steady.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        hold(&mut wizard, [100, 0, 0, 0, 0, 0], 0.5);
+        cycle(&mut wizard, &[[8, 0, 0, 0, 0, 0], [10, 0, 0, 0, 0, 0], [12, 0, 0, 0, 0, 0]], SETTLE_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(1));
+    }
+
+    #[test]
+    fn dither_the_steadiness_check_rejects_isnt_skipped_as_untouched_either() {
+        // Step 0 settles on a ±2 dither around 10. Sitting there is untouched; ±3 around it is wider
+        // than the steadiness check calls one position, so it is movement and starts a hold.
+        let mut wizard = Wizard::default();
+        hold(&mut wizard, [0; 6], REST_SECONDS + 0.1);
+        hold(&mut wizard, [100, 0, 0, 0, 0, 0], 0.5);
+        cycle(&mut wizard, &[[8, 0, 0, 0, 0, 0], [10, 0, 0, 0, 0, 0], [12, 0, 0, 0, 0, 0]], SETTLE_SECONDS + 0.1);
+        assert_eq!(wizard.stage(), Stage::Step(1));
+        cycle(&mut wizard, &[[8, 0, 0, 0, 0, 0], [10, 0, 0, 0, 0, 0], [12, 0, 0, 0, 0, 0]], 0.2);
+        assert_eq!(wizard.progress(), 0.0);
+        cycle(&mut wizard, &[[7, 0, 0, 0, 0, 0], [10, 0, 0, 0, 0, 0], [13, 0, 0, 0, 0, 0]], 0.2);
+        assert!(wizard.progress() > 0.0);
     }
 
     #[test]
