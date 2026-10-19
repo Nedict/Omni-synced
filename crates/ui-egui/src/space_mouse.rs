@@ -533,7 +533,7 @@ mod tests {
 
     #[test]
     fn a_devices_saved_calibration_puts_its_axes_on_3dconnexions() {
-        let ctx = egui::Context::default();
+        let ctx = window(true);
         let mut reference = app();
         frame(&mut reference, &ctx, DriverMapping::default(), PUSH, 0.02);
         let sent = Axes { translation: [0; 3], rotation: [0, -3500, 0] };
@@ -552,7 +552,7 @@ mod tests {
 
     #[test]
     fn while_calibrating_the_cap_feeds_the_calibration_and_the_view_stays() {
-        let ctx = egui::Context::default();
+        let ctx = window(true);
         let mut app = app();
         crate::space_mouse_calibration::start(&mut app);
         assert!(app.space_mouse.calibrating.is_none(), "nothing to calibrate without a device");
@@ -572,7 +572,7 @@ mod tests {
 
     #[test]
     fn a_reading_resting_off_zero_is_kept_for_calibration_and_doesnt_move_the_view() {
-        let ctx = egui::Context::default();
+        let ctx = window(true);
         // Inside the dead zone and not calibrated: no motion, so no redraw either.
         let mut app = app();
         let resting = Axes { translation: [0, 15, 0], rotation: [0; 3] };
@@ -599,7 +599,7 @@ mod tests {
 
     #[test]
     fn another_device_turning_up_mid_calibration_ends_it() {
-        let ctx = egui::Context::default();
+        let ctx = window(true);
         let mut app = app();
         app.space_mouse.device = Some("hid 256f:c63a".into());
         crate::space_mouse_calibration::start(&mut app);
