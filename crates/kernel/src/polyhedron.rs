@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use solidcraft_geom::{Plane, Vec3};
+use solidcraft_geom::{Plane, UnitVec3, Vec3};
 use truck_modeling::{self as mt, builder};
 
 use crate::body::{Body, Solid, from_p3, p3, v3};
@@ -419,9 +419,8 @@ pub fn round_all_edges(b: &Body, r: f64) -> Result<Body> {
         // Corner sphere patches: the faces around each inner vertex, counter-clockwise.
         for (qi, c) in q.iter().enumerate() {
             let mut around: Vec<usize> = faces.iter().filter(|(_, lp)| lp.contains(&qi)).map(|(h, _)| *h).collect();
-            let axis = around.iter().fold(Vec3::ZERO, |acc, h| acc + normal(*h)).normalized().unwrap_or(Vec3::Z);
-            let u = axis.any_perp();
-            let w2 = axis.cross(u);
+            let axis = around.iter().fold(Vec3::ZERO, |acc, h| acc + normal(*h)).unit().unwrap_or(UnitVec3::Z);
+            let (u, w2) = axis.perp_pair();
             around.sort_by(|x, y| {
                 let ang = |h: usize| normal(h).dot(w2).atan2(normal(h).dot(u));
                 ang(*x).total_cmp(&ang(*y))
@@ -434,7 +433,7 @@ pub fn round_all_edges(b: &Body, r: f64) -> Result<Body> {
             let meridian = builder::circle_arc(&builder::vertex(p3(np)), &builder::vertex(p3(sp)), p3(back));
             let surf =
                 mt::Surface::RevolutedCurve(mt::Processor::new(mt::RevolutedCurve::by_revolution(meridian.oriented_curve(), p3(*c), v3(side))));
-            let surf = orient(surf, *c + axis * r, axis);
+            let surf = orient(surf, *c + axis * r, *axis);
             out.push(mt::Face::try_new(vec![w.into()], surf).map_err(|e| KernelError::Failed(format!("rounded corner: {e}")))?);
             let mut corner: Vec<FaceOrigin> =
                 (0..k).filter_map(|i| Some((*around.get(i)?, *around.get((i + 1) % k)?))).flat_map(|(f, g)| along(f, g)).collect();
