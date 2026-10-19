@@ -70,6 +70,8 @@ pub mod issue_report;
 pub mod joint_drag;
 pub mod keymap;
 mod linked_source;
+#[cfg(test)]
+mod look_at_tests;
 mod material_card_review;
 #[cfg(test)]
 mod measurement_ui_tests;
