@@ -75,3 +75,34 @@ joint values. A chain joined to a grounded part still uses `joint.reach` within 
 Repeated nested definitions are shared: their other instances follow in their respective
 parent frames. The selected exact path determines the local change, which is carried through
 the solver's first-placement frame to jointed peers, including repeated peers.
+
+## Change the size of a standard component
+
+An inserted standard part is one component with an active catalogue configuration.
+Its Browser entry shows that configuration alongside its placement name, for example
+`Screw:1 [M6×20]`. Double-click the entry or choose **Edit** to open its configuration
+dialog. The activation radio still activates the component; double-clicking ordinary
+components keeps its existing activation behavior. The viewport also offers
+**Change Part Size** for a picked standard screw, bolt, nut, washer, pin or bearing.
+The dialog starts with the
+component's current family, size and actual length, including a non-catalogue
+length. Choose a size and, for parts with a length, a length, then confirm with OK.
+Cancel leaves the design unchanged.
+
+Resizing regenerates the standard part, replacing any extra features added inside
+that component. The dialog warns about this before applying the change.
+
+This edits the component definition: every occurrence of that component receives
+the new size. Its occurrences and their placements and joints are retained. Undo
+reverts the size change in one step. Insert another standard part when a separate
+component with a different size is needed.
+
+The dialog uses the same `parts.library` catalogue and `parts.resize` command as
+scripts. It is offered only for inserted standard parts. Other component types
+retain their usual feature-editing tools.
+
+The configuration is read from the existing standard-part family, size and length
+metadata, so it survives save/reopen and follows undo/redo without renaming any
+occurrence. Lengths in the compact configuration name are catalogue millimetres;
+the dialog displays lengths in the design's units. General parameter-driven
+configurations are outside this change.

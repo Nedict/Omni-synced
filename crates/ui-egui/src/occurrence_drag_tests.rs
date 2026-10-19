@@ -89,6 +89,7 @@ fn grounded_parts_empty_space_and_modifier_drags_draw_a_selection_box() {
         (Vec3::new(-40.0, 40.0, 0.0), egui::Modifiers::NONE),
         (Vec3::new(25.0, 5.0, 10.0), egui::Modifiers::SHIFT),
         (Vec3::new(25.0, 5.0, 10.0), egui::Modifiers::CTRL),
+        (Vec3::new(25.0, 5.0, 10.0), egui::Modifiers { command: true, mac_cmd: true, ..Default::default() }),
         (Vec3::new(25.0, 5.0, 10.0), egui::Modifiers::ALT),
     ];
     for (at, modifiers) in cases {
