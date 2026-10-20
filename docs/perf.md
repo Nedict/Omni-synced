@@ -34,7 +34,7 @@ timeline (errors and warnings), bit for bit, for 116. The other three (`07-fille
 `37-pyramid-apex-blend`, `closed_sweep_torus_cut`) number their faces differently from one run
 of `main` to the next; their faces, by area and centre, and their names agree between the two
 builds. The meshes a running blend keeps change none of the 116 either (checked the same way on
-`ci` builds with and without them). `crates/kernel/src/cache_tests.rs` counts what is measured,
+`ci` builds with and without them). `crates/kernel/src/mesh_memo_tests.rs` (`once_per_body`) counts what is measured,
 healed, meshed and searched.
 
 Release `solidcraft-cli`, Apple M4 Pro (14 cores, 48 GB), macOS 27, shared with other work
