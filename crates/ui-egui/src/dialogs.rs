@@ -406,6 +406,10 @@ pub struct Dialog {
     pub refused: Option<Refused>,
     /// Create Sketch opened by a sketch tool's shortcut: that tool starts once the sketch is open.
     pub then_start: Option<&'static str>,
+    /// Edges picked by hand in a Fillet or Chamfer dialog, before tangent-chain expansion.
+    pub(crate) picked_edges: Vec<Sel>,
+    /// Whether `inputs[0]` currently includes the tangent chains of `picked_edges`.
+    pub(crate) chain_applied: bool,
 }
 
 /// OK computing off the window thread: the dialog's commands evaluated on a scratch copy of the
@@ -505,6 +509,7 @@ impl Dialog {
     }
 
     pub(crate) fn new(kind: Kind, inputs: Vec<SelInput>) -> Dialog {
+        let chain_applied = matches!(kind, Kind::Fillet { chain: true, .. });
         Dialog {
             kind,
             inputs,
@@ -517,6 +522,8 @@ impl Dialog {
             extra: serde_json::Map::new(),
             refused: None,
             then_start: None,
+            picked_edges: Vec::new(),
+            chain_applied,
         }
     }
 
@@ -763,20 +770,16 @@ impl Dialog {
                 fits(i.accept, sel) && (i.multi || i.items.is_empty()) && (planar_ok || i.accept & FACES != 0 || !matches!(sel, Sel::Face { .. }))
             };
             if let Some(inp) = d.inputs.iter_mut().find(|i| takes(i)) {
+                if matches!(d.kind, Kind::Fillet { .. }) {
+                    for x in crate::viewport::grouped_selection(s, sel) {
+                        if !d.picked_edges.iter().any(|y| selection::same_item(y, &x)) {
+                            d.picked_edges.push(x);
+                        }
+                    }
+                }
                 // Fillets and chamfers take an edge with its tangent chain, as a pick does.
                 let picked = match (&d.kind, sel) {
-                    (Kind::Fillet { chain: true, .. }, Sel::Edge { body, index, .. }) => s
-                        .model
-                        .state()
-                        .body(body)
-                        .map(|b| {
-                            let m = b.mesh();
-                            m.tangent_chain(*index, 2f64.to_radians())
-                                .into_iter()
-                                .filter_map(|i| m.edges.get(i).map(|e| Sel::Edge { body: body.clone(), index: i, point: polyline_mid(e) }))
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_else(|| vec![sel.clone()]),
+                    (Kind::Fillet { chain, .. }, _) => fillet_edges(s, sel, *chain),
                     (Kind::Measure { .. }, _) => vec![crate::viewport::measurement_selection(s, sel)],
                     _ if inp.multi => crate::viewport::grouped_selection(s, sel),
                     _ => vec![sel.clone()],
@@ -1041,20 +1044,10 @@ impl Dialog {
         let measure = matches!(self.kind, Kind::Measure { .. });
         let sel = if measure { crate::viewport::measurement_selection(s, &sel) } else { sel };
         let chain = matches!(self.kind, Kind::Fillet { chain: true, .. });
-        let mut picked =
+        let single =
             if !measure && self.active_input().is_some_and(|i| i.multi) { crate::viewport::picked_selection(s, &sel) } else { vec![sel.clone()] };
         // Tangent chain: an edge brings the edges that continue it smoothly.
-        if chain
-            && let Sel::Edge { body, index, .. } = &sel
-            && let Some(b) = s.world_state().body(body)
-        {
-            let m = b.mesh();
-            picked = m
-                .tangent_chain(*index, 2f64.to_radians())
-                .into_iter()
-                .filter_map(|i| m.edges.get(i).map(|e| Sel::Edge { body: body.clone(), index: i, point: polyline_mid(e) }))
-                .collect();
-        }
+        let picked = if chain { fillet_edges(s, &sel, true) } else { single.clone() };
         // Extrude and revolve take profiles of one sketch.
         if let Sel::Profile { sketch, .. } = &sel
             && !matches!(self.kind, Kind::Loft { .. })
@@ -1062,7 +1055,20 @@ impl Dialog {
         {
             inp.items.retain(|x| !matches!(x, Sel::Profile { sketch: s2, .. } if s2 != sketch));
         }
+        let is_fillet = matches!(self.kind, Kind::Fillet { .. }) && self.active == 0;
         let Some(inp) = self.inputs.get_mut(self.active) else { return };
+        if is_fillet {
+            self.chain_applied = chain;
+            if picked.iter().all(|p| inp.items.iter().any(|x| selection::same_item(x, p))) {
+                self.picked_edges.retain(|x| !picked.iter().any(|p| selection::same_item(x, p)));
+            } else {
+                for p in single {
+                    if !self.picked_edges.iter().any(|x| selection::same_item(x, &p)) {
+                        self.picked_edges.push(p);
+                    }
+                }
+            }
+        }
         inp.toggle(picked);
         self.focus = true;
         // A measurement is between two items: a third pick starts over from the last one.
@@ -1087,6 +1093,11 @@ impl Dialog {
             self.profile_selection_changed = true;
         }
         let measure = matches!(self.kind, Kind::Measure { .. });
+        let is_fillet = matches!(self.kind, Kind::Fillet { .. }) && self.active == 0;
+        let chain = matches!(self.kind, Kind::Fillet { chain: true, .. });
+        if is_fillet && !add {
+            self.picked_edges.clear();
+        }
         let Some(inp) = self.inputs.get_mut(self.active) else { return };
         if !add {
             inp.items.clear();
@@ -1101,12 +1112,62 @@ impl Dialog {
                 inp.items.push(x);
                 break;
             }
-            if !inp.items.iter().any(|y| selection::same_item(y, &x)) {
+            if is_fillet {
+                if !self.picked_edges.iter().any(|y| selection::same_item(y, &x)) {
+                    self.picked_edges.push(x.clone());
+                }
+                for y in fillet_edges(s, &x, chain) {
+                    if !inp.items.iter().any(|z| selection::same_item(z, &y)) {
+                        inp.items.push(y);
+                    }
+                }
+            } else if !inp.items.iter().any(|y| selection::same_item(y, &x)) {
                 inp.items.push(x);
             }
         }
         self.sync_thread(s);
     }
+
+    /// Rebuild a Fillet or Chamfer dialog's edge input from the edges that were picked when
+    /// Tangent Chain is ticked or unticked.
+    pub fn sync_fillet_chain(&mut self, s: &Session) {
+        let Kind::Fillet { chain, .. } = &self.kind else { return };
+        if *chain == self.chain_applied {
+            return;
+        }
+        self.chain_applied = *chain;
+        let Some(inp) = self.inputs.first_mut() else { return };
+        let mut items = Vec::new();
+        for pick in &self.picked_edges {
+            for x in fillet_edges(s, pick, *chain) {
+                if !items.iter().any(|y| selection::same_item(y, &x)) {
+                    items.push(x);
+                }
+            }
+        }
+        inp.items = items;
+        self.error = None;
+    }
+}
+
+/// The edges a Fillet or Chamfer pick stands for: its tangent chain when `chain` is on, else
+/// the picked edge (both halves of a split circular rim).
+fn fillet_edges(s: &Session, sel: &Sel, chain: bool) -> Vec<Sel> {
+    let mut picked = crate::viewport::picked_selection(s, sel);
+    if chain
+        && let Sel::Edge { body, index, .. } = sel
+        && let Some(b) = s.world_state().body(body)
+    {
+        let m = b.mesh();
+        for i in m.tangent_chain(*index, 2f64.to_radians()) {
+            if !picked.iter().any(|x| matches!(x, Sel::Edge { index: j, .. } if *j == i))
+                && let Some(e) = m.edges.get(i)
+            {
+                picked.push(Sel::Edge { body: body.clone(), index: i, point: polyline_mid(e) });
+            }
+        }
+    }
+    picked
 }
 
 /// Profiles of the sketch a feature would use, when there is just one: the active sketch's, else
@@ -1859,6 +1920,7 @@ fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::
         inp.items.clear();
         if i == 0 {
             d.profile_selection_changed = true;
+            d.picked_edges.clear();
         }
         d.active = i;
     }
@@ -2427,6 +2489,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     ui.label(tr("dialog.selection_guidance"));
                     ui.end_row();
                 }
+                d.sync_fillet_chain(&app.session);
                 input_rows(&mut d, ui, &app.session);
                 match &mut d.kind {
                     Kind::Sketch => {
@@ -2782,7 +2845,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             d.extra.insert("radii".into(), json!(radii));
                         }
                         row_label(ui, "Tangent Chain");
-                        ui.checkbox(chain, "");
+                        let r = ui.checkbox(chain, "");
+                        publish_row(&r);
                         ui.end_row();
                     }
                     Kind::Shell { thickness } => {
@@ -3166,6 +3230,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         }
                     }
                 }
+                d.sync_fillet_chain(&app.session);
                 error_rows(app, ctx, &mut d, ui, false);
             });
         });
@@ -5074,7 +5139,9 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             }
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = edges.iter().filter_map(|p| edge_sel(s, p.0)).collect();
+                d.picked_edges = inp.items.clone();
             }
+            d.chain_applied = false;
             d
         }
         FeatureKind::Shell { faces, thickness, direction, tangent_chain, .. } => {
