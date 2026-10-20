@@ -1417,6 +1417,20 @@ fn boolean_whole_with_refinement(a: &Body, b: &Body, op: BoolOp, refine: bool) -
     if let Some(body) = fine(&mut last) {
         return Ok(Some(body));
     }
+    // An intersection keeps what lies in both bodies: when the sampled answer (one body whole, or
+    // nothing) is contradicted by facets that cross well past their faceting error, keeping it
+    // would keep exactly what the intersection was asked to trim (#3244: teeth standing 0.27 mm
+    // out of a trimming cylinder came back untrimmed). It fails instead, and the model is kept.
+    let deep = 2.0 * 3.0 * tol_m;
+    if op == BoolOp::Intersect
+        && doubted.is_some()
+        && let (Some(ma), Some(mb)) = &meshes
+        && ma.crosses(mb, deep)
+    {
+        return Err(KernelError::Failed(format!(
+            "boolean {op:?}: the bodies pass through each other by more than {deep:.3e} mm where they could not be intersected; {last}"
+        )));
+    }
     match doubted {
         Some(r) => {
             let mut event = BooleanFallback::new(BooleanStrategy::UnverifiedShortcut);
