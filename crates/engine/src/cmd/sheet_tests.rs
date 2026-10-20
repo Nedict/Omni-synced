@@ -4627,6 +4627,30 @@ fn a_fillet_on_a_sheet_corner_is_refused_until_a_sheet_feature_rebuilds_the_body
     assert_eq!(s.model.state().sheets[0].altered_by, None);
 }
 
+/// A cosmetic thread in a sheet's hole leaves its flat pattern as it is; a modelled thread cuts
+/// material the flat pattern lacks, so it is refused like a fillet until a sheet feature rebuilds
+/// the body and says the thread is not kept.
+#[test]
+fn a_modelled_thread_in_a_sheet_hole_is_refused_but_a_cosmetic_one_is_not() {
+    let mut s = Session::default();
+    base(&mut s, 100.0, 60.0);
+    run(&mut s, "solid.hole", json!({"position": [30, 30, 2.5], "diameter": 4.2}));
+    let drilled = volume(&mut s);
+    run(&mut s, "solid.thread", json!({"face": [32.1, 30, 1.25], "designation": "M5"}));
+    assert_eq!(last_warning(&s), "");
+    assert!(flat_exports(&mut s).into_iter().all(|r| r.is_ok()));
+    run(&mut s, "solid.thread", json!({"face": [32.1, 30, 1.25], "designation": "M5", "modeled": true}));
+    assert!(volume(&mut s) < drilled - 0.05, "the modelled thread cuts material");
+    assert!(last_warning(&s).contains("is sheet metal"), "{}", last_warning(&s));
+    for result in flat_exports(&mut s) {
+        let error = result.expect_err("a modelled thread the flat pattern lacks");
+        assert!(error.contains("can't include Thread2"), "{error}");
+    }
+    let out = run(&mut s, "sheet.flange", json!({"edges": [[50, 0, 2.5]], "height": 20}));
+    assert!(out["warning"].as_str().is_some_and(|w| w.contains("what Thread2 changed is not kept")), "{out}");
+    assert!(flat_exports(&mut s).into_iter().all(|r| r.is_ok()));
+}
+
 /// A sheet built and machined with sheet features (flanges, a hem, a hole and a cut across a
 /// bend while unfolded, refolded, then moved) keeps its flat pattern and exports.
 #[test]

@@ -1587,7 +1587,8 @@ fn copy_body_name(state: &ModelState, f: &Feature, k: usize, source: &str) -> St
 /// mirror combined into it) marks the sheet with its name, and says so. A feature that rebuilds
 /// the body from the model (a sheet metal feature, or machining the model keeps as cut-outs,
 /// which changes the model) clears the mark, and says that the change it drops is not kept.
-/// Features that move whole bodies or only mark their faces leave the flat pattern as it was.
+/// Features that move whole bodies or only mark their faces (a cosmetic thread, not a modelled
+/// one, which cuts material) leave the flat pattern as it was.
 fn track_altered_sheets(before: &ModelState, after: &mut ModelState, f: &Feature, warning: &mut Option<String>) {
     if matches!(
         f.kind,
@@ -1596,7 +1597,7 @@ fn track_altered_sheets(before: &ModelState, after: &mut ModelState, f: &Feature
             | FeatureKind::Rest { .. }
             | FeatureKind::BodyTransfer { .. }
             | FeatureKind::SplitFace { .. }
-            | FeatureKind::Thread { .. }
+            | FeatureKind::Thread { modeled: false, .. }
     ) {
         return;
     }
