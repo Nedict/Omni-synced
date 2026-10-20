@@ -21,6 +21,9 @@ serde = { workspace = true }
 pollster = { workspace = true }
 # Native backends, so tests and the CLI can open a device without a window.
 wgpu = { workspace = true, features = ["metal", "vulkan", "dx12", "gles"] }
+# The persistent pipeline cache (src/shader_cache.rs): wgpu's unsafe call, and the file checksum.
+solidcraft-gpu-native = { workspace = true }
+sha2 = { workspace = true }
 
 # x64 Windows: DXC built from its open source and linked in, so D3D12 compiles the path tracer's
 # shader without FXC, which needs hours for it (#3217). The viewport keeps its own compiler

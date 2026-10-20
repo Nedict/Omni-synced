@@ -141,14 +141,14 @@ fn f64_atrous_preserves_body_normal_depth_and_albedo_edges() {
     }
 }
 fn context() -> Option<Arc<Context>> {
-    let (_, device, queue) = match open_headless() {
+    let (adapter, device, queue) = match open_headless() {
         Ok(v) => v,
         Err(e) => {
             assert!(std::env::var_os("SOLIDCRAFT_REQUIRE_GPU").is_none(), "required GPU unavailable: {e}");
             return None;
         }
     };
-    Some(Executor::new(device, queue).unwrap().context)
+    Some(Executor::new(device, queue, &adapter.get_info()).unwrap().context)
 }
 fn request(size: u32) -> ImageRequest {
     let mut camera = Camera { distance: 4.0, ..Default::default() };

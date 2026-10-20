@@ -58,7 +58,7 @@ fn checked(scopes: [wgpu::ErrorScopeGuard; 3]) -> Result<()> {
 pub fn host() -> Result<ImageHost> {
     let (adapter, device, queue) = open_headless()?;
     log::info!("gpu-path adapter: {} ({:?})", adapter.get_info().name, adapter.get_info().device_type);
-    ImageHost::with_executor(Arc::new(Executor::new(device, queue)?))
+    ImageHost::with_executor(Arc::new(Executor::new(device, queue, &adapter.get_info())?))
 }
 
 /// Open an independent job device on the viewport's selected adapter. In particular,
@@ -71,20 +71,22 @@ pub fn host_on_adapter(adapter: &wgpu::Adapter) -> Result<ImageHost> {
         return Err(gpu(format!("viewport adapter does not satisfy SOLIDCRAFT_GPU={}", policy.name())));
     }
     if info.backend == wgpu::Backend::Dx12 {
-        // The viewport's D3D12 may compile with FXC. Reopen the same GPU where D3D12 compiles
-        // with DXC, else through Vulkan, whose driver compiles the shader in minutes at most.
+        // The same GPU through Vulkan first: its compiled pipelines persist between runs
+        // (shader_cache), where D3D12 compiles again at every start (~82 s with DXC, #3433).
+        // Else D3D12 on an instance of its own that compiles with DXC, never FXC (#3217).
         let same_gpu = |i: &wgpu::AdapterInfo, backend| i.backend == backend && i.vendor == info.vendor && i.device == info.device;
         let instance = crate::select::dxc_instance();
-        let (reopened, _) = crate::select::pick_on(&instance, policy, |i| same_gpu(i, wgpu::Backend::Dx12))
-            .or_else(|| crate::select::pick_on(&instance, policy, |i| same_gpu(i, wgpu::Backend::Vulkan)))
+        let (reopened, _) = crate::select::pick_on(&instance, policy, |i| same_gpu(i, wgpu::Backend::Vulkan))
+            .or_else(|| crate::select::pick_on(&instance, policy, |i| same_gpu(i, wgpu::Backend::Dx12)))
             .ok_or_else(|| gpu(FXC_UNSUPPORTED))?;
+        let reopened_info = reopened.get_info();
         let (device, queue) = open_device(&reopened)?;
-        log::info!("gpu-path viewport GPU: {} through {:?}", info.name, reopened.get_info().backend);
-        return ImageHost::with_executor(Arc::new(Executor::new(device, queue)?));
+        log::info!("gpu-path viewport GPU: {} through {:?}", info.name, reopened_info.backend);
+        return ImageHost::with_executor(Arc::new(Executor::new(device, queue, &reopened_info)?));
     }
     let (device, queue) = open_device(adapter)?;
     log::info!("gpu-path viewport adapter: {} ({:?})", info.name, info.device_type);
-    ImageHost::with_executor(Arc::new(Executor::new(device, queue)?))
+    ImageHost::with_executor(Arc::new(Executor::new(device, queue, &info)?))
 }
 
 /// Without DXC, D3D12 compiles the path shader with FXC, which takes about two hours (#3217).
@@ -107,7 +109,7 @@ fn open_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue)> {
     let required_limits = device_limits(adapter.limits())?;
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("solidcraft progressive path"),
-        required_features: crate::depth_features(adapter),
+        required_features: crate::depth_features(adapter) | (adapter.features() & wgpu::Features::PIPELINE_CACHE),
         required_limits,
         ..Default::default()
     }))
@@ -128,6 +130,8 @@ struct Context {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
+    // Compiled pipelines kept between runs, where the backend has a pipeline cache (#3433).
+    cache: Option<crate::shader_cache::ShaderCache>,
     // Built and warmed by the first denoised job, then shared by later ones.
     denoise: std::sync::OnceLock<denoise::Pipelines>,
     layout: wgpu::BindGroupLayout,
@@ -136,8 +140,9 @@ struct Executor {
     context: Arc<Context>,
 }
 impl Executor {
-    fn new(device: wgpu::Device, queue: wgpu::Queue) -> Result<Self> {
+    fn new(device: wgpu::Device, queue: wgpu::Queue, adapter: &wgpu::AdapterInfo) -> Result<Self> {
         device_limits(device.limits())?;
+        let cache = crate::shader_cache::ShaderCache::open(&device, adapter, "gpu-path");
         device.on_uncaptured_error(Arc::new(|e: wgpu::Error| log::error!("gpu-path: {e}")));
         let scopes = scopes(&device);
         let shader =
@@ -170,11 +175,14 @@ impl Executor {
             module: &shader,
             entry_point: Some("main"),
             compilation_options: Default::default(),
-            cache: None,
+            cache: cache.as_ref().map(crate::shader_cache::ShaderCache::get),
         });
         checked(scopes)?;
         warm_up(&device, &queue, &pipeline, &placeholder_bind(&device, &layout, 7)?)?;
-        Ok(Self { context: Arc::new(Context { device, queue, pipeline, layout, denoise: std::sync::OnceLock::new() }) })
+        if let Some(cache) = &cache {
+            cache.save();
+        }
+        Ok(Self { context: Arc::new(Context { device, queue, pipeline, layout, cache, denoise: std::sync::OnceLock::new() }) })
     }
 }
 

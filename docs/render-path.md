@@ -17,9 +17,17 @@ about two hours for the path shader (#3217). x64 Windows builds link DXC in (bui
 from its open source by mach-dxcompiler); elsewhere `dxcompiler.dll` beside
 SolidCraft or on the `PATH` provides it. The path tracer reopens the viewport's GPU
 on a D3D12 instance of its own that uses DXC, so the viewport keeps FXC, which still
-drives GPUs without shader model 6. Without DXC, discovery skips D3D12 adapters and
-the UI renders on the viewport's GPU through Vulkan; with no such Vulkan adapter
-the path executor reports why it is unavailable instead of compiling.
+drives GPUs without shader model 6. When the viewport runs on D3D12, the path tracer
+prefers the same GPU through Vulkan, whose compiled pipelines persist between runs,
+and uses D3D12 with DXC only without it. Without DXC, discovery skips D3D12 adapters;
+with neither, the path executor reports why it is unavailable instead of compiling.
+
+Compiled pipelines persist between runs where the backend keeps a pipeline cache
+(Vulkan; wgpu has none for D3D12 or Metal, #3433). The cache lives in
+`%LOCALAPPDATA%\SolidCraft\cache\shaders`, `~/Library/Caches/SolidCraft/shaders` or
+`$XDG_CACHE_HOME/solidcraft/shaders`; `SOLIDCRAFT_SHADER_CACHE` names another folder,
+or `off` disables it. A file that fails its checksum, or comes from another driver or
+wgpu version, is ignored and rewritten; deleting the folder is always safe.
 
 In the Render workspace, enable **Progressive rendering** and select samples per
 pixel before checking or starting an image. These controls are transient image-job
