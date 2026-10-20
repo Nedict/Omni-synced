@@ -450,6 +450,7 @@ fn ui_inspect(app: &SolveApp) -> Outcome {
         "preview": {"active": app.preview.active, "busy": app.preview.busy, "error": app.preview.error, "ms": app.preview.ms, "replaced": app.preview.replaced},
         "home": app.home.open,
         "recent_thumbnails_ready": app.home.ready_recents(),
+        "sample_thumbnails_ready": app.home.ready_samples(),
         "documents": app.docs.count(),
         "quit_requested": app.quit_requested,
         "quitting": app.docs.quitting.is_some(),
