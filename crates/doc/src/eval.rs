@@ -1434,6 +1434,165 @@ impl Model {
         self.last_recomputed = recomputed;
         self.last_restored = restored;
     }
+
+    /// The model after body `old` was renamed `new`, `before` and `after` being the document
+    /// either side of the rename, without building anything again (#3044): a rename changes no
+    /// geometry, but it changes the features that name the body, and so every fingerprint from
+    /// the body's feature on, and `evaluate` would rebuild all of them. Here each result keeps its
+    /// geometry and takes the new name (its bodies, threads and sheets, and its sketches' links
+    /// where the rename changed them), and its fingerprint is worked out on `after`, so the next
+    /// `evaluate` reuses it.
+    ///
+    /// `false`, with the model as it was, where a full evaluation might name something else
+    /// differently: a body whose name was made from `old` at evaluation (`old (2)` or `old'`, a
+    /// piece split off it) and isn't kept in its feature's names, a body already called `new`
+    /// at some step, a component's placed body, a message that names `old`, or results that
+    /// don't match the timeline. The caller then evaluates.
+    pub fn rename_body(&mut self, before: &Document, after: &Document, old: &str, new: &str) -> bool {
+        if self.no_cache || old == new || self.results.len() != after.features.len() || before.features.len() != after.features.len() {
+            return false;
+        }
+        let made_from_old = |name: &str| name.strip_prefix(old).is_some_and(|rest| rest.starts_with(" (") || rest.starts_with('\''));
+        let kept = |b: &ModelBody| after.feature(b.feature).is_some_and(|f| f.body_names.contains(&b.name));
+        let names_old = |m: &Option<String>| m.as_deref().is_some_and(|m| m.contains(old));
+        // A body the counter named (`BodyN`, no stored name for it in `before`: see `new_name`)
+        // moved `body_counter` on; once renamed its name is stored, and a full evaluation no longer
+        // counts it. Evaluate, so the next counted body gets the same name now as after reopening.
+        let counter_named = old.strip_prefix("Body").is_some_and(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()));
+        let counted =
+            |b: &ModelBody| counter_named && b.name == old && before.feature(b.feature).is_none_or(|f| !f.body_names.iter().any(|n| n == old));
+        if self.results.iter().any(|r| r.state.bodies.iter().any(counted)) {
+            return false;
+        }
+        for (r, f) in self.results.iter().zip(&after.features) {
+            if r.id != f.id || r.stale || names_old(&r.error) || names_old(&r.warning) {
+                return false;
+            }
+            if r.state.bodies.iter().any(|b| b.name == new || b.source_name.is_some() || (made_from_old(&b.name) && !kept(b))) {
+                return false;
+            }
+        }
+        // The links the rename changed, by sketch feature and link id: their new source and names.
+        let mut links: std::collections::HashMap<(u64, &str), &solidcraft_sketch::Link> = std::collections::HashMap::new();
+        for (fb, fa) in before.features.iter().zip(&after.features) {
+            if let (FeatureKind::Sketch { sketch: sb, .. }, FeatureKind::Sketch { sketch: sa, .. }) = (&fb.kind, &fa.kind) {
+                for (lb, la) in sb.links.iter().zip(&sa.links) {
+                    if lb.id == la.id && (lb.source != la.source || lb.face_name != la.face_name || lb.edge_name != la.edge_name) {
+                        links.insert((fa.id, la.id.as_str()), la);
+                    }
+                }
+            }
+        }
+        let rename = |st: &ModelState| -> Option<ModelState> {
+            let sketch_changed = |sk: &SolvedSketch| sk.sketch.links.iter().any(|l| links.contains_key(&(sk.feature, l.id.as_str())));
+            let touched = st.bodies.iter().any(|b| b.name == old)
+                || st.threads.iter().any(|t| t.body == old)
+                || st.sheets.iter().any(|sh| sh.body == old)
+                || st.sketches.iter().any(|sk| sketch_changed(sk));
+            if !touched {
+                return None;
+            }
+            let mut st = st.clone();
+            for b in st.bodies.iter_mut().filter(|b| b.name == old) {
+                b.name = new.to_string();
+            }
+            for t in st.threads.iter_mut().filter(|t| t.body == old) {
+                t.body = new.to_string();
+            }
+            for sh in st.sheets.iter_mut().filter(|sh| sh.body == old) {
+                sh.body = new.to_string();
+            }
+            for sk in &mut st.sketches {
+                if sketch_changed(sk) {
+                    let solved = Arc::make_mut(sk);
+                    for l in &mut solved.sketch.links {
+                        if let Some(la) = links.get(&(solved.feature, l.id.as_str())) {
+                            l.source = la.source.clone();
+                            l.face_name.clone_from(&la.face_name);
+                            l.edge_name.clone_from(&la.edge_name);
+                        }
+                    }
+                }
+            }
+            Some(st)
+        };
+        self.renamed(after, rename);
+        true
+    }
+
+    /// The model after feature `id` was renamed `old` to `new` in `after`, without building
+    /// anything again (#3044), as [`Model::rename_body`]: the feature's result, its solved
+    /// sketch and its construction geometry take the new name. `false`, with the model as it
+    /// was, where an evaluation might name something else differently: a body, thread or sheet
+    /// whose name holds `old`, a message that names it, or results that don't match the timeline.
+    pub fn rename_feature(&mut self, after: &Document, id: u64, old: &str, new: &str) -> bool {
+        if self.no_cache || old == new || old.is_empty() || self.results.len() != after.features.len() {
+            return false;
+        }
+        let names_old = |m: &Option<String>| m.as_deref().is_some_and(|m| m.contains(old));
+        for (r, f) in self.results.iter().zip(&after.features) {
+            if r.id != f.id || r.stale || names_old(&r.error) || names_old(&r.warning) {
+                return false;
+            }
+            let st = &r.state;
+            if st.bodies.iter().any(|b| b.name.contains(old) || b.source_name.as_deref().is_some_and(|n| n.contains(old)))
+                || st.threads.iter().any(|t| t.body.contains(old))
+                || st.sheets.iter().any(|sh| sh.body.contains(old))
+            {
+                return false;
+            }
+        }
+        let rename = |st: &ModelState| -> Option<ModelState> {
+            let touched =
+                st.sketches.iter().any(|sk| sk.feature == id && sk.name == old) || st.construct.iter().any(|c| c.feature == id && c.name == old);
+            if !touched {
+                return None;
+            }
+            let mut st = st.clone();
+            for sk in st.sketches.iter_mut().filter(|sk| sk.feature == id && sk.name == old) {
+                new.clone_into(&mut Arc::make_mut(sk).name);
+            }
+            for c in st.construct.iter_mut().filter(|c| c.feature == id && c.name == old) {
+                new.clone_into(&mut c.name);
+            }
+            Some(st)
+        };
+        self.renamed(after, rename);
+        for r in self.results.iter_mut().filter(|r| r.id == id) {
+            new.clone_into(&mut r.name);
+        }
+        true
+    }
+
+    /// Each result with its state as `rename` makes it (`None`: as it was) and its fingerprint
+    /// worked out on `after`, so the next `evaluate` reuses it; nothing is built.
+    fn renamed(&mut self, after: &Document, rename: impl Fn(&ModelState) -> Option<ModelState>) {
+        let (vals, _) = evaluation_values(after);
+        let steps = StepDigests::of(after, &self.step_digests);
+        let marker = after.marker.unwrap_or(usize::MAX);
+        // Results share their states (a feature that changes nothing passes its input on): each
+        // state is renamed once.
+        let mut done: std::collections::HashMap<*const ModelState, Arc<ModelState>> = std::collections::HashMap::new();
+        let mut prev_fp = 0u64;
+        let mut out = Vec::with_capacity(self.results.len());
+        for (i, (r, f)) in self.results.iter().zip(&after.features).enumerate() {
+            let fp = chain_fingerprint(after, &vals, f, prev_fp, i >= marker, &steps);
+            prev_fp = fp;
+            let state = match done.get(&Arc::as_ptr(&r.state)) {
+                Some(s) => s.clone(),
+                None => {
+                    let s = rename(&r.state).map_or_else(|| r.state.clone(), Arc::new);
+                    done.insert(Arc::as_ptr(&r.state), s.clone());
+                    s
+                }
+            };
+            out.push(FeatureResult { fingerprint: fp, state, ..r.clone() });
+        }
+        self.step_digests = steps;
+        self.results = out;
+        self.last_recomputed = 0;
+        self.last_restored = 0;
+    }
 }
 
 /// Key of the design's length unit (mm per unit) among the values (no parameter can be named

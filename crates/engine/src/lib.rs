@@ -347,6 +347,26 @@ impl Default for Session {
     }
 }
 
+/// What a rename command renamed (from its result and the document before it), so the model
+/// can take the new name without building anything again (#3044).
+enum Renamed {
+    Body { old: String, new: String },
+    Feature { id: u64, old: String, new: String },
+}
+
+impl Renamed {
+    fn of(command: &str, result: &Value, before: &Document) -> Option<Renamed> {
+        let new = result.get("name")?.as_str()?.to_string();
+        match command {
+            "body.rename" => Some(Renamed::Body { old: result.get("body")?.as_str()?.to_string(), new }),
+            "timeline.rename" => {
+                let id = result.get("feature")?.as_u64()?;
+                Some(Renamed::Feature { id, old: before.feature(id)?.name.clone(), new })
+            }
+            _ => None,
+        }
+    }
+}
 impl Session {
     pub fn new(mut doc: Document) -> Self {
         // The session keeps what is hidden (not an undo step); the design file carries it.
@@ -580,6 +600,26 @@ impl Session {
         {
             self.evaluations += 1;
         }
+        self.after_evaluation();
+    }
+
+    /// A body or feature renamed (`previous` the document before): the model takes the new
+    /// name without building anything again, or is evaluated where that might not give what an
+    /// evaluation gives (see `Model::rename_body` and `Model::rename_feature`, #3044).
+    fn refresh_renamed(&mut self, previous: &Arc<Document>, renamed: &Renamed) {
+        let in_place = match renamed {
+            Renamed::Body { old, new } => self.model.rename_body(previous, &self.doc, old, new),
+            Renamed::Feature { id, old, new } => self.model.rename_feature(&self.doc, *id, old, new),
+        };
+        if in_place {
+            self.after_evaluation();
+        } else {
+            self.refresh();
+        }
+    }
+
+    /// What follows a new model: a new revision, and what depends on the model brought up to it.
+    fn after_evaluation(&mut self) {
         self.revision += 1;
         self.prune_occurrence_state();
         // Joints follow the geometry their origins snap to.
@@ -725,6 +765,7 @@ impl Session {
         let changed = !Arc::ptr_eq(&self.doc, &before.doc);
         match r {
             Ok((v, live_edit)) => {
+                let renamed = Renamed::of(spec.id, &v, &before.doc);
                 let v = if changed { self.with_created(spec.id, params, &before, v) } else { v };
                 if changed {
                     let render_only = self.render_only_change(&before);
@@ -736,10 +777,11 @@ impl Session {
                         }
                         self.redo.clear();
                     }
-                    match live_edit {
-                        Some(edit) => self.refresh_live(edit),
-                        None if render_only => self.refresh_render(&previous_doc),
-                        None => self.refresh(),
+                    match (live_edit, renamed) {
+                        (Some(edit), _) => self.refresh_live(edit),
+                        (None, _) if render_only => self.refresh_render(&previous_doc),
+                        (None, Some(renamed)) => self.refresh_renamed(&previous_doc, &renamed),
+                        (None, None) => self.refresh(),
                     }
                 }
                 Ok(v)

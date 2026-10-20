@@ -1182,3 +1182,187 @@ mod tests {
         assert_eq!(s.visibility.hidden_folders, vec!["o:4/sketches".to_string()]);
     }
 }
+
+/// #3044: a rename builds nothing again. The model the rename leaves is the one a full
+/// evaluation of the renamed design gives, whether it took the new name in place or, where it
+/// can't tell, evaluated.
+#[cfg(test)]
+mod rename_tests {
+    use serde_json::{Value, json};
+
+    use crate::Session;
+
+    fn run(s: &mut Session, id: &str, p: Value) -> Value {
+        match s.execute(id, &p) {
+            Ok(v) => v,
+            Err(e) => panic!("{id} {p}: {e}"),
+        }
+    }
+
+    /// What a later feature or the view reads from a state: its bodies (name, feature, volume),
+    /// threads, sheets and sketch link sources.
+    fn summary(st: &solidcraft_doc::ModelState) -> String {
+        let bodies: Vec<String> = st
+            .bodies
+            .iter()
+            .map(|b| format!("{} f{} {:.6}", b.name, b.feature, solidcraft_kernel::measure(&b.body).map(|m| m.volume).unwrap_or(f64::NAN)))
+            .collect();
+        let threads: Vec<&str> = st.threads.iter().map(|t| t.body.as_str()).collect();
+        let sheets: Vec<&str> = st.sheets.iter().map(|t| t.body.as_str()).collect();
+        let links: Vec<String> = st
+            .sketches
+            .iter()
+            .flat_map(|sk| sk.sketch.links.iter().map(move |l| format!("{}:{} {:?} {:?} {:?}", sk.feature, l.id, l.source, l.face_name, l.edge_name)))
+            .collect();
+        let sketches: Vec<String> = st.sketches.iter().map(|sk| format!("{} {}", sk.feature, sk.name)).collect();
+        let construct: Vec<String> = st.construct.iter().map(|c| format!("{} {}", c.feature, c.name)).collect();
+        format!("{bodies:?} {threads:?} {sheets:?} {links:?} {sketches:?} {construct:?} counter {}", st.body_counter)
+    }
+
+    /// Rename body `old` to `new`; whether that built nothing again. The model then is the one a
+    /// full evaluation (no cache) of the renamed design gives, feature by feature.
+    fn rename(s: &mut Session, old: &str, new: &str) -> bool {
+        renamed_like_evaluated(s, "body.rename", json!({"body": old, "name": new}))
+    }
+
+    /// Rename feature `old` to `new`, as `rename` does a body.
+    fn rename_feature(s: &mut Session, old: &str, new: &str) -> bool {
+        renamed_like_evaluated(s, "timeline.rename", json!({"feature": old, "name": new}))
+    }
+
+    fn renamed_like_evaluated(s: &mut Session, id: &str, p: Value) -> bool {
+        let evaluations = s.evaluations;
+        run(s, id, p);
+        let in_place = s.evaluations == evaluations;
+        let mut fresh = Session::new((*s.doc).clone());
+        fresh.model.no_cache = true;
+        fresh.refresh();
+        assert_eq!(s.model.results.len(), fresh.model.results.len());
+        for (r, f) in s.model.results.iter().zip(&fresh.model.results) {
+            assert_eq!((&r.name, &r.error, &r.warning, r.skipped), (&f.name, &f.error, &f.warning, f.skipped), "feature {}", r.name);
+            assert_eq!(summary(&r.state), summary(&f.state), "after feature {}", r.name);
+        }
+        // And the next evaluation reuses every result.
+        s.refresh();
+        assert_eq!(s.model.last_recomputed, 0, "a rename leaves results the next evaluation rebuilds");
+        in_place
+    }
+
+    #[test]
+    fn renaming_the_sensor_enclosures_bodies_builds_nothing() {
+        let mut s = Session::default();
+        let script: Value = serde_json::from_str(include_str!("../../../../examples/acceptance/sensor_enclosure.json")).unwrap();
+        s.run_script(&script).unwrap();
+        assert!(rename(&mut s, "Case", "Shell"));
+        assert!(rename(&mut s, "Lid", "Cover"));
+        // Undo puts the old names back, as it puts back any edit.
+        run(&mut s, "edit.undo", json!({}));
+        assert!(s.model.state().body("Lid").is_some());
+    }
+
+    /// A body a later feature names, and a sketch on its face whose links name it; the copies a
+    /// pattern made of another body, renamed one by one.
+    #[test]
+    fn a_rename_follows_users_face_sketches_and_copies_without_building() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "operation": "new_body", "body_name": "X"}));
+        run(&mut s, "solid.pattern.rectangular", json!({"bodies": ["X"], "dir1": [1, 0, 0], "count1": 3, "spacing1": 20}));
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [0, 30, 0], "operation": "new_body", "body_name": "Y"}));
+        run(&mut s, "solid.move", json!({"bodies": ["Y"], "translate": [0, 0, 5]}));
+        run(&mut s, "sketch.create", json!({"plane": {"face": [5, 35, 15]}}));
+        run(&mut s, "sketch.circle.center", json!({"center": [5, 35], "radius": 2}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance": -3, "operation": "cut", "profiles": [{"point": [5, 35]}]}));
+        assert!(rename(&mut s, "Y", "Stand"));
+        let st = s.model.state();
+        let named = st.sketches.iter().flat_map(|sk| &sk.sketch.links).filter(|l| format!("{:?}", l.source).contains("\"Stand\"")).count();
+        assert!(named > 0, "the face sketch's links name the renamed body");
+        assert!(rename(&mut s, "X (3)", "Last"));
+        assert!(rename(&mut s, "X (2)", "Middle"));
+    }
+
+    /// The copies a pattern makes are named after their body when the pattern is evaluated:
+    /// renaming the body renames them, so it evaluates, and gives what an evaluation gives.
+    /// A body the counter named (`Body1`) is renamed by evaluating: the counter then is what a
+    /// full evaluation gives, and the next counted body is named the same as after reopening.
+    #[test]
+    fn a_counted_body_is_renamed_by_evaluating() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10}));
+        assert!(!rename(&mut s, "Body1", "Plate"));
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [20, 0, 0], "operation": "new_body"}));
+        let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+        let reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        let again: Vec<String> = reopened.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+        assert_eq!(names, again, "the next counted body is named as after reopening");
+    }
+
+    #[test]
+    fn a_patterned_body_is_renamed_by_evaluating() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "operation": "new_body", "body_name": "X"}));
+        run(&mut s, "solid.pattern.rectangular", json!({"bodies": ["X"], "dir1": [1, 0, 0], "count1": 3, "spacing1": 20}));
+        assert!(!rename(&mut s, "X", "Base"));
+        let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+        assert_eq!(names, ["Base", "Base (2)", "Base (3)"]);
+    }
+
+    /// Features renamed: a sketch later features use, and a construction plane a sketch is on (by
+    /// name). Their results, solved sketches and planes take the new name; nothing is built.
+    #[test]
+    fn renaming_features_builds_nothing() {
+        let mut s = Session::default();
+        let script: Value = serde_json::from_str(include_str!("../../../../examples/acceptance/sensor_enclosure.json")).unwrap();
+        s.run_script(&script).unwrap();
+        let sketch = s.doc.features.iter().find(|f| matches!(f.kind, solidcraft_doc::FeatureKind::Sketch { .. })).unwrap().name.clone();
+        assert!(rename_feature(&mut s, &sketch, "Outline"));
+        let mut s = Session::default();
+        run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 5, "name": "Shelf"}));
+        run(&mut s, "sketch.create", json!({"plane": "Shelf"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [10, 10]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance": 4}));
+        assert!(rename_feature(&mut s, "Shelf", "Ledge"));
+    }
+
+    /// Folders and components renamed: what they name isn't geometry, and the evaluation that
+    /// follows reuses every result.
+    #[test]
+    fn renaming_folders_and_components_builds_nothing() {
+        let mut s = Session::default();
+        let part = run(&mut s, "component.create", json!({"name": "Part"}))["component"].as_u64().unwrap();
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "name": "First", "body_name": "A"}));
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [20, 0, 0], "name": "Second", "body_name": "B"}));
+        let folder = run(&mut s, "browser.group", json!({"folder": "bodies", "items": ["A"]}))["group"].as_u64().unwrap();
+        let features = run(&mut s, "timeline.group", json!({"name": "Pair", "features": ["First", "Second"]}))["group"].as_u64().unwrap();
+        for (id, p) in [
+            ("browser.rename_group", json!({"group": folder, "name": "Fasteners"})),
+            ("timeline.rename_group", json!({"group": features, "name": "Both"})),
+            ("component.rename", json!({"component": part, "name": "Bracket"})),
+        ] {
+            run(&mut s, id, p);
+            assert_eq!(s.model.last_recomputed, 0, "{id} built something again");
+        }
+    }
+
+    /// A body named like a feature: an evaluation may name it after the feature, so renaming the
+    /// feature evaluates, and gives what an evaluation gives.
+    #[test]
+    fn a_feature_a_body_is_named_like_is_renamed_by_evaluating() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "name": "Block", "body_name": "Block"}));
+        assert!(!rename_feature(&mut s, "Block", "Brick"));
+    }
+
+    /// A body split later: the pieces are named after it when the split is evaluated, so the
+    /// rename evaluates, and gives what an evaluation gives.
+    #[test]
+    fn a_body_split_later_is_renamed_by_evaluating() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 20, "width": 10, "height": 10, "operation": "new_body", "body_name": "Block"}));
+        run(&mut s, "solid.split_body", json!({"body": "Block", "plane": {"origin": [10, 0, 0], "normal": [1, 0, 0]}}));
+        let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+        assert!(names.iter().any(|n| n.starts_with("Block (")), "{names:?}");
+        assert!(!rename(&mut s, "Block", "Beam"));
+    }
+}
