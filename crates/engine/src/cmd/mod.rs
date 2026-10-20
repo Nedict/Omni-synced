@@ -33,6 +33,7 @@ mod delete;
 mod diagnostics;
 mod edit;
 mod face;
+mod fan;
 mod features;
 mod features_more;
 pub use features::{auto_operation, extrude_reach};
@@ -260,6 +261,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(joints::COMMANDS.iter());
     v.extend(clearance::COMMANDS.iter());
     v.extend(motion::COMMANDS.iter());
+    v.extend(fan::COMMANDS.iter());
     v.extend(config::COMMANDS.iter());
     v.extend(parts::COMMANDS.iter());
     v.extend(bom::COMMANDS.iter());

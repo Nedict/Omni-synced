@@ -330,6 +330,7 @@
   "cam.roller": "Roller",
   "cam.roller_pick": "Roller (optional)",
   "cam.tip_pick": "Tip (optional)",
+  "cmd.analysis_ducted_fan": "Ducted Fan Analysis",
   "cmd.appearance_assign": "Appearance",
   "cmd.appearance_library": "Appearance Library",
   "cmd.appearance_list": "List Appearances",
