@@ -3,15 +3,15 @@
 //! body or face in the viewport, or onto a body's row in the Browser, applies at once; Apply
 //! (and OK) gives the picked objects the current look.
 
-use egui::{Color32, RichText, Sense, Stroke, vec2};
+use egui::Color32;
 use serde_json::{Value, json};
 use solidcraft_engine::Sel;
 use solidcraft_engine::doc::pbr_appearance::PbrParameters;
 
 use crate::SolveApp;
-use crate::dialogs::{Kind, combo, row_label};
+use crate::dialogs::{Kind, combo};
 use crate::selection::{BODIES, FACES, SelInput};
-use crate::theme::Tokens;
+use crate::ui_kit;
 use crate::viewport::Hit;
 
 /// A named look: colour and opacity.
@@ -278,99 +278,48 @@ fn c32(c: [u8; 3], opacity: f64) -> Color32 {
 
 /// A swatch: a rounded square of the look; returns its response (click, drag).
 fn swatch(ui: &mut egui::Ui, id: egui::Id, color: [u8; 3], opacity: f64, picked: bool, tip: &str, payload: Look) -> egui::Response {
-    let t = Tokens::get();
-    let r = ui
-        .dnd_drag_source(id, payload, |ui| {
-            let (rect, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
-            // A checker behind see-through looks.
-            if opacity < 0.999 {
-                let h = rect.width() / 2.0;
-                for (dx, dy) in [(0.0, 0.0), (h, h)] {
-                    ui.painter().rect_filled(egui::Rect::from_min_size(rect.min + vec2(dx, dy), vec2(h, h)), 0.0, t.hover);
-                }
-            }
-            ui.painter().rect(
-                rect,
-                5.0,
-                c32(color, opacity),
-                Stroke::new(if picked { 2.0 } else { 1.0 }, if picked { t.accent } else { t.border }),
-                egui::StrokeKind::Inside,
-            );
-        })
-        .response;
-    let r = ui.interact(r.rect, id.with("click"), Sense::click()).on_hover_text(tip);
-    if r.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-    }
-    r
+    ui_kit::color_swatch(ui, id, c32(color, opacity), picked, tip, payload)
 }
 
-/// Swatches six to a row.
-fn swatch_rows<T>(ui: &mut egui::Ui, items: &[T], mut each: impl FnMut(&mut egui::Ui, &T)) {
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
-        for row in items.chunks(6) {
-            ui.horizontal(|ui| {
-                for x in row {
-                    each(ui, x);
-                }
-            });
-        }
-    });
+fn swatch_rows<T>(ui: &mut egui::Ui, items: &[T], each: impl FnMut(&mut egui::Ui, &T)) {
+    ui_kit::swatch_grid(ui, items, each);
 }
 
 /// The dialog's rows (after the Objects input); applies drops and Apply at once.
 pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [SelInput]) -> bool {
-    let t = Tokens::get();
     // Apply To: bodies or faces (the input follows).
-    row_label(ui, "Apply To");
     if let Some(component) = &k.component {
-        ui.label(format!("Component: {component}"));
-        ui.end_row();
-        row_label(ui, "");
-        if ui.button(crate::i18n::tr_label("Select bodies or faces instead")).clicked() {
+        ui_kit::row(ui, "Apply To", |ui| ui_kit::cell_text(ui, &format!("Component: {component}")));
+        if ui_kit::secondary_button(ui, crate::i18n::tr_label("Select bodies or faces instead")).clicked() {
             k.component = None;
         }
-        ui.end_row();
     } else {
         let mut mode = usize::from(k.faces);
-        combo(ui, "ap_mode", &["Bodies", "Faces"], &mut mode);
-        ui.end_row();
+        ui_kit::row(ui, "Apply To", |ui| combo(ui, "ap_mode", &["Bodies", "Faces"], &mut mode));
         if (mode == 1) != k.faces {
             k.faces = mode == 1;
-            if let Some(i) = inputs.first_mut() {
-                *i = SelInput::new("Objects", if k.faces { FACES } else { BODIES }, true);
+            if let Some(input) = inputs.first_mut() {
+                *input = SelInput::new("Objects", if k.faces { FACES } else { BODIES }, true);
             }
         }
     }
-    // The current look: colour and opacity.
-    row_label(ui, "Colour");
-    ui.horizontal(|ui| {
+    ui_kit::row(ui, "Colour", |ui| {
         let mut rgb = k.color;
-        if ui.color_edit_button_srgb(&mut rgb).changed() {
+        if ui_kit::color_field(ui, &mut rgb).changed() {
             k.color = rgb;
             k.look = None;
             k.remove_override = false;
         }
-        ui.label(RichText::new(k.look.clone().unwrap_or_else(|| hex(k.color))).color(t.text_dim));
+        ui_kit::cell_text(ui, &k.look.clone().unwrap_or_else(|| hex(k.color)));
     });
-    ui.end_row();
-    row_label(ui, "Opacity");
-    ui.spacing_mut().slider_width = 110.0;
-    // Decimal formatting must not round a saved look merely by drawing its editor.
-    if ui
-        .add_enabled(
-            k.pbr.is_none(),
-            egui::Slider::new(&mut k.opacity, 0.0..=1.0).max_decimals_opt(None).custom_formatter(|value, _| format!("{value:.2}")),
-        )
-        .changed()
-    {
-        k.remove_override = false;
-    }
-    ui.end_row();
-    row_label(ui, app.tr("appearance.surface_response"));
+    ui_kit::row(ui, "Opacity", |ui| {
+        if ui.add_enabled_ui(k.pbr.is_none(), |ui| ui_kit::slider(ui, &mut k.opacity, 0.0..=1.0)).inner.changed() {
+            k.remove_override = false;
+        }
+    });
     let mut enabled = k.pbr.is_some();
-    let toggle = ui.checkbox(&mut enabled, app.tr("appearance.pbr_opaque")).on_hover_text(app.tr("appearance.pbr_help"));
+    let toggle = ui_kit::row(ui, app.tr("appearance.surface_response"), |ui| ui_kit::checkbox(ui, app.tr("appearance.pbr_opaque"), &mut enabled))
+        .on_hover_text(app.tr("appearance.pbr_help"));
     crate::scenario::publish_handle("appearance:pbr", toggle.rect.center());
     if toggle.changed() {
         k.pbr = enabled.then(PbrParameters::default);
@@ -379,7 +328,6 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
         }
         k.remove_override = false;
     }
-    ui.end_row();
     if let Some(parameters) = k.pbr {
         let mut metallic = parameters.metallic();
         let mut roughness = parameters.roughness();
@@ -389,23 +337,20 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
             ("appearance.roughness", "appearance:roughness", &mut roughness, 0.045..=1.0),
             ("appearance.dielectric_ior", "appearance:ior", &mut ior, 1.0..=3.0),
         ] {
-            row_label(ui, app.tr(label));
-            let response = ui.add(egui::DragValue::new(value).range(range).speed(0.01).custom_parser(crate::prefs::parse_number));
+            let response = ui_kit::row(ui, app.tr(label), |ui| ui_kit::scalar_field(ui, value, range));
             crate::scenario::publish_handle(handle, response.rect.center());
             if response.changed() {
                 k.remove_override = false;
             }
-            ui.end_row();
         }
         if let Ok(parameters) = PbrParameters::new(metallic, roughness, ior) {
             k.pbr = Some(parameters);
         }
     }
-    row_label(ui, "");
     let picked: Vec<Sel> = inputs.first().map(|i| i.items.clone()).unwrap_or_default();
     ui.horizontal(|ui| {
         let has_target = !picked.is_empty() || k.component.is_some();
-        if ui.add_enabled(has_target, egui::Button::new(crate::i18n::tr_label("Apply to selection"))).clicked()
+        if ui_kit::enabled_button(ui, "Apply to selection", has_target).clicked()
             && let Some(p) = selected_params(k, &picked)
         {
             k.remove_override = false;
@@ -417,8 +362,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
                 Err(e) => e,
             });
         }
-        if ui
-            .add_enabled(has_target, egui::Button::new(crate::i18n::tr_label("Remove override")))
+        if ui_kit::enabled_button(ui, "Remove override", has_target)
             .on_hover_text(crate::i18n::tr_label("Restore the inherited component or physical material appearance"))
             .clicked()
             && let Some(p) = clear_params(k, &picked)
@@ -433,33 +377,32 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
             });
         }
     });
-    ui.end_row();
     crate::dialogs_library::rows(app, ui, k, inputs);
     // In this design.
     let used = in_design(app);
     if !used.is_empty() {
-        row_label(ui, "In This Design");
-        let items: Vec<_> = used.iter().enumerate().collect();
-        swatch_rows(ui, &items, |ui, (i, (look, n))| {
-            if swatch(
-                ui,
-                egui::Id::new(("ap_used", *i)),
-                look.color,
-                look.opacity,
-                k.color == look.color && k.opacity == look.opacity && k.pbr == look.pbr,
-                &format!("{} · {n} item(s)", look.name),
-                look.clone(),
-            )
-            .clicked()
-            {
-                k.color = look.color;
-                k.opacity = look.opacity;
-                k.pbr = look.pbr;
-                k.look = Some(look.name.clone());
-                k.remove_override = false;
-            }
+        ui_kit::section(ui, "in_design", "In This Design", true, |ui| {
+            let items: Vec<_> = used.iter().enumerate().collect();
+            swatch_rows(ui, &items, |ui, (i, (look, n))| {
+                if swatch(
+                    ui,
+                    egui::Id::new(("ap_used", *i)),
+                    look.color,
+                    look.opacity,
+                    k.color == look.color && k.opacity == look.opacity && k.pbr == look.pbr,
+                    &format!("{} · {n} item(s)", look.name),
+                    look.clone(),
+                )
+                .clicked()
+                {
+                    k.color = look.color;
+                    k.opacity = look.opacity;
+                    k.pbr = look.pbr;
+                    k.look = Some(look.name.clone());
+                    k.remove_override = false;
+                }
+            });
         });
-        ui.end_row();
     }
     // The library, by category.
     let lib = library(app);
@@ -470,20 +413,18 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
         }
     }
     let refs: Vec<&str> = cats.iter().map(String::as_str).collect();
-    row_label(ui, "Library");
-    combo(ui, "ap_cat", &refs, &mut k.category);
-    ui.end_row();
-    row_label(ui, "Search");
-    let search = ui.add(egui::TextEdit::singleline(&mut k.search).hint_text(crate::i18n::tr_label("Appearance name")).desired_width(190.0));
+    ui_kit::row(ui, "Library", |ui| combo(ui, "ap_cat", &refs, &mut k.category));
+    let search = ui_kit::row(ui, "Search", |ui| {
+        let id = ui.make_persistent_id("ap_search");
+        ui_kit::search_field(ui, id, &mut k.search, "Appearance name")
+    });
     crate::scenario::publish_handle("appearance:search", search.rect.center());
-    ui.end_row();
-    row_label(ui, "");
     let want = cats.get(k.category).cloned().unwrap_or_default();
     let query = k.search.trim().to_lowercase();
     let shown: Vec<(usize, &Look)> =
         lib.iter().enumerate().filter(|(_, l)| (k.category == 0 || l.category == want) && l.name.to_lowercase().contains(&query)).collect();
     if shown.is_empty() {
-        ui.label(RichText::new(crate::i18n::tr_label("No matching appearances")).color(t.text_dim));
+        ui_kit::note(ui, "appearances_empty", crate::i18n::tr_label("No matching appearances"));
     }
     swatch_rows(ui, &shown, |ui, (i, l)| {
         let picked_look = k.look.as_deref() == Some(l.name.as_str()) && k.pbr == l.pbr;
@@ -497,7 +438,6 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
             k.remove_override = false;
         }
     });
-    ui.end_row();
     // A swatch dropped on the model or the Browser.
     let released = ui.input(|i| i.pointer.any_released());
     if released && let Some(look) = egui::DragAndDrop::take_payload::<Look>(ui.ctx()) {
@@ -521,9 +461,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
         }
     }
     if let Some(n) = &k.note {
-        row_label(ui, "");
-        ui.label(RichText::new(n.as_str()).color(t.text_dim));
-        ui.end_row();
+        ui_kit::text_block(ui, "appearance_status", n, false);
     }
     false
 }

@@ -29,16 +29,10 @@ pub(crate) fn valid(app: &SolveApp, k: &TextMove) -> bool {
 }
 
 pub(crate) fn rows(ui: &mut egui::Ui, k: &mut TextMove) -> bool {
-    let mut enter = false;
-    for (label, value) in ["Distance X", "Distance Y", "Angle"].iter().zip(&mut k.values) {
-        crate::dialogs::row_label(ui, label);
-        enter |= crate::dialogs::field(ui, value);
-        ui.end_row();
-    }
-    crate::dialogs::row_label(ui, "Create Copy");
-    let response = ui.checkbox(&mut k.copy, "");
-    crate::scenario::publish_handle("dialog:Create Copy", response.rect.center());
-    ui.end_row();
+    let [x, y, angle] = &mut k.values;
+    let mut enter = crate::ui_kit::value_pair_named(ui, "Position", [x, y], ["X", "Y"], ["Distance X", "Distance Y"]);
+    enter |= crate::ui_kit::row(ui, "Angle", |ui| crate::ui_kit::field(ui, angle));
+    crate::ui_kit::options(ui, "text_move_options", &mut [("Create Copy", &mut k.copy)]);
     enter
 }
 

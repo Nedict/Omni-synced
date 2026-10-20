@@ -160,7 +160,11 @@ impl Harness {
     pub fn new() -> Harness {
         let mut h = Harness {
             app: SolveApp::new(Session::default(), Services::default()),
-            ctx: egui::Context::default(),
+            ctx: {
+                let ctx = egui::Context::default();
+                crate::fonts::setup_bundled_fonts(&ctx);
+                ctx
+            },
             output: Default::default(),
             dir: scratch_dir(),
             next_file: Rc::new(RefCell::new(None)),
@@ -515,6 +519,7 @@ impl Harness {
                 }
                 drop(old);
                 self.ctx = egui::Context::default();
+                crate::fonts::setup_bundled_fonts(&self.ctx);
                 self.ctx.enable_accesskit();
                 self.install();
                 self.start_autosave();
@@ -778,7 +783,8 @@ pub fn check(h: &mut Harness, e: &Value) -> Result<(), String> {
                 if r.width() < lo - 0.5 || r.width() > hi + 0.5 {
                     return Err(format!("dialog width {:.0}, want {lo}..{hi}", r.width()));
                 }
-                if (r.right() - vp.right()).abs() > 2.0 || r.top() < vp.top() || r.bottom() > vp.bottom() + 1.0 {
+                let clearance = if rect_of("dialog:header").is_some() { crate::theme::Tokens::get().space_8 } else { 0.0 };
+                if (r.right() - (vp.right() - clearance)).abs() > 0.5 || r.top() < vp.top() || r.bottom() > vp.bottom() + 1.0 {
                     return Err(format!("dialog {r:?} is not docked right inside the viewport {vp:?}"));
                 }
             }

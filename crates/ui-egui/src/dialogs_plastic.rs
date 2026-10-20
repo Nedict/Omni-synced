@@ -9,7 +9,7 @@ use solidcraft_engine::doc::plastic::PlasticRule;
 use solidcraft_engine::geom::Vec3;
 
 use crate::SolveApp;
-use crate::dialogs::{Kind, combo, face_sel, field, row_label, shown_expr};
+use crate::dialogs::{Kind, combo, face_sel, field, form_row, shown_expr};
 use crate::selection::{BODIES, FACES, PLANAR_FACES, SelInput};
 
 #[derive(Clone, Debug)]
@@ -140,23 +140,22 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     Some((Kind::Plastic(pl), inputs))
 }
 
-/// A value row whose empty value means "from the rule" (or another default). `unit` leads the
-/// hint ("mm, from the rule") so the empty field names the unit a typed number takes.
+/// A value row whose empty value means "from the rule" (or another default).
 fn opt_field(ui: &mut egui::Ui, label: &str, v: &mut String, unit: &str, hint: &str) -> bool {
-    row_label(ui, label);
     let hint = format!("{unit}, {}", crate::i18n::tr_label(hint));
-    let r = ui.add(egui::TextEdit::singleline(v).hint_text(hint));
-    crate::dialogs::publish_row(&r);
-    crate::params_dialog::complete(ui, &r, v);
-    ui.end_row();
-    r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
+    form_row(ui, label, |ui| {
+        if crate::ui_kit::contains(ui) {
+            return crate::ui_kit::hint_field(ui, v, &hint);
+        }
+        let r = ui.add(egui::TextEdit::singleline(v).hint_text(hint));
+        crate::dialogs::publish_row(&r);
+        crate::params_dialog::complete(ui, &r, v);
+        r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
+    })
 }
 
 fn value_row(ui: &mut egui::Ui, label: &str, v: &mut String) -> bool {
-    row_label(ui, label);
-    let e = field(ui, v);
-    ui.end_row();
-    e
+    form_row(ui, label, |ui| field(ui, v))
 }
 
 /// Directions across a face (with normal `n`) a snap fit's catch can point: two axes and their
@@ -185,28 +184,32 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pl, inputs: &[SelInpu
         Pl::Boss { diameter, height, hole_diameter, hole_depth, draft, fillet, ribs, rib_thickness, rib_length, rib_offset } => {
             enter |= value_row(ui, "Diameter", diameter);
             enter |= value_row(ui, "Height", height);
-            enter |= opt_field(ui, "Hole Diameter", hole_diameter, "mm", "no hole");
-            enter |= opt_field(ui, "Hole Depth", hole_depth, "mm", "to the face");
-            enter |= opt_field(ui, "Draft Angle", draft, "deg", "from the rule");
-            enter |= opt_field(ui, "Root Fillet", fillet, "mm", "none");
-            enter |= value_row(ui, "Ribs", ribs);
-            if app.session.doc.eval(ribs, ValueKind::Unitless).is_ok_and(|n| n >= 1.0) {
-                enter |= value_row(ui, "  Rib Thickness", rib_thickness);
-                enter |= value_row(ui, "  Rib Length", rib_length);
-                enter |= value_row(ui, "  Rib Offset", rib_offset);
-            }
+            crate::ui_kit::section(ui, "boss_options", "Options", true, |ui| {
+                enter |= opt_field(ui, "Hole Diameter", hole_diameter, "mm", "no hole");
+                enter |= opt_field(ui, "Hole Depth", hole_depth, "mm", "to the face");
+            });
+            crate::ui_kit::section(ui, "boss_advanced", "Advanced", false, |ui| {
+                enter |= opt_field(ui, "Draft Angle", draft, "deg", "from the rule");
+                enter |= opt_field(ui, "Root Fillet", fillet, "mm", "none");
+                enter |= value_row(ui, "Ribs", ribs);
+                if app.session.doc.eval(ribs, ValueKind::Unitless).is_ok_and(|n| n >= 1.0) {
+                    enter |= value_row(ui, "  Rib Thickness", rib_thickness);
+                    enter |= value_row(ui, "  Rib Length", rib_length);
+                    enter |= value_row(ui, "  Rib Offset", rib_offset);
+                }
+            });
         }
         Pl::Lip { groove, width, height, gap, outside } => {
-            row_label(ui, "Type");
-            let mut ty = usize::from(*groove);
-            combo(ui, "pl_lip", &["Lip", "Groove"], &mut ty);
-            *groove = ty == 1;
-            ui.end_row();
-            row_label(ui, "Rim Edge");
-            let mut side = usize::from(*outside);
-            combo(ui, "pl_side", &["Inside", "Outside"], &mut side);
-            *outside = side == 1;
-            ui.end_row();
+            form_row(ui, "Type", |ui| {
+                let mut ty = usize::from(*groove);
+                combo(ui, "pl_lip", &["Lip", "Groove"], &mut ty);
+                *groove = ty == 1;
+            });
+            form_row(ui, "Rim Edge", |ui| {
+                let mut side = usize::from(*outside);
+                combo(ui, "pl_side", &["Inside", "Outside"], &mut side);
+                *outside = side == 1;
+            });
             enter |= value_row(ui, "Width", width);
             enter |= value_row(ui, "Height", height);
             if *groove {
@@ -217,9 +220,9 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pl, inputs: &[SelInpu
             let dirs = face_normal(app, inputs).map(hook_dirs).unwrap_or_default();
             if !dirs.is_empty() {
                 let names: Vec<&str> = dirs.iter().map(|(n, _)| n.as_str()).collect();
-                row_label(ui, "Catch Direction");
-                combo(ui, "pl_hook", &names, hook);
-                ui.end_row();
+                form_row(ui, "Catch Direction", |ui| {
+                    combo(ui, "pl_hook", &names, hook);
+                });
             }
             enter |= value_row(ui, "Length", length);
             enter |= value_row(ui, "Thickness", thickness);
@@ -228,27 +231,27 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pl, inputs: &[SelInpu
             enter |= value_row(ui, "Catch Length", catch_length);
         }
         Pl::Rest { round, width, length, height, draft, thickness } => {
-            row_label(ui, "Shape");
-            let mut sh = usize::from(!*round);
-            combo(ui, "pl_rest", &["Round", "Rectangular"], &mut sh);
-            *round = sh == 0;
-            ui.end_row();
+            form_row(ui, "Shape", |ui| {
+                let mut sh = usize::from(!*round);
+                combo(ui, "pl_rest", &["Round", "Rectangular"], &mut sh);
+                *round = sh == 0;
+            });
             enter |= value_row(ui, if *round { "Diameter" } else { "Width" }, width);
             if !*round {
                 enter |= value_row(ui, "Length", length);
             }
             enter |= value_row(ui, "Height", height);
-            enter |= opt_field(ui, "Draft Angle", draft, "deg", "from the rule");
-            enter |= opt_field(ui, "Wall Thickness", thickness, "mm", "solid");
+            crate::ui_kit::section(ui, "rest_advanced", "Advanced", false, |ui| {
+                enter |= opt_field(ui, "Draft Angle", draft, "deg", "from the rule");
+                enter |= opt_field(ui, "Wall Thickness", thickness, "mm", "solid");
+            });
         }
         Pl::Rules { pick, name, values, active, loaded } => {
             let rules = app.session.doc.plastic_rules();
             let mut names: Vec<String> = rules.iter().map(|r| r.name.clone()).collect();
             names.push("New rule…".into());
             let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-            row_label(ui, "Rule");
-            combo(ui, "pl_rules", &refs, pick);
-            ui.end_row();
+            form_row(ui, "Rule", |ui| combo(ui, "pl_rules", &refs, pick));
             if *loaded != Some(*pick) {
                 let base = rules.get(*pick).or(rules.first()).cloned();
                 if let Some(b) = base {
@@ -261,28 +264,24 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pl, inputs: &[SelInpu
                 *loaded = Some(*pick);
             }
             if *pick >= rules.len() {
-                row_label(ui, "Name");
-                ui.text_edit_singleline(name);
-                ui.end_row();
+                form_row(ui, "Name", |ui| {
+                    crate::ui_kit::text_field(ui, name, "Name");
+                });
             }
             let keys = rule_keys();
             for (i, v) in values.iter_mut().enumerate() {
                 let label = if i == 0 { "Material".to_string() } else { keys.get(i - 1).map(|k| label_of(k)).unwrap_or_default() };
-                row_label(ui, &label);
-                enter |= if i == 0 { ui.text_edit_singleline(v).lost_focus() && ui.input(|x| x.key_pressed(egui::Key::Enter)) } else { field(ui, v) };
-                ui.end_row();
+                form_row(ui, &label, |ui| {
+                    enter |= if i == 0 { crate::ui_kit::text_field(ui, v, "Material").0 } else { field(ui, v) };
+                });
             }
-            row_label(ui, "Active rule");
-            ui.checkbox(active, "");
-            ui.end_row();
+            form_row(ui, "Active rule", |ui| crate::ui_kit::checkbox(ui, "", active));
         }
         Pl::Assign { rule } => {
             let mut names: Vec<String> = vec!["(no rule)".into()];
             names.extend(app.session.doc.plastic_rules().into_iter().map(|r| r.name));
             let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-            row_label(ui, "Rule");
-            combo(ui, "pl_assign", &refs, rule);
-            ui.end_row();
+            form_row(ui, "Rule", |ui| combo(ui, "pl_assign", &refs, rule));
         }
     }
     enter

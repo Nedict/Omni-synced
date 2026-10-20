@@ -8,7 +8,7 @@ use solidcraft_engine::doc::expr::Kind as ValueKind;
 use solidcraft_engine::geom::Vec3;
 
 use crate::SolveApp;
-use crate::dialogs::{Dialog, Kind, combo, field, row_label};
+use crate::dialogs::{Dialog, Kind, combo, field, form_row};
 use crate::gizmo::{self, Change, Drag};
 use crate::selection::{AXES, BODIES, EDGES, FACES, SelInput, VERTICES};
 
@@ -46,10 +46,10 @@ pub fn inputs(mode: usize) -> Vec<SelInput> {
 /// The Move Type row (above the inputs); switching keeps the bodies and resets the values.
 pub fn type_row(d: &mut Dialog, ui: &mut egui::Ui) {
     let Kind::Move { mode, .. } = d.kind else { return };
-    row_label(ui, "Move Type");
     let mut m = mode;
-    combo(ui, "move_type", &TYPES, &mut m);
-    ui.end_row();
+    form_row(ui, "Move Type", |ui| {
+        combo(ui, "move_type", &TYPES, &mut m);
+    });
     if m != mode {
         let bodies = d.inputs.first().map(|i| i.items.clone()).unwrap_or_default();
         d.kind = kind(m);
@@ -71,9 +71,9 @@ pub fn rows(ui: &mut egui::Ui, k: &mut Kind) -> bool {
     let Kind::Move { mode, x, y, z, rx, ry, rz, angle } = k else { return false };
     let mut enter = false;
     let mut row = |ui: &mut egui::Ui, l: &str, v: &mut String| {
-        row_label(ui, l);
-        enter |= field(ui, v);
-        ui.end_row();
+        form_row(ui, l, |ui| {
+            enter |= field(ui, v);
+        });
     };
     match *mode {
         FREE | TRANSLATE => {

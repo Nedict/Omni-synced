@@ -43,7 +43,14 @@
    ]
   }
  },
- {"click": {"sketch": [20, -8]}},
+ {
+  "click": {
+   "sketch": [
+    20,
+    -8
+   ]
+  }
+ },
  {
   "text": "40"
  },
@@ -97,8 +104,9 @@
   "key": "Enter"
  },
  {
-  "widget": "Activate",
-  "near": "Configuration2"
+  "click": {
+   "handle": "config:activate:Configuration2"
+  }
  },
  {
   "expect": {
@@ -110,8 +118,9 @@
   }
  },
  {
-  "widget": "Activate",
-  "near": "Default"
+  "click": {
+   "handle": "config:activate:Default"
+  }
  },
  {
   "expect": {
