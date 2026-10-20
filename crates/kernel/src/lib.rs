@@ -47,6 +47,7 @@ mod face_source_tests;
 mod fair;
 mod fill;
 mod freeform;
+mod frustum_cut;
 pub mod fuzz;
 mod heal;
 mod helix;
