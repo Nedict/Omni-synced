@@ -814,6 +814,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "chardetng"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14b8f0b65b7b08ae3c8187e8d77174de20cb6777864c6b832d8ad365999cf1ea"
+dependencies = [
+ "cfg-if",
+ "encoding_rs",
+ "memchr",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -864,6 +875,12 @@ checksum = "2ec7c5eb7a16992b1904d76c517d170ab353b0e0b3d5a0c81a8a0cd1037893cf"
 dependencies = [
  "bytemuck",
 ]
+
+[[package]]
+name = "color_quant"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 
 [[package]]
 name = "combine"
@@ -1666,6 +1683,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gif"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee8cfcc411d9adbbaba82fb72661cc1bcca13e8bba98b364e62b2dba8f960159"
+dependencies = [
+ "color_quant",
+ "weezl",
+]
+
+[[package]]
 name = "gl_generator"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2077,12 +2104,25 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "color_quant",
+ "gif",
+ "image-webp",
  "moxcms",
  "num-traits",
  "png",
  "tiff",
  "zune-core",
  "zune-jpeg",
+]
+
+[[package]]
+name = "image-webp"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "525e9ff3e1a4be2fbea1fdf0e98686a6d98b4d8f937e1bf7402245af1909e8c3"
+dependencies = [
+ "byteorder-lite",
+ "quick-error",
 ]
 
 [[package]]
@@ -4064,7 +4104,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft"
-version = "0.15.0"
+version = "0.16.2"
 dependencies = [
  "block2 0.6.2",
  "eframe",
@@ -4096,11 +4136,11 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-3dx-client"
-version = "0.15.0"
+version = "0.16.2"
 
 [[package]]
 name = "solidcraft-cli"
-version = "0.15.0"
+version = "0.16.2"
 dependencies = [
  "image",
  "serde_json",
@@ -4111,7 +4151,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-derive"
-version = "0.15.0"
+version = "0.16.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4120,7 +4160,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-doc"
-version = "0.15.0"
+version = "0.16.2"
 dependencies = [
  "log",
  "serde",
@@ -4137,7 +4177,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-engine"
-version = "0.15.0"
+version = "0.16.2"
 dependencies = [
  "log",
  "serde",
@@ -4154,7 +4194,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-geom"
-version = "0.15.0"
+version = "0.16.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -4163,7 +4203,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-gpu"
-version = "0.15.0"
+version = "0.16.2"
 dependencies = [
  "image",
  "log",
@@ -4191,12 +4231,15 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-io"
-version = "0.15.0"
+version = "0.16.2"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
  "cadmpeg-registry",
+ "chardetng",
+ "encoding_rs",
  "gltf",
+ "log",
  "quick-xml",
  "rustix 1.1.5",
  "serde",
@@ -4211,7 +4254,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-kernel"
-version = "0.15.0"
+version = "0.16.2"
 dependencies = [
  "log",
  "proptest",
@@ -4231,7 +4274,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-mcp"
-version = "0.15.0"
+version = "0.16.2"
 dependencies = [
  "serde_json",
  "solidcraft-engine",
@@ -4240,7 +4283,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-render"
-version = "0.15.0"
+version = "0.16.2"
 dependencies = [
  "image",
  "moxcms",
@@ -4254,7 +4297,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-sketch"
-version = "0.15.0"
+version = "0.16.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -4265,12 +4308,16 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-space-mouse"
-version = "0.15.0"
+version = "0.16.2"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "solidcraft-ui-egui"
-version = "0.15.0"
+version = "0.16.2"
 dependencies = [
+ "arboard",
  "egui",
  "egui-wgpu",
  "image",
@@ -4283,6 +4330,7 @@ dependencies = [
  "sha2 0.10.9",
  "solidcraft-engine",
  "solidcraft-gpu",
+ "solidcraft-space-mouse",
  "tiny-skia",
  "toml",
  "ttf-parser",
@@ -4293,7 +4341,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-web"
-version = "0.15.0"
+version = "0.16.2"
 dependencies = [
  "eframe",
  "egui",
@@ -5824,7 +5872,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.15.0"
+version = "0.16.2"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
