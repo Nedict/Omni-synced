@@ -518,7 +518,7 @@ impl Built {
         };
         let joint = match &f.hole {
             Some(a) => {
-                let b = JointOrigin { occurrence: occ, snap: Snap::Point { point: Vec3::ZERO, z: Some(Vec3::Z * -1.0) } };
+                let b = JointOrigin { occurrence: occ, snap: Snap::Point { point: Vec3::ZERO, z: Some(Vec3::Z * -1.0), x: None } };
                 Some(joints::add_rigid_unsolved(s, a.clone(), b, offset, format!("{name} seat"))?)
             }
             None => None,
