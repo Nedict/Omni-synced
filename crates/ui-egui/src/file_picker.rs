@@ -174,7 +174,7 @@ mod tests {
         if let Some(waker) = answer.waker.borrow_mut().take() {
             waker.wake();
         }
-        tick(app, &egui::Context::default());
+        tick(app, &crate::fonts::test_context());
         assert!(!app.file_picker_busy());
     }
 
