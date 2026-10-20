@@ -478,12 +478,13 @@ impl Undo {
         }
     }
 
-    /// Go back; the number of steps undone.
-    fn rollback(self, b: &mut dyn Backend, steps: usize) -> u64 {
+    /// Go back; (whether the design is back as it was, the number of steps undone). A failed
+    /// rollback says so rather than reporting the flag the caller asked for (#3242).
+    fn rollback(self, b: &mut dyn Backend, steps: usize) -> (bool, u64) {
         match self {
             Undo::Checkpoint(id) => match exec(b, "edit.restore_checkpoint", json!({"checkpoint": id})) {
-                Ok(_) => steps as u64,
-                Err(_) => 0,
+                Ok(_) => (true, steps as u64),
+                Err(_) => (false, 0),
             },
             Undo::Depth(before) => {
                 let after = undo_depth(b).unwrap_or(before);
@@ -494,9 +495,10 @@ impl Undo {
                     }
                     undone += 1;
                 }
-                undone
+                (undone == steps as u64, undone)
             }
-            Undo::None => 0,
+            // Nothing remembered the design; only a first step that failed left nothing behind.
+            Undo::None => (steps == 0, 0),
         }
     }
 
@@ -561,12 +563,12 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
         match r {
             Ok(v) => results.push(if verbose { v } else { compact(v) }),
             Err(e) => {
-                let undone = start.rollback(b, i);
+                let (rolled_back, undone) = start.rollback(b, i);
                 let reply = json!({
                     "ok": false,
                     "completed": i,
                     "failed": {"index": i, "command": command, "error": e},
-                    "rolled_back": rollback,
+                    "rolled_back": rolled_back,
                     "undone": undone,
                     "results": results,
                 });
@@ -594,17 +596,24 @@ fn batch_reply(r: &Value, rollback: bool, verbose: bool) -> Value {
         r["results"].as_array().cloned().unwrap_or_default().into_iter().map(|v| if verbose { v } else { compact(v) }).collect();
     let (mut reply, error) = match r.get("failed").filter(|f| !f.is_null()) {
         None => (json!({"ok": true, "completed": results.len(), "results": results}), false),
-        Some(failed) => (
-            json!({
-                "ok": false,
-                "completed": r["completed"],
-                "failed": failed,
-                "rolled_back": rollback,
-                "undone": r["undone"],
-                "results": results,
-            }),
-            true,
-        ),
+        Some(failed) => {
+            // `rolled_back` tells whether the design went back, not whether a rollback was
+            // asked for (#3242): the app answers with `restored`; an app that predates that
+            // field and undid none of the steps it had completed did not go back.
+            let undone = r["undone"].as_u64().unwrap_or(0);
+            let restored = r.get("restored").and_then(Value::as_bool).unwrap_or(undone > 0 || r["completed"].as_u64() == Some(0));
+            (
+                json!({
+                    "ok": false,
+                    "completed": r["completed"],
+                    "failed": failed,
+                    "rolled_back": rollback && restored,
+                    "undone": r["undone"],
+                    "results": results,
+                }),
+                true,
+            )
+        }
     };
     // The app timed the steps where they ran.
     if let Some(o) = reply.as_object_mut() {
