@@ -62,10 +62,19 @@ impl SolveApp {
     }
 
     pub(crate) fn pick_save(&mut self, name: &str, extensions: &[&str], complete: impl FnOnce(&mut SolveApp, Option<String>) + 'static) {
+        self.pick_save_in(name, extensions, None, complete);
+    }
+    pub(crate) fn pick_save_in(
+        &mut self,
+        name: &str,
+        extensions: &[&str],
+        initial_directory: Option<&str>,
+        complete: impl FnOnce(&mut SolveApp, Option<String>) + 'static,
+    ) {
         if self.file_picker_busy() {
             return;
         }
-        let future = self.services.pick_save.as_ref().map(|pick| pick(name, extensions));
+        let future = self.services.pick_save.as_ref().map(|pick| pick(name, extensions, initial_directory));
         self.begin_picker(future, Box::new(complete));
     }
 
@@ -120,7 +129,9 @@ impl SolveApp {
 }
 
 pub(crate) fn tick(app: &mut SolveApp, ctx: &egui::Context) {
-    let Some(pending) = app.file_picker.as_mut() else { return };
+    let Some(pending) = app.file_picker.as_mut() else {
+        return;
+    };
     let waker = Waker::from(Arc::new(Repaint(ctx.clone())));
     let Poll::Ready(path) = pending.future.as_mut().poll(&mut Context::from_waker(&waker)) else {
         // A fallback for native backends that do not wake reliably. Resizing still draws
@@ -162,7 +173,7 @@ mod tests {
         let answer = Rc::new(Answer::default());
         let captured = answer.clone();
         if save {
-            app.services.pick_save = Some(Box::new(move |_, _| Box::pin(Delayed(captured.clone()))));
+            app.services.pick_save = Some(Box::new(move |_, _, _initial_directory| Box::pin(Delayed(captured.clone()))));
         } else {
             app.services.pick_open = Some(Box::new(move |_| Box::pin(Delayed(captured.clone()))));
         }

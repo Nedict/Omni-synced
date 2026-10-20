@@ -100,7 +100,7 @@ fn cached(key: &str) -> Option<egui::ColorImage> {
     decode_thumbnail(bytes)
 }
 
-fn decode_thumbnail(bytes: Vec<u8>) -> Option<egui::ColorImage> {
+pub(crate) fn decode_thumbnail(bytes: Vec<u8>) -> Option<egui::ColorImage> {
     if bytes.len() > 512 * 1024 {
         return None;
     }

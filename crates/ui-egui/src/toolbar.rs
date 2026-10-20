@@ -8,7 +8,7 @@ use serde_json::json;
 use crate::theme::Tokens;
 use crate::{SolveApp, icons};
 
-pub const TABS: &[&str] = &["SOLID", "SURFACE", "MESH", "SHEET METAL", "PLASTIC", "UTILITIES"];
+pub const TABS: &[&str] = &["SOLID", "SURFACE", "MESH", "PDM", "SHEET METAL", "PLASTIC", "UTILITIES"];
 
 /// Legacy paint arguments and non-SVG affordances follow the same semantic palette as the icon.
 /// The requested icon id determines its meaning on ribbons, menus and drag previews alike.
@@ -522,6 +522,10 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     save_as_with_extension(app, "json");
                     close = true;
                 }
+                if item(ui, app.tr_label("Local PDM"), "") {
+                    app.start("pdm.panel");
+                    close = true;
+                }
                 ui.separator();
                 if item_if(ui, "Save as mesh…", "", shown) {
                     app.start("file.save_mesh");
@@ -608,7 +612,15 @@ fn save_as(app: &mut SolveApp) {
 
 fn save_as_with_extension(app: &mut SolveApp, extension: &str) {
     let name = format!("{}.{extension}", app.session.doc.name);
-    app.pick_save(&name, &[solidcraft_engine::io::DESIGN_EXT, "json"], |app, path| {
+    let initial_directory = app
+        .session
+        .path
+        .is_none()
+        .then(|| app.pdm.runtime.status().ok())
+        .flatten()
+        .filter(|status| status.connection.is_some())
+        .and_then(|status| status.managed.root);
+    app.pick_save_in(&name, &[solidcraft_engine::io::DESIGN_EXT, "json"], initial_directory.as_deref(), |app, path| {
         if let Some(path) = path {
             let _ = app.run("file.save_as", json!({"path": path}));
         }
@@ -655,18 +667,26 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let wresp = ui.interact(ws, ui.id().with("workspace_switcher"), Sense::click());
         painter.rect(ws, 4.0, if wresp.hovered() { t.hover } else { t.field }, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
         let workspace_icon = if crate::render_workspace::active(app) { "ws_render" } else { "ws_design" };
-        icons::paint(
-            &painter,
-            Rect::from_center_size(pos2(ws.center().x, ws.top() + 24.0), vec2(26.0, 26.0)),
-            workspace_icon,
-            t.icon,
-            t.icon_fill,
-            t.accent,
-        );
+        if !app.pdm.workspace_active {
+            icons::paint(
+                &painter,
+                Rect::from_center_size(pos2(ws.center().x, ws.top() + 24.0), vec2(26.0, 26.0)),
+                workspace_icon,
+                t.icon,
+                t.icon_fill,
+                t.accent,
+            );
+        }
         painter.text(
             pos2(ws.center().x - 5.0, ws.top() + 52.0),
             Align2::CENTER_CENTER,
-            app.tr_label(if crate::render_workspace::active(app) { "RENDER" } else { crate::toolbar_custom::WORKSPACE }),
+            app.tr_label(if app.pdm.workspace_active {
+                "PDM"
+            } else if crate::render_workspace::active(app) {
+                "RENDER"
+            } else {
+                crate::toolbar_custom::WORKSPACE
+            }),
             FontId::proportional(12.0),
             t.text,
         );
@@ -682,7 +702,9 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         if sketching {
             tabs.push("SKETCH");
         }
-        if crate::render_workspace::active(app) {
+        if app.pdm.workspace_active {
+            tabs.push("PDM");
+        } else if crate::render_workspace::active(app) {
             tabs.push("RENDER");
         } else {
             tabs.extend(TABS.iter());
@@ -713,6 +735,11 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 app.ui.tab = tab.to_string();
             }
             x += w + 4.0;
+        }
+        if app.ui.tab == "PDM" {
+            let rect = Rect::from_min_max(pos2(r.left() + 112.0, r.top() + 30.0), r.right_bottom());
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| crate::pdm_panel::actions(app, ui));
+            return;
         }
         // Panels.
         let tab = app.ui.tab.clone();
@@ -1320,7 +1347,9 @@ struct ToolbarDrag {
 /// The dragged command's icon under the pointer, crossed out when releasing removes it.
 fn drag_ghost(ctx: &egui::Context, id: &str, at: egui::Pos2, removing: bool) {
     let t = Tokens::get();
-    let Some(c) = solidcraft_engine::find_command(id) else { return };
+    let Some(c) = solidcraft_engine::find_command(id) else {
+        return;
+    };
     let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("sc_toolbar_drag")));
     let r = Rect::from_center_size(at + vec2(14.0, 16.0), vec2(30.0, 30.0));
     p.rect(r, 4.0, t.toolbar.gamma_multiply(0.92), Stroke::new(1.0, if removing { t.error } else { t.accent }), egui::StrokeKind::Inside);
@@ -1462,8 +1491,9 @@ mod header_report_tests {
         let mut h = crate::scenario::Harness::new();
         h.app.run("solid.box", json!({"length":2,"width":3,"height":4})).unwrap();
         let dir = h.dir.clone();
-        h.app.services.pick_save =
-            Some(Box::new(move |name, _extensions| Box::pin(std::future::ready(Some(dir.join(name).to_string_lossy().into_owned())))));
+        h.app.services.pick_save = Some(Box::new(move |name, _extensions, _initial_directory| {
+            Box::pin(std::future::ready(Some(dir.join(name).to_string_lossy().into_owned())))
+        }));
         h.frames(3);
         h.step(&json!({"click":{"handle":"appbar:folder"}})).unwrap();
         h.step(&json!({"widget":"Save As JSON…"})).unwrap();
@@ -1990,7 +2020,9 @@ mod fill_width_tests {
                 let mut end = bar.left();
                 let mut on_bar = 0;
                 for (panel, cmds, promote) in &lists {
-                    let Some(rect) = crate::scenario::rect_of(&format!("panel:{tab}:{panel}")) else { continue };
+                    let Some(rect) = crate::scenario::rect_of(&format!("panel:{tab}:{panel}")) else {
+                        continue;
+                    };
                     on_bar += 1;
                     end = end.max(rect.right() + PANEL_GAP);
                     if crate::toolbar_custom::buttons(&h.app, tab, panel, cmds, *promote).is_empty() {
@@ -2034,6 +2066,56 @@ mod fill_width_tests {
                 let prefs = crate::scenario::handle_at("titlebar:preferences").unwrap();
                 assert!(report.right() < help.x && help.x < prefs.x, "{at}: the title bar's right-hand controls overlap");
             }
+        }
+    }
+    #[test]
+    fn only_a_new_design_suggests_the_freshly_verified_managed_working_folder() {
+        use solidcraft_engine::pdm::{ActiveConnection, ManagedState, Outcome, Task};
+        use std::{cell::RefCell, rc::Rc};
+        for (verified, existing, exporting) in [(true, false, false), (false, false, false), (true, true, false), (true, false, true)] {
+            let mut h = crate::scenario::Harness::new();
+            let root = h.dir.join("managed").to_string_lossy().into_owned();
+            h.app.pdm.runtime.set_available(true).unwrap();
+            let id = h.app.pdm.runtime.enqueue(Task::Connect { port: 48231 }).unwrap();
+            let state = ManagedState {
+                root: Some(root.clone()),
+                server_id: Some("server".into()),
+                workspace: Some("workspace".into()),
+                ..Default::default()
+            };
+            let outcome = if verified {
+                Outcome::ManagedConnected {
+                    port: 48231,
+                    state,
+                    connections: vec![],
+                    connection: ActiveConnection {
+                        id: "a".repeat(64),
+                        label: "Verified archive".into(),
+                        origin: "https://localhost:48231".into(),
+                        server_id: "server".into(),
+                        account: "actual-account".into(),
+                        role: "Contributor".into(),
+                    },
+                }
+            } else {
+                Outcome::Managed { port: 48231, state }
+            };
+            h.app.pdm.runtime.finish(id, Ok(outcome)).unwrap();
+            if existing {
+                h.app.session.path = Some(h.dir.join("existing.solidcraft").to_string_lossy().into_owned());
+            }
+            let observed = Rc::new(RefCell::new(Vec::new()));
+            let captured = observed.clone();
+            h.app.services.pick_save = Some(Box::new(move |_, _, directory| {
+                captured.borrow_mut().push(directory.map(str::to_owned));
+                Box::pin(std::future::ready(None))
+            }));
+            if exporting {
+                export(&mut h.app, "step");
+            } else {
+                save_as(&mut h.app);
+            }
+            assert_eq!(observed.borrow().as_slice(), &[if verified && !existing && !exporting { Some(root) } else { None }]);
         }
     }
 }

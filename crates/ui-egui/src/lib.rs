@@ -126,6 +126,9 @@ mod fillet_spline_handle_tests;
 pub(crate) mod navigation;
 pub mod palette;
 pub mod params_dialog;
+pub mod pdm_panel;
+#[cfg(test)]
+mod pdm_panel_tests;
 pub(crate) mod pick_buffer;
 pub(crate) mod pick_index;
 pub mod prefs;
@@ -271,10 +274,12 @@ impl Default for UiState {
 /// Host services injected by the app so this crate stays portable.
 #[derive(Default)]
 pub struct Services {
+    /// Native authenticated PDM worker. Credentials never enter engine/UI state.
+    pub pdm: Option<pdm_panel::Start>,
     /// Ask for a file to open. The extensions are the file type the command reads, offered as
     /// the picker's first filter (`&[]`: designs, CAD files and meshes, #1801).
     pub pick_open: Option<Box<dyn Fn(&[&str]) -> FilePickerFuture>>,
-    pub pick_save: Option<Box<dyn Fn(&str, &[&str]) -> FilePickerFuture>>,
+    pub pick_save: Option<Box<dyn Fn(&str, &[&str], Option<&str>) -> FilePickerFuture>>,
     /// Open a dialog for one file of a kind (its name, its extensions): on macOS a dialog allows
     /// only the types it names, so the agent chat's files need a dialog of their own. `None`: the
     /// Open dialog.
@@ -297,6 +302,7 @@ pub struct Services {
 }
 
 pub struct SolveApp {
+    pub pdm: pdm_panel::Panel,
     pub session: Session,
     pub ui: UiState,
     pub cam: Camera,
@@ -442,7 +448,11 @@ impl SolveApp {
         }
         let mut render_workspace = render_workspace::State::default();
         render_workspace.image_host = image_host;
+        let pdm = pdm_panel::Panel::default();
+        let _ = pdm.runtime.set_available(services.pdm.is_some());
+        session.pdm = pdm.runtime.clone();
         SolveApp {
+            pdm,
             session,
             ui: UiState::default(),
             cam: Camera::default(),
@@ -580,7 +590,9 @@ impl SolveApp {
 
     /// Restore preferences saved with [`SolveApp::prefs`].
     pub fn load_prefs(&mut self, prefs: &str) {
-        let Ok(v) = serde_json::from_str::<Value>(prefs) else { return };
+        let Ok(v) = serde_json::from_str::<Value>(prefs) else {
+            return;
+        };
         let flag = |k: &str| v.get(k).and_then(Value::as_bool);
         self.home.opened_at = v.get("recent_opened_at").and_then(|x| serde_json::from_value(x.clone()).ok()).unwrap_or_default();
         if let Some(d) = flag("dark") {
@@ -652,6 +664,24 @@ impl SolveApp {
 
     /// Run a command programmatically (JSON parameters, no dialogs).
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        self.session.pdm = self.pdm.runtime.clone();
+        if matches!(id, "pdm.connection.recover" | "pdm.recover_workspace") && documents::any_dirty(self) {
+            return Err("Save or Save As all unsaved editors before recovering a working folder".into());
+        }
+        if matches!(id, "pdm.checkout" | "pdm.get_latest" | "pdm.cancel_checkout" | "pdm.open_document" | "pdm.restore_version")
+            && documents::managed_target_dirty(self, params.get("document").and_then(Value::as_str))
+        {
+            return Err("Save or Save As the unsaved editor before replacing its managed working copy".into());
+        }
+        if !id.starts_with("pdm.")
+            && solidcraft_engine::find_command(id).is_some_and(|c| c.undoable)
+            && self.session.path.as_ref().is_some_and(|p| self.pdm.runtime.blocks_path(p))
+        {
+            return Err("Wait for the PDM operation before editing this managed document".into());
+        }
+        if id == "pdm.check_in" && (self.dialog.is_some() || self.tool.is_some() || self.applying.is_some() || self.deferred.is_some()) {
+            return Err("Finish or cancel interactive edits before checking in the saved design".into());
+        }
         if self.file_load.busy() || self.file_picker.is_some() {
             return Err("a file operation is in progress".into());
         }
@@ -741,6 +771,30 @@ impl SolveApp {
     /// Start a command the way a toolbar click does: interactive tools and dialogs for commands
     /// that have them, otherwise run it with defaults.
     pub fn start(&mut self, id: &str) {
+        self.session.pdm = self.pdm.runtime.clone();
+        if solidcraft_engine::find_command(id).is_some_and(|command| command.undoable)
+            && let Err(error) = self.session.check_pdm_reopen()
+        {
+            self.set_status(error.to_string(), true);
+            return;
+        }
+        if solidcraft_engine::find_command(id).is_some_and(|c| c.undoable)
+            && let Some(path) = &self.session.path
+        {
+            let managed = self.pdm.runtime.managed_for_path(path);
+            if self.pdm.runtime.blocks_path(path) {
+                self.set_status("Wait for the PDM operation before editing this managed document", true);
+                return;
+            }
+            if (self.session.pdm_read_only || managed.is_some_and(|entry| !entry.checked_out))
+                && !self.pdm.ram_paths.contains(&solidcraft_engine::pdm::cached_path_key(path))
+            {
+                self.pdm.pending_edit_path = Some(solidcraft_engine::pdm::cached_path_key(path));
+                self.pdm.pending_edit = Some(id.to_string());
+                return;
+            }
+        }
+
         // A file is loading: the design waits for it.
         if self.file_load.busy() || self.file_picker.is_some() {
             return;
@@ -758,6 +812,26 @@ impl SolveApp {
         if id == "material.properties.validate" {
             self.material_card_review = Some(material_card_review::ReviewWindow::default());
             self.home.open = false;
+            return;
+        }
+        if id.starts_with("pdm.") {
+            if matches!(id, "pdm.panel" | "pdm.connections" | "pdm.setup.create" | "pdm.connection.open" | "pdm.connection.recover") {
+                if let Err(error) = pdm_panel::enter(self) {
+                    self.set_status(error, true);
+                }
+                self.pdm.open = true;
+            }
+            if id == "pdm.connect" {
+                self.pdm.open = true;
+            }
+            if id == "pdm.cancel_checkout" {
+                self.pdm.cancel_confirmation = true;
+            }
+            if matches!(id, "pdm.refresh" | "pdm.disconnect" | "pdm.archive" | "pdm.checkout" | "pdm.get_latest")
+                && let Err(error) = self.run(id, json!({}))
+            {
+                self.set_status(error, true);
+            }
             return;
         }
         // A display toggle leaves the current modelling tool and camera in place.
@@ -923,7 +997,9 @@ impl SolveApp {
     /// timeline back to just before themselves and reopen their dialog, filled in.
     pub fn edit_feature(&mut self, id: u64) {
         use solidcraft_engine::doc::FeatureKind;
-        let Some(f) = self.session.doc.feature(id) else { return };
+        let Some(f) = self.session.doc.feature(id) else {
+            return;
+        };
         if matches!(f.kind, FeatureKind::Sketch { .. }) {
             self.edit_sketch(id);
             return;
@@ -931,7 +1007,9 @@ impl SolveApp {
         if self.session.active_sketch.is_some() {
             self.finish_sketch();
         }
-        let Some(idx) = self.session.doc.feature_index(id) else { return };
+        let Some(idx) = self.session.doc.feature_index(id) else {
+            return;
+        };
         let marker = self.session.doc.marker;
         self.tool = None;
         if dialogs::roll_marker(self, Some(idx)).is_err() {
@@ -967,7 +1045,9 @@ impl SolveApp {
         }
         self.tool = None;
         self.dialog = None;
-        let Some(idx) = self.session.doc.feature_index(id) else { return };
+        let Some(idx) = self.session.doc.feature_index(id) else {
+            return;
+        };
         let marker = self.session.doc.marker;
         let rolled = marker.is_none_or(|m| m > idx + 1) && self.run("timeline.roll_to", json!({ "position": idx + 1 })).is_ok();
         let before = self.cam;
@@ -1247,7 +1327,9 @@ impl SolveApp {
     /// Move the viewport to the camera a command asked for (`view.apply`): animated like a view
     /// change, or at once (control requests, so a screenshot right after shows it).
     pub fn follow_view_request(&mut self, animate: bool) {
-        let Some(mut to) = self.session.camera.take() else { return };
+        let Some(mut to) = self.session.camera.take() else {
+            return;
+        };
         if render_workspace::active(self) {
             self.ui.up_axis = to.up;
         } else {
@@ -1291,6 +1373,7 @@ impl SolveApp {
 
     /// Per-frame logic before layout.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        pdm_panel::tick(self, ctx);
         file_picker::tick(self, ctx);
         render_workspace::sync_backend(self);
         render_workspace::tick(self, ctx);
@@ -1424,15 +1507,15 @@ impl SolveApp {
             }
         }
         toolbar::toolbar(self, ui);
-        let show_timeline = self.ui.show_timeline && !render_workspace::active(self);
+        let show_timeline = self.ui.show_timeline && !render_workspace::active(self) && !self.pdm.workspace_active;
         let left_timeline = show_timeline && self.preferences.timeline_left;
         if show_timeline && !left_timeline {
             timeline::timeline(self, ui);
         }
         palette::palette_bar(self, ui);
         // A floating browser keeps the workspace the whole width: it is drawn over the view below.
-        let browser_float = self.ui.show_browser && self.preferences.browser_float;
-        if self.ui.show_browser && !browser_float {
+        let browser_float = self.ui.show_browser && self.preferences.browser_float && !self.pdm.workspace_active;
+        if self.ui.show_browser && !browser_float && !self.pdm.workspace_active {
             if left_timeline {
                 browser::browser_below_timeline(self, ui);
             } else {
@@ -1452,7 +1535,9 @@ impl SolveApp {
             browser::floating(self, ui, viewport);
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
-            if render_workspace::active(self) {
+            if self.pdm.workspace_active {
+                pdm_panel::workspace(self, ui);
+            } else if render_workspace::active(self) {
                 render_workspace::show(self, ui);
             } else {
                 viewport::show(self, ui);
@@ -1465,6 +1550,7 @@ impl SolveApp {
         params_dialog::show(self, ui.ctx());
         design_properties::show(self, ui.ctx());
         bom_panel::show(self, ui.ctx());
+        pdm_panel::show(self, ui.ctx());
         material_card_review::show(self, ui.ctx());
         recovery_ui::show(self, ui.ctx());
         stand_up::show(self, ui.ctx());
@@ -1497,7 +1583,9 @@ impl SolveApp {
             }
             // Held requests go first, in order, once the file is in.
             let held = if self.file_load.busy() || self.file_picker.is_some() { None } else { self.control_held.pop_front() };
-            let Some(req) = held.or_else(|| rx.as_ref().and_then(|rx| rx.try_recv().ok())) else { break };
+            let Some(req) = held.or_else(|| rx.as_ref().and_then(|rx| rx.try_recv().ok())) else {
+                break;
+            };
             // A file is loading: commands that change the design wait for it (the window,
             // inspection and screenshots still answer).
             if ((self.file_load.busy() || self.file_picker.is_some())
