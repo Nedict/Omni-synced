@@ -30,7 +30,7 @@ pub fn base_font_definitions() -> FontDefinitions {
     }
     fonts.font_data.insert("plex-mono".to_owned(), Arc::new(egui::FontData::from_static(PLEX_MONO)));
     fonts.families.entry(FontFamily::Monospace).or_default().insert(0, "plex-mono".to_owned());
-    fonts
+    with_symbol_fallback(fonts)
 }
 
 fn medium_family() -> FontFamily {
@@ -86,6 +86,7 @@ fn installed_fonts_id() -> egui::Id {
 }
 
 fn install(ctx: &egui::Context, fonts: FontDefinitions) {
+    let fonts = with_symbol_fallback(fonts);
     ctx.data_mut(|d| d.insert_temp(installed_fonts_id(), fonts.clone()));
     ctx.set_fonts(fonts);
     ctx.global_style_mut(|style| {
@@ -143,6 +144,23 @@ pub const HANGUL_FALLBACK: &str = "hangul_fallback";
 
 /// Name of the Thai fallback entry in [`egui::FontDefinitions`], last (#1902).
 pub const THAI_FALLBACK: &str = "thai_fallback";
+
+/// egui's built-in monospace face, also the last fallback of every sans family (#2955).
+pub const SYMBOL_FALLBACK: &str = "Hack";
+
+/// `fonts` with egui's built-in Hack last in every sans family. Ubuntu-Light, NotoEmoji and
+/// emoji-icon-font lack common symbols such as ▲ ▼ ↑ ↓ → ⁻, which Hack has, so they no longer
+/// show as empty boxes where no system font fills in (#2955). Text the other faces draw keeps them.
+pub fn with_symbol_fallback(mut fonts: egui::FontDefinitions) -> egui::FontDefinitions {
+    if fonts.font_data.contains_key(SYMBOL_FALLBACK) {
+        for family in sans_families() {
+            let list = fonts.families.entry(family).or_default();
+            list.retain(|name| name != SYMBOL_FALLBACK);
+            list.push(SYMBOL_FALLBACK.to_owned());
+        }
+    }
+    fonts
+}
 
 /// UI languages whose text needs the CJK font. The web app's bundled font covers Japanese only;
 /// add Chinese or Korean here together with a font that covers them.
@@ -716,9 +734,10 @@ fn web_font_definitions(ui_font: &str, previous: Option<FontDefinitions>) -> Fon
             fonts.families.entry(family).or_default().push(CJK_FALLBACK.to_owned());
         }
     }
-    fonts
+    with_symbol_fallback(fonts)
 }
 
+/// Web starts with the bundled faces and symbol fallback; Japanese loads on demand.
 #[cfg(target_arch = "wasm32")]
 pub fn setup_fonts(ctx: &egui::Context) {
     setup_fonts_for(ctx, "en", "");
@@ -735,6 +754,42 @@ pub(crate) fn test_context() -> egui::Context {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Whether a face of the Proportional family has `c`. Checked in the font data:
+    /// `Fonts::has_glyph` misses a glyph in the face that also gives the replacement glyph.
+    fn proportional_draws(fonts: &egui::FontDefinitions, c: char) -> bool {
+        fonts.families[&egui::FontFamily::Proportional]
+            .iter()
+            .filter_map(|name| fonts.font_data.get(name))
+            .any(|data| ttf_parser::Face::parse(&data.font, data.index).unwrap().glyph_index(c).is_some())
+    }
+
+    /// The symbols the built-in Latin faces lack draw through the built-in Hack (#2955), which
+    /// comes last and once, after the system fallbacks, and goes in with the desktop's fonts.
+    #[test]
+    fn symbols_fall_back_to_the_built_in_hack() {
+        let fonts = with_symbol_fallback(base_font_definitions());
+        for family in sans_families() {
+            let list = &fonts.families[&family];
+            assert_eq!(list.last().map(String::as_str), Some(SYMBOL_FALLBACK));
+            assert_eq!(list.iter().filter(|name| *name == SYMBOL_FALLBACK).count(), 1);
+        }
+        for c in "▲▼↑↓→⁻".chars() {
+            assert!(proportional_draws(&fonts, c), "{c:?} (U+{:04X}) has a face", c as u32);
+        }
+        let mut with_cjk = egui::FontDefinitions::default();
+        with_cjk.families.entry(egui::FontFamily::Proportional).or_default().push(CJK_FALLBACK.to_owned());
+        let fonts = with_symbol_fallback(with_symbol_fallback(with_cjk));
+        let list = &fonts.families[&egui::FontFamily::Proportional];
+        assert_eq!(list.last().map(String::as_str), Some(SYMBOL_FALLBACK), "{list:?}");
+        assert_eq!(list.iter().filter(|name| *name == SYMBOL_FALLBACK).count(), 1, "{list:?}");
+        assert_ne!(list.first().map(String::as_str), Some(SYMBOL_FALLBACK), "{list:?}");
+        let ctx = egui::Context::default();
+        setup_fonts_for(&ctx, "en", "");
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+        let installed = ctx.fonts(|f| f.definitions().families[&egui::FontFamily::Proportional].clone());
+        assert_eq!(installed.last().map(String::as_str), Some(SYMBOL_FALLBACK), "{installed:?}");
+    }
 
     #[test]
     fn the_interface_font_comes_first_and_keeps_the_fallbacks() {
@@ -756,7 +811,7 @@ mod tests {
 
     #[test]
     fn bundled_faces_lead_every_family_and_keep_egui_fallbacks() {
-        let defaults = FontDefinitions::default();
+        let defaults = with_symbol_fallback(FontDefinitions::default());
         let fonts = base_font_definitions();
         for ((name, weight), family) in WEIGHTS.into_iter().zip(sans_families()) {
             let list = &fonts.families[&family];
@@ -815,7 +870,9 @@ mod tests {
         let reset = web_font_definitions("", Some(installed));
         for ((name, _), family) in WEIGHTS.into_iter().zip(sans_families()) {
             assert_eq!(reset.families[&family][0], name);
-            assert_eq!(reset.families[&family].last().map(String::as_str), Some(CJK_FALLBACK));
+            let list = &reset.families[&family];
+            assert_eq!(list.get(list.len() - 2).map(String::as_str), Some(CJK_FALLBACK));
+            assert_eq!(list.last().map(String::as_str), Some(SYMBOL_FALLBACK));
         }
         install(&ctx, reset);
         let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
