@@ -386,11 +386,17 @@ fn profile_sketch(app: &SolveApp, f: u64) -> Option<u64> {
 }
 
 /// The feature a picked face stands for, and its profile sketch: the feature that made the face
-/// (a fillet's round, a cut's wall), as a feature input picks it on the canvas (#3075). The
-/// body's feature when the face's can't be told (a placed body, a face no feature's result
-/// shows).
-fn face_feature_and_sketch(app: &SolveApp, body: &str, index: usize, point: solidcraft_engine::geom::Vec3) -> (Option<u64>, Option<u64>) {
-    match crate::dialogs::feature_of_face(&app.session, body, index, point) {
+/// (a fillet's round, a cut's wall, #3075), from the face's persistent name (`F<id>:…`). The
+/// name stays with the face when a later feature only moves the body, and in a placed
+/// component. The body's feature when the name names no feature of the design.
+fn face_feature_and_sketch(app: &SolveApp, body: &str, index: usize) -> (Option<u64>, Option<u64>) {
+    let state = app.session.world_state();
+    let named = state
+        .body(body)
+        .and_then(|b| solidcraft_engine::doc::naming::face_names(b).get(index).cloned())
+        .and_then(|name| name.strip_prefix('F')?.split(':').next()?.parse::<u64>().ok())
+        .filter(|f| app.session.doc.feature(*f).is_some());
+    match named {
         Some(f) => (Some(f), profile_sketch(app, f)),
         None => body_feature_and_sketch(app, body),
     }
@@ -433,10 +439,10 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
     if let Some(sketch) = sel_sketch(app).filter(|_| !solid) {
         v.extend(sketch_items(app, sketch));
     } else if has(|s| matches!(s, Sel::Face { .. })) {
-        let picked = sel.iter().find_map(|s| if let Sel::Face { body, index, point } = s { Some((body.clone(), *index, *point)) } else { None });
-        let face = picked.as_ref().map(|(body, ..)| body.clone()).unwrap_or_default();
+        let picked = sel.iter().find_map(|s| if let Sel::Face { body, index, .. } = s { Some((body.clone(), *index)) } else { None });
+        let face = picked.as_ref().map(|(body, _)| body.clone()).unwrap_or_default();
         let (feature, sketch) = match &picked {
-            Some((body, index, point)) => face_feature_and_sketch(app, body, *index, *point),
+            Some((body, index)) => face_feature_and_sketch(app, body, *index),
             None => (None, None),
         };
         let hidden = app.session.visibility.hidden_bodies.contains(&face);
@@ -2034,5 +2040,31 @@ mod tests {
         let c = 3.0 * std::f64::consts::FRAC_1_SQRT_2;
         assert_eq!(menu(&mut h, [20.0, 3.0 - c, 12.0 + c]), (Some(round), None), "the round's face edits the fillet");
         assert_eq!(menu(&mut h, [20.0, 10.0, 0.0]), (Some(pad), Some(sketch)), "the bottom edits the extrude, and its sketch");
+        // A later feature that only moves the body leaves its faces to the features that made them.
+        let body = h.app.session.model.state().bodies[0].name.clone();
+        h.app.run("solid.move", json!({"bodies": [body], "translate": [0, 0, 30]})).unwrap();
+        assert_eq!(menu(&mut h, [20.0, 10.0, 30.0]), (Some(pad), Some(sketch)), "a moved pad's bottom edits the extrude, not the move");
+        assert_eq!(menu(&mut h, [20.0, 3.0 - c, 42.0 + c]), (Some(round), None), "a moved round edits the fillet");
+    }
+
+    /// In a component placed away from its origin, a face edits the feature that made it, not
+    /// the newest feature of the design.
+    #[test]
+    fn edit_feature_on_a_placed_components_face_edits_its_feature() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        let part = h.app.run("component.create", json!({"name": "Part"})).unwrap();
+        let occurrence = part["occurrence"].as_u64().unwrap();
+        let block = h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10})).unwrap()["feature"].as_u64().unwrap();
+        h.app.run("component.activate", json!({"component": 0})).unwrap();
+        h.app.run("occurrence.move", json!({"occurrence": occurrence, "translate": [100, 0, 0]})).unwrap();
+        let later =
+            h.app.run("solid.box", json!({"corner": [-50, 0, 0], "length": 5, "width": 5, "height": 5})).unwrap()["feature"].as_u64().unwrap();
+        assert_ne!(block, later);
+        let face = crate::dialogs::face_sel(&h.app.session, solidcraft_engine::geom::Vec3::new(105.0, 5.0, 10.0)).unwrap();
+        h.app.session.selection = vec![face];
+        let items = items(&h.app, &Target::Viewport);
+        let feature = items.iter().find(|i| i.id == "ui.editFeature").and_then(|i| i.params.as_ref()).and_then(|p| p["feature"].as_u64());
+        assert_eq!(feature, Some(block), "the placed block's top edits the block's feature");
     }
 }
