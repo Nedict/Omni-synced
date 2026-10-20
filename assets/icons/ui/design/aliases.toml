@@ -35,4 +35,5 @@ sketch_scale = { master = "scale", accent = "sketch" }
 sketch_text = { master = "text", accent = "sketch" }
 surface_fair = { master = "spline_cv", accent = "surface" }
 mesh_export = { master = "export", accent = "mesh" }
+insert_step = "box"
 bom = "list"
