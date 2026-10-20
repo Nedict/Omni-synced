@@ -4494,6 +4494,11 @@ fn replay(
         // A primitive's or a hole's targets are its participants (#1108): the copies change
         // those bodies only, like the feature itself (#2755).
         let targets = if targets.is_empty() { src.participants.clone() } else { targets };
+        // A join that merged its targets left only the first of them (the others now live in
+        // it): the copies change the bodies still there (#3378). When none is, the names stay
+        // and say which body is missing.
+        let present: Vec<String> = targets.iter().filter(|t| st.bodies.iter().any(|b| &b.name == *t)).cloned().collect();
+        let targets = if present.is_empty() { targets } else { present };
         let mut copies = Vec::new();
         if let FeatureKind::Hole { diameter, depth, hole, to, .. } = &src.kind {
             // A hole is drilled again at each copy of its spot (found on the surface there), so
