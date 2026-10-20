@@ -220,8 +220,11 @@ pub use control::{ControlRequest, ControlResponse};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
-    /// Toolbar tab: SOLID, SURFACE, MESH, SHEET METAL, PLASTIC, UTILITIES (SKETCH while sketching).
+    /// Ribbon tab; contextual SKETCH and SHEET METAL join the seven design tabs.
     pub tab: String,
+    /// Last contextual body/sketch, only used to select on entry.
+    #[serde(skip)]
+    pub ribbon_context: Option<String>,
     pub show_browser: bool,
     pub show_timeline: bool,
     pub show_grid: bool,
@@ -254,7 +257,8 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         UiState {
-            tab: "SOLID".into(),
+            tab: "MODEL".into(),
+            ribbon_context: None,
             show_browser: true,
             show_timeline: true,
             show_grid: true,
@@ -373,6 +377,9 @@ pub struct SolveApp {
     /// How long OK waits for a feature before computing it off the window thread, saying so;
     /// `None`: it waits as long as it takes (headless use, tests). The desktop app sets it.
     pub apply_off_thread: Option<std::time::Duration>,
+    /// Tests: how long OK's off-thread evaluation lingers, so that "still computing" does not depend on how fast the machine is.
+    #[cfg(test)]
+    pub apply_hold: std::time::Duration,
     /// The last command started interactively (id, label), for Repeat.
     pub last_command: Option<(String, String)>,
     /// Esc was already acted on this frame (by the shortcuts), so later handlers skip it.
@@ -493,6 +500,8 @@ impl SolveApp {
             deferred: None,
             deferred_queue: Vec::new(),
             apply_off_thread: None,
+            #[cfg(test)]
+            apply_hold: std::time::Duration::ZERO,
             last_command: None,
             esc_handled: false,
             status: None,
@@ -747,12 +756,10 @@ impl SolveApp {
                 self.set_status(msg, true);
             }
         }
-        if self.session.active_sketch.is_some() && self.ui.tab != "SKETCH" {
-            self.ui.tab = "SKETCH".into();
-        } else if self.session.active_sketch.is_none() && self.ui.tab == "SKETCH" {
-            self.ui.tab = "SOLID".into();
+        if self.session.active_sketch.is_none() && self.ui.tab == "SKETCH" {
             self.tool = None;
         }
+        workspace::sync_context(self);
     }
 
     /// Start a command the way a toolbar click does: interactive tools and dialogs for commands
@@ -772,6 +779,7 @@ impl SolveApp {
             self.set_status(format!("{label}: {why}"), true);
             return;
         }
+        workspace::select_command_tab(self, id);
         if id == "material.properties.validate" {
             self.material_card_review = Some(material_card_review::ReviewWindow::default());
             self.home.open = false;
@@ -1445,6 +1453,7 @@ impl SolveApp {
             }
         }
         toolbar::toolbar(self, ui);
+        theme::TabAccent::publish(self, ui.ctx());
         let show_timeline = self.ui.show_timeline && !render_workspace::active(self);
         let left_timeline = show_timeline && self.preferences.timeline_left;
         if show_timeline && !left_timeline {
