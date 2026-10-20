@@ -404,6 +404,9 @@ pub struct Dialog {
     pub refused: Option<Refused>,
     /// Create Sketch opened by a sketch tool's shortcut: that tool starts once the sketch is open.
     pub then_start: Option<&'static str>,
+    /// The Targets input lists the bodies the operation changes by default (the visible ones),
+    /// following what is shown, until it is edited by hand.
+    pub targets_follow: bool,
 }
 
 /// OK computing off the window thread: the dialog's commands evaluated on a scratch copy of the
@@ -515,6 +518,7 @@ impl Dialog {
             extra: serde_json::Map::new(),
             refused: None,
             then_start: None,
+            targets_follow: false,
         }
     }
 
@@ -801,7 +805,31 @@ impl Dialog {
         }
         d.sync_thread(s);
         d.advance();
+        // Added after the pre-selection and `advance`: a picked face stays a profile, and the
+        // profiles input stays active. Bodies selected beforehand are the targets.
+        if matches!(d.kind, Kind::Extrude { .. }) {
+            let mut targets = SelInput::new(TARGETS, BODIES, true);
+            targets.items = s.selection.iter().filter(|sel| matches!(sel, Sel::Body { .. })).cloned().collect();
+            d.targets_follow = targets.items.is_empty();
+            d.inputs.push(targets);
+            d.follow_targets(s);
+        }
         Some(d)
+    }
+
+    /// While the Targets input follows the defaults, set it to them: the bodies the operation
+    /// changes as things are shown now ([`default_targets`]).
+    pub(crate) fn follow_targets(&mut self, s: &Session) {
+        if !self.targets_follow || self.editing.is_some() || !matches!(self.kind, Kind::Extrude { .. }) {
+            return;
+        }
+        let Kind::Extrude { operation, .. } = self.kind else { return };
+        let want = default_targets(s, self, TargetScope::Op(operation));
+        if let Some(inp) = self.inputs.iter_mut().find(|i| i.label == TARGETS)
+            && inp.items != want
+        {
+            inp.items = want;
+        }
     }
 
     /// Resolve a newly selected face without replacing an authored size or changing the
@@ -1056,6 +1084,9 @@ impl Dialog {
             inp.items.retain(|x| !matches!(x, Sel::Profile { sketch: s2, .. } if s2 != sketch));
         }
         let Some(inp) = self.inputs.get_mut(self.active) else { return };
+        if inp.label == TARGETS {
+            self.targets_follow = false;
+        }
         inp.toggle(picked);
         self.focus = true;
         // A measurement is between two items: a third pick starts over from the last one.
@@ -1081,6 +1112,9 @@ impl Dialog {
         }
         let measure = matches!(self.kind, Kind::Measure { .. });
         let Some(inp) = self.inputs.get_mut(self.active) else { return };
+        if inp.label == TARGETS {
+            self.targets_follow = false;
+        }
         if !add {
             inp.items.clear();
         }
@@ -1784,6 +1818,9 @@ fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::
     let mut clear: Option<usize> = None;
     let mut activate: Option<usize> = None;
     for (i, inp) in d.inputs.iter().enumerate().skip(range.start).take(range.end.saturating_sub(range.start)) {
+        if inp.label == TARGETS {
+            continue;
+        }
         let stored_reference = feature_pattern_reference_key(d, i).and_then(|key| d.extra.get(key)).filter(|_| inp.items.is_empty());
         row_label(ui, inp.label);
         ui.horizontal(|ui| {
@@ -2208,16 +2245,33 @@ fn auto_operation(app: &SolveApp, d: &mut Dialog) {
     if !matches!(d.kind, Kind::Extrude { auto_op: true, .. }) {
         return;
     }
-    let Some(params) = dialog_commands(app, d).ok().and_then(|c| c.into_iter().next()).map(|(_, p)| p) else { return };
+    // The bodies the extrude would change decide, asked as targets: the ones listed by hand, else
+    // what the command takes on its own (less hidden bodies). None (an empty component, hidden
+    // bodies only) makes a new body.
+    let scope = match (d.targets_follow, d.inputs.iter().find(|i| i.label == TARGETS)) {
+        (false, Some(listed)) => listed.items.clone(),
+        _ => default_targets(&app.session, d, TargetScope::Auto),
+    };
+    let mut probe = d.clone();
+    if let Kind::Extrude { operation, .. } = &mut probe.kind {
+        *operation = if scope.is_empty() { 0 } else { 1 };
+    }
+    if let Some(listed) = probe.inputs.iter_mut().find(|i| i.label == TARGETS) {
+        listed.items = scope.clone();
+    }
+    let Some(params) = dialog_commands(app, &probe).ok().and_then(|c| c.into_iter().next()).map(|(_, p)| p) else { return };
     // To an object, the extrude goes to it on whichever side it is: that is the side (#1633).
     if params.get("to").is_some()
         && let Some(reach) = solidcraft_engine::extrude_reach(&app.session, &params)
     {
         side = crate::smart_extrude::side(reach, 0);
     }
-    let Some(fresh) = solidcraft_engine::auto_operation(&app.session, &params).and_then(|op| OPS.iter().position(|o| *o == op)) else {
-        return;
+    let fresh = if scope.is_empty() {
+        Some(0)
+    } else {
+        solidcraft_engine::auto_operation(&app.session, &params).and_then(|op| OPS.iter().position(|o| *o == op))
     };
+    let Some(fresh) = fresh else { return };
     if let Kind::Extrude { operation, smart, .. } = &mut d.kind {
         *operation = crate::smart_extrude::operation(fresh, *operation, side, &mut smart.latch);
     }
@@ -2420,6 +2474,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     ui.label(tr("dialog.selection_guidance"));
                     ui.end_row();
                 }
+                d.follow_targets(&app.session);
                 input_rows(&mut d, ui, &app.session);
                 match &mut d.kind {
                     Kind::Sketch => {
@@ -2581,6 +2636,15 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             *auto_op = false;
                         }
                         ui.end_row();
+                        // A new body changes no other body.
+                        let targets = d.inputs.iter().position(|i| i.label == TARGETS);
+                        if *operation == 0 {
+                            if targets == Some(d.active) {
+                                d.active = 0;
+                            }
+                        } else if let Some(i) = targets {
+                            targets_row(ui, &app.session, &mut d.inputs, i, &mut d.active, &mut d.targets_follow, d.editing.is_some());
+                        }
                     }
                     Kind::Revolve { angle, operation, .. } => {
                         row_label(ui, "Type");
@@ -3351,6 +3415,117 @@ pub(crate) fn roll_marker(app: &mut SolveApp, marker: Option<usize>) -> Result<(
 /// The pick input an extent of To Object adds (a face, vertex or point to go to).
 const TO_OBJECT: &str = "To Object";
 const FROM_OBJECT: &str = "From Object";
+/// The bodies an extrude joins, cuts or intersects.
+pub(crate) const TARGETS: &str = "Targets";
+
+fn picked_bodies(inputs: &[SelInput], label: &str) -> Vec<String> {
+    inputs
+        .iter()
+        .filter(|i| i.label == label)
+        .flat_map(|i| &i.items)
+        .filter_map(|x| if let Sel::Body { name } = x { Some(name.clone()) } else { None })
+        .collect()
+}
+
+/// Which bodies [`default_targets`] lists for: the operation chosen, or Auto deciding one.
+#[derive(Clone, Copy, PartialEq)]
+enum TargetScope {
+    Op(usize),
+    Auto,
+}
+
+/// The bodies a new extrude changes unless told otherwise: what `solid.extrude` takes on its
+/// own, less hidden bodies and meshes. A Join from a body's face, or a sketch on one, that body;
+/// a Cut or Intersect where the active component has no body, every body (as the command takes
+/// part in every one then); Auto from faces where it has none, every body; else the active
+/// component's. A Join or Auto with none, the design itself active and the shown bodies all in
+/// one component (a part kept in a component): those.
+fn default_targets(s: &Session, d: &Dialog, scope: TargetScope) -> Vec<Sel> {
+    let picked = d.inputs.first().map(|i| i.items.as_slice()).unwrap_or_default();
+    if scope == TargetScope::Op(1) {
+        let face = match picked.first() {
+            Some(Sel::Face { body, .. }) => Some(body.clone()),
+            Some(Sel::Profile { sketch, .. }) => solidcraft_engine::join_face_body(s, &json!({"sketch": sketch})),
+            _ => None,
+        };
+        if let Some(body) = face.filter(|b| s.body_visible(b)) {
+            return vec![Sel::Body { name: body }];
+        }
+    }
+    let st = s.model.state();
+    let in_active = |b: &&solidcraft_engine::doc::ModelBody| s.doc.model_body_component(b) == s.active_component;
+    let has_own = st.bodies.iter().any(|b| in_active(&b));
+    // Faces of one body, which the command takes as a group.
+    let first_body = match picked.first() {
+        Some(Sel::Face { body, .. }) => Some(body),
+        _ => None,
+    };
+    let faces = picked.len() > 1 && picked.iter().all(|x| matches!(x, Sel::Face { body, .. } if Some(body) == first_body));
+    let every = match scope {
+        TargetScope::Op(op) => (op == 2 || op == 3) && !has_own,
+        TargetScope::Auto => faces && !has_own,
+    };
+    let shown: Vec<_> = st.bodies.iter().filter(|b| !b.body.is_mesh() && s.body_visible(&b.name)).collect();
+    let mut names: Vec<String> = shown.iter().filter(|b| every || in_active(b)).map(|b| b.name.clone()).collect();
+    if names.is_empty() && !has_own && s.active_component == 0 && matches!(scope, TargetScope::Op(1) | TargetScope::Auto) {
+        let mut parts = shown.iter().map(|b| s.doc.model_body_component(b));
+        if let Some(first) = parts.next()
+            && parts.all(|c| c == first)
+        {
+            names = shown.iter().map(|b| b.name.clone()).collect();
+        }
+    }
+    names.into_iter().map(|name| Sel::Body { name }).collect()
+}
+
+/// The Targets row: a pill per body (× takes it out) and a chip that picks bodies into it.
+fn targets_row(ui: &mut egui::Ui, s: &Session, inputs: &mut [SelInput], index: usize, active: &mut usize, follow: &mut bool, editing: bool) {
+    let t = Tokens::get();
+    let Some(inp) = inputs.get_mut(index) else { return };
+    row_label(ui, TARGETS);
+    let mut remove = None;
+    let mut activate = false;
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP).with_main_wrap(true), |ui| {
+        // About as wide as the other fields: more bodies wrap onto more lines, not a wider dialog.
+        ui.set_max_width(FIELD_W + 8.0);
+        ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+        for (k, item) in inp.items.iter().enumerate() {
+            let name = selection_label(s, item);
+            let pill = egui::Button::new(RichText::new(format!("{name}  ×")).color(Color32::WHITE))
+                .wrap_mode(egui::TextWrapMode::Extend)
+                .fill(t.chip)
+                .min_size(vec2(0.0, 22.0));
+            let r = ui.add(pill).on_hover_text(tr("Remove from Targets"));
+            crate::scenario::publish_handle(&format!("dialog:target:{name}"), r.rect.center());
+            if r.clicked() {
+                remove = Some(k);
+            }
+        }
+        if inp.items.is_empty() && editing {
+            ui.label(RichText::new(tr("All bodies of the component")).color(t.text_dim));
+        }
+        let on = index == *active;
+        let stroke = if on { Stroke::new(1.5, t.accent) } else { Stroke::new(1.0, t.dialog_border.gamma_multiply(1.6)) };
+        let chip = egui::Button::new(RichText::new(tr("dialog.select")).color(t.text))
+            .wrap_mode(egui::TextWrapMode::Extend)
+            .fill(Color32::TRANSPARENT)
+            .stroke(stroke)
+            .min_size(vec2(0.0, 22.0));
+        let r = crate::frame::add_outlined(ui, chip, stroke.width);
+        publish_row(&r);
+        if r.on_hover_text(format!("{} (click to pick into this input)", hint(inp))).clicked() {
+            activate = true;
+        }
+    });
+    ui.end_row();
+    if let Some(k) = remove {
+        inp.items.remove(k);
+        *follow = false;
+    }
+    if activate {
+        *active = index;
+    }
+}
 
 fn object_on(inputs: &[SelInput], label: &str) -> bool {
     inputs.iter().any(|i| i.label == label)
@@ -3863,6 +4038,16 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             }
             if object_on(&d.inputs, FROM_OBJECT) {
                 common["from"] = object_point(&d.inputs, FROM_OBJECT).ok_or("select the object to extrude from")?;
+            }
+            let op = OPS.get(*operation).copied().unwrap_or("new");
+            let targets = picked_bodies(&d.inputs, TARGETS);
+            if op != "new" && !targets.is_empty() {
+                common["targets"] = json!(targets);
+            }
+            // An edit of a feature made without targets keeps it so; a new one changes exactly
+            // the bodies listed.
+            if op != "new" && targets.is_empty() && d.editing.is_none() {
+                return Err(tr("Pick the bodies to change, or choose New Body").to_string());
             }
             let with = |extra: Value| -> Value {
                 let mut p = common.clone();
@@ -4948,8 +5133,13 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                     inp.items = items.into_iter().map(|index| Sel::Profile { sketch: sketch.0, index }).collect();
                 }
             }
-            if !targets.is_empty() {
+            // `*` (every body) has no body to show: it is kept as it is.
+            let every = targets.iter().any(|t| *t == "*");
+            if every {
                 d.extra.insert("targets".into(), json!(targets));
+            }
+            if let Some(input) = d.inputs.iter_mut().find(|i| i.label == TARGETS) {
+                input.items = if every { Vec::new() } else { targets.iter().map(|t| Sel::Body { name: t.to_string() }).collect() };
             }
             d
         }
