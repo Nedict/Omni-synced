@@ -41,6 +41,12 @@ impl ContentWidth {
         label_width(ui, text)
     }
 
+    /// Width of a strong configuration name, using the same font as its table cell.
+    pub(crate) fn name(ui: &Ui, text: &str) -> f32 {
+        let t = Tokens::get();
+        ui.painter().layout_no_wrap(text.to_owned(), crate::fonts::semibold(t.font_label), t.form_ink).size().x.ceil()
+    }
+
     pub(crate) fn button(ui: &Ui, label: &str) -> f32 {
         label_width(ui, label) + 2.0 * ui.spacing().button_padding.x
     }
@@ -48,11 +54,6 @@ impl ContentWidth {
     pub(crate) fn dropdown(ui: &Ui, options: &[&str]) -> f32 {
         let text = options.iter().map(|text| label_width(ui, text)).fold(0.0, f32::max);
         text + 2.0 * ui.spacing().button_padding.x + ui.spacing().icon_width + ui.spacing().icon_spacing
-    }
-
-    pub(crate) fn editor(ui: &Ui, value: &str) -> f32 {
-        let t = Tokens::get();
-        ui.painter().layout_no_wrap(value.to_owned(), egui::FontId::monospace(t.font_label), t.text).size().x.ceil() + 2.0 * t.form_inset
     }
 }
 
@@ -72,7 +73,9 @@ pub(super) fn header_column(ui: &Ui, text: &str) -> f32 {
 /// Shared label width, capped at 1.6x. Tokens: `form_label_width, font_label, dialog_label, space_4`.
 pub(super) fn label_column(ui: &Ui, text: &str, row_width: f32) -> f32 {
     let t = Tokens::get();
-    let base = t.form_label_width;
+    // Wide manager cards use the approved 104 pt label column; compact cards retain room
+    // for their existing controls. Both sizes derive from the same form/spacing tokens.
+    let base = if row_width >= t.form_card_width + t.space_24 * 2.0 { t.form_label_width + t.space_24 + t.space_10 } else { t.form_label_width };
     let natural = label_width(ui, text);
     let widest = match ui.stack().iter().find(|node| node.tags().contains(FORM)).map(|node| node.id) {
         Some(form) => {
@@ -98,3 +101,14 @@ pub(super) fn label_column(ui: &Ui, text: &str, row_width: f32) -> f32 {
 #[cfg(test)]
 #[path = "metrics_tests.rs"]
 mod tests;
+
+/// Table rows leave four points above/below the shared control. Tokens: control_height, space_8.
+pub(crate) fn table_row_height() -> f32 {
+    Tokens::get().control_height + Tokens::get().space_8
+}
+
+/// Label/control gutter for the same responsive form grid as label_column.
+pub(super) fn label_gap(width: f32) -> f32 {
+    let t = Tokens::get();
+    if width >= t.form_card_width + t.space_24 * 2.0 { t.space_10 } else { t.space_8 }
+}

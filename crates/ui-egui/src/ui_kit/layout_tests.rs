@@ -24,7 +24,7 @@ fn row_height_and_label_column_are_fixed_for_long_labels_and_expressions() {
     let control = scenario::rect_of("dialog:control:Radius").unwrap();
     assert_eq!(first.height(), Tokens::get().control_height);
     assert_eq!(second.height(), Tokens::get().control_height);
-    // The design's grid: 24 pt controls with a 5 pt row gap and a 70 pt label column (wider only for long labels).
+    // The design's grid: 28 pt controls with a 5 pt row gap and a 70 pt label column (wider only for long labels).
     assert!(
         (second.top() - first.bottom() - Tokens::get().form_gap_y).abs() < 0.01,
         "Plex Mono fields must retain the row gap: {first:?}, {second:?}"

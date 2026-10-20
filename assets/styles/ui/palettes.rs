@@ -38,20 +38,25 @@ impl Tokens {
             font_article_heading: 17.0,
             font_title: 22.0,
             font_display: 26.0,
-            control_height: 24.0,
-            control_radius: 5,
+            control_height: 28.0,
+            form_ink: Color32::from_rgb(27, 36, 48),
+            form_dim: Color32::from_rgb(74, 88, 104),
+            form_primary: Color32::from_rgb(35, 110, 173),
+            form_error: Color32::from_rgb(161, 52, 44),
+            form_error_fill: Color32::from_rgb(252, 239, 237),
+            control_radius: 6,
             form_label_width: 70.0,
             form_gap_y: 5.0,
-            form_footer_height: 38.0,
-            form_header_height: 30.0,
+            form_footer_height: 48.0,
+            form_header_height: 40.0,
             form_card_width: 264.0,
-            form_icon_size: 18.0,
-            form_close_size: 22.0,
-            form_inset: 7.0,
+            form_icon_size: 19.0,
+            form_close_size: 26.0,
+            form_inset: 9.0,
             form_icon_inset: 4.5,
             form_section_icon_size: 11.0,
             form_checkbox_height: 22.0,
-            form_button_height: 26.0,
+            form_button_height: 28.0,
             sketch_palette_width: 232.0,
             sketch_mode_size: 36.0,
             sketch_mode_radius: 7,
@@ -130,7 +135,7 @@ impl Tokens {
             sketch_point_free: Color32::from_rgb(30, 90, 200),
             section_cap: Color32::from_rgb(214, 128, 72),
             dialog_bg: Color32::from_rgb(250, 251, 252),
-            dialog_border: Color32::from_rgb(208, 212, 220),
+            dialog_border: Color32::from_rgb(213, 219, 227),
             chip: Color32::from_rgb(38, 120, 218),
             heading_bg: Color32::from_rgb(218, 223, 231),
             subheading_bg: Color32::from_rgb(234, 237, 242),
@@ -147,13 +152,13 @@ impl Tokens {
             app_bar_hover_strong: Color32::from_rgba_unmultiplied_const(255, 255, 255, 40),
             app_bar_tab_active: Color32::from_rgb(53, 59, 71),
             dialog_body: Color32::from_rgb(255, 255, 255),
-            dialog_footer: Color32::from_rgb(246, 248, 250),
+            dialog_footer: Color32::from_rgb(244, 246, 249),
             dialog_rule: Color32::from_rgb(230, 234, 240),
             control_fill: Color32::from_rgb(255, 255, 255),
             control_border: Color32::from_rgb(195, 203, 214),
             dialog_label: Color32::from_rgb(58, 70, 86),
             selected_ink: Color32::from_rgb(26, 80, 127),
-            selected_bg: Color32::from_rgb(227, 240, 251),
+            selected_bg: Color32::from_rgb(232, 241, 250),
             timeline_item: Color32::WHITE,
             timeline_item_error: Color32::from_rgb(250, 220, 220),
             timeline_marker: Color32::from_rgb(70, 76, 88),
@@ -215,20 +220,20 @@ impl Tokens {
         t.font_article_heading = 17.0;
         t.font_title = 22.0;
         t.font_display = 26.0;
-        t.control_height = 24.0;
-        t.control_radius = 5;
+        t.control_height = 28.0;
+        t.control_radius = 6;
         t.form_label_width = 70.0;
         t.form_gap_y = 5.0;
-        t.form_footer_height = 38.0;
-        t.form_header_height = 30.0;
+        t.form_footer_height = 48.0;
+        t.form_header_height = 40.0;
         t.form_card_width = 264.0;
-        t.form_icon_size = 18.0;
-        t.form_close_size = 22.0;
-        t.form_inset = 7.0;
+        t.form_icon_size = 19.0;
+        t.form_close_size = 26.0;
+        t.form_inset = 9.0;
         t.form_icon_inset = 4.5;
         t.form_section_icon_size = 11.0;
         t.form_checkbox_height = 22.0;
-        t.form_button_height = 26.0;
+        t.form_button_height = 28.0;
         t.sketch_palette_width = 232.0;
         t.sketch_mode_size = 36.0;
         t.sketch_mode_radius = 7;
@@ -300,6 +305,11 @@ impl Tokens {
         t.box_crossing = Color32::from_rgb(80, 200, 120);
         t.bend_up = Color32::from_rgb(110, 200, 120);
         t.bend_down = Color32::from_rgb(240, 150, 80);
+        t.form_ink = t.text;
+        t.form_dim = t.text_dim;
+        t.form_primary = t.accent;
+        t.form_error = t.error;
+        t.form_error_fill = t.timeline_item_error;
         t
     }
 

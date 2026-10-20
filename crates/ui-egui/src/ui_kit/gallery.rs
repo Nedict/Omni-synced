@@ -28,6 +28,146 @@ macro_rules! element {
 
 // One entry per element/variant: names, rendering and geometry expectations stay together.
 const ELEMENTS: &[Element] = &[
+    element!("mono_note", |ui, _| {
+        text(ui, "solid.fillet · replayable", Text::MonoNote("sample"));
+    }),
+    element!("color_thumbnail", |ui, _| {
+        color_thumbnail(ui, ui.id().with("thumb"), Tokens::get().accent, "Sample", ());
+    }),
+    element!("list_frame", |ui, _| {
+        list_frame(ui, "sample", |ui| {
+            text(ui, "Sample", Text::Cell);
+        });
+    }),
+    element!("segmented_primary", |ui, s| {
+        segmented(ui, &mut s.selected, &["U8", "F"], Segments { primary: true, ..Default::default() });
+    }),
+    element!("color_popover", |ui, _| {
+        color_popover(ui, &mut [204, 208, 214]);
+    }),
+    element!("report_list", |ui, _| {
+        report_list(ui, "sample", 120.0, |ui| {
+            report_header(ui, "Internal error", 3, "2026-10-18 21:04:12", "Report", |ui| {
+                bin_button(ui, "Delete");
+            });
+            text(ui, "solid.fillet · replayable", Text::MonoNote("sample"));
+        });
+    }),
+    element!("path_chip", |ui, _| {
+        path_chip(ui, "/reports", |ui| {
+            button(ui, "Copy path", Button::Normal);
+        });
+    }),
+    element!("empty_box", |ui, _| {
+        empty_box(ui, "empty", "No crash reports.");
+    }),
+    element!("report_header", |ui, _| {
+        report_header(ui, "Internal error", 3, "2026-10-18 21:04:12", "Report", |ui| {
+            bin_button(ui, "Delete");
+        });
+    }),
+    element!("parameter_import", |ui, _| {
+        icon_label_button(ui, "Import…", "import_tray", true, false);
+    }),
+    element!("parameter_export_csv", |ui, _| {
+        icon_label_button(ui, "Export CSV…", "export_tray", true, false);
+    }),
+    element!("parameter_export_json", |ui, _| {
+        icon_label_button(ui, "Export JSON…", "export_tray", true, false);
+    }),
+    element!("icon_label_button", |ui, _| {
+        icon_label_button(ui, "Copy path", "copy", true, false);
+    }),
+    element!("section_count", |ui, _| {
+        section_count(ui, "count", "Parameters", false, Some(5), |_| {});
+    }),
+    element!("bin_button", |ui, _| {
+        bin_button(ui, "Delete");
+    }),
+    element!("active_pill", |ui, _| {
+        active_pill(ui);
+    }),
+    element!("library_cell", |ui, s| {
+        library_cell(ui, ui.id().with("library"), &mut s.value, "Default material", |ui| {
+            button(ui, "Steel", Button::Normal);
+        });
+    }),
+    element!("add_prompt", "dialog:table:add_prompt:add", Some("dialog:table:add_prompt:add"), |ui, _| {
+        table(ui, "add_prompt", &[Column::new("Name", 1.0).flex()], "Empty", |ui, table| {
+            table.add_prompt(ui, "Add configuration", "Add configuration");
+        });
+    }),
+    element!("removable_header", |ui, _| {
+        ui.allocate_ui(vec2(140.0, row_height()), |ui| {
+            removable_header(ui, "Width");
+        });
+    }),
+    element!("plus_header", |ui, _| {
+        ui.allocate_ui(vec2(140.0, row_height()), |ui| {
+            ui.set_min_size(vec2(140.0, row_height()));
+            plus_header(ui, |_| {});
+        });
+    }),
+    element!("table_custom", |ui, _| {
+        table_custom(ui, "custom", &[Column::new("Name", 1.0)], "Empty", |ui, table| {
+            table.headers(ui, |_, _| false);
+            table.add_prompt(ui, "Add parameter", "Add parameter");
+        });
+    }),
+    element!("table_row_height", |ui, _| {
+        ui.allocate_space(vec2(table_row_height(), table_row_height()));
+    }),
+    element!("summary_row", |ui, s| {
+        summary_row(ui, "Rule", "Drives width = 120 mm", &mut s.checked, ContentWidth::button(ui, "Edit"), |ui| {
+            button(ui, "Edit", Button::Normal);
+        });
+    }),
+    element!("compact_button", |ui, _| {
+        compact_button(ui, "▲", "Move up", true, false);
+    }),
+    element!("error", |ui, _| {
+        text(ui, "Invalid expression", Text::Error("gallery"));
+    }),
+    element!("table_flex", |ui, s| {
+        table(
+            ui,
+            "flex",
+            &[Column::new("Name", 1.0).flex(), Column::new("Expression", 1.5).flex(), Column::new("Actions", 0.0).icon_only()],
+            "Empty",
+            |ui, table| {
+                table.row(ui, "row", false, |row| {
+                    row.cell(|ui| {
+                        text(ui, "Width", Text::Cell);
+                    });
+                    row.cell(|ui| {
+                        cell_editor(ui, ui.id().with("expression"), &mut s.value, "Expression", false);
+                    });
+                    row.cell(|ui| {
+                        bin_button(ui, "Delete");
+                    });
+                });
+                table.add_prompt(ui, "Add parameter", "Add parameter");
+            },
+        );
+    }),
+    element!("cell_name", |ui, _| {
+        text(ui, "Width", Text::NameCell(false));
+    }),
+    element!("cell_name_strong", |ui, _| {
+        text(ui, "Default", Text::NameCell(true));
+    }),
+    element!("text_heading", |ui, _| {
+        text(ui, "Configuration rules", Text::Heading("gallery"));
+    }),
+    element!("cell_mono", |ui, _| {
+        text(ui, "mm", Text::MonoCell);
+    }),
+    element!("cell_value", |ui, _| {
+        text(ui, "80.0000 mm", Text::Value("gallery_value", false));
+    }),
+    element!("cell_value_error", |ui, _| {
+        text(ui, "Unknown parameter", Text::Value("gallery_value_error", true));
+    }),
     element!("scope", |ui, _| {
         scope(ui, |ui| {
             ui.allocate_space(vec2(row_height(), row_height()));
@@ -39,8 +179,8 @@ const ELEMENTS: &[Element] = &[
     element!("header_height", |ui, _| {
         ui.allocate_space(vec2(header_height(), header_height()));
     }),
-    element!("timeline_slider", |ui, _| {
-        timeline_slider(ui, &mut 12.0, 0.0..=100.0, true);
+    element!("slider_integer_without_editor", |ui, _| {
+        slider(ui, &mut 12.0, 0.0..=100.0, Slider { show_value: false, integer: true, ..Default::default() });
     }),
     element!("placement_field", |ui, s| {
         placement_field(ui, ui.id().with("placement"), &mut s.value, "Distance");
@@ -54,8 +194,8 @@ const ELEMENTS: &[Element] = &[
     element!("number_field", |ui, _| {
         number_field(ui, &mut 3_u32, 1..=200, 1.0, "");
     }),
-    element!("formatted_slider", |ui, _| {
-        formatted_slider(ui, &mut 1.0, 0.5..=2.5, 0.05, |v| format!("{:.0} %", v * 100.0));
+    element!("slider_percent", |ui, _| {
+        slider(ui, &mut 1.0, 0.5..=2.5, Slider { step: Some(0.05), format: |v| format!("{:.0} %", v * 100.0), ..Default::default() });
     }),
     element!("dropdown_menu", |ui, _| {
         dropdown_menu(ui, "gallery_menu", "Preset", |ui| {
@@ -67,6 +207,12 @@ const ELEMENTS: &[Element] = &[
     }),
     element!("text_lines", |ui, _| {
         text_lines(ui, "gallery", "Licence\nSecond line");
+    }),
+    element!("report_divider", "dialog:divider:gallery_report", None, |ui, _| {
+        report_list(ui, "gallery_report", row_height() * 3.0, |ui| {
+            text(ui, "Report message", Text::Report("gallery_report", false));
+            report_divider(ui, "gallery_report");
+        });
     }),
     element!("table", "dialog:table:gallery:row", None, |ui, s| {
         table(ui, "gallery", &[Column::new("Name", 1.0), Column::new("Expression", 1.5)], "No rows", |ui, table| {
@@ -107,7 +253,10 @@ const ELEMENTS: &[Element] = &[
         color_field(ui, &mut [120, 150, 180]);
     }),
     element!("slider", |ui, _| {
-        slider(ui, &mut 0.5, 0.0..=1.0);
+        slider(ui, &mut 0.5, 0.0..=1.0, Default::default());
+    }),
+    element!("slider_disabled", |ui, _| {
+        ui.add_enabled_ui(false, |ui| slider(ui, &mut 0.5, 0.0..=1.0, Default::default()));
     }),
     element!("scalar_field", |ui, _| {
         scalar_field(ui, &mut 0.5, 0.0..=1.0);
@@ -139,6 +288,31 @@ const ELEMENTS: &[Element] = &[
     }),
     element!("header", "dialog:header", Some("dialog:close"), |ui, _| {
         header(ui, "fillet", "Fillet", || {});
+    }),
+    element!("disclosure", |ui, _| {
+        let t = Tokens::get();
+        for open in [true, false] {
+            let (rect, _) = ui.allocate_exact_size(vec2(t.form_close_size, t.form_close_size), egui::Sense::hover());
+            disclosure(ui.painter(), rect.center(), open, t.form_dim);
+        }
+    }),
+    element!("disclosure_button_at", |ui, _| {
+        let t = Tokens::get();
+        for open in [true, false] {
+            let (rect, _) = ui.allocate_exact_size(vec2(t.form_close_size, t.form_close_size), egui::Sense::hover());
+            ui.push_id(open, |ui| disclosure_button_at(ui, rect, open, crate::i18n::tr_label(if open { "Collapse" } else { "Expand" })));
+        }
+    }),
+    element!("dropdown_indicator", |ui, _| {
+        let t = Tokens::get();
+        let (rect, _) = ui.allocate_exact_size(vec2(t.form_section_icon_size, t.form_section_icon_size), egui::Sense::hover());
+        dropdown_indicator(ui.painter(), rect, t.form_dim);
+    }),
+    element!("collapsible_header_closed", "dialog:header", Some("dialog:collapse"), |ui, _| {
+        collapsible_header(ui, "fillet", "Fillet", &mut true, || {});
+    }),
+    element!("section_open", "dialog:section:Advanced", Some("dialog:section:Advanced"), |ui, _| {
+        section(ui, "gallery_open", "Advanced", true, |_| {});
     }),
     element!("collapsible_header", "dialog:header", Some("dialog:collapse"), |ui, _| {
         collapsible_header(ui, "fillet", "Fillet", &mut false, || {});
@@ -175,6 +349,10 @@ const ELEMENTS: &[Element] = &[
     }),
     element!("value_pair_named", "dialog:row:Position", Some("dialog:Distance X"), |ui, s| {
         value_pair(ui, "Position", [&mut s.value, &mut s.second], ["X", "Y"], Some(["Distance X", "Distance Y"]));
+    }),
+    element!("inline_name", |ui, s| {
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), row_height()), egui::Sense::hover());
+        inline_name(ui, rect, ui.id().with("inline_name"), &mut s.value);
     }),
     element!("field", "dialog:row:Gallery", Some("dialog:Gallery"), |ui, s| {
         row(ui, "Gallery", |ui| {
@@ -245,6 +423,48 @@ const ELEMENTS: &[Element] = &[
         row(ui, "Gallery", |ui| {
             checkbox(ui, "Option", &mut s.checked);
         });
+    }),
+    element!("checkbox_off", |ui, _| {
+        checkbox(ui, "Option", &mut false);
+    }),
+    element!("checkbox_disabled_on", |ui, _| {
+        ui.add_enabled_ui(false, |ui| checkbox(ui, "Option", &mut true));
+    }),
+    element!("checkbox_disabled_off", |ui, _| {
+        ui.add_enabled_ui(false, |ui| checkbox(ui, "Option", &mut false));
+    }),
+    element!("checkbox_indeterminate", |ui, _| {
+        checkbox_indeterminate(ui, "Option", &mut false, true);
+    }),
+    element!("checkbox_disabled_mixed", |ui, _| {
+        ui.add_enabled_ui(false, |ui| checkbox_indeterminate(ui, "Option", &mut false, true));
+    }),
+    element!("checkbox_focused", |ui, _| {
+        egui::Frame::new().inner_margin(Tokens::get().space_4).show(ui, |ui| {
+            checkbox(ui, "Option", &mut true).request_focus();
+        });
+    }),
+    element!("checkbox_focused_off", |ui, _| {
+        egui::Frame::new().inner_margin(Tokens::get().space_4).show(ui, |ui| {
+            checkbox(ui, "Option", &mut false).request_focus();
+        });
+    }),
+    element!("checkbox_focused_mixed", |ui, _| {
+        egui::Frame::new().inner_margin(Tokens::get().space_4).show(ui, |ui| {
+            checkbox_indeterminate(ui, "Option", &mut false, true).request_focus();
+        });
+    }),
+    element!("checkbox_hovered", |ui, _| {
+        checkbox(ui, "Option", &mut false);
+    }),
+    element!("checkbox_hovered_on", |ui, _| {
+        checkbox(ui, "Option", &mut true);
+    }),
+    element!("checkbox_hovered_mixed", |ui, _| {
+        checkbox_indeterminate(ui, "Option", &mut false, true);
+    }),
+    element!("command_menu_button", |ui, _| {
+        command_menu_button(ui, "save", "Save", "save", "Ctrl+S", true);
     }),
     element!("primary_button", "dialog:row:Gallery", Some("dialog:button:Create"), |ui, _| {
         row(ui, "Gallery", |ui| {
@@ -341,7 +561,7 @@ const ELEMENTS: &[Element] = &[
             ui.id().with("popup"),
             anchor,
             0,
-            &[PopupOption { text: "Width", detail: "10 mm", color: Tokens::get().text }],
+            &[PopupOption { kind: "parameter", text: "Width", detail: "10 mm", color: Tokens::get().text }],
             "Choose",
         );
         // The popup is on a separate layer; reserve its painted allocation for the same checks.
@@ -365,12 +585,21 @@ fn every_element_has_geometry_and_stays_in_its_allocation_in_both_themes() {
             let name = element.name;
             let ctx = crate::fonts::test_context();
             ctx.set_visuals(if dark { egui::Visuals::dark() } else { egui::Visuals::light() });
-            for _ in 0..3 {
+            for pass in 0..3 {
+                let events = if element.name.starts_with("checkbox_hovered") && pass > 0 {
+                    vec![egui::Event::PointerMoved(scenario::rect_of("gallery:allocation").expect("hover allocation").center())]
+                } else {
+                    vec![]
+                };
                 scenario::clear_handles();
                 let mut allocation = egui::Rect::NOTHING;
                 let mut published = ("", None);
                 let mut output = ctx.run_ui(
-                    egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 600.0))), ..Default::default() },
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 600.0))),
+                        events,
+                        ..Default::default()
+                    },
                     |ui| {
                         ui.set_width(320.0);
                         allocation = ui
@@ -610,8 +839,8 @@ fn popup_suggestions_and_selectable_lists_keep_click_selection() {
                 egui::Rect::from_min_size(egui::pos2(10.0, 10.0), vec2(220.0, 24.0)),
                 0,
                 &[
-                    PopupOption { text: "width", detail: "Parameter · 10 mm", color: Tokens::get().text },
-                    PopupOption { text: "height", detail: "Parameter · 20 mm", color: Tokens::get().text },
+                    PopupOption { kind: "parameter", text: "width", detail: "Parameter · 10 mm", color: Tokens::get().text },
+                    PopupOption { kind: "parameter", text: "height", detail: "Parameter · 20 mm", color: Tokens::get().text },
                 ],
                 "Choose",
             );
@@ -655,7 +884,7 @@ fn many_draggable_samples_wrap_inside_the_available_width() {
         });
     });
     assert_eq!(rects.len(), 20);
-    assert!(rects.iter().all(|rect| rect.right() <= bounds.right() && rect.width() == Tokens::get().control_height));
+    assert!(rects.iter().all(|rect| rect.right() <= bounds.right() && rect.width() == Tokens::get().control_height + Tokens::get().space_6));
     assert!(rects.last().unwrap().top() > rects.first().unwrap().top(), "samples must wrap to additional rows");
 }
 
@@ -664,7 +893,19 @@ fn gallery_covers_every_inline_element() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui_kit");
     let names: std::collections::BTreeSet<_> = ELEMENTS.iter().map(|e| e.name).collect();
     assert_eq!(names.len(), ELEMENTS.len(), "duplicate gallery entries");
-    for file in ["actions.rs", "choice.rs", "fields.rs", "layout.rs", "metrics.rs", "status.rs", "table.rs"] {
+    for file in [
+        "actions.rs",
+        "checks.rs",
+        "choice.rs",
+        "color.rs",
+        "disclosure.rs",
+        "fields.rs",
+        "layout.rs",
+        "metrics.rs",
+        "reports.rs",
+        "status.rs",
+        "table.rs",
+    ] {
         let source = std::fs::read_to_string(root.join(file)).unwrap();
         let ast = syn::parse_file(&source).unwrap();
         for item in ast.items {

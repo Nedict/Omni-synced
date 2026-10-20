@@ -62,50 +62,78 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         .cards(2.0)
         .actions("", crate::i18n::tr("ui.close"), None)
         .show(ctx, true, |ui| {
-            ui_kit::text(ui, crate::i18n::tr("crash.intro"), ui_kit::Text::Note("intro"));
+            ui.spacing_mut().item_spacing.y = crate::theme::Tokens::get().space_10;
+            let intro = ui_kit::text(ui, crate::i18n::tr("crash.intro"), ui_kit::Text::Hint("intro"));
+            crate::scenario::publish_rect("dialog:note:intro", intro.rect);
             if let Some(d) = app.crashes.dir.clone() {
                 // A long path is cut short (hover shows it all): it must not widen the card.
-                ui_kit::label_actions(ui, &d, |ui| {
-                    if ui_kit::button(ui, crate::i18n::tr("crash.copy_folder"), ui_kit::Button::Small).clicked() {
+                ui_kit::path_chip(ui, &d, |ui| {
+                    if ui_kit::icon_label_button(ui, crate::i18n::tr("crash.copy_folder"), "copy", true, false).clicked() {
                         ctx.copy_text(d.clone());
                     }
                 });
             }
-            ui_kit::divider(ui, "reports");
+            // The list/empty-box top border replaces the old divider; retain its geometry alias.
+            crate::scenario::publish_rect(
+                "dialog:divider:reports",
+                egui::Rect::from_min_size(ui.next_widget_position(), egui::vec2(ui.available_width(), 1.0)),
+            );
             if app.crashes.reports.is_empty() {
-                ui_kit::text(ui, crate::i18n::tr_label("No crash reports."), ui_kit::Text::Note("none"));
+                ui_kit::empty_box(ui, "none", crate::i18n::tr_label("No crash reports."));
             }
-            egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-                for r in &app.crashes.reports {
-                    let times = if r.count > 1 { format!("  ×{}", r.count) } else { String::new() };
-                    let title = format!("{}  {}{times}", r.time.replace('T', " ").trim_end_matches('Z'), kind_label(&r.kind));
-                    ui_kit::label_actions(ui, &title, |ui| {
-                        if ui_kit::button(ui, crate::i18n::tr("crash.report"), ui_kit::Button::Small).clicked() {
-                            report = Some(r.id.clone());
+            if !app.crashes.reports.is_empty() {
+                ui_kit::report_list(
+                    ui,
+                    "reports",
+                    crate::theme::Tokens::get().control_height * 10.0 + crate::theme::Tokens::get().space_10 * 4.0,
+                    |ui| {
+                        let last = app.crashes.reports.len().saturating_sub(1);
+                        for (index, r) in app.crashes.reports.iter().enumerate() {
+                            let times = if r.count > 1 { format!("  ×{}", r.count) } else { String::new() };
+                            let title = format!("{}  {}{times}", r.time.replace('T', " ").trim_end_matches('Z'), kind_label(&r.kind));
+                            ui.push_id(&r.id, |ui| {
+                                ui.spacing_mut().item_spacing.y = crate::theme::Tokens::get().space_6;
+                                ui.add_space(crate::theme::Tokens::get().space_10);
+                                ui_kit::report_header(
+                                    ui,
+                                    kind_label(&r.kind),
+                                    r.count,
+                                    r.time.replace('T', " ").trim_end_matches('Z'),
+                                    &title,
+                                    |ui| {
+                                        if ui_kit::bin_button(ui, crate::i18n::tr("ui.delete")).clicked() {
+                                            delete = Some(Some(r.id.clone()));
+                                        }
+                                        ui_kit::icon_label_button(ui, crate::i18n::tr("crash.copy_path"), "copy", true, false)
+                                            .clicked()
+                                            .then(|| ctx.copy_text(r.path.clone()));
+                                        if ui_kit::icon_label_button(ui, crate::i18n::tr("crash.report"), "bug_report", true, false).clicked() {
+                                            report = Some(r.id.clone());
+                                        }
+                                    },
+                                );
+                                let mut detail = r.command.clone().unwrap_or_default();
+                                if r.replayable {
+                                    let sep = if detail.is_empty() { "" } else { " · " };
+                                    detail = format!("{detail}{sep}{}", crate::i18n::tr("crash.replayable"));
+                                }
+                                if !detail.is_empty() {
+                                    ui_kit::text(ui, &detail, ui_kit::Text::MonoNote(&format!("detail:{}", r.id)));
+                                }
+                                ui_kit::text(ui, &r.message, ui_kit::Text::Report(&format!("message:{}", r.id), false));
+                                ui.add_space(crate::theme::Tokens::get().space_6);
+                                if index != last {
+                                    ui_kit::report_divider(ui, &format!("end:{}", r.id));
+                                }
+                            });
                         }
-                        if ui_kit::button(ui, crate::i18n::tr("crash.copy_path"), ui_kit::Button::Small).clicked() {
-                            ctx.copy_text(r.path.clone());
-                        }
-                        if ui_kit::button(ui, crate::i18n::tr("ui.delete"), ui_kit::Button::Small).clicked() {
-                            delete = Some(Some(r.id.clone()));
-                        }
-                    });
-                    let mut detail = r.command.clone().unwrap_or_default();
-                    if r.replayable {
-                        let sep = if detail.is_empty() { "" } else { " · " };
-                        detail = format!("{detail}{sep}{}", crate::i18n::tr("crash.replayable"));
-                    }
-                    if !detail.is_empty() {
-                        ui_kit::text(ui, &detail, ui_kit::Text::Note(&format!("detail:{}", r.id)));
-                    }
-                    ui_kit::text(ui, &r.message, ui_kit::Text::Report(&format!("message:{}", r.id), false));
-                    ui_kit::divider(ui, &format!("end:{}", r.id));
-                }
-            });
+                    },
+                );
+            }
             if !app.crashes.note.is_empty() {
                 ui_kit::text(ui, &app.crashes.note, ui_kit::Text::Note("note"));
             }
-            if ui_kit::button(ui, "Delete all", ui_kit::Button::Enabled(!app.crashes.reports.is_empty())).clicked() {
+            if ui_kit::icon_label_button(ui, crate::i18n::tr_label("Delete all"), "delete", !app.crashes.reports.is_empty(), true).clicked() {
                 delete = Some(None);
             }
         });
@@ -220,5 +248,52 @@ mod tests {
         };
         super::announce(&mut h.app, &[quiet]);
         assert!(!h.app.crashes.open);
+    }
+
+    #[test]
+    fn inventory_actions_details_empty_state_and_keyboard_remain_reachable() {
+        let d = folder("inventory");
+        let mut h = crate::scenario::Harness::new();
+        h.app.crashes.folder = Some(d.clone());
+        super::open(&mut h.app);
+        h.frames(5);
+        for handle in [
+            "dialog:close",
+            "dialog:cancel",
+            "dialog:Close",
+            "dialog:button::Copy folder path",
+            "dialog:button::Report…",
+            "dialog:button::Copy path",
+            "dialog:button::Delete",
+            "dialog:button::Delete all",
+        ] {
+            assert!(crate::scenario::handle_at(handle).is_some(), "missing {handle}");
+        }
+        for rect in [
+            "dialog:note:intro",
+            "dialog:divider:reports",
+            "dialog:list:reports",
+            "dialog:note:detail:20261012-162341-bb60791ed6692f1d",
+            "dialog:report:message:20261012-162341-bb60791ed6692f1d",
+        ] {
+            assert!(crate::scenario::rect_of(rect).is_some(), "missing {rect}");
+        }
+        let title = "2026-10-12 16:23:41  Closed unexpectedly  ×2";
+        assert!(crate::scenario::handle_at(&format!("dialog:cell:{title}")).is_some());
+        assert!(crate::scenario::handle_at(&format!("dialog:cell:{}", d.display())).is_some());
+        h.step(&json!({"click":{"handle":"dialog:button::Copy folder path"}})).unwrap();
+        h.step(&json!({"click":{"handle":"dialog:button::Copy path"}})).unwrap();
+        h.step(&json!({"key":"Enter"})).unwrap();
+        assert!(h.app.crashes.open, "Enter has no primary action");
+        h.step(&json!({"click":{"handle":"dialog:button::Delete"}})).unwrap();
+        h.frames(3);
+        assert!(h.app.crashes.reports.is_empty());
+        assert!(crate::scenario::rect_of("dialog:note:none").is_some());
+        assert!(crate::scenario::rect_of("dialog:note:note").is_some());
+        h.step(&json!({"click":{"handle":"dialog:button::Delete all"}})).unwrap();
+        assert!(h.app.crashes.reports.is_empty());
+        h.step(&json!({"key":"Escape"})).unwrap();
+        assert!(!h.app.crashes.open);
+        let _ = std::fs::remove_dir_all(d);
     }
 }

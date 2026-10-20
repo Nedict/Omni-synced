@@ -9,7 +9,7 @@ pub(crate) fn header(ui: &mut Ui, icon: &str, title: &str, on_close: impl FnOnce
 }
 
 /// Optional fold action for managers which historically hide their inputs without losing edits.
-/// Tokens: header tokens and space_4; retains the legacy chevron accessibility identities.
+/// Tokens: header tokens and space_4; retains the dialog:collapse scenario handle.
 pub(crate) fn collapsible_header(ui: &mut Ui, icon: &str, title: &str, collapsed: &mut bool, on_close: impl FnOnce()) {
     header_impl(ui, icon, title, Some(collapsed), on_close);
 }
@@ -17,9 +17,9 @@ pub(crate) fn collapsible_header(ui: &mut Ui, icon: &str, title: &str, collapsed
 fn header_impl(ui: &mut Ui, icon: &str, title: &str, collapsed: Option<&mut bool>, on_close: impl FnOnce()) {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), header_height()), egui::Sense::hover());
-    // Design: padding 0 8 0 10, an 18 pt icon, a 7 pt gap, a 22 pt close button.
+    // Shared card chrome: 12 pt left inset, 19 pt icon, 8 pt gap and 26 pt close target.
     let icon_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.left() + t.space_10 + t.form_icon_size / 2.0, rect.center().y),
+        egui::pos2(rect.left() + t.space_12 + t.form_icon_size / 2.0, rect.center().y),
         vec2(t.form_icon_size, t.form_icon_size),
     );
     crate::icons::paint_icon(ui.painter(), icon_rect, icon, 1.0);
@@ -34,8 +34,7 @@ fn header_impl(ui: &mut Ui, icon: &str, title: &str, collapsed: Option<&mut bool
     }
     let right = if let Some(collapsed) = collapsed {
         let fold = egui::Rect::from_min_size(egui::pos2(close_rect.left() - t.form_close_size - t.space_4, close_rect.top()), close_rect.size());
-        let response = icon_button_at(ui, fold, if *collapsed { "chevron" } else { "chevron_right" }, if *collapsed { "«" } else { "»" })
-            .on_hover_text(crate::i18n::tr_label(if *collapsed { "Expand" } else { "Collapse" }));
+        let response = super::disclosure_button_at(ui, fold, !*collapsed, crate::i18n::tr_label(if *collapsed { "Expand" } else { "Collapse" }));
         scenario::publish_handle("dialog:collapse", response.rect.center());
         if response.clicked() {
             *collapsed = !*collapsed;
@@ -44,9 +43,9 @@ fn header_impl(ui: &mut Ui, icon: &str, title: &str, collapsed: Option<&mut bool
     } else {
         close_rect.left()
     };
-    let left = (icon_rect.right() + t.form_inset).min(right);
+    let left = (icon_rect.right() + t.space_8).min(right);
     let title_rect = egui::Rect::from_min_max(egui::pos2(left, rect.top()), egui::pos2(right.max(left), rect.bottom()));
-    paint_text(ui, title_rect, title, crate::fonts::semibold(t.font_label), t.text, false);
+    paint_text(ui, title_rect, title, crate::fonts::semibold(t.font_heading), t.form_ink, false);
     let title_response = ui.interact(title_rect, ui.make_persistent_id("title_text"), egui::Sense::hover());
     title_response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), title));
     scenario::publish_rect("dialog:header", rect);
@@ -65,6 +64,7 @@ pub(crate) struct Panel<'a> {
     width: f32,
     ok: &'a str,
     cancel: &'a str,
+    reset_scroll: bool,
 }
 
 pub(crate) struct FeatureOptions<'a> {
@@ -94,7 +94,7 @@ impl<'a> Panel<'a> {
     pub(crate) fn feature_frame(ctx: &egui::Context, layout: crate::shell::LayoutMode, side: crate::frame::Side) -> egui::Frame {
         let t = Tokens::get();
         if layout == crate::shell::LayoutMode::Floating {
-            crate::frame::shell_card(t.dialog_body).inner_margin(0.0)
+            crate::frame::shell_card(t.dialog_body).stroke(egui::Stroke::new(1.0, t.dialog_border)).corner_radius(t.radius_xl).inner_margin(0.0)
         } else {
             crate::frame::dock_frame(ctx, side).fill(t.dialog_body).inner_margin(0.0)
         }
@@ -111,7 +111,13 @@ impl<'a> Panel<'a> {
     }
 
     pub(crate) fn new(title: &'a str, id: egui::Id, anchor: egui::Pos2, viewport: egui::Rect, side: crate::frame::Side, frame: egui::Frame) -> Self {
-        Self { title, id, anchor, viewport, side, frame, width: Tokens::get().form_card_width, ok: "OK", cancel: "Cancel" }
+        Self { title, id, anchor, viewport, side, frame, width: Tokens::get().form_card_width, ok: "OK", cancel: "Cancel", reset_scroll: false }
+    }
+
+    /// A newly opened manager starts at its first section. Later frames retain user scrolling.
+    pub(crate) fn reset_scroll(mut self, reset: bool) -> Self {
+        self.reset_scroll = reset;
+        self
     }
 
     pub(crate) fn width(mut self, width: f32) -> Self {
@@ -141,7 +147,9 @@ impl<'a> Panel<'a> {
             }
             crate::frame::Side::Left => self.anchor.x.clamp(viewport.left(), viewport.right() - width),
         };
-        egui::pos2(x, self.anchor.y.clamp(viewport.top(), viewport.bottom()))
+        let chrome =
+            Tokens::get().form_header_height + Tokens::get().form_footer_height + self.frame.total_margin().sum().y + crate::shell::SHELL_GAP;
+        egui::pos2(x, self.anchor.y.clamp(viewport.top(), (viewport.bottom() - chrome).max(viewport.top())))
     }
 
     pub(crate) fn window(&self) -> egui::Window<'a> {
@@ -232,28 +240,33 @@ impl<'a> Panel<'a> {
             let fields_height = (bottom - ui.cursor().top() - footer_height).max(0.0);
             let fields_rect = egui::Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), fields_height));
             let state = if collapsed.as_deref().copied().unwrap_or(false) {
+                scenario::publish_count("dialog:body:content_height", 0.0);
                 ComputeStatus { text: None, busy: disabled, applying: disabled }
             } else {
                 ui.scope_builder(egui::UiBuilder::new().max_rect(fields_rect), |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("feature_fields")
-                        .min_scrolled_height(0.0)
-                        .max_height(fields_height)
-                        .show(ui, |ui| {
+                    if self.reset_scroll {
+                        // Clear persisted offset, animation and momentum once per opening.
+                        egui::scroll_area::State::default().store(ui.ctx(), ui.make_persistent_id(egui::IdSalt::new("feature_fields")));
+                    }
+                    let scroll =
+                        egui::ScrollArea::vertical().id_salt("feature_fields").min_scrolled_height(0.0).max_height(fields_height).show(ui, |ui| {
                             if disabled {
                                 ui.disable();
                             }
                             egui::Frame::NONE
                                 .inner_margin(egui::Margin {
-                                    left: t.space_10 as i8,
-                                    right: t.space_10 as i8,
-                                    top: t.space_8 as i8,
-                                    bottom: t.space_6 as i8,
+                                    left: t.space_12 as i8,
+                                    right: t.space_12 as i8,
+                                    top: t.space_12 as i8,
+                                    bottom: t.space_12 as i8,
                                 })
                                 .show(ui, body)
                                 .inner
-                        })
-                        .inner
+                        });
+                    scenario::publish_count("dialog:body:content_height", f64::from(scroll.content_size.y));
+                    scenario::publish_count("dialog:body:scroll_y", f64::from(scroll.state.offset.y));
+                    scenario::publish_rect("dialog:body:viewport", scroll.inner_rect);
+                    scroll.inner
                 })
                 .inner
             };
@@ -416,8 +429,9 @@ impl<'a> Prompt<'a> {
     /// `valid` enables the primary action.
     pub(crate) fn show(self, ctx: &egui::Context, valid: bool, body: impl FnOnce(&mut Ui)) -> (bool, super::Action) {
         let t = Tokens::get();
-        let frame = crate::frame::shell_card(t.dialog_body).inner_margin(0.0);
-        let inner_width = (self.width - frame.total_margin().sum().x).max(0.0);
+        let frame =
+            crate::frame::shell_card(t.dialog_body).stroke(egui::Stroke::new(1.0, t.dialog_border)).corner_radius(t.radius_xl).inner_margin(0.0);
+        let inner_width = (self.width.min(ctx.content_rect().width()) - frame.total_margin().sum().x).max(0.0);
         let window = egui::Window::new(self.title)
             .enabled(!crate::issue_report::cad_input_blocked())
             .id(self.id)
@@ -441,7 +455,7 @@ impl<'a> Prompt<'a> {
                 let mut close = false;
                 header(ui, self.icon, self.title, || close = true);
                 egui::Frame::NONE
-                    .inner_margin(egui::Margin { left: t.space_10 as i8, right: t.space_10 as i8, top: t.space_8 as i8, bottom: t.space_6 as i8 })
+                    .inner_margin(egui::Margin { left: t.space_12 as i8, right: t.space_12 as i8, top: t.space_12 as i8, bottom: t.space_12 as i8 })
                     .show(ui, body);
                 if !self.enter_submits {
                     ui.ctx().input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));

@@ -12,6 +12,10 @@ pub(crate) enum Action {
     Apply,
 }
 
+/// Reorder actions are directional navigation, not disclosures.
+pub(crate) const MOVE_UP: &str = "▲";
+pub(crate) const MOVE_DOWN: &str = "▼";
+
 /// Every enabled button shows the pointing hand on hover, as the application's other clickable
 /// chrome does. A disabled button stays inert and keeps the arrow.
 fn pointer_on_hover(ui: &Ui, response: &Response) {
@@ -22,13 +26,23 @@ fn pointer_on_hover(ui: &Ui, response: &Response) {
 
 /// Icon action inside an existing rectangle. Tokens: `form_icon_inset, text, text_dim; icon palette`.
 pub(crate) fn icon_button_at(ui: &mut Ui, rect: egui::Rect, icon: &str, label: &str) -> Response {
+    icon_button_colored(ui, rect, icon, label, None)
+}
+
+pub(super) fn icon_button_colored(ui: &mut Ui, rect: egui::Rect, icon: &str, label: &str, ink: Option<egui::Color32>) -> Response {
     let t = Tokens::get();
     let response = ui.interact(rect, ui.make_persistent_id(("icon_button", icon, label)), egui::Sense::click());
+    if response.clicked() {
+        response.request_focus();
+    }
+    if response.hovered() {
+        ui.painter().rect_filled(rect, t.control_radius, t.hover);
+    }
     crate::icons::paint_ink(
         ui.painter(),
         rect.shrink(t.form_icon_inset),
         icon,
-        if response.hovered() || response.has_focus() { t.text } else { t.text_dim },
+        ink.unwrap_or(if response.hovered() || response.has_focus() { t.form_ink } else { t.form_dim }),
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), crate::i18n::tr_label(label)));
     pointer_on_hover(ui, &response);
@@ -59,14 +73,14 @@ pub(crate) fn footer(ui: &mut Ui, ok_label: &str, cancel_label: &str, ok_enabled
     let t = Tokens::get();
     let ok_enabled = ok_enabled && !ok_label.is_empty();
     // The footer is a full-width band (the card has no margin of its own): its own fill, a rule
-    // on top, and the buttons right-aligned with 6 pt above/below and 10 pt at the sides.
+    // on top, and the buttons right-aligned with 10 pt above/below and 12 pt at the sides.
     let (band, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), t.form_footer_height), egui::Sense::hover());
-    let corner = t.radius_lg.saturating_sub(1);
+    let corner = t.radius_xl.saturating_sub(1);
     ui.painter().rect_filled(band, egui::CornerRadius { nw: 0, ne: 0, sw: corner, se: corner }, t.dialog_footer);
     ui.painter().hline(band.x_range(), band.top(), egui::Stroke::new(1.0, t.dialog_rule));
     scenario::publish_rect("dialog:footer", band);
     scenario::publish_count("dialog:ok:enabled", f64::from(ok_enabled && ui.is_enabled()));
-    let inner = band.shrink2(vec2(t.space_10, t.space_6));
+    let inner = band.shrink2(vec2(t.space_12, t.space_10));
     scenario::publish_rect("dialog:footer:actions", inner);
     let mut action = if ui.is_enabled() { keyboard(ui.ctx(), ok_enabled) } else { Action::None };
     let mut actions_left = inner.right();
@@ -84,16 +98,16 @@ pub(crate) fn footer(ui: &mut Ui, ok_label: &str, cancel_label: &str, ok_enabled
                 let text = RichText::new(crate::i18n::tr_label(label)).size(t.font_label).color(if primary && ok_enabled {
                     t.on_accent
                 } else if primary {
-                    t.text_dim
+                    t.form_dim
                 } else {
-                    t.text
+                    t.form_ink
                 });
                 let response = ui.add_enabled(
                     live,
                     egui::Button::new(if primary && ok_enabled { text.bold_face() } else { text })
                         .selected(marked && !primary)
                         .fill(if primary && ok_enabled {
-                            t.accent
+                            t.form_primary
                         } else if marked {
                             t.selected_bg
                         } else {
@@ -101,11 +115,11 @@ pub(crate) fn footer(ui: &mut Ui, ok_label: &str, cancel_label: &str, ok_enabled
                         })
                         .stroke(egui::Stroke::new(
                             if primary && ok_enabled { 0.0 } else { 1.0 },
-                            if marked && !primary { t.accent } else { t.control_border },
+                            if marked && !primary { t.form_primary } else { t.control_border },
                         ))
                         .wrap_mode(egui::TextWrapMode::Extend)
                         .corner_radius(t.control_radius)
-                        .min_size(vec2(0.0, t.form_button_height)),
+                        .min_size(vec2(if primary { t.space_24 * 3.0 } else { 0.0 }, t.form_button_height)),
                 );
                 pointer_on_hover(ui, &response);
                 actions_left = actions_left.min(response.rect.left());
@@ -127,7 +141,7 @@ pub(crate) fn footer(ui: &mut Ui, ok_label: &str, cancel_label: &str, ok_enabled
         let right = (actions_left - t.space_8).max(left);
         let rect = egui::Rect::from_min_max(egui::pos2(left, inner.top()), egui::pos2(right, inner.bottom()));
         // Added after the actions, so status changes cannot change the button IDs.
-        ui.put(rect, egui::Label::new(RichText::new(status).medium().color(t.text_dim)).truncate());
+        ui.put(rect, egui::Label::new(RichText::new(status).medium().color(t.form_dim)).truncate());
     }
     action
 }
@@ -165,7 +179,7 @@ pub(crate) fn button_pair(ui: &mut egui::Ui, key: &str, states: [bool; 2], butto
                     egui::StrokeKind::Inside,
                 );
                 let label = crate::i18n::tr_label(button.label);
-                let galley = ui.painter().layout_no_wrap(label.to_string(), egui::FontId::proportional(t.font_label), t.text);
+                let galley = ui.painter().layout_no_wrap(label.to_string(), egui::FontId::proportional(t.font_label), t.form_ink);
                 let icon_width = if button.icon.is_some() { t.sketch_footer_icon_size + t.space_4 } else { 0.0 };
                 let left = rect.center().x - (galley.size().x + icon_width) / 2.0;
                 let painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
@@ -179,10 +193,10 @@ pub(crate) fn button_pair(ui: &mut egui::Ui, key: &str, states: [bool; 2], butto
                         icon,
                         t.icon,
                         t.icon_fill,
-                        t.accent,
+                        t.form_primary,
                     );
                 }
-                painter.galley(egui::pos2(left + icon_width, rect.center().y - galley.size().y / 2.0), galley, t.text);
+                painter.galley(egui::pos2(left + icon_width, rect.center().y - galley.size().y / 2.0), galley, t.form_ink);
                 response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), on, label));
                 pointer_on_hover(ui, &response);
                 crate::scenario::publish_target(&format!("{key}:{}", button.key), rect);
@@ -223,7 +237,7 @@ pub(crate) fn button(ui: &mut Ui, label: impl Into<egui::WidgetText>, options: B
 #[cfg(any(not(target_arch = "wasm32"), test))]
 pub(crate) fn primary_button(ui: &mut Ui, label: &str) -> Response {
     let t = Tokens::get();
-    let response = ui.add(egui::Button::new(RichText::new(crate::i18n::tr_label(label)).color(t.on_accent)).fill(t.accent));
+    let response = ui.add(egui::Button::new(RichText::new(crate::i18n::tr_label(label)).color(t.on_accent)).fill(t.form_primary));
     pointer_on_hover(ui, &response);
     scenario::publish_target(&format!("dialog:button:{label}"), response.rect);
     response
@@ -244,4 +258,97 @@ pub(crate) fn action_menu<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)
     let response = ui.menu_button(crate::i18n::tr_label(label), |ui| super::scope(ui, add));
     scenario::publish_target(&format!("dialog:menu:{label}"), response.response.rect);
     response
+}
+
+/// Borderless compact table actions. Existing star glyphs keep their identities; arrows
+/// use the kit chevron rather than a font-dependent triangle. Tokens: form_close_size,
+/// space_4, control_radius, form_primary/dim/ink, selected_bg, hover, font_label.
+pub(crate) fn compact_button(ui: &mut Ui, glyph: &str, tooltip: &str, enabled: bool, selected: bool) -> Response {
+    let t = Tokens::get();
+    let arrow = matches!(glyph, MOVE_UP | MOVE_DOWN);
+    let width = if arrow { t.form_close_size - t.space_4 } else { t.form_close_size };
+    let response = ui
+        .add_enabled_ui(enabled, |ui| {
+            let (rect, response) = ui.allocate_exact_size(vec2(width, t.form_close_size), egui::Sense::click());
+            if response.hovered() || selected {
+                ui.painter().rect_filled(rect, t.control_radius, if selected { t.selected_bg } else { t.hover });
+            }
+            let ink = if !enabled {
+                t.form_dim.gamma_multiply(0.35)
+            } else if selected {
+                t.form_primary
+            } else {
+                t.form_dim
+            };
+            if arrow {
+                let icon = rect.shrink(t.form_icon_inset);
+                if glyph == MOVE_UP {
+                    crate::icons::paint_ink_flipped(ui.painter(), icon, "chevron", ink);
+                } else {
+                    crate::icons::paint_ink(ui.painter(), icon, "chevron", ink);
+                }
+            } else {
+                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, glyph, egui::FontId::proportional(t.font_label), ink);
+            }
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), glyph));
+            response
+        })
+        .inner;
+    publish_button(ui, &response, glyph);
+    pointer_on_hover(ui, &response);
+    response.on_hover_text(crate::i18n::tr_label(tooltip))
+}
+
+/// Secondary action with an existing icon, optionally using the danger ink. Keeps button handles.
+pub(crate) fn icon_label_button(ui: &mut Ui, label: &str, icon: &str, enabled: bool, danger: bool) -> Response {
+    let t = Tokens::get();
+    let label = crate::i18n::tr_label(label);
+    let text_width = ui.painter().layout_no_wrap(label.to_string(), egui::FontId::proportional(t.font_label), t.form_ink).size().x;
+    let response = ui
+        .add_enabled_ui(enabled, |ui| {
+            let (rect, response) =
+                ui.allocate_exact_size(vec2(text_width + t.space_10 * 2.0 + t.space_14 + t.space_6, t.control_height), egui::Sense::click());
+            let ink = if danger { t.form_error } else { t.form_ink };
+            ui.painter().rect(
+                rect,
+                t.control_radius,
+                if response.hovered() { t.hover } else { t.control_fill },
+                egui::Stroke::new(1.0, t.control_border),
+                egui::StrokeKind::Inside,
+            );
+            let icon_rect =
+                egui::Rect::from_center_size(egui::pos2(rect.left() + t.space_10 + t.space_14 / 2.0, rect.center().y), vec2(t.space_14, t.space_14));
+            crate::icons::paint_ink(ui.painter(), icon_rect, icon, ink);
+            super::text::paint_text(
+                ui,
+                egui::Rect::from_min_max(egui::pos2(icon_rect.right() + t.space_6, rect.top()), rect.max),
+                label,
+                egui::FontId::proportional(t.font_label),
+                ink,
+                false,
+            );
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
+            response
+        })
+        .inner;
+    pointer_on_hover(ui, &response);
+    let key = format!("dialog:button:{}:{label}", super::layout::label(ui));
+    scenario::publish_handle(&key, response.rect.center());
+    scenario::publish_rect(&key, response.rect);
+    response
+}
+
+/// Ribbon overflow action; keeps its native atom identity, shortcut, accessibility and behaviour.
+/// Tokens: space_16 and the existing icon palette; button chrome inherits the menu style.
+pub(crate) fn command_menu_button(ui: &mut Ui, id: &str, label: &str, icon: &str, shortcut: &str, enabled: bool) -> Response {
+    ui.add_enabled_ui(enabled, |ui| {
+        let atom = ui.id().with(("overflow_icon", id));
+        let side = Tokens::get().space_16;
+        let row = egui::Button::new((egui::Atom::custom(atom, vec2(side, side)), label)).shortcut_text(shortcut).atom_ui(ui);
+        if let Some(rect) = row.rect(atom) {
+            crate::icons::paint_icon(ui.painter(), rect, icon, if enabled { 1.0 } else { 0.35 });
+        }
+        row.response
+    })
+    .inner
 }

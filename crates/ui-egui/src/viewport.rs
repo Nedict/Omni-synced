@@ -3677,25 +3677,25 @@ fn view_menu(app: &mut SolveApp, ui: &mut egui::Ui, button: Rect) -> bool {
             ui.label(app.tr("ui.graphics_preset"));
             crate::prefs::graphics_preset_selector(app, ui);
             ui.separator();
-            ui.checkbox(&mut app.ui.show_grid, crate::i18n::tr_label("Grid"));
-            ui.checkbox(&mut app.ui.ground_shadow, crate::i18n::tr_label("Ground shadow"));
+            crate::ui_kit::checkbox(ui, crate::i18n::tr_label("Grid"), &mut app.ui.show_grid);
+            crate::ui_kit::checkbox(ui, crate::i18n::tr_label("Ground shadow"), &mut app.ui.ground_shadow);
             crate::prefs::ambient_occlusion_checkbox(app, ui, "Ambient occlusion");
             ui.separator();
             let s = &mut app.ui.agent_cursor;
-            let show = ui.checkbox(&mut s.show, crate::i18n::tr_label("Show Agent Cursor"));
+            let show = crate::ui_kit::checkbox(ui, crate::i18n::tr_label("Show Agent Cursor"), &mut s.show);
             crate::scenario::publish_handle("view:agent_cursor", show.rect.center());
             ui.add_enabled_ui(s.show, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(crate::i18n::tr_label("Speed"));
                     crate::agent_cursor::speed_slider(ui, &mut s.speed);
                 });
-                ui.checkbox(&mut s.follow_camera, crate::i18n::tr_label("Follow camera (Look At sketches)"));
+                crate::ui_kit::checkbox(ui, crate::i18n::tr_label("Follow camera (Look At sketches)"), &mut s.follow_camera);
             });
             // The agent chat panel, once the chat is turned on in Preferences.
             if crate::agent_chat::shown(app) {
                 ui.separator();
                 let mut open = app.agent_chat.open;
-                let r = ui.checkbox(&mut open, crate::agent_chat::panel_tip());
+                let r = crate::ui_kit::checkbox(ui, &crate::agent_chat::panel_tip(), &mut open);
                 crate::scenario::publish_handle("view:agent_chat", r.rect.center());
                 if r.changed() {
                     app.agent_chat.open = open;

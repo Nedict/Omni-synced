@@ -132,6 +132,9 @@ fn choose_fillet_type(extra: &mut serde_json::Map<String, Value>, index: usize, 
 pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: &mut egui::Ui) -> bool {
     let t = Tokens::get();
     let mut enter = false;
+    if matches!(d.kind, Kind::Appearance(_)) {
+        ui.spacing_mut().item_spacing.y = t.space_10;
+    }
     if matches!(d.kind, Kind::Sketch | Kind::SketchModify(_) | Kind::Text(_) | Kind::TextMove(_) | Kind::EditParam { .. }) {
         let prompt = if let Some(input) = d.active_input() {
             tr(hint(input)).to_owned()

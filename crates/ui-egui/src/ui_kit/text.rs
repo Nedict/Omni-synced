@@ -10,7 +10,9 @@ pub(super) fn paint_text(ui: &Ui, rect: egui::Rect, text: &str, font: egui::Font
     if spaced {
         format.extra_letter_spacing = size * Tokens::get().font_section_tracking;
     }
-    let job = egui::text::LayoutJob::single_section(text.to_string(), format);
+    let mut job = egui::text::LayoutJob::single_section(text.to_string(), format);
+    job.wrap.max_width = rect.width().max(0.0);
+    job.wrap.max_rows = 1;
     let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
     // Snap to whole device pixels: a fractional origin blurs every glyph edge.
     let ppp = ui.ctx().pixels_per_point().max(0.5);

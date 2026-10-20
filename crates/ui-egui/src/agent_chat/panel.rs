@@ -361,7 +361,7 @@ fn glyph_button(ui: &mut egui::Ui, kind: &str, tip: &str) -> egui::Response {
     let p = ui.painter();
     match kind {
         "minimize" => {
-            p.line_segment([c + vec2(-5.0, 4.0), c + vec2(5.0, 4.0)], s);
+            ui_kit::disclosure(p, c, true, t.text);
         }
         "close" => {
             p.line_segment([c + vec2(-4.5, -4.5), c + vec2(4.5, 4.5)], s);
@@ -417,7 +417,7 @@ fn strip(app: &mut SolveApp, ui: &mut egui::Ui) {
     if resp.hovered() {
         ui.painter().rect_filled(button, 4.0, t.hover);
     }
-    crate::icons::paint(ui.painter(), button.shrink(4.0), "agent_chat", t.icon, t.icon_fill, t.accent);
+    ui_kit::disclosure(ui.painter(), button.center(), false, t.text);
     let state = app.agent_chat.state();
     ui.painter().circle_filled(pos2(r.center().x, button.bottom() + 10.0), 3.5, state_color(state));
     let waiting = app.agent_chat.waiting();
@@ -1362,6 +1362,10 @@ fn tool_card(ui: &mut egui::Ui, n: usize, title: &str, kind: &str, status: Optio
             let id = ui.make_persistent_id(("sc_agent_tool", n));
             let mut state_ = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false);
             let head = ui.horizontal(|ui| {
+                if output.is_some() {
+                    let (rect, _) = ui.allocate_exact_size(vec2(t.form_section_icon_size, t.form_section_icon_size), Sense::hover());
+                    ui_kit::disclosure(ui.painter(), rect.center(), state_.is_open(), t.text_dim);
+                }
                 status_dot(ui, color, filled);
                 // The state and kind keep their room at the right; the title is cut short before them.
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

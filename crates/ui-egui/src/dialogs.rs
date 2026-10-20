@@ -403,8 +403,9 @@ pub struct Dialog {
     pub profile_selection_changed: bool,
     /// Give the on-canvas value box the keyboard (and select its text) on the next frame.
     pub focus: bool,
-    /// Folded to its header (the "−" glyph).
+    /// Folded to its header (the shared disclosure chevron).
     pub collapsed: bool,
+    reset_scroll: bool,
     /// Transient display preference; never part of a command or a saved feature.
     pub preview_enabled: bool,
     /// Preserve Apply intent across asynchronous evaluation; never a command parameter.
@@ -523,6 +524,7 @@ impl Dialog {
             profile_selection_changed: false,
             focus: true,
             collapsed: false,
+            reset_scroll: true,
             preview_enabled: true,
             repeat_after_apply: false,
             extra: serde_json::Map::new(),
@@ -1999,7 +2001,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         app.viewport.dialog_rect = None;
     }
     let Some(mut d) = app.dialog.take() else {
-        if app.tree.redefine.is_none() {
+        if app.tree.redefine.is_none() && app.params.is_none() {
             crate::frame::reset_dock_offset(ctx);
         }
         return;
@@ -2090,7 +2092,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     };
     let panel =
         crate::ui_kit::Panel::new(&heading, egui::Id::new(("sc_dialog", title(&d.kind))), anchor, vp, side, frame).actions(ok_label, close_label);
-    let panel = if wide {
+    let panel = if matches!(d.kind, Kind::Appearance(_)) {
+        panel.width(t.form_card_width + t.form_label_width + t.space_6)
+    } else if wide {
         let panel = panel.wide();
         if side == crate::frame::Side::Left {
             let available = app.viewport.palette_rect.map_or(vp.width(), |r| (r.left() - vp.left() - t.space_8).max(0.0));
@@ -2101,6 +2105,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     } else {
         panel
     };
+    let reset_scroll = d.reset_scroll;
+    let panel =
+        panel.reset_scroll(reset_scroll && matches!(d.kind, Kind::Appearance(_) | Kind::Motion(crate::dialogs_motion::Mo::Configurations { .. })));
     let window = panel.window();
     let repeatable =
         matches!(&d.kind, Kind::SketchModify(k) if crate::sketch_modify_ui::repeatable(k)) && d.editing.is_none() && !d.extra.contains_key("pattern");
@@ -2142,6 +2149,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         } else {
             panel.feature(ui, heading, applying, valid, body)
         };
+        d.reset_scroll = false;
         d.collapsed = collapsed;
         cancel |= closed;
         if app.issue_report.draft.is_none() {

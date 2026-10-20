@@ -60,7 +60,7 @@ pub(super) fn configurations_rows(
         .chain(std::iter::once(crate::i18n::tr_label("Actions").to_owned()))
         .collect();
     let gap = ui.spacing().item_spacing.x;
-    let name_width = tb.rows.iter().map(|(name, _)| ui_kit::ContentWidth::label(ui, name)).fold(0.0, f32::max);
+    let name_width = tb.rows.iter().map(|(name, _)| ui_kit::ContentWidth::name(ui, name)).fold(0.0, f32::max);
     let status_width = (ui_kit::ContentWidth::label(ui, "Active") + gap + ui_kit::ContentWidth::button(ui, "Apply"))
         .max(ui_kit::ContentWidth::button(ui, "Activate"));
     let columns: Vec<_> = labels
@@ -68,38 +68,47 @@ pub(super) fn configurations_rows(
         .enumerate()
         .map(|(index, label)| {
             let min_width = if index == 0 {
-                (name_width + gap + status_width).max(ui_kit::ContentWidth::label(ui, "Remove the column"))
-            } else if index <= tb.columns.len() {
-                tb.rows
-                    .iter()
-                    .filter_map(|(_, values)| values.get(index - 1))
-                    .map(|value| ui_kit::ContentWidth::editor(ui, value))
-                    .fold(ui_kit::ContentWidth::button(ui, "×"), f32::max)
+                name_width + gap + status_width + crate::theme::Tokens::get().space_24
             } else {
-                ui_kit::ContentWidth::button(ui, "×")
+                ui_kit::row_height() * 2.0 + crate::theme::Tokens::get().space_24
             };
-            ui_kit::Column::new(label, 2.0).min_content_width(min_width)
+            if index == labels.len() - 1 {
+                ui_kit::Column::new(label, 0.0)
+                    .icon_only()
+                    .min_content_width(crate::theme::Tokens::get().control_height + crate::theme::Tokens::get().space_12)
+            } else {
+                let weight = if index == 0 {
+                    1.6
+                } else {
+                    match tb.columns.get(index - 1).map(|column| column_parts(column).0) {
+                        Some("param") => 0.9,
+                        Some("suppress") => 1.1,
+                        Some("material") => 1.2,
+                        _ => 1.3,
+                    }
+                };
+                ui_kit::Column::new(label, weight).flex().min_content_width(min_width)
+            }
         })
         .collect();
-    ui_kit::table(ui, "configuration_table", &columns, crate::i18n::tr("manage.empty"), |ui, table| {
-        // The column-action band shares the header's exact widths without posing as a data row.
-        if !tb.columns.is_empty() {
-            table.column_actions(ui, |row| {
-                row.cell(|ui| {
-                    ui_kit::text(ui, crate::i18n::tr_label("Remove the column"), ui_kit::Text::Cell);
-                });
-                for c in &tb.columns {
-                    row.cell(|ui| {
-                        let (kind, name) = column_parts(c);
-                        if ui_kit::button(ui, "×", ui_kit::Button::Normal).on_hover_text(crate::i18n::tr_label("Remove the column")).clicked() {
-                            let key = if kind == "suppress" { "feature" } else { kind };
-                            run(app, error, "config.column", json!({key:if kind == "face_appearance" {c.as_str()} else {name},"delete":true}));
-                        }
-                    });
+    ui_kit::table_custom(ui, "configuration_table", &columns, crate::i18n::tr("manage.empty"), |ui, table| {
+        table.headers(ui, |ui, index| {
+            if index == labels.len() - 1 {
+                column_menu(app, ui, error, &tb.columns);
+                true
+            } else if index > 0 {
+                if let (Some(column), Some(label)) = (tb.columns.get(index - 1), labels.get(index))
+                    && ui_kit::removable_header(ui, label)
+                {
+                    let (kind, name) = column_parts(column);
+                    let key = if kind == "suppress" { "feature" } else { kind };
+                    run(app, error, "config.column", json!({key:if kind == "face_appearance" {column.as_str()} else {name},"delete":true}));
                 }
-                row.cell(|_| {});
-            });
-        }
+                true
+            } else {
+                false
+            }
+        });
         for (name, values) in &tb.rows {
             let active = tb.active.as_deref() == Some(name.as_str());
             table.row(ui, name, active, |row| {
@@ -109,11 +118,11 @@ pub(super) fn configurations_rows(
                         egui::vec2(name_width, ui_kit::row_height()),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
-                            ui_kit::text(ui, name, ui_kit::Text::Cell);
+                            ui_kit::text(ui, name, ui_kit::Text::NameCell(true));
                         },
                     );
                     if active {
-                        ui_kit::text(ui, crate::i18n::tr_label("Active"), ui_kit::Text::Inline);
+                        ui_kit::active_pill(ui);
                         if v.get("matches").and_then(Value::as_bool) == Some(false) {
                             let apply = ui_kit::button(ui, crate::i18n::tr_label("Apply"), ui_kit::Button::Small);
                             crate::scenario::publish_handle(&format!("config:activate:{name}"), apply.rect.center());
@@ -132,51 +141,14 @@ pub(super) fn configurations_rows(
                 for (column, value) in tb.columns.iter().zip(values) {
                     row.cell(|ui| {
                         let (kind, _) = column_parts(column);
-                        let appearance = matches!(kind, "appearance" | "component_appearance" | "face_appearance");
-                        let shown = if appearance {
-                            solidcraft_engine::doc::config::appearance_cell(value)
-                                .ok()
-                                .flatten()
-                                .filter(|look| solidcraft_engine::doc::appearance::library(&look.name).as_ref() == Some(look))
-                                .map(|look| look.name)
-                                .unwrap_or_else(|| value.clone())
-                        } else {
-                            value.clone()
-                        };
-                        if kind == "material" || appearance {
-                            let mut choice = None;
-                            ui_kit::action_menu(ui, "Library", |ui| {
-                                let follow = if kind == "appearance" {
-                                    "Follow material"
-                                } else if appearance {
-                                    "Follow inherited appearance"
-                                } else {
-                                    "Default material"
-                                };
-                                if ui_kit::button(ui, crate::i18n::tr_label(follow), ui_kit::Button::Normal).clicked() {
-                                    choice = Some("Default".to_owned());
-                                    ui.close();
-                                }
-                                let choices: Vec<_> = if kind == "material" {
-                                    material_names.iter().filter(|n| *n != "Default").map(String::as_str).collect()
-                                } else {
-                                    solidcraft_engine::doc::appearance::LIBRARY.iter().map(|(name, _, _)| *name).collect()
-                                };
-                                for name in choices {
-                                    if ui_kit::button(ui, name, ui_kit::Button::Normal).clicked() {
-                                        choice = Some(name.to_owned());
-                                        ui.close();
-                                    }
-                                }
-                            });
-                            if let Some(choice) = choice {
-                                run(app, error, "config.row", json!({"name":name,"values":{column:choice}}));
-                            }
-                        }
+                        let shown = display_cell(kind, value);
                         let key = (name.clone(), column.clone());
                         let mut text = rule_editor.drafts.get(&key).cloned().unwrap_or_else(|| shown.clone());
                         let id = ui.make_persistent_id(&key);
-                        let response = ui_kit::cell_editor(ui, id, &mut text, "", false);
+                        let (response, choice) = value_control(ui, id, &mut text, kind, &material_names);
+                        if let Some(choice) = choice {
+                            run(app, error, "config.row", json!({"name":name,"values":{column:choice}}));
+                        }
                         crate::scenario::publish_handle(&format!("config:cell:{name}:{column}"), response.rect.center());
                         let focused = response.has_focus();
                         let completed = crate::params_dialog::complete(ui, &response, &mut text);
@@ -193,148 +165,98 @@ pub(super) fn configurations_rows(
                     });
                 }
                 row.cell(|ui| {
-                    if ui_kit::button(ui, "×", ui_kit::Button::Small).on_hover_text(crate::i18n::tr_label("Delete the row")).clicked() {
+                    if ui_kit::bin_button(ui, "Delete the row").clicked() {
                         run(app, error, "config.row", json!({"name":name,"delete":true}));
                     }
                 });
             });
         }
-    });
-    // New row (a copy of the active one) and new column.
-    ui_kit::row(ui, "Configuration", |ui| {
-        let id = ui.make_persistent_id("new_configuration");
-        ui_kit::cell_editor(ui, id, new_row, "new configuration", false);
-    });
-    ui.horizontal_wrapped(|ui| {
-        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-
-        if ui_kit::button(ui, crate::i18n::tr_label("Add Row"), ui_kit::Button::Normal)
-            .on_hover_text(crate::i18n::tr_label("A new configuration, a copy of the active one"))
-            .clicked()
-        {
-            let name = if new_row.trim().is_empty() {
-                (tb.rows.len() + 1..).map(|k| format!("Configuration{k}")).find(|n| !tb.rows.iter().any(|r| &r.0 == n)).unwrap_or_default()
-            } else {
-                new_row.trim().to_string()
-            };
-            let mut p = json!({ "name": name });
-            if let Some(a) = &tb.active {
-                p["from"] = json!(a);
-            }
-            run(app, error, "config.row", p);
-            new_row.clear();
-        }
-        // A column: a parameter's value or a feature's suppression.
-        let mut options: Vec<(String, Value)> = Vec::new();
-        for p in app.session.doc.all_param_exprs() {
-            if !tb.columns.contains(&format!("param:{}", p.0)) {
-                options.push((format!("{} (parameter)", p.0), json!({ "param": p.0 })));
-            }
-        }
-        for f in &app.session.doc.features {
-            if !tb.columns.contains(&format!("suppress:{}", f.name)) {
-                options.push((format!("Suppress {}", f.name), json!({ "feature": f.name })));
-            }
-        }
-        for body in &app.session.model.state().bodies {
-            for kind in ["material", "appearance"] {
-                if !tb.columns.contains(&format!("{kind}:{}", body.name)) {
-                    options.push((format!("{} ({kind})", body.name), json!({kind: body.name})));
-                }
-            }
-        }
-        for component in &app.session.doc.components {
-            if component.id != 0 && !tb.columns.contains(&format!("component_appearance:{}", component.id)) {
-                options.push((format!("{} (component appearance)", component.name), json!({"component_appearance":component.id})));
-            }
-        }
-        for selected in &app.session.selection {
-            if let solidcraft_engine::Sel::Face { body, point, .. } = selected {
-                options.push((format!("Selected face on {body} (shared appearance)"), json!({"face_appearance":{"body":body,"point":point}})));
-            }
-        }
-        let mut pick: Option<Value> = None;
-        ui_kit::action_menu(ui, "Add Column", |ui| {
-            egui::ScrollArea::vertical().max_height(ui_kit::row_height() * 12.0).show(ui, |ui| {
-                for (label, p) in &options {
-                    if ui_kit::button(ui, label.as_str(), ui_kit::Button::Normal).clicked() {
-                        pick = Some(p.clone());
-                        ui.close();
-                    }
-                }
-                ui_kit::action_menu(ui, "Face Appearance", |ui| {
-                    ui_kit::text(
-                        ui,
-                        crate::i18n::tr_label("Semantic faces share their appearance across instances."),
-                        ui_kit::Text::Note("semantic_faces"),
-                    );
-                    let state = app.session.model.state();
-                    for body in &state.bodies {
-                        if body.body.is_mesh() {
-                            continue;
-                        }
-                        ui_kit::action_menu(ui, &format!("Faces on {}", body.name), |ui| {
-                            if let Ok(faces) = body.body.faces((body.body.size() * 2e-3).max(1e-3)) {
-                                let mut seen = std::collections::BTreeSet::new();
-                                let mesh = body.mesh();
-                                let mut points = std::collections::BTreeMap::new();
-                                for (triangle, index) in mesh.triangles.iter().zip(&mesh.tri_face) {
-                                    if let std::collections::btree_map::Entry::Vacant(entry) = points.entry(*index as usize)
-                                        && let Some([a, b, c]) = mesh.tri(triangle)
-                                    {
-                                        entry.insert((a + b + c) * (1. / 3.));
-                                    }
-                                }
-                                for face in faces {
-                                    // A curved face centroid can lie on another surface.
-                                    // Pick an interior triangle point on this actual face.
-                                    let Some(point) = points.get(&face.index).copied() else { continue };
-                                    let Ok(target) = app.session.doc.configuration_face_target(body, face.index, point) else { continue };
-                                    let supported = if target.certificate.is_some() {
-                                        // Capture read this exact face's current source certificate.
-                                        // Enumerate its pieces once in the command, not per menu face.
-                                        app.session.doc.certify_config_face(&target).is_ok()
-                                    } else {
-                                        app.session.doc.configuration_face_indices(body, &target).is_ok()
-                                    };
-                                    if !supported || !seen.insert(target.name.clone()) {
-                                        continue;
-                                    }
-                                    let Some((_, role)) = target.name.split_once(':') else { continue };
-                                    if ui_kit::button(ui, role, ui_kit::Button::Normal).clicked() {
-                                        pick = Some(json!({"face_appearance":{"target":target}}));
-                                        ui.close();
-                                    }
-                                }
+        if rule_editor.adding_row {
+            let menu_was_open = egui::Popup::is_any_open(ui.ctx());
+            let mut commit = false;
+            let mut discard = false;
+            let mut left = false;
+            let reveal = rule_editor.focus_new_row;
+            let response = ui
+                .push_id("configuration_draft", |ui| {
+                    table.row(ui, "new", false, |row| {
+                        row.cell(|ui| {
+                            let id = ui.make_persistent_id("new_configuration");
+                            let focused = ui.memory(|m| m.has_focus(id) || m.had_focus_last_frame(id));
+                            let response = ui_kit::cell_editor(ui, id, new_row, "new configuration", false);
+                            crate::scenario::publish_handle("config:new:name", response.rect.center());
+                            if rule_editor.focus_new_row {
+                                response.request_focus();
+                                rule_editor.focus_new_row = false;
                             }
+                            commit = focused && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+                            left = response.lost_focus();
                         });
-                    }
-                });
-            });
-        });
-        if let Some(p) = pick {
-            // The first column starts the table (with a Default row of the current values).
-            let (id, p) = if tb.columns.is_empty() {
-                (
-                    "config.configure",
-                    if let Some(n) = p.get("param") {
-                        json!({ "params": [n] })
-                    } else if let Some(n) = p.get("feature") {
-                        json!({ "features": [n] })
-                    } else if let Some(n) = p.get("material") {
-                        json!({ "materials": [n] })
-                    } else if let Some(n) = p.get("component_appearance") {
-                        json!({ "component_appearances": [n] })
-                    } else if let Some(n) = p.get("face_appearance") {
-                        json!({ "face_appearances": [n] })
-                    } else {
-                        json!({ "appearances": [p.get("appearance")] })
-                    },
-                )
-            } else {
-                ("config.column", p)
-            };
-            run(app, error, id, p);
+                        let source = tb.rows.iter().find(|(name, _)| tb.active.as_ref() == Some(name));
+                        for (index, column) in tb.columns.iter().enumerate() {
+                            row.cell(|ui| {
+                                let mut value = rule_editor.new_values.get(column).cloned().unwrap_or_else(|| {
+                                    source
+                                        .and_then(|(_, values)| values.get(index))
+                                        .map(|value| display_cell(column_parts(column).0, value))
+                                        .unwrap_or_default()
+                                });
+                                let (kind, _) = column_parts(column);
+                                let (response, choice) = value_control(ui, ui.id().with(column), &mut value, kind, &material_names);
+                                let picked = choice.is_some();
+                                if let Some(choice) = choice {
+                                    value = choice;
+                                }
+                                crate::scenario::publish_handle(&format!("config:new:cell:{column}"), response.rect.center());
+                                let completed = crate::params_dialog::complete(ui, &response, &mut value);
+                                if response.changed() || completed || picked {
+                                    rule_editor.new_values.insert(column.clone(), value);
+                                }
+                                let focused = response.has_focus() || response.lost_focus();
+                                left |= response.lost_focus();
+                                commit |= !completed && focused && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+                            });
+                        }
+                        row.cell(|ui| {
+                            discard = ui_kit::bin_button(ui, "Delete the row").clicked();
+                        });
+                    })
+                })
+                .inner;
+            if reveal {
+                table.reveal_row(response.rect);
+            }
+            let abandoned = new_row.trim().is_empty()
+                && !menu_was_open
+                && ui.input(|i| i.pointer.any_click() && i.pointer.interact_pos().is_some_and(|p| !response.rect.contains(p)));
+            if discard || abandoned {
+                rule_editor.adding_row = false;
+                new_row.clear();
+                rule_editor.new_values.clear();
+            } else if commit || (left && !new_row.trim().is_empty()) {
+                let name = if new_row.trim().is_empty() {
+                    (tb.rows.len() + 1..).map(|k| format!("Configuration{k}")).find(|n| !tb.rows.iter().any(|r| &r.0 == n)).unwrap_or_default()
+                } else {
+                    new_row.trim().to_string()
+                };
+                let values: serde_json::Map<String, Value> =
+                    rule_editor.new_values.iter().map(|(col, text)| (col.clone(), cell_value(col, text))).collect();
+                let mut params = json!({"name":name});
+                if !values.is_empty() {
+                    params["values"] = Value::Object(values);
+                }
+                if let Some(active) = &tb.active {
+                    params["from"] = json!(active);
+                }
+                run(app, error, "config.row", params);
+                new_row.clear();
+                rule_editor.adding_row = false;
+                rule_editor.new_values.clear();
+            }
+        }
+        if table.add_prompt(ui, "Add configuration", "A new configuration, a copy of the active one").clicked() {
+            rule_editor.adding_row = true;
+            rule_editor.focus_new_row = true;
         }
     });
     configuration_rules_ui::show(ui, app, error, rule_editor);
@@ -348,12 +270,180 @@ pub(super) fn configurations_rows(
         }
     }
     if let Some(message) = v["style_error"].as_str() {
-        ui_kit::text(ui, message, ui_kit::Text::Report("style_error", true));
+        ui_kit::text(ui, message, ui_kit::Text::Error("style_error"));
     }
     if let Some(message) = error {
-        ui_kit::text(ui, message, ui_kit::Text::Report("config_error", true));
+        ui_kit::text(ui, message, ui_kit::Text::Error("config_error"));
     }
     // Table cells and rule editors own Enter. As in the legacy wide manager, it
     // commits an edited cell without also submitting the enclosing card.
     ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+}
+
+fn column_menu(app: &mut SolveApp, ui: &mut egui::Ui, error: &mut Option<String>, columns: &[String]) {
+    let run = |app: &mut SolveApp, error: &mut Option<String>, id: &str, params: Value| {
+        *error = app.run(id, params).err();
+    };
+    // A column: a parameter's value or a feature's suppression.
+    let mut options: Vec<(String, Value)> = Vec::new();
+    for p in app.session.doc.all_param_exprs() {
+        if !columns.contains(&format!("param:{}", p.0)) {
+            options.push((format!("{} (parameter)", p.0), json!({ "param": p.0 })));
+        }
+    }
+    for f in &app.session.doc.features {
+        if !columns.contains(&format!("suppress:{}", f.name)) {
+            options.push((format!("Suppress {}", f.name), json!({ "feature": f.name })));
+        }
+    }
+    for body in &app.session.model.state().bodies {
+        for kind in ["material", "appearance"] {
+            if !columns.contains(&format!("{kind}:{}", body.name)) {
+                options.push((format!("{} ({kind})", body.name), json!({kind: body.name})));
+            }
+        }
+    }
+    for component in &app.session.doc.components {
+        if component.id != 0 && !columns.contains(&format!("component_appearance:{}", component.id)) {
+            options.push((format!("{} (component appearance)", component.name), json!({"component_appearance":component.id})));
+        }
+    }
+    for selected in &app.session.selection {
+        if let solidcraft_engine::Sel::Face { body, point, .. } = selected {
+            options.push((format!("Selected face on {body} (shared appearance)"), json!({"face_appearance":{"body":body,"point":point}})));
+        }
+    }
+    let mut pick: Option<Value> = None;
+    ui_kit::plus_header(ui, |ui| {
+        egui::ScrollArea::vertical().max_height(crate::theme::Tokens::get().space_24 * 12.0).show(ui, |ui| {
+            for (label, p) in &options {
+                if ui_kit::button(ui, label.as_str(), ui_kit::Button::Normal).clicked() {
+                    pick = Some(p.clone());
+                    ui.close();
+                }
+            }
+            ui_kit::action_menu(ui, "Face Appearance", |ui| {
+                ui_kit::text(
+                    ui,
+                    crate::i18n::tr_label("Semantic faces share their appearance across instances."),
+                    ui_kit::Text::Note("semantic_faces"),
+                );
+                let state = app.session.model.state();
+                for body in &state.bodies {
+                    if body.body.is_mesh() {
+                        continue;
+                    }
+                    ui_kit::action_menu(ui, &format!("Faces on {}", body.name), |ui| {
+                        if let Ok(faces) = body.body.faces((body.body.size() * 2e-3).max(1e-3)) {
+                            let mut seen = std::collections::BTreeSet::new();
+                            let mesh = body.mesh();
+                            let mut points = std::collections::BTreeMap::new();
+                            for (triangle, index) in mesh.triangles.iter().zip(&mesh.tri_face) {
+                                if let std::collections::btree_map::Entry::Vacant(entry) = points.entry(*index as usize)
+                                    && let Some([a, b, c]) = mesh.tri(triangle)
+                                {
+                                    entry.insert((a + b + c) * (1. / 3.));
+                                }
+                            }
+                            for face in faces {
+                                // A curved face centroid can lie on another surface.
+                                // Pick an interior triangle point on this actual face.
+                                let Some(point) = points.get(&face.index).copied() else { continue };
+                                let Ok(target) = app.session.doc.configuration_face_target(body, face.index, point) else { continue };
+                                let supported = if target.certificate.is_some() {
+                                    // Capture read this exact face's current source certificate.
+                                    // Enumerate its pieces once in the command, not per menu face.
+                                    app.session.doc.certify_config_face(&target).is_ok()
+                                } else {
+                                    app.session.doc.configuration_face_indices(body, &target).is_ok()
+                                };
+                                if !supported || !seen.insert(target.name.clone()) {
+                                    continue;
+                                }
+                                let Some((_, role)) = target.name.split_once(':') else { continue };
+                                if ui_kit::button(ui, role, ui_kit::Button::Normal).clicked() {
+                                    pick = Some(json!({"face_appearance":{"target":target}}));
+                                    ui.close();
+                                }
+                            }
+                        }
+                    });
+                }
+            });
+        });
+    });
+    if let Some(p) = pick {
+        // The first column starts the table (with a Default row of the current values).
+        let (id, p) = if columns.is_empty() {
+            (
+                "config.configure",
+                if let Some(n) = p.get("param") {
+                    json!({ "params": [n] })
+                } else if let Some(n) = p.get("feature") {
+                    json!({ "features": [n] })
+                } else if let Some(n) = p.get("material") {
+                    json!({ "materials": [n] })
+                } else if let Some(n) = p.get("component_appearance") {
+                    json!({ "component_appearances": [n] })
+                } else if let Some(n) = p.get("face_appearance") {
+                    json!({ "face_appearances": [n] })
+                } else {
+                    json!({ "appearances": [p.get("appearance")] })
+                },
+            )
+        } else {
+            ("config.column", p)
+        };
+        run(app, error, id, p);
+    }
+}
+
+fn display_cell(kind: &str, value: &str) -> String {
+    if (kind == "material" || matches!(kind, "appearance" | "component_appearance" | "face_appearance")) && value.eq_ignore_ascii_case("Default") {
+        return String::new();
+    }
+    if matches!(kind, "appearance" | "component_appearance" | "face_appearance") {
+        solidcraft_engine::doc::config::appearance_cell(value)
+            .ok()
+            .flatten()
+            .filter(|look| solidcraft_engine::doc::appearance::library(&look.name).as_ref() == Some(look))
+            .map(|look| look.name)
+            .unwrap_or_else(|| value.to_owned())
+    } else {
+        value.to_owned()
+    }
+}
+
+fn value_control(ui: &mut egui::Ui, id: egui::Id, text: &mut String, kind: &str, material_names: &[String]) -> (egui::Response, Option<String>) {
+    let appearance = matches!(kind, "appearance" | "component_appearance" | "face_appearance");
+    let mut choice = None;
+    let response = if kind == "material" || appearance {
+        let follow = if kind == "appearance" {
+            "Follow material"
+        } else if appearance {
+            "Follow inherited appearance"
+        } else {
+            "Default material"
+        };
+        ui_kit::library_cell(ui, id, text, follow, |ui| {
+            if ui_kit::button(ui, crate::i18n::tr_label(follow), ui_kit::Button::Normal).clicked() {
+                choice = Some("Default".to_owned());
+                ui.close();
+            }
+            let choices: Vec<_> = if kind == "material" {
+                material_names.iter().filter(|n| *n != "Default").map(String::as_str).collect()
+            } else {
+                solidcraft_engine::doc::appearance::LIBRARY.iter().map(|(name, _, _)| *name).collect()
+            };
+            for name in choices {
+                if ui_kit::button(ui, name, ui_kit::Button::Normal).clicked() {
+                    choice = Some(name.to_owned());
+                    ui.close();
+                }
+            }
+        })
+    } else {
+        ui_kit::cell_editor(ui, id, text, "", false)
+    };
+    (response, choice)
 }

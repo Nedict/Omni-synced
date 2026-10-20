@@ -7,6 +7,13 @@ use super::{
 use crate::{scenario, theme::Tokens};
 use egui::{Response, RichText, Ui, vec2};
 
+/// One alignment policy for every kit text input. Align the galley itself rather than
+/// approximating font metrics with integer margins (Plex Mono and Sans differ).
+fn text_input(edit: egui::TextEdit<'_>) -> egui::TextEdit<'_> {
+    let t = Tokens::get();
+    edit.vertical_align(egui::Align::Center).margin(vec2(t.form_inset, 0.0)).min_size(vec2(0.0, t.control_height))
+}
+
 /// Expression editor with the application's existing completion and number-focus behaviour.
 /// Values carry their own unit text ("20 mm", "45 deg"): there is no unit suffix. Returns accepted Enter.
 /// Tokens: `control_height, control_fill, form_inset, font_label, space_4; scope tokens`.
@@ -49,12 +56,11 @@ pub(crate) fn multiline_text_field(ui: &mut Ui, label: &str, id: egui::Id, value
         let t = Tokens::get();
         let response = ui.add_sized(
             vec2(dimension(ui.available_width()), row_height() * 3.0),
-            egui::TextEdit::multiline(value)
+            text_input(egui::TextEdit::multiline(value))
                 .id(id)
                 .desired_rows(3)
                 .font(egui::FontId::monospace(t.font_label))
-                .background_color(t.control_fill)
-                .margin(vec2(t.form_inset, 0.0)),
+                .background_color(t.control_fill),
         );
         publish(ui, &response, egui::WidgetType::TextEdit);
         response
@@ -90,7 +96,7 @@ pub(crate) fn searchable_dropdown(
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show_ui(ui, |ui| {
             let search = ui.add(
-                egui::TextEdit::singleline(filter)
+                text_input(egui::TextEdit::singleline(filter))
                     .id_salt(format!("{id}_search"))
                     .hint_text(crate::i18n::tr_label("Search"))
                     .desired_width(f32::INFINITY),
@@ -137,18 +143,9 @@ fn editor(ui: &mut Ui, value: &mut String, hint: &str, completion: bool) -> (boo
     let t = Tokens::get();
     let width = dimension(ui.available_width());
     let font = egui::FontId::monospace(t.font_label);
-    let line_height = ui.fonts_mut(|fonts| fonts.row_height(&font)) + ui.spacing().extra_text_line_spacing;
-    // Plex Mono's taller metrics must fit the 24 pt field without pushing the next row down.
-    // Margins use whole logical pixels; round down so the editor cannot grow beyond its row.
-    let margin_y = ((row_height() - line_height) * 0.5).floor().clamp(0.0, t.space_4);
     let response = ui.add_sized(
         vec2(width, row_height()),
-        egui::TextEdit::singleline(value)
-            .hint_text(hint)
-            .font(font)
-            .background_color(t.control_fill)
-            .margin(vec2(t.form_inset, margin_y))
-            .clip_text(true),
+        text_input(egui::TextEdit::singleline(value)).hint_text(hint).font(font).background_color(t.control_fill).clip_text(true),
     );
     crate::theme::TabAccent::number_focus(ui, &response);
     let label = crate::i18n::tr_label(label(ui));
@@ -165,7 +162,7 @@ fn editor(ui: &mut Ui, value: &mut String, hint: &str, completion: bool) -> (boo
 
 /// The one dropdown arrow every kit dropdown draws (the kit chevron, dimmed), instead of egui's triangle.
 fn dropdown_arrow(ui: &Ui, rect: egui::Rect, _visuals: &egui::style::WidgetVisuals, _open: bool) {
-    crate::icons::paint_ink(ui.painter(), rect, "chevron", Tokens::get().text_dim);
+    super::dropdown_indicator(ui.painter(), rect, Tokens::get().text_dim);
 }
 
 /// Native dropdown with kit arrow and scenario option handles. Tokens: `text_dim; scope control/font tokens`.
@@ -185,7 +182,7 @@ pub(crate) fn dropdown(ui: &mut Ui, id: &str, selected: &mut usize, options: &[&
 pub(crate) fn dropdown_menu(ui: &mut Ui, id: impl egui::AsIdSalt, current: &str, add: impl FnOnce(&mut Ui)) -> Response {
     let response = egui::ComboBox::from_id_salt(id)
         .width(dimension(ui.available_width()))
-        .height(Tokens::get().control_height * 14.0)
+        .height(Tokens::get().space_24 * 14.0)
         .selected_text(current)
         .icon(dropdown_arrow)
         .show_ui(ui, add)
@@ -204,13 +201,22 @@ pub(crate) fn selection_field(ui: &mut Ui, text: &str, options: Selection) -> Re
     let Selection { active, filled } = options;
     let t = Tokens::get();
     let (rect, response) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), row_height()), egui::Sense::CLICK);
-    ui.painter().rect(rect, t.control_radius, t.selected_bg, egui::Stroke::new(if active { 1.0 } else { 0.0 }, t.accent), egui::StrokeKind::Inside);
+    if active && !filled {
+        ui.painter().rect_filled(rect, t.control_radius, t.selected_bg);
+    }
+    ui.painter().rect(
+        if active && !filled { rect.shrink(t.space_2) } else { rect },
+        t.control_radius,
+        if filled { t.selected_bg } else { t.control_fill },
+        egui::Stroke::new(1.0, if active || filled { t.form_primary } else { t.control_border }),
+        egui::StrokeKind::Inside,
+    );
     let end = if filled { t.space_24 } else { t.space_8 };
     let text_rect = egui::Rect::from_min_max(
         rect.min + vec2(t.form_inset.min(rect.width()), 0.0),
         egui::pos2((rect.right() - end).max(rect.left() + t.form_inset.min(rect.width())), rect.bottom()),
     );
-    paint_text(ui, text_rect, text, crate::fonts::medium(t.font_label), if filled { t.selected_ink } else { t.text_dim }, false);
+    paint_text(ui, text_rect, text, crate::fonts::medium(t.font_label), if filled { t.selected_ink } else { t.form_dim }, false);
     publish(ui, &response, egui::WidgetType::Button);
     scenario::publish_rect(&format!("dialog:field:{}", label(ui)), rect);
     scenario::publish_count(&format!("dialog:selection:{}:filled", label(ui)), f64::from(filled));
@@ -257,19 +263,33 @@ pub(crate) fn cell_editor(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &
 
 /// Stable-ID cell/name editor with a caller-supplied character cap. Tokens: cell_editor tokens.
 pub(crate) fn bounded_cell_editor(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str, invalid: bool, limit: usize) -> Response {
+    cell_editor_frame(ui, id, value, hint, invalid, limit, true)
+}
+
+fn cell_editor_frame(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str, invalid: bool, limit: usize, frame: bool) -> Response {
     let t = Tokens::get();
-    let response = ui.add_sized(
-        vec2(dimension(ui.available_width()), row_height()),
-        egui::TextEdit::singleline(value)
-            .char_limit(limit)
-            .id(id)
-            .hint_text(crate::i18n::tr_label(hint))
-            .font(egui::FontId::monospace(t.font_label))
-            .background_color(t.control_fill)
-            .text_color(if invalid { t.error } else { t.text })
-            .margin(vec2(t.form_inset, 0.0))
-            .clip_text(true),
-    );
+    let editor = text_input(egui::TextEdit::singleline(value))
+        .char_limit(limit)
+        .id(id)
+        .hint_text(crate::i18n::tr_label(hint))
+        .font(if frame { egui::FontId::monospace(t.font_label) } else { egui::FontId::proportional(t.font_label) })
+        .background_color(if invalid { t.form_error_fill } else { t.control_fill })
+        .text_color(if invalid { t.form_error } else { t.form_ink })
+        .clip_text(true);
+    let editor = if invalid {
+        editor.frame(
+            egui::Frame::NONE
+                .inner_margin(egui::Margin::symmetric(t.form_inset as i8, 0))
+                .fill(t.form_error_fill)
+                .stroke(egui::Stroke::new(1.0, t.form_error))
+                .corner_radius(t.control_radius),
+        )
+    } else if frame {
+        editor
+    } else {
+        editor.frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(t.space_8 as i8, 0)))
+    };
+    let response = ui.add_sized(vec2(dimension(ui.available_width()), row_height()), editor);
     publish(ui, &response, egui::WidgetType::TextEdit);
     response.widget_info(|| {
         let mut info = egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, ui.is_enabled(), crate::i18n::tr_label(label(ui)));
@@ -285,26 +305,83 @@ pub(crate) fn search_field(ui: &mut Ui, id: egui::Id, value: &mut String, hint: 
     cell_editor(ui, id, value, hint, false)
 }
 
-/// Native colour chooser under the shared form styling. Colour is document data.
-pub(crate) fn color_field(ui: &mut Ui, rgb: &mut [u8; 3]) -> Response {
-    let response = ui.color_edit_button_srgb(rgb);
-    scenario::publish_target(&format!("dialog:color:{}", label(ui)), response.rect);
-    response
+/// Behaviour of the one kit slider. Appearance is always owned by `slider`.
+/// Values/ranges stay in caller units; formatting never rounds saved values during drawing.
+pub(crate) struct Slider {
+    pub step: Option<f64>,
+    pub format: fn(f64) -> String,
+    pub show_value: bool,
+    pub integer: bool,
 }
 
-/// Continuous scalar control. Formatting never rounds saved values during drawing.
-/// Tokens: control_height, space_24/4, scope control/font tokens.
-pub(crate) fn slider(ui: &mut Ui, value: &mut f64, range: std::ops::RangeInclusive<f64>) -> Response {
-    let t = Tokens::get();
-    ui.spacing_mut().slider_width = dimension(ui.available_width() - t.space_24 - t.space_24 - t.space_4);
-    let response = ui.add(egui::Slider::new(value, range).max_decimals_opt(None).custom_formatter(|v, _| format!("{v:.2}")));
-    scenario::publish_target(&format!("dialog:slider:{}", label(ui)), response.rect);
-    response
+impl Default for Slider {
+    fn default() -> Self {
+        Self { step: None, format: |v| format!("{v:.2}"), show_value: true, integer: false }
+    }
+}
+
+/// The only slider element, including stepped preferences and editor-free timeline controls.
+/// Native input, keyboard routing, enabled state and accessibility; one token-painted track/thumb.
+/// Tokens: control_height, space_24/8/4/2, dialog_body/rule, control_fill, form_primary.
+pub(crate) fn slider<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T, range: std::ops::RangeInclusive<T>, options: Slider) -> Response {
+    // Own form styling even in callers such as the viewport menu which have no kit scope.
+    super::scope(ui, |ui| {
+        let t = Tokens::get();
+        ui.style_mut().drag_value_text_style = egui::TextStyle::Monospace;
+        let limits = (range.start().to_f64(), range.end().to_f64());
+        let reserved = if options.show_value {
+            // Reserve the actual formatted editor, including suffixes and localized Instant.
+            // Endpoints keep its width stable as a preference is dragged through its range.
+            let font = egui::TextStyle::Monospace.resolve(ui.style());
+            let text_width = [limits.0, limits.1, value.to_f64()]
+                .into_iter()
+                .map(|v| ui.painter().layout_no_wrap((options.format)(v), font.clone(), t.form_ink).size().x.ceil())
+                .fold(0.0, f32::max);
+            let editor_width = (text_width + ui.spacing().button_padding.x * 2.0).max(ui.spacing().interact_size.x);
+            (editor_width + ui.spacing().item_spacing.x).max(t.space_24 * 2.0 + t.space_4)
+        } else {
+            t.space_4
+        };
+        ui.spacing_mut().slider_width = dimension(ui.available_width() - reserved);
+        let mut widget = egui::Slider::new(value, range).show_value(options.show_value).handle_shape(egui::style::HandleShape::Circle);
+        if options.show_value {
+            widget = widget.custom_formatter(move |v, _| (options.format)(v));
+        }
+        if let Some(step) = options.step {
+            widget = widget.step_by(step);
+        }
+        if options.integer {
+            widget = widget.integer();
+        }
+        let response = ui.add(widget);
+        let slider = egui::Rect::from_min_size(response.rect.min, vec2(ui.spacing().slider_width, response.rect.height()));
+        let mut background = ui.painter().clone();
+        background.set_opacity(if ui.is_visible() { 1.0 } else { 0.0 });
+        background.rect_filled(slider, 0.0, t.dialog_body);
+        // Match egui's native input range (handle_radius = thickness / 2.5), so the
+        // painted thumb stays under the pointer even at the two ends of the range.
+        let input_radius = ui.text_style_height(&egui::TextStyle::Body).max(ui.spacing().interact_size.y) / 2.5;
+        let track = egui::Rect::from_center_size(slider.center(), vec2((slider.width() - input_radius * 2.0).max(0.0), t.space_4));
+        let fraction = if limits.1 != limits.0 { ((value.to_f64() - limits.0) / (limits.1 - limits.0)).clamp(0.0, 1.0) as f32 } else { 0.0 };
+        let center = egui::pos2(egui::lerp(track.x_range(), fraction), track.center().y);
+        ui.painter().rect_filled(track, t.control_radius, t.dialog_rule);
+        ui.painter().rect_filled(egui::Rect::from_min_max(track.min, egui::pos2(center.x, track.bottom())), t.control_radius, t.form_primary);
+        ui.painter().circle(center, t.space_8, t.control_fill, egui::Stroke::new(t.space_2, t.form_primary));
+        publish(ui, &response, egui::WidgetType::Slider);
+        response.widget_info(|| egui::WidgetInfo::slider(ui.is_enabled(), value.to_f64(), crate::i18n::tr_label(label(ui))));
+        scenario::publish_rect(&format!("dialog:slider_track:{}", label(ui)), slider);
+        scenario::publish_target(&format!("dialog:slider:{}", label(ui)), response.rect);
+        response
+    })
 }
 
 /// Locale-aware bounded scalar field, used for dimensionless material properties.
 pub(crate) fn scalar_field(ui: &mut Ui, value: &mut f64, range: std::ops::RangeInclusive<f64>) -> Response {
-    let response = ui.add(egui::DragValue::new(value).range(range).speed(0.01).custom_parser(crate::prefs::parse_number));
+    ui.style_mut().drag_value_text_style = egui::TextStyle::Monospace;
+    let response = ui.add_sized(
+        vec2(dimension(ui.available_width()), row_height()),
+        egui::DragValue::new(value).range(range).speed(0.01).custom_parser(crate::prefs::parse_number),
+    );
     scenario::publish_target(&format!("dialog:scalar:{}", label(ui)), response.rect);
     response
 }
@@ -330,13 +407,12 @@ pub(crate) fn text_area(ui: &mut Ui, label: &str, id: egui::Id, value: &mut Stri
     let t = Tokens::get();
     let response = ui.add_sized(
         vec2(dimension(ui.available_width()), row_height() * rows.clamp(1, 16) as f32),
-        egui::TextEdit::multiline(value)
+        text_input(egui::TextEdit::multiline(value))
             .id(id)
             .desired_rows(rows.clamp(1, 16))
             .char_limit(limit)
             .font(egui::FontId::monospace(t.font_label))
-            .background_color(t.control_fill)
-            .margin(vec2(t.form_inset, 0.0)),
+            .background_color(t.control_fill),
     );
     response.widget_info(|| {
         let mut info = egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, ui.is_enabled(), label);
@@ -352,13 +428,12 @@ pub(crate) fn password_field(ui: &mut Ui, id: egui::Id, value: &mut String, hint
     let t = Tokens::get();
     let response = ui.add_sized(
         vec2(dimension(ui.available_width()), row_height()),
-        egui::TextEdit::singleline(value)
+        text_input(egui::TextEdit::singleline(value))
             .id(id)
             .password(true)
             .hint_text(hint)
             .font(egui::FontId::monospace(t.font_label))
-            .background_color(t.control_fill)
-            .margin(vec2(t.form_inset, 0.0)),
+            .background_color(t.control_fill),
     );
     publish(ui, &response, egui::WidgetType::TextEdit);
     response
@@ -383,37 +458,19 @@ pub(crate) fn number_field<T: egui::emath::Numeric>(
     response
 }
 
-/// Stepped slider retaining caller units/formatting (percent, multiplier, seconds).
-/// Tokens: control_height, space_24/4, scope control/font tokens.
-pub(crate) fn formatted_slider<T: egui::emath::Numeric>(
-    ui: &mut Ui,
-    value: &mut T,
-    range: std::ops::RangeInclusive<T>,
-    step: f64,
-    format: impl Fn(f64) -> String + 'static,
-) -> Response {
-    let t = Tokens::get();
-    ui.spacing_mut().slider_width = dimension(ui.available_width() - t.space_24 * 2.0 - t.space_4);
-    let response = ui.add(egui::Slider::new(value, range).step_by(step).custom_formatter(move |v, _| format(v)));
-    response.widget_info(|| egui::WidgetInfo::slider(ui.is_enabled(), value.to_f64(), crate::i18n::tr_label(label(ui))));
-    super::layout::publish_geometry(ui, &response);
-    response
-}
-
 /// Growing plain-text message editor; its parent owns scrolling and Enter routing.
 /// Tokens: control_fill, form_inset, font_label. Use text_area for bounded data input.
 #[cfg(any(not(target_arch = "wasm32"), test))]
 pub(crate) fn message_field(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str) -> Response {
     let t = Tokens::get();
     ui.add(
-        egui::TextEdit::multiline(value)
+        text_input(egui::TextEdit::multiline(value))
             .id(id)
             .hint_text(hint)
             .desired_rows(2)
             .desired_width(f32::INFINITY)
             .font(egui::FontId::proportional(t.font_label))
-            .background_color(t.control_fill)
-            .margin(vec2(t.form_inset, t.space_4)),
+            .background_color(t.control_fill),
     )
 }
 
@@ -428,31 +485,24 @@ fn length_drag<'a>(value: &'a mut f64, units: &str, decimals: u8) -> egui::DragV
         .custom_parser(move |text| crate::prefs::parse_length_mm(text, scale))
 }
 
-/// Timeline/drive slider without a numeric editor; the owning surface shows its value.
-/// Whole steps round only while manipulating a timeline. Tokens: control_height, space_4.
-pub(crate) fn timeline_slider(ui: &mut Ui, value: &mut f64, range: std::ops::RangeInclusive<f64>, whole_steps: bool) -> Response {
-    ui.spacing_mut().slider_width = dimension(ui.available_width() - Tokens::get().space_4);
-    let slider = egui::Slider::new(value, range).show_value(false);
-    let response = ui.add(if whole_steps { slider.integer() } else { slider });
-    publish(ui, &response, egui::WidgetType::Slider);
-    response.widget_info(|| egui::WidgetInfo::slider(ui.is_enabled(), *value, crate::i18n::tr_label(label(ui))));
-    response
-}
-
 /// Placement editor whose owner routes Enter and Tab (including rejected expressions).
 /// Completion remains with the caller. Tokens: cell_editor tokens.
 pub(crate) fn placement_field(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str) -> Response {
     let t = Tokens::get();
+    let font = egui::FontId::proportional(t.font_body);
+    // Canvas editors must retain their native hit target: enlarging it intercepts nearby
+    // sketch picks. Keep the former line + space_2 above/below, with shared galley alignment.
+    let height = ui.fonts_mut(|fonts| fonts.row_height(&font)) + ui.spacing().extra_text_line_spacing + t.space_4;
     let response = ui.add(
-        egui::TextEdit::singleline(value)
+        text_input(egui::TextEdit::singleline(value))
             .id(id)
+            .min_size(vec2(0.0, height))
             .desired_width(t.control_height * 3.0 - t.space_6)
             .return_key(None)
             .event_filter(egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, ..Default::default() })
-            .font(egui::FontId::proportional(t.font_body))
+            .font(font)
             .background_color(t.control_fill)
-            .text_color(t.text)
-            .margin(vec2(t.space_4, t.space_2))
+            .text_color(t.form_ink)
             .clip_text(true),
     );
     publish(ui, &response, egui::WidgetType::TextEdit);
@@ -463,4 +513,38 @@ pub(crate) fn placement_field(ui: &mut Ui, id: egui::Id, value: &mut String, hin
     });
     crate::theme::TabAccent::number_focus(ui, &response);
     response.on_hover_text(crate::i18n::tr_label(hint))
+}
+
+/// Attached Library dropdown and text editor inside one bordered control.
+/// The caller retains draft, completion and commit ownership.
+pub(crate) fn library_cell(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str, menu: impl FnOnce(&mut Ui)) -> Response {
+    let t = Tokens::get();
+    let (rect, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), row_height()), egui::Sense::hover());
+    ui.painter().rect(rect, t.control_radius, t.control_fill, egui::Stroke::new(1.0, t.control_border), egui::StrokeKind::Inside);
+    let split = (rect.right() - t.space_24).max(rect.left());
+    let field = egui::Rect::from_min_max(rect.min, egui::pos2(split, rect.bottom()));
+    let response = ui
+        .scope_builder(egui::UiBuilder::new().max_rect(field).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
+            ui.set_clip_rect(ui.clip_rect().intersect(field));
+            cell_editor_frame(ui, id, value, hint, false, usize::MAX, false)
+        })
+        .inner;
+    let button = egui::Rect::from_min_max(egui::pos2(split, rect.top()), rect.max);
+    ui.painter().vline(split, rect.y_range(), egui::Stroke::new(1.0, t.dialog_rule));
+    let library = super::icon_button_at(ui, button, "chevron", "Library");
+    scenario::publish_handle("dialog:menu:Library", button.center());
+    scenario::publish_rect("dialog:menu:Library", button);
+    let popup = egui::Popup::menu(&library);
+    let open = popup.is_open();
+    popup.show(|ui| super::scope(ui, menu));
+    if open {
+        ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    }
+    if value.is_empty() { response.on_hover_text(crate::i18n::tr_label(hint)) } else { response }
+}
+
+/// Inline tree-name editor in caller-owned geometry; preserves its native focus and selection ID.
+/// Tokens: text. The caller retains commit/cancel and select-all behavior.
+pub(crate) fn inline_name(ui: &mut Ui, rect: egui::Rect, id: egui::Id, value: &mut String) -> Response {
+    ui.put(rect, egui::TextEdit::singleline(value).id(id).frame(egui::Frame::NONE).text_color(Tokens::get().text).vertical_align(egui::Align::Center))
 }

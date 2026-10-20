@@ -176,34 +176,36 @@ fn import_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &[SelI
             ui_kit::text(ui, crate::i18n::tr_label("No matching appearance presets."), ui_kit::Text::Note("library_empty"));
         }
         let row_height = ui_kit::row_height();
-        egui::ScrollArea::vertical().id_salt("local_library_entries").max_height(row_height * 5.0).show_rows(
-            ui,
-            row_height,
-            appearances.len(),
-            |ui, range| {
-                for index in range {
-                    let Some(entry) = appearances.get(index) else { continue };
-                    if let Definition::Appearance(look) = &entry.definition {
-                        ui.horizontal(|ui| {
-                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                            let [r, g, b] = look.color;
-                            ui_kit::color_swatch(ui, ui.id().with((&entry.id, "sample")), egui::Color32::from_rgb(r, g, b), false, &look.name, ());
-                            let button = ui_kit::list_picker(ui, &entry.id, &look.name, k.local.selected.as_deref() == Some(entry.id.as_str()))
-                                .on_hover_text(format!(
-                                    "Opacity {:.0}% · {} · {}",
-                                    look.opacity * 100.0,
-                                    entry.provenance.license,
-                                    entry.provenance.source_url.as_deref().unwrap_or("Local definition")
-                                ));
-                            crate::scenario::publish_handle(&format!("library:entry:{index}"), button.rect.center());
-                            if button.clicked() {
-                                k.local.selected = Some(entry.id.clone());
-                            }
-                        });
+        ui_kit::list_frame(ui, "local_library_entries", |ui| {
+            egui::ScrollArea::vertical().id_salt("local_library_entries").max_height(row_height * 5.0).show_rows(
+                ui,
+                row_height,
+                appearances.len(),
+                |ui, range| {
+                    for index in range {
+                        let Some(entry) = appearances.get(index) else { continue };
+                        if let Definition::Appearance(look) = &entry.definition {
+                            ui.horizontal(|ui| {
+                                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                                let [r, g, b] = look.color;
+                                ui_kit::color_thumbnail(ui, ui.id().with((&entry.id, "sample")), egui::Color32::from_rgb(r, g, b), &look.name, ());
+                                let button = ui_kit::list_picker(ui, &entry.id, &look.name, k.local.selected.as_deref() == Some(entry.id.as_str()))
+                                    .on_hover_text(format!(
+                                        "Opacity {:.0}% · {} · {}",
+                                        look.opacity * 100.0,
+                                        entry.provenance.license,
+                                        entry.provenance.source_url.as_deref().unwrap_or("Local definition")
+                                    ));
+                                crate::scenario::publish_handle(&format!("library:entry:{index}"), button.rect.center());
+                                if button.clicked() {
+                                    k.local.selected = Some(entry.id.clone());
+                                }
+                            });
+                        }
                     }
-                }
-            },
-        );
+                },
+            );
+        });
     }
     let entry = k
         .local

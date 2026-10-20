@@ -630,8 +630,12 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
                 let cur = s.doc.eval(v, unit_kind).ok().filter(|x| x.is_finite()).unwrap_or(0.0);
                 let (mut shown, scale) = if angle { (cur.to_degrees(), 1f64.to_degrees()) } else { (cur, 1.0) };
                 ui.vertical(|ui| {
-                    ui.spacing_mut().slider_width = 160.0;
-                    let r = crate::ui_kit::timeline_slider(ui, &mut shown, lo * scale..=hi * scale, false);
+                    let r = crate::ui_kit::slider(
+                        ui,
+                        &mut shown,
+                        lo * scale..=hi * scale,
+                        crate::ui_kit::Slider { show_value: false, ..Default::default() },
+                    );
                     crate::scenario::publish_handle(&format!("drive_slider:{i}"), r.rect.center());
                     if r.changed() {
                         *v = if angle { format!("{shown:.1} deg") } else { format!("{shown:.2} mm") };

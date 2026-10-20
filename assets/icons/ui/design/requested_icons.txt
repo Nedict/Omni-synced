@@ -80,8 +80,6 @@ decal	false
 delete	false
 delete_face	false
 dimension	false
-disclosure_closed	false
-disclosure_open	false
 draft	false
 draft_analysis	false
 drive	false
@@ -93,6 +91,7 @@ environment_map	false
 error	false
 explode	false
 export	false
+export_tray	false
 extend	false
 extrude	false
 eye	false
@@ -113,6 +112,7 @@ hem	false
 hole	false
 home	false
 import	false
+import_tray	false
 include	false
 infinite	false
 inspect	false

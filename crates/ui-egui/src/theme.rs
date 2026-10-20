@@ -270,6 +270,12 @@ pub struct Tokens {
     pub font_display: f32,
     /// Height of dense form controls and rows.
     pub control_height: f32,
+    /// Card text, hint, primary and validation colours.
+    pub form_ink: Color32,
+    pub form_dim: Color32,
+    pub form_primary: Color32,
+    pub form_error: Color32,
+    pub form_error_fill: Color32,
     /// Corner radius of dense form controls and actions.
     pub control_radius: u8,
     /// Width of the dense form label column.

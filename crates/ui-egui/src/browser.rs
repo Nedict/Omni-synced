@@ -6,7 +6,6 @@
 //! viewport, a double-click on a sketch edits it, and a right-click opens the item's menu
 //! ([`crate::context_menu`]).
 
-use crate::fonts::RichTextExt as _;
 #[cfg(test)]
 #[path = "occurrence_ui_tests.rs"]
 mod occurrence_ui_tests;
@@ -21,7 +20,7 @@ mod model_tests;
 use crate::icons::glyphs::badge;
 use std::collections::BTreeSet;
 
-use egui::{Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, pos2, vec2};
+use egui::{Color32, FontId, Pos2, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::{Value, json};
 use solidcraft_engine::Sel;
 use solidcraft_engine::doc::FeatureKind;
@@ -359,9 +358,7 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
     let hover_on = resp.hover_pos().map_or(0, at);
     // Fold arrow.
     if let Some(open) = row.fold {
-        let ar = Rect::from_center_size(pos2(x + 6.0, cy), vec2(12.0, 12.0));
-        let strength = if hover_on == 1 { 1.0 } else { 0.7 };
-        icons::paint_icon(ui.painter(), ar, if open { "disclosure_open" } else { "disclosure_closed" }, strength);
+        crate::ui_kit::disclosure(ui.painter(), pos2(x + 6.0, cy), open, if hover_on == 1 { t.text } else { t.text_dim });
         out.fold = resp.clicked() && click_on == 1;
         crate::scenario::publish_handle(&format!("fold:{}", row.label), fold_r.center());
     }
@@ -551,9 +548,22 @@ fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
                     ui.painter().hline(rect.x_range(), rect.center().y, egui::Stroke::new(1.0, t.border));
                     crate::scenario::publish_handle("left-history-divider", rect.center());
                 }
-                let arrow = if browser_collapsed { "▶" } else { "▼" };
-                let response = ui
-                    .add(egui::Button::new(RichText::new(format!("{arrow}  BROWSER")).size(t.font_small).semibold().color(t.text_dim)).frame(false));
+                let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), crate::ui_kit::row_height()), Sense::click());
+                crate::ui_kit::disclosure(
+                    ui.painter(),
+                    pos2(rect.left() + t.form_section_icon_size / 2.0, rect.center().y),
+                    !browser_collapsed,
+                    t.text_dim,
+                );
+                ui.painter().text(
+                    pos2(rect.left() + t.form_section_icon_size + t.space_8, rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    "BROWSER",
+                    crate::fonts::semibold(t.font_small),
+                    t.text_dim,
+                );
+                response
+                    .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::CollapsingHeader, ui.is_enabled(), !browser_collapsed, "BROWSER"));
                 crate::scenario::publish_handle("left-browser-toggle", response.rect.center());
                 if response.clicked() {
                     app.preferences.timeline_left_browser_collapsed = !browser_collapsed;
@@ -666,12 +676,7 @@ fn browser_header(app: &mut SolveApp, ui: &mut egui::Ui, collapsible: bool) {
     ui.painter().galley(pos2(rect.left() + t.space_6, rect.center().y - galley.size().y / 2.0), galley, t.text);
     let mut right = rect.right() - t.space_6;
     if collapsible {
-        let chevron = Rect::from_center_size(pos2(right - 5.0, rect.center().y), vec2(12.0, 12.0));
-        if collapsed {
-            crate::icons::paint_ink(ui.painter(), chevron, "chevron", t.text_dim);
-        } else {
-            crate::icons::paint_ink_flipped(ui.painter(), chevron, "chevron", t.text_dim);
-        }
+        crate::ui_kit::disclosure(ui.painter(), pos2(right - t.form_section_icon_size / 2.0, rect.center().y), !collapsed, t.text_dim);
         right -= 18.0;
     }
     let bodies = app.session.model.state().bodies.len();

@@ -305,13 +305,13 @@ macro_rules! preference_settings {
     (@control $app:ident, $ui:ident, $field:ident, enabled_slider($enabled:ident, $label:literal, $range:expr, $step:expr, $format:expr)) => {
         ui_kit::row($ui, $app.tr_label($label), |ui| {
             ui.add_enabled_ui($app.preferences.$enabled, |ui| {
-                ui_kit::formatted_slider(ui, &mut $app.preferences.$field, $range, $step, $format)
+                ui_kit::slider(ui, &mut $app.preferences.$field, $range, ui_kit::Slider { step: Some($step), format: $format, ..Default::default() })
             }).inner
         })
     };
     (@control $app:ident, $ui:ident, $field:ident, slider($label:literal, $range:expr, $step:expr, $format:expr, $rect:literal)) => {
         ui_kit::row($ui, $app.tr($label), |ui| {
-            let response = ui_kit::formatted_slider(ui, &mut $app.preferences.$field, $range, $step, $format);
+            let response = ui_kit::slider(ui, &mut $app.preferences.$field, $range, ui_kit::Slider { step: Some($step), format: $format, ..Default::default() });
             crate::scenario::publish_rect($rect, response.rect);
             response
         })
@@ -1221,7 +1221,12 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                                 ui_kit::checkbox(ui, crate::i18n::tr_label("Invert"), reverse);
                             }
                             if let Some(speed) = app.preferences.space_mouse_axis_speed.get_mut(axis) {
-                                ui_kit::formatted_slider(ui, speed, 0.0..=3.0, 0.05, |v| format!("{v:.2}×"));
+                                ui_kit::slider(
+                                    ui,
+                                    speed,
+                                    0.0..=3.0,
+                                    ui_kit::Slider { step: Some(0.05), format: |v| format!("{v:.2}×"), ..Default::default() },
+                                );
                             }
                         });
                     });
@@ -1257,12 +1262,11 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             if let Some(calibration) = device.and_then(|device| app.preferences.space_mouse_calibrations.get_mut(&device)) {
                 ui_kit::row(ui, &label, |ui| {
                     ui.add_enabled_ui(enabled, |ui| {
-                        ui_kit::formatted_slider(
+                        ui_kit::slider(
                             ui,
                             &mut calibration.dead_zone_share,
                             0.0..=solidcraft_space_mouse::MAX_DEAD_ZONE_SHARE,
-                            0.01,
-                            |v| format!("{:.0} %", v * 100.0),
+                            ui_kit::Slider { step: Some(0.01), format: |v| format!("{:.0} %", v * 100.0), ..Default::default() },
                         )
                         .on_hover_text(tip);
                     });

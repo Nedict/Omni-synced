@@ -281,7 +281,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
     // Apply To: bodies or faces (the input follows).
     if let Some(component) = &k.component {
         ui_kit::row(ui, "Apply To", |ui| ui_kit::text(ui, &format!("Component: {component}"), ui_kit::Text::Cell));
-        if ui_kit::button(ui, crate::i18n::tr_label("Select bodies or faces instead"), ui_kit::Button::Normal).clicked() {
+        if ui_kit::row(ui, "", |ui| ui_kit::button(ui, crate::i18n::tr_label("Select bodies or faces instead"), ui_kit::Button::Normal)).clicked() {
             k.component = None;
         }
     } else {
@@ -301,10 +301,10 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
             k.look = None;
             k.remove_override = false;
         }
-        ui_kit::text(ui, &k.look.clone().unwrap_or_else(|| hex(k.color)), ui_kit::Text::Cell);
+        ui_kit::text(ui, &k.look.clone().unwrap_or_else(|| hex(k.color)), ui_kit::Text::MonoCell);
     });
     ui_kit::row(ui, "Opacity", |ui| {
-        if ui.add_enabled_ui(k.pbr.is_none(), |ui| ui_kit::slider(ui, &mut k.opacity, 0.0..=1.0)).inner.changed() {
+        if ui.add_enabled_ui(k.pbr.is_none(), |ui| ui_kit::slider(ui, &mut k.opacity, 0.0..=1.0, Default::default())).inner.changed() {
             k.remove_override = false;
         }
     });
@@ -339,7 +339,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
         }
     }
     let picked: Vec<Sel> = inputs.first().map(|i| i.items.clone()).unwrap_or_default();
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         let has_target = !picked.is_empty() || k.component.is_some();
         if ui_kit::button(ui, "Apply to selection", ui_kit::Button::Enabled(has_target)).clicked()
             && let Some(p) = selected_params(k, &picked)
@@ -372,7 +372,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
     // In this design.
     let used = in_design(app);
     if !used.is_empty() {
-        ui_kit::section(ui, "in_design", "In This Design", true, |ui| {
+        ui_kit::section_count(ui, "in_design", "In This Design", true, Some(used.len()), |ui| {
             let items: Vec<_> = used.iter().enumerate().collect();
             ui_kit::swatch_grid(ui, &items, |ui, (i, (look, n))| {
                 if ui_kit::color_swatch(
@@ -622,10 +622,10 @@ mod tests {
         h.app.start("appearance.assign");
         h.frames(3);
         let before = h.app.dialog.clone().unwrap();
-        h.step(&json!({"widget":"»"})).unwrap();
+        h.step(&json!({"click":{"handle":"dialog:collapse"}})).unwrap();
         assert!(h.app.dialog.as_ref().unwrap().collapsed);
         assert!(h.widget("Appearance name").is_none());
-        h.step(&json!({"widget":"«"})).unwrap();
+        h.step(&json!({"click":{"handle":"dialog:collapse"}})).unwrap();
         let after = h.app.dialog.as_ref().unwrap();
         assert!(!after.collapsed);
         assert_eq!(format!("{:?}", after.inputs), format!("{:?}", before.inputs));
@@ -675,5 +675,75 @@ mod tests {
         k.opacity = 0.123456;
         d.inputs[0].items = vec![Sel::Body { name: "Body2".into() }];
         assert_eq!(commands(k, &d.inputs).len(), 1, "changed target still applies on OK");
+    }
+
+    #[test]
+    fn inventory_rows_controls_sections_and_component_mode_remain_reachable() {
+        let mut h = crate::scenario::Harness::new();
+        h.call("ui.resize", json!({"width":1600,"height":2000}));
+        h.app.run("solid.box", json!({"length":10,"width":10,"height":10})).unwrap();
+        h.app.run("appearance.assign", json!({"bodies":["Body1"],"color":"#abcdef","opacity":0.25,"appearance":"Tinted glass"})).unwrap();
+        h.app.session.selection = vec![Sel::Body { name: "Body1".into() }];
+        h.app.start("appearance.assign");
+        h.frames(5);
+        for handle in [
+            "dialog:Objects",
+            "dialog:clear:Objects",
+            "dialog:Apply To",
+            "dialog:color:Colour",
+            "dialog:slider:Opacity",
+            "appearance:pbr",
+            "appearance:search",
+            "dialog:section:Local library",
+            "dialog:section:In This Design",
+            "dialog:Library",
+            "dialog:button::Apply to selection",
+            "dialog:button::Remove override",
+            "library:export",
+            "dialog:ok",
+            "dialog:cancel",
+            "dialog:collapse",
+        ] {
+            assert!(crate::scenario::handle_at(handle).is_some(), "missing {handle}");
+        }
+        for label in ["Objects", "Apply To", "Colour", "Opacity", "Surface response", "Library", "Search"] {
+            assert!(crate::scenario::rect_of(&format!("dialog:row:{label}")).is_some(), "missing row {label}");
+        }
+        h.step(&json!({"click":{"handle":"dialog:Apply To"}})).unwrap();
+        h.frames(2);
+        for option in ["Bodies", "Faces"] {
+            assert!(crate::scenario::handle_at(&format!("dialog:Apply To:{option}")).is_some());
+        }
+        h.step(&json!({"click":{"handle":"dialog:Apply To:Bodies"}})).unwrap();
+        h.step(&json!({"click":{"handle":"appearance:pbr"}})).unwrap();
+        for handle in ["appearance:metallic", "appearance:roughness", "appearance:ior"] {
+            assert!(crate::scenario::handle_at(handle).is_some(), "missing {handle}");
+        }
+        let Kind::Appearance(k) = &mut h.app.dialog.as_mut().unwrap().kind else { panic!("Appearance") };
+        k.component = Some("Example component".into());
+        k.note = Some("Appearance applied".into());
+        h.frames(4);
+        assert!(h.widget("Appearance applied").is_some());
+        assert!(crate::scenario::handle_at("dialog:button::Select bodies or faces instead").is_some());
+        assert!(crate::scenario::handle_at("dialog:cell:Component: Example component").is_some());
+        h.step(&json!({"widget":"Select bodies or faces instead"})).unwrap();
+        assert!(crate::scenario::handle_at("dialog:Apply To").is_some());
+        h.step(&json!({"click":{"handle":"dialog:clear:Objects"}})).unwrap();
+        assert!(h.app.dialog.as_ref().unwrap().inputs[0].items.is_empty());
+        h.step(&json!({"click":{"handle":"dialog:color:Colour"}})).unwrap();
+        h.frames(3);
+        for handle in [
+            "color:format:U8",
+            "color:format:F",
+            "color:copy",
+            "color:channel:R",
+            "color:channel:G",
+            "color:channel:B",
+            "color:sv",
+            "color:hue",
+            "color:current",
+        ] {
+            assert!(crate::scenario::handle_at(handle).is_some(), "missing {handle}");
+        }
     }
 }

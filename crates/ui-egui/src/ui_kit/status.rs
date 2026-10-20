@@ -28,13 +28,13 @@ pub(crate) fn status_header(ui: &mut egui::Ui, key: &str, name: &str, status: St
             });
             ui.horizontal(|ui| {
                 let (dot, _) = ui.allocate_exact_size(vec2(t.space_10, t.space_10), egui::Sense::hover());
-                ui.painter().circle_filled(dot.center(), t.space_10 / 2.0, if status.complete { t.text } else { t.accent });
-                ui.add(egui::Label::new(RichText::new(status.text).size(t.font_label).color(t.text_dim)).wrap());
+                ui.painter().circle_filled(dot.center(), t.space_10 / 2.0, if status.complete { t.form_ink } else { t.form_primary });
+                ui.add(egui::Label::new(RichText::new(status.text).size(t.font_label).color(t.form_dim)).wrap());
             });
             let (meter, _) = ui.allocate_exact_size(vec2(ui.available_width(), t.space_6), egui::Sense::hover());
             ui.painter().rect_filled(meter, t.space_3, t.dialog_rule);
             if fraction > 0.0 {
-                ui.painter().rect_filled(egui::Rect::from_min_size(meter.min, vec2(meter.width() * fraction, meter.height())), t.space_3, t.text);
+                ui.painter().rect_filled(egui::Rect::from_min_size(meter.min, vec2(meter.width() * fraction, meter.height())), t.space_3, t.form_ink);
             }
             crate::scenario::publish_rect(&format!("{key}:meter"), meter);
             crate::scenario::publish_count(&format!("{key}:constrained_fraction"), f64::from(fraction));
@@ -54,7 +54,7 @@ pub(crate) fn progress(ui: &mut egui::Ui, key: &str, fraction: f32) -> egui::Res
     let (bar, response) = ui.allocate_exact_size(vec2(ui.available_width().max(0.0), t.space_6), egui::Sense::hover());
     ui.painter().rect_filled(bar, t.space_3, t.dialog_rule);
     if fraction > 0.0 {
-        ui.painter().rect_filled(egui::Rect::from_min_size(bar.min, vec2(bar.width() * fraction, bar.height())), t.space_3, t.accent);
+        ui.painter().rect_filled(egui::Rect::from_min_size(bar.min, vec2(bar.width() * fraction, bar.height())), t.space_3, t.form_primary);
     }
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ProgressIndicator, ui.is_enabled(), format!("{:.0}%", fraction * 100.0)));
     crate::scenario::publish_rect(&format!("dialog:progress:{key}"), bar);

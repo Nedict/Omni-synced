@@ -281,7 +281,13 @@ pub fn window(app: &mut SolveApp, ctx: &egui::Context) {
     let tab = app.ui.tab.clone();
     let mut changes: Vec<(&'static str, bool)> = Vec::new();
     let mut reset_tab = false;
+    let t = crate::theme::Tokens::get();
+    // This long card grows as sections open. A top-left pivot keeps its controls at their
+    // published positions instead of shifting them after egui measures the taller content.
+    let origin =
+        egui::pos2((ctx.content_rect().center().x - t.form_card_width).max(ctx.content_rect().left()), ctx.content_rect().top() + t.space_24 * 2.0);
     let (closed, action) = ui_kit::Prompt::new(egui::Id::new("sc_toolbar_customize"), "settings", crate::i18n::tr_label("Customize Toolbar"))
+        .placed(egui::Align2::LEFT_TOP, origin)
         .cards(2.0)
         .actions("", "Close", None)
         .show(ctx, true, |ui| {

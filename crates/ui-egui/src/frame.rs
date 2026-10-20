@@ -153,6 +153,7 @@ mod tests {
                 h.step(&json!({"start":"solid.extrude"})).unwrap();
                 h.frames(10);
                 let dialog = h.app.viewport.dialog_rect.unwrap();
+                let dialog_content = crate::scenario::count_of("dialog:body:content_height").unwrap();
                 let viewport = h.app.viewport.rect.unwrap();
                 assert!(dialog.height() > 230.0, "scale={scale}: {dialog:?}");
                 assert!(viewport.expand(1.0).contains_rect(dialog), "scale={scale}: {dialog:?} outside {viewport:?}");
@@ -167,7 +168,18 @@ mod tests {
                 h.step(&json!({"start":"solid.shell"})).unwrap();
                 h.frames(8);
                 let short = h.app.viewport.dialog_rect.unwrap();
-                assert!(short.height() < dialog.height(), "short forms should shrink: {short:?}, {dialog:?}");
+                let short_content = crate::scenario::count_of("dialog:body:content_height").unwrap();
+                assert!(
+                    short_content < dialog_content,
+                    "short forms have less content even when both need scrolling: {short_content}, {dialog_content}"
+                );
+                assert!(short.height() <= dialog.height(), "short forms cannot grow taller: {short:?}, {dialog:?}");
+                let t = crate::theme::Tokens::get();
+                let chrome = f64::from(t.form_header_height + t.form_footer_height + t.form_gap_y * 2.0 + t.space_2);
+                if short_content + chrome < f64::from(dialog.height()) {
+                    assert!(short.height() < dialog.height(), "unconstrained short forms must shrink: {short:?}, {dialog:?}");
+                }
+                assert!(viewport.expand(1.0).contains_rect(short));
                 assert!(h.widget("Cancel").is_some());
                 h.step(&json!({"widget":"Cancel"})).unwrap();
                 h.step(&json!({"start":"solid.hole"})).unwrap();

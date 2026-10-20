@@ -30,6 +30,30 @@ fn catalog_clicked_load_apply_export_and_ok_keep_one_design_undo_step() {
     h.frames(3);
     let undo = h.app.session.undo.len();
     h.step(&json!({"widget":"Load library"})).unwrap();
+    for handle in [
+        "library:path",
+        "library:load",
+        "library:search",
+        "library:entry:0",
+        "library:apply",
+        "library:export",
+        "dialog:button::Open library...",
+        "dialog:button::Load library",
+        "dialog:button::Apply library appearance",
+        "dialog:button::Export design library...",
+    ] {
+        assert!(crate::scenario::handle_at(handle).is_some(), "missing {handle}");
+    }
+    for message in
+        ["Replace existing library file", "Apply your appearance first. Exports assigned appearances and materials created in this design."]
+    {
+        assert!(h.widget(message).is_some(), "missing {message}");
+    }
+    h.step(&json!({"click":{"handle":"library:search"}})).unwrap();
+    h.step(&json!({"text":"no such appearance"})).unwrap();
+    assert!(h.widget("No matching appearance presets.").is_some());
+    h.step(&json!({"key":"A","cmd":true})).unwrap();
+    h.step(&json!({"key":"Backspace"})).unwrap();
     h.step(&json!({"click":{"handle":"library:entry:0"}})).unwrap();
     h.step(&json!({"widget":"Apply library appearance"})).unwrap();
     assert_eq!(h.app.session.doc.appearances.bodies["Body1"].name, "Warm oak colour");

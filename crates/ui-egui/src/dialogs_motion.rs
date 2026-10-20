@@ -72,7 +72,7 @@ pub enum Mo {
     Configurations {
         new_row: String,
         error: Option<String>,
-        rule_editor: configuration_rules_ui::Editor,
+        rule_editor: Box<configuration_rules_ui::Editor>,
     },
 }
 
@@ -509,8 +509,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, inputs: &mut [Sel
         Mo::Explode { name, scale, shown, saved, error } => {
             text_row(ui, "Name", name, "");
             form_row(ui, "Explode", |ui| {
-                ui.spacing_mut().slider_width = 160.0;
-                crate::ui_kit::slider(ui, scale, 0.0..=2.0);
+                crate::ui_kit::slider(ui, scale, 0.0..=2.0, Default::default());
             });
             let key = ((*scale * 1000.0).round() as u64, 0);
             if *shown != Some(key) {
@@ -602,7 +601,14 @@ fn motion_study_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, inputs: 
     });
     form_row(ui, "Step", |ui| {
         ui.horizontal(|ui| {
-            if crate::ui_kit::timeline_slider(ui, step, 0.0..=f64::from(total), true).dragged() {
+            if crate::ui_kit::slider(
+                ui,
+                step,
+                0.0..=f64::from(total),
+                crate::ui_kit::Slider { show_value: false, integer: true, ..Default::default() },
+            )
+            .dragged()
+            {
                 *playing = false;
             }
         });
@@ -887,11 +893,16 @@ mod tests {
             }
             h.call(
                 "ui.scroll",
-                json!({"x":header.center().x,"y":(header.bottom()+footer.top())*0.5,"delta":if at.y > footer.top() {-160.0} else {160.0}}),
+                json!({"x":header.left()+Tokens::get().space_6,"y":(header.bottom()+footer.top())*0.5,"delta":if at.y >= footer.top()-Tokens::get().space_8 {-160.0} else {160.0}}),
             );
             h.frames(6);
         }
-        panic!("could not reveal {handle}");
+        panic!(
+            "could not reveal {handle}: {:?}, header {:?}, footer {:?}",
+            crate::scenario::handle_at(handle),
+            crate::scenario::rect_of("dialog:header"),
+            crate::scenario::rect_of("dialog:footer")
+        );
     }
 
     fn click_config_handle(h: &mut crate::scenario::Harness, handle: &str) {
@@ -1136,7 +1147,7 @@ mod tests {
                 ]))
                 .unwrap();
             harness.frames(4);
-            for label in ["Configuration", "Active", "Apply", "Add Row", "Add Column"] {
+            for label in ["Configuration", "Active", "Apply", "Add configuration", "Add Column"] {
                 assert_single_line(&harness, label);
             }
             crate::scenario::check(&mut harness, &json!({"windows_fit":{"max_width":Tokens::get().form_card_width * 3.0}})).unwrap();
@@ -1162,7 +1173,7 @@ mod tests {
                 "missing {label}; labels/values: {:?}",
                 tree.nodes.iter().filter_map(|(_, n)| n.label().or(n.value())).collect::<Vec<_>>()
             );
-            assert!(bounds.iter().all(|b| b.y1 - b.y0 <= 24.0), "{label} wrapped: {bounds:?}");
+            assert!(bounds.iter().all(|b| b.y1 - b.y0 <= Tokens::get().control_height as f64), "{label} wrapped: {bounds:?}");
         }
     }
 

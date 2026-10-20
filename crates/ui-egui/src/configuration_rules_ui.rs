@@ -12,6 +12,9 @@ pub struct Editor {
     preview: Option<Value>,
 
     preview_revision: u64,
+    pub(super) new_values: std::collections::BTreeMap<String, String>,
+    pub(super) adding_row: bool,
+    pub(super) focus_new_row: bool,
     pub(super) drafts: std::collections::BTreeMap<(String, String), String>,
     pub(super) table: Option<(u64, Value)>,
 }
@@ -30,6 +33,9 @@ impl Default for Editor {
             preview: None,
 
             preview_revision: 0,
+            new_values: Default::default(),
+            adding_row: false,
+            focus_new_row: false,
             drafts: Default::default(),
             table: None,
         }
@@ -74,7 +80,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, 
     let suppression_features: Vec<(u64, String)> =
         features.iter().filter(|(id, _)| app.session.doc.configs.columns.contains(&Column::Suppress(*id))).cloned().collect();
     ui_kit::divider(ui, "configuration_rules");
-    ui_kit::text(ui, crate::i18n::tr_label("Configuration rules"), ui_kit::Text::Report("rules_heading", false));
+    ui_kit::text(ui, crate::i18n::tr_label("Configuration rules"), ui_kit::Text::Heading("rules_heading"));
     ui_kit::text(
         ui,
         crate::i18n::tr_label("Rules run from top to bottom. Matched drives change effective values."),
@@ -83,15 +89,20 @@ pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, 
     ui_kit::text(ui, crate::i18n::tr_label("Matched restrictions check the final values."), ui_kit::Text::Note("rules_restrictions"));
     for (index, rule) in rules.iter().enumerate() {
         ui.push_id(&rule.id, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                let mut enabled = rule.enabled;
-                if ui_kit::checkbox(ui, "", &mut enabled).on_hover_text(crate::i18n::tr_label("Enable rule")).changed() {
-                    let mut r = rule.clone();
-                    r.enabled = enabled;
-                    *error = app.run("config.rule", json!({"rule":r})).err();
-                }
-                ui_kit::text(ui, &rule.name, ui_kit::Text::Inline);
-                if ui_kit::button(ui, crate::i18n::tr_label("Edit"), ui_kit::Button::Small).clicked() {
+            let summary = match &rule.effect {
+                RuleEffect::DriveParameter { parameter, expression } => format!("Drives {parameter} = {expression}"),
+                RuleEffect::DriveSuppression { feature, value } => format!(
+                    "Drives suppression {} = {value}",
+                    features.iter().find(|f| f.0 == *feature).map(|f| f.1.as_str()).unwrap_or("missing feature")
+                ),
+                RuleEffect::ParameterRange { parameter, minimum, maximum } => format!("Restricts {parameter}: {minimum} through {maximum}"),
+                RuleEffect::AllowParameterValues { parameter, expressions } => format!("Restricts {parameter}: {}", expressions.join(", ")),
+            };
+            let actions_width = ["Edit", "↑", "↓", "Delete"].iter().map(|label| ui_kit::ContentWidth::button(ui, label)).sum::<f32>()
+                + crate::theme::Tokens::get().space_4 * 3.0;
+            let mut enabled = rule.enabled;
+            if ui_kit::summary_row(ui, &rule.name, &summary, &mut enabled, actions_width, |ui| {
+                if ui_kit::button(ui, crate::i18n::tr_label("Edit"), ui_kit::Button::Normal).clicked() {
                     editor.rule = rule.clone();
                 }
                 let up = ui_kit::button(ui, "↑", ui_kit::Button::Enabled(index > 0)).on_hover_text(crate::i18n::tr_label("Move earlier"));
@@ -105,22 +116,14 @@ pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, 
                 {
                     *error = app.run("config.rule", json!({"id":rule.id,"index":index+1})).err();
                 }
-                if ui_kit::button(ui, crate::i18n::tr_label("Delete"), ui_kit::Button::Small).clicked() {
+                if ui_kit::button(ui, crate::i18n::tr_label("Delete"), ui_kit::Button::Normal).clicked() {
                     *error = app.run("config.rule", json!({"id":rule.id,"delete":true})).err();
                 }
-            });
-            report(
-                ui,
-                match &rule.effect {
-                    RuleEffect::DriveParameter { parameter, expression } => format!("Drives {parameter} = {expression}"),
-                    RuleEffect::DriveSuppression { feature, value } => format!(
-                        "Drives suppression {} = {value}",
-                        features.iter().find(|f| f.0 == *feature).map(|f| f.1.as_str()).unwrap_or("missing feature")
-                    ),
-                    RuleEffect::ParameterRange { parameter, minimum, maximum } => format!("Restricts {parameter}: {minimum} through {maximum}"),
-                    RuleEffect::AllowParameterValues { parameter, expressions } => format!("Restricts {parameter}: {}", expressions.join(", ")),
-                },
-            );
+            }) {
+                let mut updated = rule.clone();
+                updated.enabled = enabled;
+                *error = app.run("config.rule", json!({"rule":updated})).err();
+            }
         });
     }
     ui_kit::section(ui, "rule_editor", "Add or edit rule", false, |ui| {
@@ -210,96 +213,98 @@ pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, 
             *error = result.err();
         }
     });
-    let rows: Vec<String> = app.session.doc.configs.rows.iter().map(|r| r.name.clone()).collect();
-    if !rows.contains(&editor.row) {
-        editor.row = app.session.doc.configs.active.clone().or_else(|| rows.first().cloned()).unwrap_or_default();
-    }
-    let previous_row = editor.row.clone();
-    ui.vertical(|ui| {
-        choose(ui, "preview_configuration", &mut editor.row, &rows);
-        let preview = ui_kit::button(ui, "Preview Row", ui_kit::Button::Enabled(!editor.row.is_empty()));
-        crate::scenario::publish_handle("config:preview_row", preview.rect.center());
-        if preview.clicked() {
-            match app.session.execute("config.preview", &json!({"row":editor.row})) {
-                Ok(result) => {
-                    editor.preview = Some(result);
-                    editor.preview_revision = app.session.revision;
-                    *error = None;
-                }
-                Err(e) => {
-                    editor.preview = None;
-                    *error = Some(e.to_string());
-                }
-            }
+    ui_kit::section(ui, "preview", "Preview", true, |ui| {
+        let rows: Vec<String> = app.session.doc.configs.rows.iter().map(|r| r.name.clone()).collect();
+        if !rows.contains(&editor.row) {
+            editor.row = app.session.doc.configs.active.clone().or_else(|| rows.first().cloned()).unwrap_or_default();
         }
-    });
-    if previous_row != editor.row {
-        editor.preview = None;
-    }
-    if let Some(preview) = &editor.preview {
-        ui_kit::section(ui, "rule_preview", &format!("Preview: {}", preview["active"].as_str().unwrap_or("row")), false, |ui| {
-            report(ui, crate::i18n::tr_label("Preview leaves the current design unchanged."));
-            if let Some(styles) = preview["styles"].as_array() {
-                for style in styles {
-                    report(
-                        ui,
-                        format!(
-                            "{}: {} (shared definition)",
-                            style["target"].as_str().unwrap_or("Appearance"),
-                            if style["dormant"].as_bool() == Some(true) { "dormant" } else { "resolved" }
-                        ),
-                    );
-                }
-            }
-            if let Some(trace) = preview["trace"].as_array() {
-                for entry in trace {
-                    report(
-                        ui,
-                        format!(
-                            "{} — {}",
-                            entry["name"].as_str().unwrap_or("rule"),
-                            if entry["matched"].as_bool() == Some(true) { "matched" } else { "skipped" }
-                        ),
-                    );
-                    if entry["matched"].as_bool() == Some(true)
-                        && let Ok(effect) = serde_json::from_value::<RuleEffect>(entry["effect"].clone())
-                    {
-                        report(
-                            ui,
-                            match effect {
-                                RuleEffect::DriveParameter { parameter, expression } => format!("Driven: {parameter} = {expression}"),
-                                RuleEffect::DriveSuppression { feature, value } => format!(
-                                    "Driven: {} is {}",
-                                    features.iter().find(|f| f.0 == feature).map(|f| f.1.as_str()).unwrap_or("feature"),
-                                    if value { "suppressed" } else { "unsuppressed" }
-                                ),
-                                RuleEffect::ParameterRange { parameter, minimum, maximum } => {
-                                    format!("Restricted: {parameter}, {minimum} through {maximum}")
-                                }
-                                RuleEffect::AllowParameterValues { parameter, expressions } => {
-                                    format!("Restricted: {parameter}, {}", expressions.join("; "))
-                                }
-                            },
-                        );
+        let previous_row = editor.row.clone();
+        ui.vertical(|ui| {
+            choose(ui, "preview_configuration", &mut editor.row, &rows);
+            let preview = ui_kit::button(ui, "Preview Row", ui_kit::Button::Enabled(!editor.row.is_empty()));
+            crate::scenario::publish_handle("config:preview_row", preview.rect.center());
+            if preview.clicked() {
+                match app.session.execute("config.preview", &json!({"row":editor.row})) {
+                    Ok(result) => {
+                        editor.preview = Some(result);
+                        editor.preview_revision = app.session.revision;
+                        *error = None;
                     }
-                }
-            }
-            if let Some(parameters) = preview["parameters"].as_array() {
-                for parameter in parameters {
-                    if let Some(name) = parameter["name"].as_str()
-                        && all_parameters.iter().any(|p| p == name)
-                    {
-                        let response = ui_kit::text(
-                            ui,
-                            &format!("{name} = {}", parameter["expression"].as_str().unwrap_or("")),
-                            ui_kit::Text::Report("preview_parameter", false),
-                        );
-                        crate::scenario::publish_handle(&format!("config:preview:param:{name}"), response.rect.center());
+                    Err(e) => {
+                        editor.preview = None;
+                        *error = Some(e.to_string());
                     }
                 }
             }
         });
-    }
+        if previous_row != editor.row {
+            editor.preview = None;
+        }
+        if let Some(preview) = &editor.preview {
+            ui_kit::section(ui, "rule_preview", &format!("Preview: {}", preview["active"].as_str().unwrap_or("row")), false, |ui| {
+                report(ui, crate::i18n::tr_label("Preview leaves the current design unchanged."));
+                if let Some(styles) = preview["styles"].as_array() {
+                    for style in styles {
+                        report(
+                            ui,
+                            format!(
+                                "{}: {} (shared definition)",
+                                style["target"].as_str().unwrap_or("Appearance"),
+                                if style["dormant"].as_bool() == Some(true) { "dormant" } else { "resolved" }
+                            ),
+                        );
+                    }
+                }
+                if let Some(trace) = preview["trace"].as_array() {
+                    for entry in trace {
+                        report(
+                            ui,
+                            format!(
+                                "{} — {}",
+                                entry["name"].as_str().unwrap_or("rule"),
+                                if entry["matched"].as_bool() == Some(true) { "matched" } else { "skipped" }
+                            ),
+                        );
+                        if entry["matched"].as_bool() == Some(true)
+                            && let Ok(effect) = serde_json::from_value::<RuleEffect>(entry["effect"].clone())
+                        {
+                            report(
+                                ui,
+                                match effect {
+                                    RuleEffect::DriveParameter { parameter, expression } => format!("Driven: {parameter} = {expression}"),
+                                    RuleEffect::DriveSuppression { feature, value } => format!(
+                                        "Driven: {} is {}",
+                                        features.iter().find(|f| f.0 == feature).map(|f| f.1.as_str()).unwrap_or("feature"),
+                                        if value { "suppressed" } else { "unsuppressed" }
+                                    ),
+                                    RuleEffect::ParameterRange { parameter, minimum, maximum } => {
+                                        format!("Restricted: {parameter}, {minimum} through {maximum}")
+                                    }
+                                    RuleEffect::AllowParameterValues { parameter, expressions } => {
+                                        format!("Restricted: {parameter}, {}", expressions.join("; "))
+                                    }
+                                },
+                            );
+                        }
+                    }
+                }
+                if let Some(parameters) = preview["parameters"].as_array() {
+                    for parameter in parameters {
+                        if let Some(name) = parameter["name"].as_str()
+                            && all_parameters.iter().any(|p| p == name)
+                        {
+                            let response = ui_kit::text(
+                                ui,
+                                &format!("{name} = {}", parameter["expression"].as_str().unwrap_or("")),
+                                ui_kit::Text::Report("preview_parameter", false),
+                            );
+                            crate::scenario::publish_handle(&format!("config:preview:param:{name}"), response.rect.center());
+                        }
+                    }
+                }
+            });
+        }
+    });
 }
 fn report(ui: &mut Ui, text: impl AsRef<str>) {
     ui_kit::text(ui, crate::i18n::tr_label(text.as_ref()), ui_kit::Text::Report("rule_report", false));

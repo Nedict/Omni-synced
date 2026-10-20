@@ -34,7 +34,7 @@ fn heading_weight_field_surfaces_and_disclosures_follow_tokens_in_both_themes() 
                     assert_eq!(text.galley.job.sections.first().unwrap().format.font_id.family, egui::FontFamily::Monospace);
                 }
                 if text.galley.job.text == "Fillet" {
-                    assert_eq!(text.galley.job.sections.first().unwrap().format.font_id, crate::fonts::semibold(t.font_label));
+                    assert_eq!(text.galley.job.sections.first().unwrap().format.font_id, crate::fonts::semibold(t.font_heading));
                     *title += 1;
                 }
                 if text.galley.job.text == "OPTIONS" {

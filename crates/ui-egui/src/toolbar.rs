@@ -883,8 +883,8 @@ fn ribbon_tabs(app: &mut SolveApp, ui: &mut egui::Ui, row: Rect) {
 }
 
 /// The dropdown chevron every ribbon menu shares.
-fn chevron(painter: &egui::Painter, at: egui::Pos2, ink: Color32) {
-    crate::icons::paint_ink(painter, Rect::from_center_size(at, vec2(10.0, 10.0)), "chevron", ink);
+fn dropdown_arrow(painter: &egui::Painter, at: egui::Pos2, ink: Color32) {
+    crate::ui_kit::dropdown_indicator(painter, Rect::from_center_size(at, vec2(10.0, 10.0)), ink);
 }
 
 /// The label colour on a selected tab or open section.
@@ -940,7 +940,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let label_width =
             painter.layout_no_wrap(label.to_string(), FontId::proportional(crate::theme::Tokens::get().font_small), t.text_dim).size().x;
         ribbon_text(ui, pos2(ws.center().x - 6.0, ws.top() + 89.0), label, t.font_small, t.text_dim, false);
-        chevron(&painter, pos2(ws.center().x - 6.0 + label_width / 2.0 + 7.0, ws.top() + 89.5), t.text_dim);
+        dropdown_arrow(&painter, pos2(ws.center().x - 6.0 + label_width / 2.0 + 7.0, ws.top() + 89.5), t.text_dim);
         if wresp.on_hover_text(app.tr("ui.change_workspace")).clicked() {
             crate::context_menu::toggle_for(app, ws, ws.left_bottom(), crate::context_menu::Target::Workspace);
         }
@@ -1061,7 +1061,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                     let acc = command_accent(c.icon);
                     icons::paint(&painter, Rect::from_center_size(br.center() - vec2(0.0, 3.0), vec2(26.0, 26.0)), c.icon, t.icon, t.icon_fill, acc);
                 }
-                chevron(&painter, pos2(br.center().x, br.bottom() - 3.0), t.text_dim);
+                dropdown_arrow(&painter, pos2(br.center().x, br.bottom() - 3.0), t.text_dim);
                 let tip = format!("{} ({})", app.tr_label(panel), shown.len().max(cmds.len()));
                 if fresp.on_hover_text(tip).clicked() && enabled_panel {
                     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("sc_panel_open"), popup_id));
@@ -1134,7 +1134,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                     let title_y = whole.top() + 39.0;
                     let galley = ribbon_button_galley(&painter, app.tr_label(f.label), ar.width() - 16.0, t.text);
                     painter.galley(pos2(ar.center().x - 4.0, title_y - galley.size().y / 2.0), galley, t.text);
-                    chevron(&painter, pos2(ar.right() - 6.0, title_y + 0.5), t.text_dim);
+                    dropdown_arrow(&painter, pos2(ar.right() - 6.0, title_y + 0.5), t.text_dim);
                     arrow.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, app.tr_label(f.label)));
                     egui::Popup::menu(&arrow).show(|ui| {
                         let variants: Vec<_> = f.commands.iter().filter_map(|id| solidcraft_engine::find_command(id)).collect();
@@ -1229,7 +1229,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             let ink = if panel_open { selected_ink(&accent) } else { t.text_dim };
             ribbon_text(ui, lr.center() - vec2(if finish { 0.0 } else { 6.0 }, 0.0), &label, t.font_caption, ink, panel_open || hot);
             if !finish {
-                chevron(&painter, pos2(lr.center().x + label_width / 2.0 + 1.0, lr.center().y + 0.5), ink);
+                dropdown_arrow(&painter, pos2(lr.center().x + label_width / 2.0 + 1.0, lr.center().y + 0.5), ink);
             }
             if lresp.clicked() && enabled_panel {
                 ui.ctx().data_mut(|d| {
@@ -1354,18 +1354,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                             }
                             for c in cmds {
                                 let info = c.info(&app.session);
-                                let response = ui
-                                    .add_enabled_ui(info.enabled, |ui| {
-                                        let icon = ui.id().with(("overflow_icon", c.id));
-                                        let row = egui::Button::new((egui::Atom::custom(icon, vec2(16.0, 16.0)), c.label))
-                                            .shortcut_text(c.shortcut.unwrap_or(""))
-                                            .atom_ui(ui);
-                                        if let Some(rect) = row.rect(icon) {
-                                            icons::paint_icon(ui.painter(), rect, c.icon, if info.enabled { 1.0 } else { 0.35 });
-                                        }
-                                        row.response
-                                    })
-                                    .inner;
+                                let response = crate::ui_kit::command_menu_button(ui, c.id, c.label, c.icon, c.shortcut.unwrap_or(""), info.enabled);
                                 crate::scenario::publish_handle(&format!("toolbar:{}", c.id), response.rect.center());
                                 if response.clicked() {
                                     app.start(c.id);
@@ -1765,10 +1754,10 @@ fn drag_ghost(ctx: &egui::Context, id: &str, at: egui::Pos2, removing: bool) {
 }
 
 /// The SELECT panel: what a click in the view picks.
-fn selection_filter(app: &mut SolveApp, ui: &mut egui::Ui) {
+pub(crate) fn selection_filter(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     ui.label(egui::RichText::new(crate::i18n::tr_label("Selection filter")).color(t.text_dim).size(t.font_small));
-    ui.checkbox(&mut app.ui.pick_bodies, crate::i18n::tr_label("Select bodies (a face picks its body)"));
+    crate::ui_kit::checkbox(ui, crate::i18n::tr_label("Select bodies (a face picks its body)"), &mut app.ui.pick_bodies);
     for (k, label) in [
         ("faces", "Faces"),
         ("edges", "Edges"),
@@ -1780,7 +1769,7 @@ fn selection_filter(app: &mut SolveApp, ui: &mut egui::Ui) {
         ("constraints", "Sketch constraints"),
     ] {
         let mut on = !app.ui.pick_off.iter().any(|x| x == k);
-        if ui.checkbox(&mut on, crate::i18n::tr_label(label)).changed() {
+        if crate::ui_kit::checkbox(ui, crate::i18n::tr_label(label), &mut on).changed() {
             app.ui.pick_off.retain(|x| x != k);
             if !on {
                 app.ui.pick_off.push(k.to_string());
@@ -1800,7 +1789,7 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
     }
     // A dimension value that is taking the keyboard: letters belong to it (a parameter name
     // starting with L or D), even on the frame before its field holds the focus.
-    if ctx.egui_wants_keyboard_input() || crate::dim_view::editing() || crate::dialogs_save_mesh::popup_open(ctx) {
+    if egui::Popup::is_any_open(ctx) || ctx.egui_wants_keyboard_input() || crate::dim_view::editing() || crate::dialogs_save_mesh::popup_open(ctx) {
         return;
     }
     let (keys, mods) = ctx.input(|i| {

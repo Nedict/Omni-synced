@@ -128,11 +128,18 @@ pub(crate) fn complete(ui: &mut egui::Ui, resp: &egui::Response, text: &mut Stri
         .iter()
         .map(|suggestion| ui_kit::PopupOption {
             text: &suggestion.text,
+            kind: match suggestion.kind.as_str() {
+                "parameter" => crate::i18n::tr_label("Parameter"),
+                "function" => crate::i18n::tr("ui.function"),
+                "unit" => crate::i18n::tr_label("Unit"),
+                "constant" => crate::i18n::tr("ui.constant"),
+                _ => &suggestion.kind,
+            },
             detail: &suggestion.detail,
             color: match suggestion.kind.as_str() {
-                "parameter" => t.text,
-                "function" => t.accent,
-                _ => t.text_dim,
+                "parameter" => t.form_ink,
+                "function" => t.form_primary,
+                _ => t.form_dim,
             },
         })
         .collect();

@@ -511,10 +511,7 @@ fn timeline_group_name(
     let left = rect.left() + 38.0 + offset;
     let edit_rect = Rect::from_min_max(pos2(left, rect.top() + 1.0), pos2(rect.right() - 3.0, rect.bottom() - 1.0));
     let edit_id = ui.id().with(("timeline_group_rename", group.id));
-    let response = ui.put(
-        edit_rect,
-        egui::TextEdit::singleline(&mut rename.text).id(edit_id).frame(egui::Frame::NONE).text_color(t.text).vertical_align(egui::Align::Center),
-    );
+    let response = crate::ui_kit::inline_name(ui, edit_rect, edit_id, &mut rename.text);
     crate::scenario::publish_handle(&format!("timeline-folder-rename:{}", group.name), edit_rect.center());
     if !rename.focused {
         if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), edit_id) {
@@ -569,12 +566,7 @@ fn vertical_group_row(
     }
     let offset = depth as f32 * 14.0;
     let centre = pos2(rect.left() + 9.0 + offset, rect.center().y);
-    let arrow = if open {
-        vec![centre + vec2(-4.0, -2.0), centre + vec2(4.0, -2.0), centre + vec2(0.0, 3.0)]
-    } else {
-        vec![centre + vec2(-2.0, -4.0), centre + vec2(-2.0, 4.0), centre + vec2(3.0, 0.0)]
-    };
-    ui.painter().add(egui::Shape::convex_polygon(arrow, t.text_dim, Stroke::NONE));
+    crate::ui_kit::disclosure(ui.painter(), centre, open, t.text_dim);
     let icon = Rect::from_center_size(pos2(rect.left() + 27.5 + offset, rect.center().y), vec2(17.0, 17.0));
     icons::paint(ui.painter(), icon, "folder", t.icon, t.icon_fill, t.accent);
     let renaming = timeline_group_name(app, ui, group, rect, offset, &t);
@@ -721,7 +713,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.painter().rect_filled(rect, 3.0, background);
         }
         if has_patterns {
-            crate::icons::glyphs::disclosure(ui.painter(), fold_rect.shrink(3.0), patterns_open, t.text_dim);
+            crate::ui_kit::disclosure(ui.painter(), fold_rect.center(), patterns_open, t.text_dim);
             crate::scenario::publish_handle(&format!("timeline-sketch-fold:{name}"), fold_rect.center());
         }
         let icon_rect =

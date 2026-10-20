@@ -13,15 +13,18 @@ use egui::{Ui, vec2};
 pub(crate) struct Segments<'a> {
     pub states: &'a [bool],
     pub compact: bool,
+    pub primary: bool,
 }
 
 pub(crate) fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str], config: Segments<'_>) -> bool {
-    let Segments { states, compact } = config;
+    let Segments { states, compact, primary } = config;
     let t = Tokens::get();
     let segment_width = dimension(ui.available_width()) / options.len().max(1) as f32;
     let widest = options
         .iter()
-        .map(|option| ui.painter().layout_no_wrap(crate::i18n::tr_label(option).to_string(), crate::fonts::semibold(t.font_label), t.text).size().x)
+        .map(|option| {
+            ui.painter().layout_no_wrap(crate::i18n::tr_label(option).to_string(), crate::fonts::semibold(t.font_label), t.form_ink).size().x
+        })
         .fold(0.0, f32::max);
     if !compact && widest + 2.0 * t.space_8 > segment_width {
         let before = *selected;
@@ -44,17 +47,40 @@ pub(crate) fn segmented(ui: &mut Ui, selected: &mut usize, options: &[&str], con
             se: if index + 1 == options.len() { t.control_radius } else { 0 },
         };
         if on || response.hovered() {
-            ui.painter().rect_filled(segment, rounding, if on { t.selected_bg } else { t.hover });
+            ui.painter().rect_filled(
+                segment,
+                rounding,
+                if on && primary {
+                    t.form_primary
+                } else if on {
+                    t.selected_bg
+                } else {
+                    t.hover
+                },
+            );
         }
         if index > 0 {
             ui.painter().vline(segment.left(), segment.y_range(), egui::Stroke::new(1.0, t.control_border));
         }
         let font = if on { crate::fonts::semibold(t.font_label) } else { egui::FontId::proportional(t.font_label) };
-        let galley = ui.painter().layout_no_wrap((*option).to_string(), font.clone(), t.text);
+        let galley = ui.painter().layout_no_wrap((*option).to_string(), font.clone(), t.form_ink);
         let text_rect =
             egui::Rect::from_min_size(egui::pos2(segment.center().x - galley.size().x / 2.0, segment.top()), vec2(galley.size().x, segment.height()));
         let text_rect = if compact { text_rect.intersect(segment.shrink2(vec2(t.space_4, 0.0))) } else { text_rect };
-        paint_text(ui, text_rect, option, font, if on { t.selected_ink } else { t.text }, false);
+        paint_text(
+            ui,
+            text_rect,
+            option,
+            font,
+            if on && primary {
+                t.on_accent
+            } else if on {
+                t.selected_ink
+            } else {
+                t.form_ink
+            },
+            false,
+        );
         response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), on, *option));
         scenario::publish_handle(&format!("dialog:{}:{option}", label(ui)), segment.center());
         if response.on_hover_text(*option).clicked() {
@@ -104,7 +130,7 @@ pub(crate) fn segmented_icons(ui: &mut Ui, selected: &mut usize, options: &[Icon
         // A square icon area inside the segment: dash gaps and dots need the room to read apart.
         let side = (segment.width().min(segment.height()) - t.space_4).max(t.space_12);
         let icon_rect = egui::Rect::from_center_size(segment.center(), vec2(side, side));
-        crate::icons::paint(ui.painter(), icon_rect, option.icon, t.icon, t.icon_fill, t.accent);
+        crate::icons::paint(ui.painter(), icon_rect, option.icon, t.icon, t.icon_fill, t.form_primary);
         response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), on, option.key));
         scenario::publish_handle(&format!("dialog:{}:{}", label(ui), option.key), segment.center());
         let response = response.on_hover_text(&option.tip);
@@ -132,25 +158,12 @@ pub(crate) fn checkbox_grid(ui: &mut Ui, items: &mut [(&str, &mut bool)], column
                     **value = !**value;
                     response.mark_changed();
                 }
-                let square = egui::Rect::from_center_size(egui::pos2(rect.left() + t.space_14 / 2.0, rect.center().y), vec2(t.space_14, t.space_14));
-                ui.painter().rect(
-                    square,
-                    t.radius_sm,
-                    if **value { t.accent } else { t.control_fill },
-                    egui::Stroke::new(1.0, if **value { t.accent } else { t.control_border }),
-                    egui::StrokeKind::Inside,
-                );
-                if **value {
-                    let mark = square.shrink(t.space_3);
-                    ui.painter().add(egui::Shape::line(
-                        vec![mark.left_center(), mark.center_bottom(), mark.right_top()],
-                        egui::Stroke::new(t.space_2, t.on_accent),
-                    ));
-                }
+                let square = super::checks::box_at(ui, egui::pos2(rect.left() + t.space_14 / 2.0, rect.center().y));
+                super::checks::paint_box(ui, square, &response, **value, false);
                 let translated = crate::i18n::tr_label(label);
                 let text = if translated == "Tangent Chain" { "Tangent chain" } else { translated };
                 let text_rect = egui::Rect::from_min_max(egui::pos2((square.right() + t.space_6).min(rect.right()), rect.top()), rect.max);
-                paint_text(ui, text_rect, text, egui::FontId::proportional(t.font_body), t.text, false);
+                paint_text(ui, text_rect, text, egui::FontId::proportional(t.font_body), t.form_ink, false);
                 response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), **value, translated));
                 scenario::publish_target_as(&format!("dialog:{label}"), &format!("dialog:checkbox:{label}"), rect);
             }
@@ -169,39 +182,19 @@ pub(crate) fn options(ui: &mut Ui, id: &str, items: &mut [(&str, &mut bool)]) {
 pub(crate) fn checkbox_row(ui: &mut egui::Ui, key: &str, label: &str, on: bool) -> bool {
     let t = Tokens::get();
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), t.control_height), egui::Sense::click());
-    let square = egui::Rect::from_center_size(egui::pos2(rect.right() - t.space_14 / 2.0, rect.center().y), vec2(t.space_14, t.space_14));
+    let square = super::checks::box_at(ui, egui::pos2(rect.right() - t.space_14 / 2.0, rect.center().y));
     if response.hovered() || response.has_focus() {
         ui.painter().rect_filled(rect, t.control_radius, t.hover);
     }
-    ui.painter().rect(
-        square,
-        t.radius_sm,
-        if on { t.accent } else { t.control_fill },
-        egui::Stroke::new(1.0, if on { t.accent } else { t.control_border }),
-        egui::StrokeKind::Inside,
-    );
-    if on {
-        let mark = square.shrink(t.space_3);
-        ui.painter()
-            .add(egui::Shape::line(vec![mark.left_center(), mark.center_bottom(), mark.right_top()], egui::Stroke::new(t.space_2, t.on_accent)));
-    }
+    super::checks::paint_box(ui, square, &response, on, false);
     let label = crate::i18n::tr_label(label);
     let painter = ui
         .painter()
         .with_clip_rect(ui.clip_rect().intersect(egui::Rect::from_min_max(rect.min, egui::pos2(square.left() - t.space_6, rect.bottom()))));
-    painter.text(rect.left_center(), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(t.font_label), t.text);
+    painter.text(rect.left_center(), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(t.font_label), t.form_ink);
     response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), on, label));
     crate::scenario::publish_target(&format!("sketch_palette:toggle:{key}"), rect);
     response.on_hover_text(label).clicked()
-}
-
-/// Standard inline checkbox; inherits scope's font_label, accent, control and text tokens.
-/// Use checkbox_row for a full-width label-left/box-right palette option.
-/// Inline native checkbox retaining existing accessibility and sizing. Tokens: `scope control/font/accent tokens`.
-pub(crate) fn checkbox(ui: &mut Ui, label: &str, value: &mut bool) -> egui::Response {
-    let response = ui.checkbox(value, label);
-    super::layout::publish_geometry(ui, &response);
-    response
 }
 
 /// Compact bold/italic toggles for text. Tokens: scope font/control tokens.
@@ -264,7 +257,7 @@ pub(crate) fn toggle_icon(ui: &mut Ui, row: &str, label: &str, selected: &mut bo
     let t = Tokens::get();
     let response =
         ui.add(egui::Button::new("").selected(*selected).min_size(vec2(t.space_24 + t.space_4, t.control_height)).sense(egui::Sense::CLICK));
-    crate::icons::paint(ui.painter(), response.rect.shrink(t.space_3), icon, t.icon, t.icon_fill, t.accent);
+    crate::icons::paint(ui.painter(), response.rect.shrink(t.space_3), icon, t.icon, t.icon_fill, t.form_primary);
     response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, *selected, crate::i18n::tr_label(label)));
     crate::scenario::publish_handle(&format!("dialog:{row}:{label}"), response.rect.center());
     if response.clone().on_hover_text(crate::i18n::tr_label(label)).clicked() {
@@ -300,20 +293,28 @@ pub(crate) fn color_swatch<T: Send + Sync + 'static>(
     let t = crate::theme::Tokens::get();
     let response = ui
         .dnd_drag_source(id, payload, |ui| {
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(t.control_height, t.control_height), egui::Sense::hover());
+            let side = t.control_height + t.space_6;
+            let (allocation, _) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::hover());
+            let rect = allocation.shrink(t.space_2);
+            if selected {
+                ui.painter().rect_stroke(allocation, t.radius_lg, egui::Stroke::new(t.space_2, t.form_primary), egui::StrokeKind::Inside);
+            }
+            ui.painter().rect_filled(rect, t.control_radius, t.control_fill);
             if color.a() < u8::MAX {
-                let half = rect.width() / 2.0;
-                for offset in [egui::Vec2::ZERO, egui::vec2(half, half)] {
-                    ui.painter().rect_filled(egui::Rect::from_min_size(rect.min + offset, egui::vec2(half, half)), 0.0, t.hover);
+                let tile = rect.width() / 6.0;
+                for y in 0..6 {
+                    for x in 0..6 {
+                        if (x + y) % 2 == 0 {
+                            ui.painter().rect_filled(
+                                egui::Rect::from_min_size(rect.min + vec2(x as f32 * tile, y as f32 * tile), vec2(tile, tile)),
+                                0.0,
+                                t.border,
+                            );
+                        }
+                    }
                 }
             }
-            ui.painter().rect(
-                rect,
-                t.control_radius,
-                color,
-                egui::Stroke::new(if selected { t.space_2 } else { 1.0 }, if selected { t.accent } else { t.border }),
-                egui::StrokeKind::Inside,
-            );
+            ui.painter().rect(rect, t.control_radius, color, egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
         })
         .response;
     let response = ui.interact(response.rect, id.with("click"), egui::Sense::click()).on_hover_text(tip);
@@ -326,9 +327,9 @@ pub(crate) fn color_swatch<T: Send + Sync + 'static>(
 /// Wrapped samples with common token spacing. Keeps native drag-and-drop payloads intact.
 pub(crate) fn swatch_grid<T>(ui: &mut Ui, values: &[T], mut each: impl FnMut(&mut Ui, &T)) {
     let t = Tokens::get();
-    let columns = ((super::metrics::dimension(ui.available_width()) + t.space_4) / (t.control_height + t.space_4)).floor().clamp(1.0, 64.0) as usize;
+    let columns = ((super::metrics::dimension(ui.available_width()) + t.space_2) / (t.control_height + t.space_8)).floor().clamp(1.0, 64.0) as usize;
     ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing = vec2(t.space_4, t.space_4);
+        ui.spacing_mut().item_spacing = vec2(t.space_2, t.space_2);
         for row in values.chunks(columns.max(1)) {
             ui.horizontal(|ui| {
                 for value in row {
@@ -343,6 +344,7 @@ pub(crate) fn swatch_grid<T>(ui: &mut Ui, values: &[T], mut each: impl FnMut(&mu
 pub(crate) struct PopupOption<'a> {
     pub text: &'a str,
     pub detail: &'a str,
+    pub kind: &'a str,
     pub color: egui::Color32,
 }
 
@@ -359,28 +361,70 @@ pub(crate) fn popup_list(
     let t = crate::theme::Tokens::get();
     let mut chosen = None;
     let area = crate::frame::area(id).order(egui::Order::Tooltip).fixed_pos(anchor.left_bottom() + egui::vec2(0.0, t.space_2)).show(ctx, |ui| {
-        egui::Frame::popup(ui.style()).show(ui, |ui| {
-            super::scope(ui, |ui| {
-                ui.set_width(anchor.width().max(t.form_label_width * 2.0));
-                for (index, option) in options.iter().enumerate() {
-                    let response = ui
-                        .add_sized(
-                            egui::vec2(ui.available_width(), t.control_height),
-                            egui::Button::selectable(index == selected, egui::RichText::new(option.text).color(option.color)),
-                        )
-                        .on_hover_text(option.detail);
-                    crate::scenario::publish_handle(&format!("dialog:suggestion:{index}"), response.rect.center());
-                    if index == selected {
+        egui::Frame::popup(ui.style())
+            .fill(t.control_fill)
+            .stroke(egui::Stroke::new(1.0, t.dialog_border))
+            .corner_radius(t.radius_lg)
+            .inner_margin(t.space_4)
+            .show(ui, |ui| {
+                super::scope(ui, |ui| {
+                    ui.set_width(anchor.width().max(t.form_card_width - t.space_16 * 2.0 - t.space_2));
+                    for (index, option) in options.iter().enumerate() {
+                        let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), t.control_height), egui::Sense::click());
+                        let picked = index == selected;
+                        if picked || response.hovered() {
+                            ui.painter().rect_filled(rect, t.control_radius, if picked { t.selected_bg } else { t.hover });
+                        }
+                        let inner = rect.shrink2(vec2(t.space_8, 0.0));
+                        let kind = crate::i18n::tr_label(option.kind);
+                        let kind_width = super::metrics::label_width(ui, kind);
+                        let text_rect = egui::Rect::from_min_max(
+                            inner.min,
+                            egui::pos2((inner.right() - kind_width - t.space_8).max(inner.left()), inner.bottom()),
+                        );
+                        super::text::paint_text(
+                            ui,
+                            text_rect,
+                            option.text,
+                            egui::FontId::monospace(t.font_body),
+                            if picked { t.form_primary } else { option.color },
+                            false,
+                        );
+                        ui.painter().text(
+                            inner.right_center(),
+                            egui::Align2::RIGHT_CENTER,
+                            kind,
+                            egui::FontId::proportional(t.font_small),
+                            t.form_dim,
+                        );
+                        response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, ui.is_enabled(), picked, option.text));
+                        let response = response.on_hover_text(option.detail);
+                        crate::scenario::publish_handle(&format!("dialog:suggestion:{index}"), response.rect.center());
+                        if response.clicked() {
+                            chosen = Some(index);
+                        }
+                    }
+                    super::divider(ui, "completion_detail");
+                    if let Some(option) = options.get(selected) {
                         super::text(ui, option.detail, super::Text::Note("completion_detail"));
                     }
-                    if response.clicked() {
-                        chosen = Some(index);
-                    }
-                }
-                super::text(ui, hint, super::Text::Note("completion_hint"));
-            })
-        });
+                    super::text(ui, hint, super::Text::Note("completion_hint"));
+                })
+            });
     });
     crate::scenario::publish_rect("dialog:suggestions", area.response.rect);
     chosen
+}
+
+/// Compact draggable library thumbnail, retaining the caller's distinct payload type.
+/// Tokens: space_16, radius_sm, border.
+#[cfg(any(not(target_arch = "wasm32"), test))]
+pub(crate) fn color_thumbnail<T: Send + Sync + 'static>(ui: &mut Ui, id: egui::Id, color: egui::Color32, tip: &str, payload: T) -> egui::Response {
+    let t = Tokens::get();
+    ui.dnd_drag_source(id, payload, |ui| {
+        let (rect, _) = ui.allocate_exact_size(vec2(t.space_16, t.space_16), egui::Sense::hover());
+        ui.painter().rect(rect, t.radius_sm, color, egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    })
+    .response
+    .on_hover_text(tip)
 }

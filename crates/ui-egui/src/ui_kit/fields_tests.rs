@@ -5,6 +5,51 @@ use crate::scenario;
 use egui::Ui;
 
 #[test]
+fn every_text_input_centres_its_galley_for_mono_and_proportional_fonts() {
+    for case in ["expression", "plain", "cell", "invalid", "library", "placement", "password", "multiline", "area", "message"] {
+        let ctx = crate::fonts::test_context();
+        let mut value = "Centred".to_owned();
+        let mut rect = egui::Rect::NOTHING;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.set_width(280.0);
+            scope(ui, |ui| {
+                let id = ui.id().with(case);
+                rect = match case {
+                    "expression" | "plain" => super::editor(ui, &mut value, "", case == "expression").2.rect,
+                    "cell" | "invalid" => cell_editor(ui, id, &mut value, "", case == "invalid").rect,
+                    "library" => library_cell(ui, id, &mut value, "", |_| {}).rect,
+                    "placement" => placement_field(ui, id, &mut value, "").rect,
+                    "password" => password_field(ui, id, &mut value, "").rect,
+                    "multiline" => multiline_text_field(ui, "Text", id, &mut value).rect,
+                    "area" => text_area(ui, "Text", id, &mut value, 3, 100).rect,
+                    _ => message_field(ui, id, &mut value, "").rect,
+                };
+            });
+        });
+        output.textures_delta.clear();
+        let galley = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == value || (case == "password" && !text.galley.is_empty()) => Some(text),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{case}: missing text"));
+        let center = galley.pos.y + galley.galley.rect.center().y;
+        assert!((center - rect.center().y).abs() < 0.01, "{case}: galley centre {center} differs from field {rect:?}");
+        if case == "placement" {
+            let font = egui::FontId::proportional(crate::theme::Tokens::get().font_body);
+            let native = ctx.fonts_mut(|fonts| fonts.row_height(&font))
+                + ctx.style_of(egui::Theme::Light).spacing.extra_text_line_spacing
+                + crate::theme::Tokens::get().space_4;
+            assert_eq!(rect.height(), native, "canvas editor retains its native hit target");
+        } else if !matches!(case, "multiline" | "area" | "message") {
+            assert_eq!(rect.height(), crate::theme::Tokens::get().control_height, "{case}");
+        }
+    }
+}
+
+#[test]
 fn tab_visits_expression_fields_in_row_order() {
     let ctx = crate::fonts::test_context();
     let mut first = "1".to_string();
