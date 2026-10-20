@@ -88,6 +88,30 @@ fn read_back(s: &Session, body: &solidcraft_kernel::Body) -> (String, usize) {
     (text, back.file_faces)
 }
 
+/// The timeline insertion from #1765 on a small part with analytic material. The kernel test
+/// separately forces the empty numerical attempts, without needing the reporter's design.
+#[test]
+fn shallow_cuts_rebuild_after_inserting_an_earlier_pocket() {
+    let s = replay(include_str!("../../../examples/regressions/shallow_cuts_after_earlier_pocket.json"));
+    let rounded_plate = 40.0 * 30.0 * 10.0 - (4.0 - std::f64::consts::PI) * 40.0;
+    // Half of each circle overlaps the existing 0.75 mm pocket.
+    let expected = rounded_plate - 30.0 * 10.0 * 0.75 - 2.0 * std::f64::consts::PI * 25.0 * (1.5 - 0.75 / 2.0);
+    let reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    for session in [s, reopened] {
+        assert!(session.model.results.iter().all(|r| r.error.is_none()));
+        assert_eq!(session.model.state().bodies.len(), 1);
+        let body = &session.model.state().bodies[0].body;
+        assert!(body.validity().is_empty(), "{:?}", body.validity());
+        let actual = volume(&session, "Plate");
+        assert!((actual - expected).abs() < 0.02, "{actual} vs {expected}");
+        let mesh = body.tessellate(0.001).unwrap();
+        assert!(!mesh.contains(solidcraft_geom::Vec3::new(12.0, 14.0, 9.0)));
+        assert!(mesh.contains(solidcraft_geom::Vec3::new(12.0, 14.0, 8.0)));
+        assert!(!mesh.contains(solidcraft_geom::Vec3::new(20.0, 20.0, 9.5)));
+        assert!(mesh.contains(solidcraft_geom::Vec3::new(20.0, 20.0, 9.0)));
+    }
+}
+
 /// #2059: tabs exactly as wide as their supporting ribs share the ribs' side
 /// planes. The base's remote conical chamfer must not prevent their join.
 #[test]
@@ -972,4 +996,39 @@ fn prism_edge_in_a_round_cornered_slab_end_face_joins() {
         let got = volume(&s, "Prism");
         assert!((got - (prism + slab - shared)).abs() < 1e-3 * got, "r {r}: {got} vs {}", prism + slab - shared);
     }
+}
+
+/// A cut from a face up to the plate's top face, its tool's end lying in that face: the boolean
+/// of the bodies as they lie left the hole closed by a skin of no thickness (the plate's top face
+/// whole over the hole, the tool's end face under it), which no volume shows and which was kept.
+/// The hole is open, and the cut takes the whole tool: the circle of radius 3.04 the two
+/// profiles make, from the barrel cut's floor at z 1.6 up to the plate's top at z 2.8.
+#[test]
+fn cut_up_to_the_plate_top_face_opens_the_hole() {
+    let mut script: Value = serde_json::from_str(include_str!("../../../examples/regressions/cut_up_to_face_leaves_skin.json")).unwrap();
+    let s = replay_value(&script);
+    assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+    let state = s.model.state();
+    let body = &state.body("Body7").unwrap().body;
+    assert!(body.validity().is_empty(), "{:?}", body.validity());
+    let skin: Vec<f64> = body
+        .faces(1e-4)
+        .unwrap()
+        .into_iter()
+        .filter(|f| f.plane_normal.is_some_and(|n| n.z < -0.999) && (f.centroid.z - 2.8).abs() < 1e-6)
+        .map(|f| f.area)
+        .collect();
+    assert!(skin.is_empty(), "faces at z 2.8 facing down, areas {skin:?} mm²");
+    // The same design without the cut.
+    script["commands"].as_array_mut().unwrap().pop();
+    let before = replay_value(&script);
+    let fine = |s: &Session| s.model.state().body("Body7").unwrap().body.tessellate(1e-5).unwrap().measure().volume;
+    let (removed, want) = (fine(&before) - fine(&s), std::f64::consts::PI * 3.04 * 3.04 * 1.2);
+    assert!((removed - want).abs() < 0.01, "removed {removed} mm³, want {want}");
+}
+
+fn replay_value(script: &Value) -> Session {
+    let mut s = Session::default();
+    s.run_script(script).unwrap();
+    s
 }

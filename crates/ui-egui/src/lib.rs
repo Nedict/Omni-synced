@@ -72,6 +72,8 @@ pub mod issue_report;
 pub mod joint_drag;
 pub mod keymap;
 mod linked_source;
+#[cfg(test)]
+mod loft_rails_dialog_tests;
 mod material_card_review;
 #[cfg(test)]
 mod measurement_ui_tests;
@@ -117,6 +119,8 @@ pub use file_picker::FilePickerFuture;
 #[cfg(test)]
 mod blend_arrow_tests;
 #[cfg(test)]
+mod blend_dialog_tests;
+#[cfg(test)]
 mod boundary_dialog_tests;
 pub(crate) mod display_lod;
 #[cfg(test)]
@@ -128,6 +132,7 @@ pub mod palette;
 pub mod params_dialog;
 pub(crate) mod pick_buffer;
 pub(crate) mod pick_index;
+pub(crate) mod plugins;
 pub mod prefs;
 #[cfg(test)]
 mod preselect_tests;

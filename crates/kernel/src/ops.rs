@@ -350,7 +350,7 @@ fn contradicted(
     let (under_a, under_b) = (|p: Vec3, f: u32| shared().under_cap(p, f, true, tol), |p: Vec3, f: u32| shared().under_cap(p, f, false, tol));
     if disjoint {
         let (ba, bb) = (ma.bounds(), mb.bounds());
-        let meet = solidcraft_geom::Aabb3 { min: ba.min.max(bb.min), max: ba.max.min(bb.max) };
+        let meet = ba.intersection(&bb);
         return !meet.is_empty()
             && (under_surface(ma, ia, ib, tol, true, Some(&meet), &under_a) || under_surface(mb, ib, ia, tol, true, Some(&meet), &under_b));
     }
@@ -1241,7 +1241,7 @@ fn meeting_size(a: &Body, b: &Body) -> f64 {
         bb
     };
     let (ba, bb) = (bbox(a), bbox(b));
-    let s = solidcraft_geom::Aabb3 { min: ba.min.max(bb.min), max: ba.max.min(bb.max) }.size();
+    let s = ba.intersection(&bb).size();
     // A closed sweep's section seams need not span its geometry. Roundoff in a flat
     // vertex box is not a thin meeting region: refining for it
     // makes millions of triangles and skips the bounded containment shortcut (#2005).
@@ -1254,7 +1254,7 @@ fn meeting_size(a: &Body, b: &Body) -> f64 {
 /// on its seam, so its vertex box says nothing about where its side reaches.
 fn mesh_meeting_size(a: &solidcraft_geom::Mesh, b: &solidcraft_geom::Mesh) -> f64 {
     let (ba, bb) = (a.bounds(), b.bounds());
-    let s = solidcraft_geom::Aabb3 { min: ba.min.max(bb.min), max: ba.max.min(bb.max) }.size();
+    let s = ba.intersection(&bb).size();
     if s.x > 0.0 && s.y > 0.0 && s.z > 0.0 { s.x.min(s.y).min(s.z) } else { f64::INFINITY }
 }
 
@@ -1318,14 +1318,19 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
     boolean_whole_with_refinement(a, b, op, false)
 }
 
-/// [`boolean_whole_inner`] with the attempts it and the booleans its retries make counted
+/// [`boolean_whole_with`] with the attempts it and the booleans its retries make counted
 /// together ([`MAX_ATTEMPTS`]), unless an outer boolean already counts them.
 fn boolean_whole_with_refinement(a: &Body, b: &Body, op: BoolOp, refine: bool) -> Result<Option<Body>> {
     let _scope = AttemptScope::enter();
-    boolean_whole_inner(a, b, op, refine)
+    boolean_whole_with(a, b, op, refine, &truck_boolean)
 }
 
-fn boolean_whole_inner(a: &Body, b: &Body, op: BoolOp, refine: bool) -> Result<Option<Body>> {
+/// The whole-body strategies with the numerical intersection supplied separately, so tests
+/// can reproduce an empty numerical attempt without depending on a particular ray seed.
+fn boolean_whole_with<F>(a: &Body, b: &Body, op: BoolOp, refine: bool, intersect: &F) -> Result<Option<Body>>
+where
+    F: Fn(&Body, &Body, BoolOp, Option<mt::Vector3>, f64) -> Result<(Solid, Option<recorded::Shapeops>)>,
+{
     if let Some(body) = swept_prism(a, b, op) {
         return Ok(Some(body));
     }
@@ -1415,7 +1420,8 @@ fn boolean_whole_inner(a: &Body, b: &Body, op: BoolOp, refine: bool) -> Result<O
     // nothing to cut, so it returns both operands side by side (#396). Volume and point
     // sampling cannot see that; the shell grouping can. Only contact over an area counts
     // (bodies tangent along a line stay two lumps), and operands already like that, saved
-    // before this was caught, stay joinable.
+    // before this was caught, stay joinable. Nor can they see a skin of no thickness left over
+    // a hole by a tool ending in a face of the target ([`crate::coplanar::has_skin`]).
     // Faces seen crossing each other (`crossing`) share volume, so a union of them has fewer
     // shells than the operands together: one that kept them all missed where they cross (an
     // intersection traced too coarsely for an overlap a hundredth of a millimetre deep).
@@ -1435,7 +1441,7 @@ fn boolean_whole_inner(a: &Body, b: &Body, op: BoolOp, refine: bool) -> Result<O
         if !bounds {
             return (false, v);
         }
-        if unfused(r) {
+        if unfused(r) || crate::coplanar::has_skin(r, &mr) {
             return (false, v);
         }
         let consistent = match &meshes {
@@ -1455,7 +1461,7 @@ fn boolean_whole_inner(a: &Body, b: &Body, op: BoolOp, refine: bool) -> Result<O
                 break;
             }
             let tol = (size * k).max(1e-6);
-            if let Ok((solid, history)) = truck_boolean(a, b, op, None, tol)
+            if let Ok((solid, history)) = intersect(a, b, op, None, tol)
                 && !solid.boundaries().is_empty()
                 && let Ok(body) = guard("refined boolean result", || recorded::truck_result(solid, history, size, &keep, &counts))
                 && check(&body).0
@@ -1607,7 +1613,7 @@ fn boolean_whole_inner(a: &Body, b: &Body, op: BoolOp, refine: bool) -> Result<O
     let fine_tols: Vec<f64> = match &meshes {
         (Some(ma), Some(mb)) if a.solid.boundaries().len() == 1 && b.solid.boundaries().len() == 1 => {
             let (ba, bb) = (ma.bounds(), mb.bounds());
-            let s = solidcraft_geom::Aabb3 { min: ba.min.max(bb.min), max: ba.max.min(bb.max) }.size();
+            let s = ba.intersection(&bb).size();
             // The thinner operand's thickness (twice its volume over its area: a plate's
             // thickness, a rod's radius) bounds what the tolerance must resolve as well.
             let thickness = |m: &solidcraft_geom::Mesh| {
@@ -1628,7 +1634,7 @@ fn boolean_whole_inner(a: &Body, b: &Body, op: BoolOp, refine: bool) -> Result<O
                 if spent() {
                     return None;
                 }
-                match truck_boolean(a, b, op, if attempt > 0 { Some(shift) } else { None }, tol) {
+                match intersect(a, b, op, if attempt > 0 { Some(shift) } else { None }, tol) {
                     Ok((s, _)) if s.boundaries().is_empty() || s.face_iter().next().is_none() => *last = "empty result".into(),
                     Ok((s, h)) => match guard("boolean result", || recorded::truck_result(s, h, size, &keep, &counts)) {
                         Ok(body) => {
@@ -1718,7 +1724,7 @@ fn boolean_whole_inner(a: &Body, b: &Body, op: BoolOp, refine: bool) -> Result<O
                 if spent() {
                     break;
                 }
-                let Ok((s, h)) = truck_boolean(a, b, op, None, tol) else { continue };
+                let Ok((s, h)) = intersect(a, b, op, None, tol) else { continue };
                 if s.boundaries().is_empty() || s.face_iter().next().is_none() {
                     continue;
                 }
@@ -1743,13 +1749,20 @@ fn boolean_whole_inner(a: &Body, b: &Body, op: BoolOp, refine: bool) -> Result<O
                 return Ok(r);
             }
         }
+        // An implausible empty result from the unshifted numerical tries must still give
+        // the exact strategies above a chance (#1765), including seam-face recovery. If none
+        // recovers it, keep the original candidate for the outer guard, before displaced retries.
+        if empty_votes >= 2 && op != BoolOp::Union {
+            merge(empty_diagnostics);
+            return Ok(None);
+        }
         let shift = mt::Vector3::new(j[0], j[1], j[2]) * (size * 0.01);
         for k in [2e-3, 5e-4] {
             if spent() {
                 break;
             }
             let tol = (size * k).max(1e-5);
-            let r = truck_boolean(a, b, op, if attempt > 0 { Some(shift) } else { None }, tol);
+            let r = intersect(a, b, op, if attempt > 0 { Some(shift) } else { None }, tol);
             match r {
                 // Faces that cross share volume: an empty result missed it.
                 Ok((s, _)) if (s.boundaries().is_empty() || s.face_iter().next().is_none()) && crossing => {
@@ -1796,6 +1809,9 @@ fn boolean_whole_inner(a: &Body, b: &Body, op: BoolOp, refine: bool) -> Result<O
         if empty_votes >= 2 && op != BoolOp::Union {
             if let Some(body) = fine(&mut last) {
                 return Ok(Some(body));
+            }
+            if attempt == 0 && crate::boolean_guard::check_retry(a, b, op, None).is_err() {
+                continue;
             }
             merge(empty_diagnostics);
             return Ok(None);
@@ -2185,8 +2201,7 @@ fn union_apart_untimed(bodies: &[Body]) -> Result<Option<Body>> {
         if bb.is_empty() {
             return Ok(None);
         }
-        let pad = Vec3::new(1.0, 1.0, 1.0) * (2.0 * tol);
-        boxes.push(solidcraft_geom::Aabb3 { min: bb.min - pad, max: bb.max + pad });
+        boxes.push(bb.inflated(2.0 * tol));
     }
     // Sweep along x: only boxes whose x ranges overlap are compared.
     let mut order: Vec<usize> = (0..boxes.len()).collect();
@@ -2537,6 +2552,10 @@ pub(crate) fn half_box(body: &Body, plane: &solidcraft_geom::Plane, positive: bo
     let (lo, hi) = if positive { (0.0, reach) } else { (-reach, 0.0) };
     crate::build::extrude(plane, std::slice::from_ref(&sq), lo, hi)?.pop().ok_or_else(|| KernelError::Failed("half space".into()))
 }
+
+#[cfg(test)]
+#[path = "empty_retry_tests.rs"]
+mod empty_retry_tests;
 
 #[cfg(test)]
 #[path = "prism_fast_path_tests.rs"]
