@@ -107,7 +107,7 @@ fn a_face_picked_in_the_viewport_opens_the_browser_to_its_placements_body() {
     h.frames(2);
     assert!(!h.app.tree.order.contains(&format!("b:{second}")), "the body's row is closed away");
     let face = Sel::Face { body: second.clone(), index: 0, point: solidcraft_engine::geom::Vec3::new(55.0, 5.0, 10.0) };
-    crate::viewport::select(&mut h.app, Some(face), false);
+    crate::viewport::select(&mut h.app, Some(face), false, false);
     assert_eq!(h.app.tree.reveal.as_deref(), Some(second.as_str()));
     h.frames(2);
     assert!(h.app.tree.reveal.is_none(), "revealed");
