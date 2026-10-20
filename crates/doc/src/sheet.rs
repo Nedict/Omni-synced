@@ -740,6 +740,10 @@ const MIN_CORNER_RELIEF: f64 = 0.01;
 /// The narrowest bend relief that is cut: a narrower one would leave hairline edges.
 const MIN_BEND_RELIEF: f64 = 0.01;
 
+/// How many straight pieces a round corner relief's arc is measured in, when the region it takes
+/// out of the base is worked out (see [`SheetBody::plan_relief`]).
+const RELIEF_ARC_STEPS: usize = 64;
+
 /// Two bends on the base meeting at a corner (see [`SheetBody::corners`]): flanges `a` and `b`,
 /// which end of each (false = the end at `p`), and the corner point (flat coordinates).
 #[derive(Clone, Copy, Debug)]
@@ -756,6 +760,16 @@ fn corners_of(r: &Region2) -> Vec<Vec2> {
     dedup(&r.outer.ccw().polyline(1e-3))
 }
 
+/// A corner relief planned but not yet cut (see [`SheetBody::plan_relief`]): the corner it is
+/// for, the segments that cut the base's corner, and the region they take out of it (the
+/// polygon, counter-clockwise, the two reliefs of two corners are compared on).
+#[derive(Clone, Debug)]
+struct PlannedRelief {
+    corner: Corner,
+    segs: Vec<Seg2>,
+    cut: Vec<Vec2>,
+}
+
 /// The area two convex counter-clockwise polygons share.
 fn convex_overlap(a: &[Vec2], b: &[Vec2]) -> f64 {
     let mut poly = a.to_vec();
@@ -769,6 +783,16 @@ fn convex_overlap(a: &[Vec2], b: &[Vec2]) -> f64 {
         }
     }
     signed_area(&poly).abs()
+}
+
+/// A polygon counter-clockwise, so that the two of them can be compared (see
+/// [`convex_overlap`]).
+fn ccw(p: &[Vec2]) -> Vec<Vec2> {
+    let mut q = p.to_vec();
+    if signed_area(&q) < 0.0 {
+        q.reverse();
+    }
+    q
 }
 
 /// How wide a strip two flat pieces may share and still only touch. A flange's bend starts on
@@ -2821,9 +2845,38 @@ impl SheetBody {
             ReliefShape::Notch => {}
             // The reliefs come last: they move the bends' ends, which is how the corners were found.
             ReliefShape::Round | ReliefShape::Rectangular => {
+                // Every corner's relief is planned against the base as it is now, before any of
+                // them is cut, so that a corner's relief does not depend on the order the corners
+                // are cut in.
+                let mut planned = Vec::with_capacity(corners.len());
                 for k in corners {
-                    if let Err(why) = self.relieve_corner(k, corners, shape, size) {
-                        notes.push(format!("no corner relief at {}: {why}", self.shown(k.c)));
+                    match self.plan_relief(k, corners, shape, size) {
+                        Ok(Some(p)) => planned.push(p),
+                        Ok(None) => {}
+                        Err(why) => notes.push(format!("no corner relief at {}: {why}", self.shown(k.c))),
+                    }
+                }
+                // The reliefs at the two ends of one edge must not overlap: the one planned later
+                // is left out, with a note.
+                let mut kept: Vec<PlannedRelief> = Vec::with_capacity(planned.len());
+                for p in planned {
+                    let mut clash = None;
+                    for q in &kept {
+                        if convex_overlap(&q.cut, &p.cut) > 1e-9 {
+                            clash = Some(q.corner.c);
+                            break;
+                        }
+                    }
+                    match clash {
+                        Some(at) => {
+                            notes.push(format!("no corner relief at {}: it would overlap the relief at {}", self.shown(p.corner.c), self.shown(at)))
+                        }
+                        None => kept.push(p),
+                    }
+                }
+                for p in &kept {
+                    if let Err(why) = self.cut_relief(p) {
+                        notes.push(format!("no corner relief at {}: {why}", self.shown(p.corner.c)));
                     }
                 }
             }
@@ -2998,17 +3051,16 @@ impl SheetBody {
         Ok(())
     }
 
-    /// Cut a relief `size` across where two bends meet at a corner of the base, `size / 2`
-    /// from the corner along both edges: a round about the corner through the angle the base
-    /// fills there, or the square with that side (a kite where the corner isn't square, its
-    /// cuts square to the two edges). The base's edges then start that far from the corner, so
-    /// both bends stop there, cut straight across (`zone_span`): their ends stay exact arcs,
-    /// the round runs on into them tangentially, and the bend table gets the shorter bends.
-    /// The flange panels keep the ends `close_corner` gave them. A relief too small to cut, one
-    /// that would leave nothing of an edge it starts on (with the relief at that edge's other
-    /// end, where there is one), or one reaching as far from the corner as another edge of the
-    /// base is, is refused with the reason.
-    fn relieve_corner(&mut self, k: &Corner, corners: &[Corner], shape: ReliefShape, size: f64) -> std::result::Result<(), String> {
+    /// Plan the relief of size `size` at the corner `k`: the segments that cut the base's corner
+    /// and the region they take out of it. A relief `size` across is cut `size / 2` from the
+    /// corner along both edges: a round about the corner through the angle the base fills there,
+    /// or the square with that side (a kite where the corner isn't square, its cuts square to the
+    /// two edges). `None` where the corner is not one of the base's (the flanges turn away from
+    /// each other), and the reason why no relief is cut where none fits: a relief too small to
+    /// cut, one that would leave nothing of an edge it starts on (with the relief at that edge's
+    /// other end, where there is one), or one reaching as far from the corner as another edge of
+    /// the base is.
+    fn plan_relief(&self, k: &Corner, corners: &[Corner], shape: ReliefShape, size: f64) -> std::result::Result<Option<PlannedRelief>, String> {
         if !(size >= MIN_CORNER_RELIEF) {
             return Err(format!("the relief size {size:.4} mm is below {MIN_CORNER_RELIEF} mm"));
         }
@@ -3030,7 +3082,7 @@ impl SheetBody {
         let alpha = db.cross(da).atan2(db.dot(da));
         if !(alpha > 1e-6 && alpha < std::f64::consts::PI - 1e-6) {
             // An inside corner of the base: the flanges turn away from each other.
-            return Ok(());
+            return Ok(None);
         }
         // Both bends must keep some length. An edge whose far end is another of the corners has
         // to hold a relief there too, so the reliefs at its two ends fit or are left out together.
@@ -3041,14 +3093,13 @@ impl SheetBody {
         // The relief from the edge that ends at the corner to the one that starts there, and
         // how far from the corner it reaches.
         let (relief, reach) = match shape {
-            ReliefShape::Notch | ReliefShape::Tear => return Ok(()),
+            ReliefShape::Notch | ReliefShape::Tear => return Ok(None),
             ReliefShape::Round => (vec![Seg2::Arc { center: c, radius: r, start: da.angle(), sweep: -alpha }], r),
             ReliefShape::Rectangular => {
                 let x = snap(c + (da + db) * (r / (1.0 + da.dot(db))));
                 (vec![Seg2::Line { a: snap(c + da * r), b: x }, Seg2::Line { a: x, b: snap(c + db * r) }], x.dist(c))
             }
         };
-        let (Some(start), Some(end)) = (relief.first().map(Seg2::start), relief.last().map(Seg2::end)) else { return Ok(()) };
         // The rest of the outline must stay clear of it.
         let clear = segs.iter().enumerate().filter(|(e, _)| *e != i && *e != j).all(|(_, s)| {
             s.polyline(1e-3).windows(2).all(|w| {
@@ -3060,13 +3111,45 @@ impl SheetBody {
         if !clear {
             return Err(format!("a relief {size:.3} mm across reaches {reach:.3} mm from the corner, where another edge of the base is nearer"));
         }
-        let mut outer = Vec::with_capacity(n + relief.len());
+        // The region the relief takes out of the base: the corner, the two edges it takes along
+        // and the cut between them. The round one is a sector of the circle about the corner, the
+        // square one the kite with that side.
+        let cut = match shape {
+            ReliefShape::Round => {
+                let mut poly = vec![c, c + da * r];
+                for k in 1..RELIEF_ARC_STEPS {
+                    poly.push(c + Vec2::from_angle(da.angle() - alpha * (k as f64) / (RELIEF_ARC_STEPS as f64)) * r);
+                }
+                poly.push(c + db * r);
+                poly
+            }
+            _ => vec![c, c + da * r, snap(c + (da + db) * (r / (1.0 + da.dot(db)))), c + db * r],
+        };
+        Ok(Some(PlannedRelief { corner: *k, segs: relief, cut: ccw(&cut) }))
+    }
+
+    /// Cut a planned relief into the base: its edges then start that far from the corner, so
+    /// both bends stop there, cut straight across (`zone_span`): their ends stay exact arcs, the
+    /// round runs on into them tangentially, and the bend table gets the shorter bends. The
+    /// flange panels keep the ends `close_corner` gave them.
+    fn cut_relief(&mut self, p: &PlannedRelief) -> std::result::Result<(), String> {
+        let k = &p.corner;
+        let segs = self.base.outer.ccw().segs;
+        let n = segs.len();
+        let at_corner =
+            |i: usize| segs.get(i).is_some_and(|s| s.end().dist(k.c) < 1e-6) && segs.get((i + 1) % n).is_some_and(|s| s.start().dist(k.c) < 1e-6);
+        let Some(i) = (0..n).find(|&i| at_corner(i)) else { return Err("the bends don't meet at a corner of the base".into()) };
+        let j = (i + 1) % n;
+        let (Some(start), Some(end)) = (p.segs.first().map(Seg2::start), p.segs.last().map(Seg2::end)) else {
+            return Err("the relief has no cut".into());
+        };
+        let mut outer = Vec::with_capacity(n + p.segs.len());
         for (e, s) in segs.iter().enumerate() {
             if e == i {
-                outer.push(Seg2::Line { a: pa, b: start });
-                outer.extend(relief.iter().copied());
+                outer.push(Seg2::Line { a: s.start(), b: start });
+                outer.extend(p.segs.iter().copied());
             } else if e == j {
-                outer.push(Seg2::Line { a: end, b: pb });
+                outer.push(Seg2::Line { a: end, b: s.end() });
             } else {
                 outer.push(*s);
             }
@@ -5417,6 +5500,181 @@ mod tests {
                     assert!((removed - want).abs() < 1e-6, "{what}: {removed} vs {want}");
                     holds_the_flat_material(&s, &what);
                 }
+            }
+        }
+    }
+
+    /// A rhombus of 120 and 90 long sides whose corners are 60° and 120°: the two at 60° and the
+    /// two at 120°, the origin among them.
+    fn rhombus() -> Region2 {
+        let u = Vec2::from_angle(std::f64::consts::FRAC_PI_3);
+        let pts = [Vec2::new(0.0, 0.0), Vec2::new(120.0, 0.0), Vec2::new(120.0, 0.0) + u * 90.0, u * 90.0];
+        Region2 { outer: Loop2::polygon(&pts).ccw(), holes: vec![] }
+    }
+
+    /// The rhombus' four flanges, one on each edge, at `angles` (degrees) and `heights`.
+    fn rhombus_flanges(rv: &RuleValues, angles: [f64; 4], heights: [f64; 4]) -> (SheetBody, Vec<String>) {
+        let u = Vec2::from_angle(std::f64::consts::FRAC_PI_3);
+        let picks = [
+            Vec3::new(60.0, 0.0, 2.0),
+            Vec3::new(120.0 + u.x * 45.0, u.y * 45.0, 2.0),
+            Vec3::new(60.0 + u.x * 90.0, u.y * 90.0, 2.0),
+            Vec3::new(u.x * 45.0, u.y * 45.0, 2.0),
+        ];
+        let each: Vec<EdgeFlange> = (0..4).map(|i| EdgeFlange { pick: picks[i], height: heights[i], angle: angles[i].to_radians() }).collect();
+        flanges_each(rhombus(), rv, &each)
+    }
+
+    /// The corner of the trimmed base at the corner `c` of the base, whose edges leave it in the
+    /// directions `dirs`: the two bend lines, each `s0` in from its edge, meet there.
+    fn trimmed_corner(c: Vec2, dirs: [Vec2; 2], s0: f64) -> Vec2 {
+        let alpha = dirs[1].cross(dirs[0]).atan2(dirs[1].dot(dirs[0])).abs();
+        let bisector = (dirs[0] + dirs[1]).normalized().unwrap_or(Vec2::X);
+        c + bisector * (s0 / (alpha / 2.0).sin())
+    }
+
+    /// The corner reliefs at the corners that are not square: a 60° and a 120° one, each of the
+    /// four shapes. The relief is cut `size / 2` from the corner along both edges, the bends stop
+    /// there, and the flat pattern keeps one clean loop.
+    #[test]
+    fn corner_reliefs_at_acute_and_obtuse_corners() {
+        use std::f64::consts::FRAC_PI_3;
+        let rv = alu();
+        let s0 = 3.0;
+        let u = Vec2::from_angle(FRAC_PI_3);
+        // The corners of the trimmed base, with the directions their two edges leave in (the edge
+        // that ends at the corner first): the 60° one at the origin, the 120° one at the far end
+        // of the slanted side.
+        let corners = [
+            (trimmed_corner(Vec2::new(0.0, 0.0), [u, Vec2::new(1.0, 0.0)], s0), [u, Vec2::new(1.0, 0.0)], FRAC_PI_3),
+            (trimmed_corner(u * 90.0, [Vec2::new(1.0, 0.0), -u], s0), [Vec2::new(1.0, 0.0), -u], 2.0 * FRAC_PI_3),
+        ];
+        // The notch's corners: a relief moves the bends' ends, so the corners are the notch's.
+        let (notch, _) = rhombus_flanges(&rv, [90.0; 4], [38.6; 4]);
+        let closed = notch.corners(&[0, 1, 2, 3]);
+        assert_eq!(closed.len(), 4, "the notch's corners");
+        for shape in [ReliefShape::Notch, ReliefShape::Round, ReliefShape::Rectangular, ReliefShape::Tear] {
+            let what = format!("{shape:?} at 60° and 120°");
+            let (s, notes) = rhombus_flanges(&RuleValues { corner_relief_shape: shape, ..rv }, [90.0; 4], [38.6; 4]);
+            assert!(notes.is_empty(), "{what}: {notes:?}");
+            // The corners are closed with the gap, and the flanges keep clear of each other.
+            ends_are_gap_apart(&s, &closed, rv.gap, &what);
+            for k in &closed {
+                flanges_keep_clear(&s, k, &what);
+            }
+            let segs = &s.base.outer.segs;
+            match shape {
+                ReliefShape::Notch => {
+                    // The notch cuts nothing: the base keeps its four corners.
+                    assert_eq!(segs.len(), 4, "{what}: {segs:?}");
+                }
+                ReliefShape::Round => {
+                    // A round about each corner, through the angle the base fills there.
+                    for (c, [d1, d2], alpha) in corners {
+                        let found = segs.iter().any(|g| {
+                            matches!(g, Seg2::Arc { center, radius, sweep, .. }
+                                if center.dist(c) < 1e-8 && (radius - 4.0).abs() < 1e-12 && (sweep + alpha).abs() < 1e-9)
+                                && g.start().dist(c + d1 * 4.0) < 1e-8
+                                && g.end().dist(c + d2 * 4.0) < 1e-8
+                        });
+                        assert!(found, "{what}: no round relief of radius 4 about {c:?}: {segs:?}");
+                    }
+                    // The bends stop 4 mm short of the corners at both their ends.
+                    for f in &s.flanges {
+                        let (u0, u1) = s.zone_span(f);
+                        assert!((u0 - 4.0).abs() < 1e-9 && (u1 - (f.len - 4.0)).abs() < 1e-9, "{what}: {u0} {u1} of {}", f.len);
+                    }
+                }
+                ReliefShape::Rectangular => {
+                    // A kite at each corner: its cuts square to the two edges, meeting
+                    // 4 / cos(α / 2) from the corner on the bisector.
+                    for (c, [d1, d2], alpha) in corners {
+                        let x = c + (d1 + d2) * (4.0 / (1.0 + d1.dot(d2)));
+                        let line = |a: Vec2, b: Vec2| {
+                            segs.iter().any(|g| matches!(g, Seg2::Line { .. }) && g.start().dist(a) < 1e-8 && g.end().dist(b) < 1e-8)
+                        };
+                        assert!(line(c + d1 * 4.0, x), "{what}: no kite at {c:?}: {segs:?}");
+                        assert!(line(x, c + d2 * 4.0), "{what}: no kite at {c:?}: {segs:?}");
+                        // The cuts are square to the edges they start on, and the kite's far corner
+                        // is 4 / cos(α / 2) from the corner, on the bisector.
+                        assert!((x - (c + d1 * 4.0)).dot(d1).abs() < 1e-9 && (x - (c + d2 * 4.0)).dot(d2).abs() < 1e-9, "{what}");
+                        assert!((x.dist(c) - 4.0 / (alpha / 2.0).cos()).abs() < 1e-9, "{what}");
+                    }
+                    for f in &s.flanges {
+                        let (u0, u1) = s.zone_span(f);
+                        assert!((u0 - 4.0).abs() < 1e-9 && (u1 - (f.len - 4.0)).abs() < 1e-9, "{what}: {u0} {u1} of {}", f.len);
+                    }
+                }
+                ReliefShape::Tear => {
+                    // The tear cuts the bend ends, not the base: the base keeps its four corners.
+                    assert_eq!(segs.len(), 4, "{what}: {segs:?}");
+                    assert_eq!(s.flanges.iter().map(|f| f.tear.0 as usize + f.tear.1 as usize).sum::<usize>(), 8, "{what}");
+                }
+            }
+            // The flat pattern is one piece without hairline edges, and the folded part holds the
+            // same material.
+            holds_the_flat_material(&s, &what);
+        }
+    }
+
+    /// The corner reliefs at a corner that is not square, with the flanges of unequal height:
+    /// the ends are still closed with the gap and the flanges still keep clear of each other.
+    #[test]
+    fn corner_reliefs_at_acute_and_obtuse_corners_with_unequal_heights() {
+        let rv = alu();
+        let heights = [38.6, 25.0, 45.0, 30.0];
+        let (notch, _) = rhombus_flanges(&rv, [90.0; 4], heights);
+        let closed = notch.corners(&[0, 1, 2, 3]);
+        assert_eq!(closed.len(), 4, "the notch's corners");
+        for shape in [ReliefShape::Notch, ReliefShape::Round, ReliefShape::Rectangular, ReliefShape::Tear] {
+            let what = format!("{shape:?} at 60° and 120°, flanges of unequal height");
+            let (s, notes) = rhombus_flanges(&RuleValues { corner_relief_shape: shape, ..rv }, [90.0; 4], heights);
+            assert!(notes.is_empty(), "{what}: {notes:?}");
+            ends_are_gap_apart(&s, &closed, rv.gap, &what);
+            for k in &closed {
+                flanges_keep_clear(&s, k, &what);
+            }
+            // The relief cuts the base only: the flanges are the ones the closing left.
+            assert_eq!(
+                s.flanges.iter().map(|f| (f.ext, f.slope)).collect::<Vec<_>>(),
+                notch.flanges.iter().map(|f| (f.ext, f.slope)).collect::<Vec<_>>(),
+                "{what}"
+            );
+            holds_the_flat_material(&s, &what);
+        }
+    }
+
+    /// The reliefs at the two corners of one short edge: both fit, and the corners do not depend
+    /// on the order the flanges were made in.
+    #[test]
+    fn the_reliefs_at_two_corners_of_one_edge_do_not_depend_on_their_order() {
+        // A quadrilateral with a 120° corner at the origin and a 90° one 9 mm along the edge
+        // between them, and flanges on the three edges that meet there. The two corners are
+        // 4.27 mm apart in the trimmed base: a relief 4 mm across fits at both of them.
+        let pts = [Vec2::new(0.0, 0.0), Vec2::new(9.0, 0.0), Vec2::new(9.0, 40.0), Vec2::new(-20.0, 20.0 * 3.0f64.sqrt())];
+        let base = || Region2 { outer: Loop2::polygon(&pts).ccw(), holes: vec![] };
+        let picks = [Vec3::new(-10.0, 17.32, 2.0), Vec3::new(4.5, 0.0, 2.0), Vec3::new(9.0, 20.0, 2.0)];
+        let flange = |i: usize| EdgeFlange { pick: picks[i], height: 38.6, angle: 90f64.to_radians() };
+        for shape in [ReliefShape::Round, ReliefShape::Rectangular] {
+            let what = format!("{shape:?} at both ends of a short edge");
+            let rv = RuleValues { corner_relief_shape: shape, corner_relief: 4.0, ..alu() };
+            // The same three flanges, made in another order.
+            for order in [[0, 1, 2], [2, 1, 0]] {
+                let each: Vec<EdgeFlange> = order.iter().map(|&i| flange(i)).collect();
+                let (s, notes) = flanges_each(base(), &rv, &each);
+                assert!(notes.is_empty(), "{what}: {notes:?}");
+                // Both corners are relieved: the round one cuts an arc at each, the square one a
+                // kite, and the base keeps a piece of the edge between them.
+                let want = match shape {
+                    ReliefShape::Round => 6,
+                    _ => 8,
+                };
+                assert_eq!(s.base.outer.segs.len(), want, "{what}: {order:?}: {:?}", s.base.outer.segs);
+                // The bend on the short edge is what is left between the two reliefs.
+                let short = s.flanges.iter().find(|f| f.d.dist(Vec2::new(1.0, 0.0)) < 1e-9).expect("the bend on the short edge");
+                let (u0, u1) = s.zone_span(short);
+                assert!((u0 - 2.0).abs() < 1e-9 && (u1 - (short.len - 2.0)).abs() < 1e-9, "{what}: {u0} {u1} of {}", short.len);
+                holds_the_flat_material(&s, &what);
             }
         }
     }
