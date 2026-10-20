@@ -35,6 +35,8 @@ mod coaxial_overlap;
 mod continuity;
 mod coplanar;
 mod corner_g2;
+#[cfg(test)]
+mod crossed_trim_tests;
 mod curveblend;
 mod delete_face;
 mod distance;
