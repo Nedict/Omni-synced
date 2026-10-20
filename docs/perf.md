@@ -23,7 +23,7 @@ Copies that lie apart are now applied at once:
   step fails, the copies are chamfered one at a time as before. Fillets are still one at a time.
 
 The result is the same body: the same faces and edges, volumes and areas within 1e-8 of each other
-(`blend_apart_tests`, `pattern_copies_tests`, and the identity sweep below).
+(`blend_wrong_way_tests::apart`, `patterns_tests::copies`, and the identity sweep below).
 
 Names change in two ways:
 
