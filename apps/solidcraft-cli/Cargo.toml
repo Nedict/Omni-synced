@@ -1,83 +1,153 @@
-[package]
-name = "omni-synced"
-description = "OmniSynced desktop app"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-publish = false
-default-run = "omni-synced"
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*", "xtask"]
+# Third-party code kept with local fixes (see vendor/README.md); not linted as ours.
+exclude = ["vendor"]
 
-# The workspace lints, except unsafe_code: denied, not forbidden, so that src/open_documents.rs
-# (macOS file-open events), src/native_crash.rs (Windows exception filter) and src/native_frame.rs
-# (Windows resize border) can allow it: none has a safe API. Keep the rest in sync with [workspace.lints].
-[lints.rust]
-unsafe_code = "deny"
+[workspace.package]
+version = "0.16.2"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.95"
+authors = ["Nedict"]
+repository = "https://github.com/Nedict/Omni-synced"
 
-[lints.clippy]
+[workspace.dependencies]
+# internal
+solidcraft-geom = { path = "crates/geom" }
+solidcraft-sketch = { path = "crates/sketch" }
+solidcraft-kernel = { path = "crates/kernel" }
+solidcraft-render = { path = "crates/render" }
+solidcraft-gpu = { path = "crates/gpu" }
+solidcraft-doc = { path = "crates/doc" }
+solidcraft-io = { path = "crates/io" }
+solidcraft-engine = { path = "crates/engine" }
+solidcraft-ui-egui = { path = "crates/ui-egui" }
+solidcraft-space-mouse = { path = "crates/space-mouse" }
+solidcraft-mcp = { path = "crates/mcp" }
+solidcraft-derive = { path = "crates/derive" }
+solidcraft-3dx-client = { path = "crates/threedx-client" }
+
+# foundation
+thiserror = "2"
+serde = { version = "1", features = ["derive", "rc"] }
+# derive macros (crates/derive); already in the tree through serde_derive
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+log = "0.4"
+sha2 = "0.10"
+moxcms = { version = "0.8.1", default-features = false, features = ["extended_range"] }
+semver = "1"
+
+# geometry kernel (Apache-2.0; see plan/adr/0001-geometry-kernel.md). Only crates/kernel uses it.
+truck-modeling = "0.6"
+truck-shapeops = { version = "0.4", default-features = false }
+truck-meshalgo = { version = "0.4", default-features = false, features = ["tessellation", "analyzers"] }
+truck-stepio = { version = "0.3", default-features = false }
+truck-topology = "0.6"
+# constrained Delaunay + Ruppert refinement for trimmed faces (MIT OR Apache-2.0); already in the
+# tree through truck-meshalgo.
+spade = { version = "2.15", default-features = false, features = ["std"] }
+rayon = "1.12"
+
+# packages (3MF)
+zip = { version = "9", default-features = false, features = ["deflate"] }
+quick-xml = "0.41"
+# glTF 2.0 import (MIT OR Apache-2.0): the document model and GLB container only; buffers are
+# read by crates/io itself, so no image decoding or file access comes with it.
+gltf = { version = "1.4", default-features = false, features = ["names"] }
+
+# FreeCAD and Rhino import (Apache-2.0, pure Rust apart from zstd; native builds only).
+# Pinned: its IR and codec APIs change between minor versions. Open formats only: no default
+# features, so cadmpeg's codecs for commercial formats (f3d, sldprt, inventor, catia, creo, nx)
+# and its ShapeManager/ACIS `sat` codec are not compiled in. `step` is the writer we restate through.
+cadmpeg-core = "=0.6.1"
+cadmpeg-ir = "=0.6.1"
+cadmpeg-registry = { version = "=0.6.1", default-features = false, features = ["fcstd", "rhino", "step"] }
+
+# fonts (sketch text outlines; MIT OR Apache-2.0, pure Rust)
+ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
+
+# images
+image = { version = "0.25", default-features = false, features = ["png", "hdr"] }
+png = "0.18.1"
+# LZW for GIF animations (MIT OR Apache-2.0, pure Rust; already in the tree through image's tiff).
+weezl = "0.1.12"
+# rasterises the UI icon SVGs (BSD-3-Clause, pure Rust, builds for wasm)
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
+# build scripts: reads the icon palette (MIT OR Apache-2.0)
+toml = "1"
+
+# ui
+egui = "0.36"
+eframe = { version = "0.36", default-features = false, features = ["persistence"] }
+# Instant/SystemTime that also work in the browser (std panics on wasm32-unknown-unknown).
+web-time = "1"
+egui-wgpu = "0.36"
+# the wgpu egui-wgpu uses, for compute (crates/gpu); backends come from the apps' features
+wgpu = { version = "30", default-features = false, features = ["std", "wgsl"] }
+naga = { version = "30", default-features = false }
+pollster = "0.4"
+rfd = "0.17"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
 dbg_macro = "warn"
 todo = "warn"
 too_many_arguments = "allow"
 type_complexity = "allow"
+# `!(x > tol)` is our idiom for "not a usable number" (NaN-safe).
 neg_cmp_op_on_partial_ord = "allow"
 
-[dependencies]
-solidcraft-engine = { workspace = true }
-solidcraft-ui-egui = { workspace = true }
-solidcraft-space-mouse = { workspace = true }
-eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11", "links"] }
-egui = { workspace = true }
-serde_json = { workspace = true }
-log = { workspace = true }
-rfd = { workspace = true }
-# Checks eframe's settings file (app.ron) before eframe reads it (src/startup.rs).
-ron = "0.12"
-# Waits for wgpu's adapter list when choosing the graphics backend before the window opens.
-pollster = { workspace = true }
-getrandom = "0.3"
-# The update check (docs/updates.md): HTTPS with rustls, certificates from the operating system.
-ureq = { version = "3.4", default-features = false, features = ["rustls-no-provider", "platform-verifier"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
-# API keys of the agent chat's API agents (docs/agent-chat.md) live in the system keychain:
-# Keychain on macOS, Credential Manager on Windows, the Secret Service (pure-Rust D-Bus) elsewhere.
-keyring = { version = "3.6", default-features = false, features = ["apple-native", "windows-native", "async-secret-service", "async-io", "crypto-rust"] }
+[profile.dev.package."*"]
+opt-level = 2
 
-[target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
-quick-xml = { workspace = true }
+[profile.dev]
+opt-level = 1
 
-[target.'cfg(target_os = "windows")'.dependencies]
-hidapi = { version = "2.6.7", default-features = false, features = ["windows-native"] }
-# The main window's handle for src/native_frame.rs (already in the tree through eframe and winit).
-raw-window-handle = "0.6"
-# Native crash capture (src/native_crash.rs): the exception filter, the faulting module, a minidump.
-# The window's resize border and DPI size (src/native_frame.rs): the window procedure, hit test, DPI.
-windows-sys = { version = "0.61", features = [
-    "Win32_Foundation",
-    "Win32_Security",
-    "Win32_Storage_FileSystem",
-    "Win32_System_Diagnostics_Debug",
-    "Win32_System_IO",
-    "Win32_System_Kernel",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Memory",
-    "Win32_System_Threading",
-    "Win32_UI_HiDpi",
-    "Win32_UI_WindowsAndMessaging",
-] }
+# Tests and lints (`cargo xtask ci`, GitHub CI): quick to build, quick enough to run. Light
+# optimisation, line tables only (file:line in backtraces), no LTO. Debug assertions are off because
+# truck's debug-only checks reject valid geometry (seam edges, closed edges); that was the only
+# reason the tests used to build with --release, which cost most of CI's time.
+[profile.ci]
+inherits = "dev"
+opt-level = 1
+debug = "line-tables-only"
+debug-assertions = false
+overflow-checks = true
+incremental = false
 
-[target.'cfg(target_os = "macos")'.dependencies]
-# The 3D mouse through the 3Dconnexion driver, which keeps the device to itself (src/space_mouse.rs).
-solidcraft-3dx-client = { workspace = true }
-# The 3D mouse (src/space_mouse.rs), in the shared-device open mode so that a running 3DxWare
-# driver does not shut the app out.
-hidapi = { version = "2.6.7", default-features = false, features = ["macos-shared-device"] }
-# Files opened from Finder and the Dock (src/open_documents.rs); all already come with eframe and rfd.
-objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSNotification", "NSOperation", "NSString", "NSURL"] }
-block2 = "0.6"
+[profile.ci.package."*"]
+opt-level = 2
+# No line tables for dependencies: they were over a third of the test archive every CI shard
+# downloads. Our own crates keep theirs, so a backtrace still names file:line in them.
+debug = false
 
-[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
-winit = { version = "0.30", default-features = false, features = ["x11"] }
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+# Line tables only: crash reports name file:line in their backtraces (no runtime cost; a larger
+# binary). See docs/crash-reports.md.
+debug = "line-tables-only"
 
-[build-dependencies]
-embed-resource = "3.0.11"
+# truck-shapeops with SolidCraft fixes (Apache-2.0, see vendor/truck-shapeops and ATTRIBUTION.md).
+[patch.crates-io]
+truck-geometry = { path = "vendor/truck-geometry" }
+truck-shapeops = { path = "vendor/truck-shapeops" }
+truck-stepio = { path = "vendor/truck-stepio" }
+truck-meshalgo = { path = "vendor/truck-meshalgo" }
+matext4cgmath = { path = "vendor/matext4cgmath" }
+
+# Keep OpenGL pipelines, resolve textures and CAD callbacks at the same safe sample count.
+egui-wgpu = { path = "vendor/egui-wgpu" }
+
+# Mutation testing (cargo-mutants, docs/mutation-testing.md): the ci profile with incremental
+# builds, since every mutant rebuilds the crates above the one it changes.
+[profile.mutants]
+inherits = "ci"
+incremental = true

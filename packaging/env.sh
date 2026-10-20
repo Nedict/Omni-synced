@@ -1,68 +1,114 @@
-# shellcheck shell=bash
-# Shared setup for the packaging scripts. Source it: `. "$(dirname "$0")/../env.sh"`.
-# Adapted from PhotoCraft's packaging (storytold/photocraft, Apache-2.0; see ATTRIBUTION.md).
-#
-# Exports:
-#   ROOT                    workspace root
-#   VERSION                 [workspace.package] version from Cargo.toml (override: SOLIDCRAFT_VERSION)
-#
-# Every SOLIDCRAFT_* override also accepts the pre-rename SOLVECRAFT_* name when the new one is
-# unset (compatibility shim, see docs/compatibility.md).
-#   DIST                    output directory for release artifacts (default: $ROOT/dist/release)
-#   SOLIDCRAFT_BUILD_DATE   UTC build date, YYYY-MM-DD
-#   CARGO_TARGET_DIR        cargo's target dir (default: $ROOT/target)
+//! First-launch adoption of a pre-rename settings or data folder. Compatibility shim (see
+//! docs/compatibility.md): when the current folder doesn't exist yet and the legacy one does,
+//! the legacy folder is copied over. The legacy folder is never changed or deleted, so an older
+//! release installed side by side keeps working.
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export ROOT
+use std::path::{Path, PathBuf};
 
-# The version lives in one place: `[workspace.package] version` in the root Cargo.toml.
-workspace_version() {
-  awk '
-    /^\[/ { in_pkg = ($0 == "[workspace.package]") ; next }
-    in_pkg && $1 == "version" { gsub(/[" ]/, "", $3); print $3; exit }
-  ' "$ROOT/Cargo.toml"
+/// Current Linux app id (Flatpak, desktop entry, AppStream, Wayland `app_id` / X11 class).
+pub const APP_ID: &str = "ai.storyteller.omni-synced";
+/// Legacy app id kept for compatibility when a previous SolidCraft install is still present.
+pub const LEGACY_APP_ID: &str = "ai.storyteller.solidcraft";
+
+const MAX_ENTRIES: usize = 10_000;
+const MAX_DEPTH: usize = 8;
+
+pub fn adopt_legacy_dir(current: &Path, legacy: &Path) -> std::io::Result<bool> {
+    if current.exists() || !legacy.is_dir() || current == legacy {
+        return Ok(false);
+    }
+    let mut budget = MAX_ENTRIES;
+    copy_tree(legacy, current, 0, &mut budget)?;
+    Ok(true)
 }
 
-VERSION="${SOLIDCRAFT_VERSION:-${SOLVECRAFT_VERSION:-$(workspace_version)}}"
-if [ -z "$VERSION" ]; then
-  echo "error: could not read [workspace.package] version from $ROOT/Cargo.toml" >&2
-  exit 1
-fi
-export VERSION
-
-DIST="${DIST:-$ROOT/dist/release}"
-mkdir -p "$DIST"
-DIST="$(cd "$DIST" && pwd)"
-export DIST
-
-export SOLIDCRAFT_BUILD_DATE="${SOLIDCRAFT_BUILD_DATE:-${SOLVECRAFT_BUILD_DATE:-$(date -u +%Y-%m-%d)}}"
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
-# The reverse-DNS id: Flatpak app id, desktop, metainfo and MIME file names, icon name and the
-# window's Wayland app_id / X11 class. Releases before 0.8 used ai.storyteller.solvecraft; the
-# Flatpak repository rebases that id to this one (packaging/flatpak-site.sh, docs/compatibility.md).
-APP_ID=ai.storyteller.solidcraft
-export APP_ID
-
-# Emit a GitHub Actions warning (plain stderr outside Actions).
-warn() {
-  if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::warning::$*"; else echo "warning: $*" >&2; fi
+pub fn legacy_flatpak_path(path: &Path) -> Option<PathBuf> {
+    flatpak_twin(path, &std::env::var_os("FLATPAK_ID")?, Path::new(&std::env::var_os("HOME")?))
 }
 
-# Copy the licence, notice and readme files into a package directory. The programs also carry
-# them (Help > About > Licences, `solidcraft-cli licences`).
-copy_docs() {
-  local dest="$1" f
-  for f in README.md LICENSE-MIT LICENSE-APACHE NOTICE THIRD-PARTY-LICENSES.txt; do
-    if [ -f "$ROOT/$f" ]; then cp "$ROOT/$f" "$dest/"; fi
-  done
+fn flatpak_twin(path: &Path, flatpak_id: &std::ffi::OsStr, home: &Path) -> Option<PathBuf> {
+    if flatpak_id != APP_ID {
+        return None;
+    }
+    let apps = home.join(".var").join("app");
+    let rel = path.strip_prefix(apps.join(APP_ID)).ok()?;
+    Some(apps.join(LEGACY_APP_ID).join(rel))
 }
 
-# Copy canonical package exports; $1 is retained for callers' CLI argument compatibility.
-make_icons() {
-  local out="$2" s
-  for s in 16 24 32 48 64 128 256 512; do
-    mkdir -p "$out/hicolor/${s}x${s}/apps"
-    cp "$ROOT/assets/icons/app/linux/exports/hicolor/${s}x${s}/apps/$APP_ID.png" "$out/hicolor/${s}x${s}/apps/$APP_ID.png" || return
-  done
-  cp "$ROOT/assets/icons/app/windows/exports/solidcraft.ico" "$out/solidcraft.ico"
+fn copy_tree(from: &Path, to: &Path, depth: usize, budget: &mut usize) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    if depth >= MAX_DEPTH {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        if *budget == 0 {
+            return Ok(());
+        }
+        *budget -= 1;
+        let kind = entry.file_type()?;
+        let target = to.join(entry.file_name());
+        if kind.is_dir() {
+            copy_tree(&entry.path(), &target, depth + 1, budget)?;
+        } else if kind.is_file() {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("solidcraft-legacy-dir-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn copies_legacy_folder_once_and_keeps_it() {
+        let d = scratch("copy");
+        let old = d.join("solvecraft");
+        std::fs::create_dir_all(old.join("recovery")).unwrap();
+        std::fs::write(old.join("graphics.json"), "{\"msaa\":8}").unwrap();
+        std::fs::write(old.join("recovery").join("a.solvecraft"), "x").unwrap();
+        let new = d.join("solidcraft");
+        assert!(adopt_legacy_dir(&new, &old).unwrap());
+        assert_eq!(std::fs::read_to_string(new.join("graphics.json")).unwrap(), "{\"msaa\":8}");
+        assert!(new.join("recovery").join("a.solvecraft").is_file());
+        assert!(old.join("graphics.json").is_file() && old.join("recovery").join("a.solvecraft").is_file());
+        std::fs::write(old.join("later.json"), "{}").unwrap();
+        assert!(!adopt_legacy_dir(&new, &old).unwrap());
+        assert!(!new.join("later.json").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn flatpak_twin_maps_our_sandbox_data_to_the_old_app_id() {
+        let home = Path::new("/home/u");
+        let ours = home.join(".var/app/ai.storyteller.omni-synced/data/solidcraft");
+        let id = std::ffi::OsStr::new(APP_ID);
+        assert_eq!(flatpak_twin(&ours, id, home), Some(home.join(".var/app/ai.storyteller.solidcraft/data/solidcraft")));
+        assert_eq!(flatpak_twin(&home.join(".local/share/solidcraft"), id, home), None);
+        assert_eq!(flatpak_twin(&ours, std::ffi::OsStr::new("org.example.Other"), home), None);
+    }
+
+    #[test]
+    fn nothing_to_adopt() {
+        let d = scratch("none");
+        let new = d.join("solidcraft");
+        assert!(!adopt_legacy_dir(&new, &d.join("missing")).unwrap());
+        assert!(!new.exists());
+        let old = d.join("solvecraft");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("p.json"), "old").unwrap();
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::write(new.join("p.json"), "new").unwrap();
+        assert!(!adopt_legacy_dir(&new, &old).unwrap());
+        assert_eq!(std::fs::read_to_string(new.join("p.json")).unwrap(), "new");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

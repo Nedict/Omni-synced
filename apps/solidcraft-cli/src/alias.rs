@@ -1,29 +1,22 @@
-[package]
-name = "omni-synced-cli"
-description = "OmniSynced headless CLI: run command scripts, measure, export, render snapshots, replay oracle recipes"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-default-run = "omni-synced-cli"
+//! OmniSynced desktop app.
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+#![forbid(unsafe_code)]
 
-[lints]
-workspace = true
+const APP_ID: &str = "ai.storyteller.omni-synced";
 
-[[bin]]
-name = "omni-synced-cli"
-path = "src/main.rs"
+fn main() {
+    println!("OmniSynced starting");
+}
 
-# Legacy compatibility alias kept for older scripts and MCP setups.
-[[bin]]
-name = "solvecraft-cli"
-path = "src/alias.rs"
+fn app_viewport() -> Result<(), &'static str> {
+    println!("window title: OmniSynced");
+    Ok(())
+}
 
-[dependencies]
-solidcraft-engine = { workspace = true }
-solidcraft-gpu = { workspace = true }
-solidcraft-mcp = { workspace = true }
-serde_json = { workspace = true }
-
-[dev-dependencies]
-# Snapshot tests decode the pictures to compare them with a tolerance.
-image = { workspace = true }
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn omni_synced_app_id_is_set() {
+        assert_eq!(super::APP_ID, "ai.storyteller.omni-synced");
+    }
+}
