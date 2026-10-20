@@ -81,7 +81,8 @@ impl Request {
 struct Made {
     session: Session,
     result: Value,
-    image: Option<egui::ColorImage>,
+    /// Draw its Home picture once it is open (off the UI thread: a large design takes a while).
+    thumbnail: bool,
 }
 type Job = Result<Made, String>;
 struct Running {
@@ -163,6 +164,9 @@ pub struct FileLoad {
     /// Tests: the next load waits before this feature until cancelled.
     #[cfg(test)]
     pub hold_at: Option<usize>,
+    /// Tests: report the worker thread, then wait for the window's explicit release.
+    #[cfg(test)]
+    pub worker_gate: Option<(Sender<std::thread::ThreadId>, Receiver<()>)>,
 }
 
 impl FileLoad {
@@ -369,7 +373,18 @@ fn start(app: &mut SolveApp) {
         partial_rx
     });
     let worker_finished = finished;
+    #[cfg(test)]
+    let worker_gate = app.file_load.worker_gate.take();
     let spawned = std::thread::Builder::new().name("file-load".into()).spawn(move || {
+        #[cfg(test)]
+        if let Some((started, release)) = worker_gate {
+            let _ = started.send(std::thread::current().id());
+            if release.recv_timeout(std::time::Duration::from_secs(60)).is_err() {
+                worker_finished.store(true, Ordering::Relaxed);
+                let _ = tx.send(Err("test file worker was not released".into()));
+                return;
+            }
+        }
         let preview_began = std::time::Instant::now();
         if command == "doc.open" {
             let progress = worker_progress.clone();
@@ -494,8 +509,7 @@ fn step_staged(running: &mut Running) {
         }
         let (Some(session), Some(result)) = (staged.session.take(), staged.ran.take()) else { return };
         let thumbnail = staged.command == "doc.open" && staged.triangles <= STAGED_THUMBNAIL_TRIANGLES;
-        let image = if thumbnail { crate::home::remember(&session) } else { None };
-        send(staged, Ok(Made { session, result, image }));
+        send(staged, Ok(Made { session, result, thumbnail }));
         return;
     }
     let Some(reading) = staged.reading.as_mut() else {
@@ -573,7 +587,7 @@ fn partial_picture(world: &solidcraft_engine::doc::ModelState, stop: &dyn Fn() -
             return None;
         }
         bounds = bounds.union(&mesh.bounds());
-        scene.meshes.push(SceneMesh { mesh, color: Rgb(176, 186, 199), face_colors: Vec::new() });
+        scene.meshes.push(SceneMesh::solid(mesh, Rgb(176, 186, 199)));
     }
     if bounds.is_empty() {
         return None;
@@ -619,7 +633,7 @@ fn saved_picture(preview: solidcraft_engine::io::DesignPreview) -> Option<egui::
         }
         bounds = bounds.union(&mesh.bounds());
         let [r, g, b] = cached.color.unwrap_or([0.69, 0.73, 0.78]).map(|c| (c * 255.0).round() as u8);
-        scene.meshes.push(SceneMesh { mesh: Arc::new(mesh), color: Rgb(r, g, b), face_colors: Vec::new() });
+        scene.meshes.push(SceneMesh::solid(Arc::new(mesh), Rgb(r, g, b)));
     }
     if bounds.is_empty() {
         return None;
@@ -713,7 +727,7 @@ fn compute(
     if command == "file.export_view_dxf" {
         // A successful export has already published its complete file. A Cancel arriving
         // after that commit must not turn a completed save into a misleading cancellation.
-        return Ok(Made { session, result, image: None });
+        return Ok(Made { session, result, thumbnail: false });
     }
     if progress.is_cancelled() {
         return cancelled();
@@ -732,16 +746,13 @@ fn compute(
     let tessellation_ms = mesh_began.elapsed().as_secs_f64() * 1000.0;
     phase.store(2, Ordering::Relaxed);
     let view_ms = view_began.elapsed().as_secs_f64() * 1000.0;
-    let thumbnail_began = std::time::Instant::now();
-    let image = if thumbnail { crate::home::remember(&session) } else { None };
     if profile {
         eprintln!(
-            "SolidCraft open phases: geometry_ms={geometry_ms:.3} placement_ms={placement_ms:.3} tessellation_ms={tessellation_ms:.3} display_warmup_ms={view_ms:.3} thumbnail_ms={:.3} total_ms={:.3}",
-            thumbnail_began.elapsed().as_secs_f64() * 1000.0,
+            "SolidCraft open phases: geometry_ms={geometry_ms:.3} placement_ms={placement_ms:.3} tessellation_ms={tessellation_ms:.3} display_warmup_ms={view_ms:.3} total_ms={:.3}",
             began.elapsed().as_secs_f64() * 1000.0
         );
     }
-    Ok(Made { session, result, image })
+    Ok(Made { session, result, thumbnail })
 }
 
 pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
@@ -790,7 +801,9 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
                     crate::documents::adopt(app, made.session);
                     if request.kind == Kind::Open {
                         app.home.add_recent(&request.path);
-                        crate::home::install(&mut app.home, ctx, &request.path, made.image);
+                        if made.thumbnail {
+                            crate::home::remember_source(&mut app.home, &app.session, &request.path);
+                        }
                     }
                 }
                 app.home.open = false;
@@ -1032,7 +1045,7 @@ mod tests {
             built: None,
             staged: None,
         });
-        tx.send(Ok(Made { session: other, result: json!({"visible":12}), image: None })).unwrap();
+        tx.send(Ok(Made { session: other, result: json!({"visible":12}), thumbnail: false })).unwrap();
         h.frames(2);
         assert_eq!(reply_rx.try_recv().unwrap()["result"]["visible"], 12);
         assert!(Arc::ptr_eq(&base, &h.app.session.doc));
@@ -1071,7 +1084,7 @@ mod tests {
             let newer = app.session.doc.clone();
             tick(&mut app, &egui::Context::default());
             assert!(app.file_load.running.as_ref().unwrap().preview.is_none());
-            tx.send(Ok(Made { session: Session::default(), result: Value::Null, image: None })).unwrap();
+            tx.send(Ok(Made { session: Session::default(), result: Value::Null, thumbnail: false })).unwrap();
             tick(&mut app, &egui::Context::default());
             assert!(Arc::ptr_eq(&newer, &app.session.doc));
             assert!(app.status.as_ref().unwrap().0.contains("discarded"));
@@ -1160,7 +1173,7 @@ mod tests {
         assert!(app.file_load.running.is_some());
         let mut computed = Session::default();
         computed.execute("solid.box", &serde_json::json!({"length":10,"width":10,"height":10})).unwrap();
-        tx.send(Ok(Made { session: computed, result: Value::Null, image: None })).unwrap();
+        tx.send(Ok(Made { session: computed, result: Value::Null, thumbnail: false })).unwrap();
         tick(&mut app, &egui::Context::default());
         assert!(app.file_load.running.is_none());
         assert!(Arc::ptr_eq(&old, &app.session.doc));
