@@ -382,6 +382,22 @@ fn write_bytes(
 }
 
 impl Session {
+    /// Take up a save that ran on `done`, a [`Session::scratch`] copy of this session that
+    /// `file.save` or `file.save_as` ran on (on another thread, so the window keeps drawing)
+    /// while this one did not change: the name and link paths the save gave the design, its
+    /// file, and its saved state, as running the command here would have left them.
+    pub fn adopt_save(&mut self, done: &Session) {
+        if done.doc.name != self.doc.name {
+            let (from, to) = (self.doc.name.clone(), done.doc.name.clone());
+            rename_design(self, &from, &to);
+        }
+        if done.doc.links != self.doc.links {
+            self.doc_mut().links.clone_from(&done.doc.links);
+        }
+        self.path.clone_from(&done.path);
+        self.mark_saved();
+    }
+
     /// Container bytes for desktop and browser saves. Only already evaluated bodies
     /// and warm meshes are eligible; saving never forces evaluation or tessellation.
     pub fn design_container(&self, compression: solidcraft_io::DesignCompression, preview: bool, cache: bool) -> solidcraft_io::Result<Vec<u8>> {
@@ -644,6 +660,34 @@ mod urdf_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #3044: a save run on a scratch copy of the session (on a worker, so the window keeps
+    /// drawing) and taken up with `adopt_save` leaves the session as saving it directly does:
+    /// the design named after its first file, its file, and nothing unsaved; undo keeps the name.
+    #[test]
+    fn a_save_run_on_a_copy_and_adopted_matches_saving_directly() {
+        let dir = std::env::temp_dir().join(format!("solidcraft-adopt-save-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut direct = Session::default();
+        direct.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10})).unwrap();
+        let mut adopted = Session::new((*direct.doc).clone());
+        adopted.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10})).unwrap();
+        let a = dir.join("Bracket.solidcraft");
+        let b = dir.join("Bracket copy.solidcraft");
+        direct.execute("file.save_as", &json!({"path": a.to_string_lossy()})).unwrap();
+        let mut copy = adopted.scratch();
+        copy.path.clone_from(&adopted.path);
+        copy.execute("file.save_as", &json!({"path": b.to_string_lossy()})).unwrap();
+        assert!(adopted.is_dirty(), "nothing taken up yet");
+        adopted.adopt_save(&copy);
+        assert!(!adopted.is_dirty());
+        assert_eq!(adopted.path.as_deref(), b.to_str());
+        assert_eq!(adopted.doc.name, "Bracket copy");
+        assert_eq!(direct.doc.name, "Bracket");
+        assert_eq!(adopted.undo.iter().map(|u| u.doc.name.clone()).collect::<Vec<_>>(), vec!["Bracket copy".to_string(); adopted.undo.len()]);
+        assert_eq!(solidcraft_io::read_design(&std::fs::read(&b).unwrap()).unwrap(), *adopted.doc);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     #[ignore = "manual warmed engine save and provisional-open benchmark"]
