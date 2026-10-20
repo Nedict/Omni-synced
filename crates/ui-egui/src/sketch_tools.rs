@@ -146,16 +146,18 @@ pub fn trim_drag_to(app: &mut SolveApp, proj: &Proj, pos: Pos2) {
 /// Most points a Trim drag's path keeps (the command's limit).
 const TRIM_PATH_MAX: usize = 2_000;
 
-/// The Trim drag is let go: trim every piece its path crossed, in one undo step. A path that
-/// crosses nothing does nothing.
-pub fn trim_drag_end(app: &mut SolveApp) {
+/// The Trim drag is let go: trim every piece its path crossed, in one undo step. False when the
+/// path crossed nothing (the caller takes the release as a click).
+pub fn trim_drag_end(app: &mut SolveApp) -> bool {
     TRIM_LAST.with(|c| c.set(None));
     let crossed = TRIM_REMOVED.with(|r| !std::mem::take(&mut *r.borrow_mut()).is_empty());
-    let Some(tool) = app.tool.as_mut().filter(|t| t.cmd == "sketch.trim") else { return };
+    let Some(tool) = app.tool.as_mut().filter(|t| t.cmd == "sketch.trim") else { return false };
     let points: Vec<[f64; 2]> = std::mem::take(&mut tool.pts).iter().map(|p| [p.0.x, p.0.y]).collect();
-    if crossed && points.len() >= 2 {
-        let _ = app.run("sketch.trim.path", json!({"points": points}));
+    if !crossed || points.len() < 2 {
+        return false;
     }
+    let _ = app.run("sketch.trim.path", json!({"points": points}));
+    true
 }
 
 /// Commands registered on one panel that another panel also lists: the analyses (sketch
@@ -1069,6 +1071,33 @@ pub fn finish(app: &mut SolveApp, tool: &mut Tool) -> bool {
     }
 }
 
+/// The cursor's Trim piece, keyed by design revision, sketch, curve and cursor: the viewport's
+/// hover and the preview both ask for it each frame, and it intersects the curve with every other.
+type TrimPieceKey = (u64, u64, String, [u64; 2]);
+
+thread_local! {
+    static TRIM_PIECE: std::cell::RefCell<Option<(TrimPieceKey, Option<Vec<Vec2>>)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// With Trim active and the cursor over curve `id` of `sketch` (the active sketch): the piece a
+/// click takes away (#3052), which the hover shows in place of the whole curve. `None` with
+/// another tool, or for a curve trim cuts otherwise (`solidcraft_engine::cmd::trim_piece`).
+pub(crate) fn trim_hover_piece(app: &SolveApp, sketch: u64, id: &str) -> Option<Vec<Vec2>> {
+    let tool = app.tool.as_ref().filter(|t| t.cmd == "sketch.trim")?;
+    let (at, _) = tool.hover.as_ref()?;
+    if active_sketch(app) != Some(sketch) {
+        return None;
+    }
+    let key = (app.session.revision, sketch, id.to_string(), [at.x.to_bits(), at.y.to_bits()]);
+    if let Some(piece) = TRIM_PIECE.with(|c| c.borrow().as_ref().filter(|(k, _)| *k == key).map(|(_, p)| p.clone())) {
+        return piece;
+    }
+    let st = app.session.world_state();
+    let piece = solidcraft_engine::cmd::trim_piece(&st.sketch(sketch)?.sketch, id, *at);
+    TRIM_PIECE.with(|c| *c.borrow_mut() = Some((key, piece.clone())));
+    piece
+}
+
 /// Rubber band for point tools and pick markers.
 pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) {
     let Some(sid) = active_sketch(app) else { return };
@@ -1076,6 +1105,13 @@ pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) {
     let Some(ss) = st.sketch(sid) else { return };
     let to = |p: Vec2| proj.to_screen(ss.plane.to_world(p));
     let tk = crate::theme::Tokens::get();
+    if let Some(crate::viewport::Hit::SketchCurve { sketch, id, .. }) = &app.viewport.hover
+        && let Some(piece) = trim_hover_piece(app, *sketch, id)
+    {
+        let world: Vec<_> = piece.iter().map(|p| ss.plane.to_world(*p)).collect();
+        // In the error colour, thicker than a hover: it is what the click deletes.
+        crate::tools::paint_sketch_path(&world, 0, painter, proj, Stroke::new(4.5, tk.error));
+    }
     let stroke = Stroke::new(1.5, tk.rubber_band);
     // A Trim drag: the pieces it will remove, then the path drawn so far.
     if t.cmd == "sketch.trim" && !t.pts.is_empty() {

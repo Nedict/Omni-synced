@@ -90,6 +90,24 @@ fn a_click_still_trims_one_piece_and_an_empty_drag_nothing() {
     assert!(sk.curve_index(&v).is_some());
 }
 
+#[test]
+fn a_click_that_moves_along_a_piece_still_trims_it() {
+    // A press that moves on the way (#2448) beside the vertical line's middle piece, crossing
+    // nothing: the release is the click, and trims the piece under it.
+    let (mut h, _) = ladder();
+    let undo = h.app.session.undo.len();
+    let a = screen(&mut h, 10.0, 3.0) + egui::vec2(3.0, 0.0);
+    let b = screen(&mut h, 10.0, 7.0) + egui::vec2(3.0, 0.0);
+    let mut path = vec![a];
+    path.extend(steps(a, b, 6));
+    press_and_move(&mut h, &path);
+    release(&mut h, b);
+    assert_eq!(h.app.session.undo.len(), undo + 1, "one trim");
+    let sk = sketch(&h);
+    assert_eq!(sk.curves.len(), 4);
+    assert!((0..sk.curves.len()).all(|ci| sk.shape(ci).is_some_and(|s| s.dist(Vec2::new(10.0, 5.0)) > 1e-3)));
+}
+
 fn run(h: &mut Harness, id: &str, p: Value) -> Value {
     match h.app.run(id, p.clone()) {
         Ok(v) => v,
