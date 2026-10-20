@@ -72,6 +72,8 @@ pub mod issue_report;
 pub mod joint_drag;
 pub mod keymap;
 mod linked_source;
+#[cfg(test)]
+mod loft_rails_dialog_tests;
 mod material_card_review;
 #[cfg(test)]
 mod measurement_ui_tests;
@@ -128,6 +130,7 @@ pub mod palette;
 pub mod params_dialog;
 pub(crate) mod pick_buffer;
 pub(crate) mod pick_index;
+pub(crate) mod plugins;
 pub mod prefs;
 #[cfg(test)]
 mod preselect_tests;
@@ -168,6 +171,8 @@ mod sketch_guidance_ui_tests;
 pub mod sketch_modify_ui;
 #[cfg(test)]
 mod sketch_modify_ui_tests;
+#[cfg(test)]
+mod sketch_moving_click_tests;
 pub mod sketch_palette;
 mod sketch_pattern_tree;
 #[cfg(test)]
