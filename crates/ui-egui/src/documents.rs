@@ -140,7 +140,9 @@ pub fn switch(app: &mut SolveApp, i: usize) {
 }
 
 /// Open `session` in a new tab after the active one and switch to it (`fit`: frame its model).
-pub fn open_tab(app: &mut SolveApp, session: Session) -> Result<(), String> {
+pub fn open_tab(app: &mut SolveApp, mut session: Session) -> Result<(), String> {
+    // Bind shared protection without renewing this session's reload receipt.
+    session.pdm = app.pdm.runtime.clone();
     if app.docs.slots.is_empty() {
         app.docs.slots.push(None);
         app.docs.active = 0;
@@ -163,7 +165,9 @@ pub fn active_is_blank(app: &SolveApp) -> bool {
 
 /// Show `session` (a design built or read elsewhere): in place of a blank active design,
 /// otherwise in a new tab.
-pub fn adopt(app: &mut SolveApp, session: Session) {
+pub fn adopt(app: &mut SolveApp, mut session: Session) {
+    // Adoption may use an old cached sample or autosave, so never stamp here.
+    session.pdm = app.pdm.runtime.clone();
     if active_is_blank(app) {
         let rev = app.session.revision;
         crate::dialogs::cancel(app);
@@ -195,6 +199,13 @@ pub fn managed_target_dirty(app: &SolveApp, document: Option<&str>) -> bool {
     let Some(path) = path else { return false };
     (same_managed_path(app.session.path.as_ref(), &path) && app.session.is_dirty())
         || app.docs.slots.iter().flatten().any(|s| same_managed_path(s.session.path.as_ref(), &path) && s.session.is_dirty())
+}
+
+/// Only real native/IO load completions call this, with a receipt captured BEFORE
+/// reading. Generic adoption and tab switching must never renew cached sessions.
+pub(crate) fn bind_fresh_pdm_load(app: &SolveApp, session: &mut Session, expected_epoch: u64) -> Result<(), String> {
+    session.pdm = app.pdm.runtime.clone();
+    session.mark_pdm_reloaded_from(expected_epoch)
 }
 
 /// Refresh a managed path in its existing tab. Never discard an unsaved editor.
@@ -837,7 +848,7 @@ mod tests {
         let file = std::env::temp_dir().join(format!("solidcraft-quit-saveas-{}.solidcraft", std::process::id()));
         let _ = std::fs::remove_file(&file);
         let to = file.to_string_lossy().to_string();
-        a.services.pick_save = Some(Box::new(move |_: &str, _: &[&str]| Box::pin(std::future::ready(Some(to.clone())))));
+        a.services.pick_save = Some(Box::new(move |_: &str, _: &[&str], _initial_directory| Box::pin(std::future::ready(Some(to.clone())))));
         request_quit(&mut a);
         answer_prompt(&mut a, Answer::Save);
         assert!(!a.quit_requested && a.file_picker_busy());

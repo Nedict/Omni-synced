@@ -79,8 +79,41 @@ pub struct Preview {
     pub png: Vec<u8>,
 }
 
+/// Public connection inventory. A saved row never establishes authentication.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConnectionKind {
+    Local,
+    Saved,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConnectionStage {
+    Pending,
+    SavedUnverified,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectionSummary {
+    pub id: String,
+    pub label: String,
+    pub kind: ConnectionKind,
+    pub stage: ConnectionStage,
+}
+/// Fresh native authentication only; contains no credential or capability.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActiveConnection {
+    pub id: String,
+    pub label: String,
+    pub origin: String,
+    pub server_id: String,
+    pub account: String,
+    pub role: String,
+}
+
 #[derive(Clone)]
 pub enum ManagedTask {
+    ListConnections,
+    CreateLocal { label: String, administrator: String },
+    OpenConnection { connection_id: String },
+    RecoverConnection { connection_id: String },
     Recover { port: u16, root: String },
     Preview { reference: Reference },
     OpenArchived { reference: Reference },
@@ -143,6 +176,8 @@ pub struct Retrieved {
 
 #[derive(Clone, Debug)]
 pub enum Outcome {
+    Connections(Vec<ConnectionSummary>),
+    ManagedConnected { port: u16, state: ManagedState, connections: Vec<ConnectionSummary>, connection: ActiveConnection },
     ManagedRefreshed { port: u16, state: ManagedState },
     Managed { port: u16, state: ManagedState },
     Connected { port: u16, versions: Vec<Version> },
@@ -160,6 +195,8 @@ pub struct Failure {
 
 #[derive(Clone, Default, Debug, Serialize)]
 pub struct Status {
+    pub connections: Vec<ConnectionSummary>,
+    pub connection: Option<ActiveConnection>,
     pub available: bool,
     pub port: Option<u16>,
     pub busy: Option<u64>,
@@ -178,9 +215,11 @@ struct State {
     next: u64,
     job: Option<Job>,
     blocked_paths: Vec<String>,
+    block_all_paths: bool,
     known_paths: BTreeMap<String, KnownPath>,
     historical_paths: BTreeMap<String, String>,
     protection_failed: bool,
+    recovery_epoch: u64,
 }
 
 struct KnownPath {
@@ -235,6 +274,10 @@ impl State {
 
 #[derive(Clone, Default)]
 pub struct Runtime(Arc<Mutex<State>>);
+
+pub fn valid_connection(id: &str) -> bool {
+    id.len() == 64 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
 
 pub fn valid_document(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'_'))
@@ -314,6 +357,40 @@ impl Reference {
 }
 
 impl Runtime {
+    pub fn recovery_epoch(&self) -> Result<u64, String> {
+        let state = self.0.lock().map_err(|_| "PDM recovery protection unavailable")?;
+        if state.protection_failed {
+            return Err("PDM recovery protection unavailable".into());
+        }
+        Ok(state.recovery_epoch)
+    }
+    /// Saved editors are fenced individually. An unnamed design has no disk state.
+    pub fn requires_reopen(&self, epoch: u64, path: Option<&str>) -> bool {
+        path.is_some() && self.0.lock().map_or(true, |state| state.protection_failed || state.recovery_epoch != epoch)
+    }
+    /// Capture BEFORE fresh file I/O. Reuse this exact token after the read,
+    /// including across asynchronous native work; never sample after reading.
+    pub fn begin_pdm_reload(&self) -> Result<u64, String> {
+        let state = self.0.lock().map_err(|_| "PDM recovery protection unavailable")?;
+        if state.protection_failed {
+            return Err("PDM recovery protection unavailable".into());
+        }
+        if state.status.blocking && state.block_all_paths {
+            return Err("Wait for PDM recovery before reopening this design".into());
+        }
+        Ok(state.recovery_epoch)
+    }
+    fn validate_reload_epoch(&self, expected: u64) -> Result<(), String> {
+        let state = self.0.lock().map_err(|_| "PDM recovery protection unavailable")?;
+        if state.protection_failed || state.recovery_epoch != expected {
+            return Err("PDM recovery changed files while loading; reopen this design again".into());
+        }
+        if state.status.blocking && state.block_all_paths {
+            return Err("Wait for PDM recovery before reopening this design".into());
+        }
+        Ok(())
+    }
+
     pub fn set_available(&self, available: bool) -> Result<(), String> {
         self.0.lock().map_err(|_| "Local PDM state unavailable")?.status.available = available;
         Ok(())
@@ -332,10 +409,29 @@ impl Runtime {
         if state.status.busy.is_some() {
             return Err("A local PDM operation is in progress".into());
         }
-        if !matches!(task, Task::Connect { .. } | Task::Managed(ManagedTask::Connect { .. } | ManagedTask::Recover { .. }))
-            && state.status.port.is_none()
+        if !matches!(
+            task,
+            Task::Connect { .. }
+                | Task::Managed(
+                    ManagedTask::Connect { .. }
+                        | ManagedTask::Recover { .. }
+                        | ManagedTask::ListConnections
+                        | ManagedTask::CreateLocal { .. }
+                        | ManagedTask::OpenConnection { .. }
+                        | ManagedTask::RecoverConnection { .. }
+                )
+        ) && state.status.port.is_none()
         {
             return Err("Connect to a local PDM service first".into());
+        }
+        if matches!(&task, Task::Managed(ManagedTask::Recover { .. } | ManagedTask::RecoverConnection { .. })) {
+            state.recovery_epoch = match state.recovery_epoch.checked_add(1) {
+                Some(epoch) => epoch,
+                None => {
+                    state.protection_failed = true;
+                    return Err("PDM recovery protection exhausted; restart the application".into());
+                }
+            };
         }
         state.next = state.next.checked_add(1).ok_or("Local PDM request limit reached")?;
         let id = state.next;
@@ -343,6 +439,9 @@ impl Runtime {
         if let Task::Managed(ManagedTask::Archive { path, .. }) | Task::CheckIn { path, .. } = &task {
             state.blocked_paths.push(path.clone());
         }
+        // A connection ID keeps native paths out of commands. Until native
+        // authentication identifies its recovery root, reserve every saved path.
+        state.block_all_paths = matches!(&task, Task::Managed(ManagedTask::Recover { .. } | ManagedTask::RecoverConnection { .. }));
         state.job = Some(Job { id, task });
         state.status.blocking = state.job.as_ref().is_some_and(|job| {
             matches!(
@@ -355,6 +454,7 @@ impl Runtime {
                             | ManagedTask::GetLatest { .. }
                             | ManagedTask::Open { .. }
                             | ManagedTask::Recover { .. }
+                            | ManagedTask::RecoverConnection { .. }
                             | ManagedTask::Restore { .. }
                     )
             )
@@ -374,12 +474,18 @@ impl Runtime {
         state.status.busy = None;
         state.status.blocking = false;
         state.blocked_paths.clear();
+        state.block_all_paths = false;
         state.job = None;
-        if let Ok(Outcome::Managed { state: managed, .. } | Outcome::ManagedRefreshed { state: managed, .. }) = &result
+        if let Ok(
+            Outcome::Managed { state: managed, .. }
+            | Outcome::ManagedRefreshed { state: managed, .. }
+            | Outcome::ManagedConnected { state: managed, .. },
+        ) = &result
             && let Err(error) = state.remember(managed)
         {
             state.protection_failed = true;
             state.status.port = None;
+            state.status.connection = None;
             state.status.error = Some(error.clone());
             return Err(error);
         }
@@ -388,28 +494,57 @@ impl Runtime {
                 state.status.error = Some(failure.message);
                 if failure.disconnect {
                     state.status.port = None;
+                    state.status.connection = None;
                     state.status.versions.clear();
                 }
             }
             Ok(Outcome::Disconnected) => {
                 state.status.port = None;
+                state.status.connection = None;
                 state.status.versions.clear();
                 state.status.retrieved = None;
             }
-            Ok(Outcome::Managed { port, state: managed }) => {
-                state.status.port = Some(port);
-                state.status.managed = managed;
-            }
-            Ok(Outcome::ManagedRefreshed { port, state: mut managed }) => {
-                if state.status.managed.server_id == managed.server_id && state.status.managed.workspace == managed.workspace {
+            Ok(Outcome::Connections(connections)) => state.status.connections = connections,
+            Ok(Outcome::ManagedConnected { port, state: mut managed, connections, connection }) => {
+                if state.status.port == Some(port)
+                    && state.status.managed.server_id == managed.server_id
+                    && state.status.managed.workspace == managed.workspace
+                {
                     managed.history = state.status.managed.history.clone();
                     managed.where_used = state.status.managed.where_used.clone();
                     managed.preview = state.status.managed.preview.clone();
                 }
                 state.status.port = Some(port);
                 state.status.managed = managed;
+                state.status.connections = connections;
+                state.status.connection = Some(connection);
+            }
+            Ok(Outcome::Managed { port, state: managed }) => {
+                if state.status.port != Some(port)
+                    || state.status.managed.server_id != managed.server_id
+                    || state.status.managed.workspace != managed.workspace
+                {
+                    state.status.connection = None;
+                }
+                state.status.port = Some(port);
+                state.status.managed = managed;
+            }
+            Ok(Outcome::ManagedRefreshed { port, state: mut managed }) => {
+                if state.status.port == Some(port)
+                    && state.status.managed.server_id == managed.server_id
+                    && state.status.managed.workspace == managed.workspace
+                {
+                    managed.history = state.status.managed.history.clone();
+                    managed.where_used = state.status.managed.where_used.clone();
+                    managed.preview = state.status.managed.preview.clone();
+                } else {
+                    state.status.connection = None;
+                }
+                state.status.port = Some(port);
+                state.status.managed = managed;
             }
             Ok(Outcome::Connected { port, versions }) => {
+                state.status.connection = None;
                 state.status.port = Some(port);
                 state.status.versions = versions;
             }
@@ -443,7 +578,8 @@ impl Runtime {
 
     pub fn blocks_path(&self, path: &str) -> bool {
         self.0.lock().map_or(true, |state| {
-            state.status.blocking && state.blocked_paths.iter().any(|blocked| cached_path_key(blocked) == cached_path_key(path))
+            state.status.blocking
+                && (state.block_all_paths || state.blocked_paths.iter().any(|blocked| cached_path_key(blocked) == cached_path_key(path)))
         })
     }
 
@@ -452,7 +588,7 @@ impl Runtime {
         if state.protection_failed {
             return Err("PDM path protection is unavailable; restart the application before saving".into());
         }
-        if state.status.blocking && state.blocked_paths.iter().any(|blocked| same_file_path(blocked, path)) {
+        if state.status.blocking && (state.block_all_paths || state.blocked_paths.iter().any(|blocked| same_file_path(blocked, path))) {
             return Err("Wait for the managed operation before saving this file".into());
         }
         if state.historical_paths.values().any(|historical| same_file_path(historical, path)) {
@@ -474,9 +610,26 @@ impl Runtime {
 }
 
 impl crate::Session {
+    /// Trusted fresh-I/O/replacement boundary only, with the token captured BEFORE
+    /// I/O. Never call for a cached tab or per-frame shared-runtime binding.
+    pub fn mark_pdm_reloaded_from(&mut self, expected_epoch: u64) -> Result<(), String> {
+        self.pdm.validate_reload_epoch(expected_epoch)?;
+        self.pdm_recovery_epoch = expected_epoch;
+        Ok(())
+    }
+    pub fn check_pdm_reopen(&self) -> crate::Result<()> {
+        if self.pdm.requires_reopen(self.pdm_recovery_epoch, self.path.as_deref()) {
+            return Err(crate::EngineError::Other("PDM recovery changed saved files. Reopen this design from disk before editing or saving its original path; Save As a separate copy preserves this editor.".into()));
+        }
+        Ok(())
+    }
+
     /// Check each destination before an export writes, creates or removes files.
     /// Multi-file exports must check every target before their first side effect.
     pub fn check_output_path(&self, path: &str) -> crate::Result<()> {
+        if self.path.as_deref().is_some_and(|original| same_file_path(original, path)) {
+            self.check_pdm_reopen()?;
+        }
         self.pdm.may_save(path).map_err(crate::EngineError::Other)?;
         if self.pdm_read_only && self.path.as_deref().is_some_and(|original| same_file_path(original, path)) {
             return Err(crate::EngineError::Other("Historical copies are read-only; export to a separate file".into()));

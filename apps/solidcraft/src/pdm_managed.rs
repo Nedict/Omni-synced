@@ -150,7 +150,6 @@ impl Host {
         }
         if let ManagedTask::Connect { port, root } = task {
             let client = Client::new(port, AuthToken::from_env().map_err(error)?);
-            let catalog = client.managed_catalog().map_err(error)?;
             let root = root
                 .map(PathBuf::from)
                 .or_else(|| default_root.map(|p| p.join("working")))
@@ -161,27 +160,9 @@ impl Host {
             if let Some(parent) = root.parent() {
                 fs::create_dir_all(parent).map_err(|_| fail("Could not create working folder parent"))?;
             }
-            let ws = if root.join(".solidcraft-pdm").exists() {
-                Workspace::open(&root, &catalog.server_id)
-            } else {
-                Workspace::create(&root, &catalog.server_id)
-            }
-            .map_err(error)?;
-            self.port = port;
-            self.root = Some(ws.root().into());
-            self.server_id = catalog.server_id;
-            self.machine = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "desktop".into());
-            self.client = Some(client.clone());
-            self.grants.clear();
-            // Reacquire only reservations that already belong to this persisted workspace.
-            for entry in client.managed_catalog().map_err(error)?.entries {
-                if entry.checkout.as_ref().is_some_and(|c| c.workspace == ws.manifest().workspace_id && c.machine == self.machine)
-                    && let Ok(grant) = client.managed_checkout(entry.document.clone(), ws.manifest().workspace_id.clone(), self.machine.clone())
-                {
-                    self.grants.insert(entry.document, grant);
-                }
-            }
-            return Ok((Outcome::Managed { port, state: self.state(&ws, None)? }, None));
+            let prepared = Self::prepare_connection(client, &root, port, None)?;
+            *self = prepared.host;
+            return Ok((Outcome::Managed { port, state: prepared.state }, None));
         }
         let client = self.client()?;
         if client.managed_catalog().map_err(error)?.server_id != self.server_id {
@@ -190,6 +171,12 @@ impl Host {
         let mut ws = self.workspace()?;
         let mut opened = None;
         let selected = match task {
+            ManagedTask::ListConnections
+            | ManagedTask::CreateLocal { .. }
+            | ManagedTask::OpenConnection { .. }
+            | ManagedTask::RecoverConnection { .. } => {
+                return Err(fail("Connection setup requires the native connection controller"));
+            }
             ManagedTask::Recover { .. } => return Err(fail("Invalid recovery state")),
             ManagedTask::Preview { reference } => {
                 let mut state = self.state(&ws, Some(&reference.document))?;
@@ -553,6 +540,74 @@ fn dependencies(
     Ok(references.into_iter().collect())
 }
 
+pub struct AuthenticatedHost {
+    pub host: Host,
+    pub port: u16,
+    pub state: ManagedState,
+}
+
+impl Host {
+    pub fn connect_authenticated(session: crate::pdm_login::AuthenticatedSession, root: &Path, recover: bool) -> Result<AuthenticatedHost, Failure> {
+        if !root.is_absolute() || root.components().any(|part| matches!(part, std::path::Component::ParentDir)) {
+            return Err(fail("The working folder must be absolute"));
+        }
+        // Do not trust a manually assembled AuthenticatedSession's public fields.
+        let actual = session.client.authenticated_identity().map_err(error)?;
+        if actual != session.identity || actual.server_id != session.profile.server_id() || actual.principal.id != session.profile.principal_id() {
+            return Err(fail("PDM authenticated identity changed; sign in again"));
+        }
+        let origin: ureq::http::Uri = session.profile.origin().parse().map_err(|_| fail("Invalid PDM HTTPS origin"))?;
+        let port = origin.port_u16().unwrap_or(443);
+        if recover {
+            let catalog = session.client.managed_catalog().map_err(error)?;
+            let mut workspace = Workspace::open_for_recovery(root, &catalog.server_id).map_err(error)?;
+            for (document, entry) in &workspace.manifest().documents {
+                let (version, _) = session.client.download(&VersionRef { document: document.clone(), version: entry.base_version }).map_err(error)?;
+                if version.sha256 != entry.base_sha256 {
+                    return Err(fail("Recovery refused: the recorded base does not match this server"));
+                }
+            }
+            workspace.recover_pending(true).map_err(error)?;
+        }
+        Self::prepare_connection(session.client, root, port, Some(&actual.principal.id))
+    }
+
+    fn prepare_connection(client: Client, root: &Path, port: u16, principal: Option<&str>) -> Result<AuthenticatedHost, Failure> {
+        if !root.is_absolute() || root.components().any(|part| matches!(part, std::path::Component::ParentDir)) {
+            return Err(fail("The working folder must be absolute"));
+        }
+        let catalog = client.managed_catalog().map_err(error)?;
+        // The native controller/index creates the fixed private parent. This
+        // helper never recursively creates arbitrary user-selected ancestors.
+        let ws = if root.join(".solidcraft-pdm").try_exists().map_err(|_| fail("Working folder unavailable"))? {
+            Workspace::open(root, &catalog.server_id)
+        } else {
+            Workspace::create(root, &catalog.server_id)
+        }
+        .map_err(error)?;
+        let machine = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "desktop".into());
+        let mut candidate =
+            Self { client: Some(client.clone()), port, root: Some(ws.root().into()), server_id: catalog.server_id, machine, grants: BTreeMap::new() };
+        for entry in catalog.entries {
+            if entry.checkout.as_ref().is_some_and(|checkout| {
+                checkout.workspace == ws.manifest().workspace_id
+                    && checkout.machine == candidate.machine
+                    && principal.is_none_or(|principal| checkout.owner == principal)
+            }) {
+                // A missing or changed reservation stays readonly. Connecting
+                // cannot create a checkout, rotate a token, or publish metadata.
+                if let Ok(grant) =
+                    client.managed_resume_checkout(entry.document.clone(), ws.manifest().workspace_id.clone(), candidate.machine.clone())
+                {
+                    candidate.grants.insert(entry.document, grant);
+                }
+            }
+        }
+        let state = candidate.state(&ws, None)?;
+        Ok(AuthenticatedHost { host: candidate, port, state })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -663,6 +718,35 @@ mod tests {
         session.execute("file.save", &serde_json::json!({"path":path})).unwrap();
         session
     }
+    #[test]
+    fn failed_guided_holder_commit_preserves_existing_host_and_checkout_authority() {
+        let trial = Trial::new();
+        let mut host = trial.host("original");
+        let path = host.root.as_ref().unwrap().join("part.solidcraft");
+        let design = part(&path);
+        let document = archive(&mut host, &design);
+        run(&mut host, ManagedTask::Checkout { document: Some(document.clone()), path: None });
+        let before_root = host.root.clone();
+        let before_server = host.server_id.clone();
+        let grant = host.grants.get(&document).unwrap().clone();
+        let holder = std::sync::Mutex::new(Some(host.client().unwrap()));
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _held = holder.lock().unwrap();
+            panic!("test-only holder poisoning");
+        }));
+        assert!(poisoned.is_err());
+        let candidate = trial.host("candidate");
+        let failure = super::super::pdm::commit_guided_host(&mut host, &holder, candidate).unwrap_err();
+        assert!(!failure.disconnect);
+        assert_eq!(host.root, before_root);
+        assert_eq!(host.server_id, before_server);
+        assert!(host.grants.get(&document).unwrap() == &grant);
+        let client = host.client().unwrap();
+        assert!(client.managed_catalog().unwrap().entries.iter().any(|entry| entry.document == document && entry.checkout == grant.entry.checkout));
+        let ws = host.workspace().unwrap();
+        assert!(host.state(&ws, None).unwrap().local.iter().any(|entry| entry.document == document && entry.checked_out));
+    }
+
     #[test]
     fn managed_native_keeps_one_path_excludes_other_workspace_and_opens_history_separately() {
         let trial = Trial::new();

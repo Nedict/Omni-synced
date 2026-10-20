@@ -51,9 +51,21 @@ fn ok_computes_off_the_window_thread_saying_so_then_applies() {
     if let Some(job) = h.app.applying.as_mut() {
         let _ = job.done.recv();
         job.done = done;
+        // A loaded machine may already be beyond the first second. Exercise that
+        // case deterministically without waiting or changing the production clock.
+        job.started -= 2000.0;
     }
     h.frames(1);
-    assert!(h.widget("Computing… 0 s").is_some(), "the dialog says it computes");
+    let computing_label = h.output.accesskit_update.as_ref().and_then(|tree| {
+        tree.nodes.iter().flat_map(|(_, node)| [node.label(), node.value()].into_iter().flatten()).find(|label| {
+            label
+                .strip_prefix("Computing… ")
+                .and_then(|tail| tail.strip_suffix(" s"))
+                .and_then(|seconds| seconds.parse::<u64>().ok())
+                .is_some_and(|seconds| seconds >= 2)
+        })
+    });
+    assert!(computing_label.is_some_and(|label| h.widget(label).is_some()), "the visible dialog says it computes with elapsed seconds");
     // Enter again does not start it twice.
     h.step(&json!({"key": "Enter"})).unwrap();
     finish.send(()).unwrap();

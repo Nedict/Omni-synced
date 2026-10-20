@@ -52,6 +52,8 @@ fn app() -> Harness {
     h.app.services.pdm = Some(backend(None));
     h.app.start("pdm.panel");
     h.frames(3);
+    h.step(&json!({"click":{"handle":"pdm:advanced"}})).unwrap();
+    h.frames(3);
     h
 }
 fn connect(h: &mut Harness) {
@@ -74,7 +76,9 @@ fn actual_panel_connects_lists_pinned_dependencies_and_disconnects() {
     h.frames(2);
     assert!(h.widget("base · v3").is_some());
     h.app.pdm.open = true;
-    h.frames(2);
+    // Reopening inventories saved connections before actions become available.
+    h.frames(5);
+    assert!(h.app.pdm.runtime.status().unwrap().busy.is_none());
     h.step(&json!({"click":{"handle":"pdm:disconnect"}})).unwrap();
     h.frames(4);
     assert!(h.app.pdm.runtime.status().unwrap().port.is_none());
@@ -442,6 +446,185 @@ fn restore_version_confirmation_captures_selection_and_cancel_queues_nothing() {
     assert!(h.app.pdm.restore_confirmation.is_none());
 }
 
+use solidcraft_engine::pdm::{ActiveConnection, ConnectionKind, ConnectionStage, ConnectionSummary, ManagedState};
+
+fn guided_recent() -> Vec<ConnectionSummary> {
+    vec![
+        ConnectionSummary {
+            id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            label: "Saved archive label".into(),
+            kind: ConnectionKind::Local,
+            stage: ConnectionStage::SavedUnverified,
+        },
+        ConnectionSummary {
+            id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+            label: "Interrupted archive".into(),
+            kind: ConnectionKind::Local,
+            stage: ConnectionStage::Pending,
+        },
+    ]
+}
+fn guided_worker(requests: Arc<Mutex<Vec<ManagedTask>>>, recent: Vec<ConnectionSummary>) -> Start {
+    Arc::new(move |job| {
+        let (send, receive) = mpsc::channel();
+        let Task::Managed(task) = job.task else {
+            send.send(Completion { result: Err(Failure { message: "Unexpected test request".into(), disconnect: false }), open: None }).unwrap();
+            return receive;
+        };
+        requests.lock().unwrap().push(task.clone());
+        let result = match task {
+            ManagedTask::ListConnections => Ok(Outcome::Connections(recent.clone())),
+            ManagedTask::OpenConnection { connection_id } | ManagedTask::RecoverConnection { connection_id } => Ok(Outcome::ManagedConnected {
+                port: 48231,
+                state: ManagedState {
+                    root: Some("C:/PDM proof/Working".into()),
+                    server_id: Some("server-real".into()),
+                    workspace: Some("verified-workspace".into()),
+                    ..Default::default()
+                },
+                connections: recent.clone(),
+                connection: ActiveConnection {
+                    id: connection_id,
+                    label: "Verified archive".into(),
+                    origin: "https://localhost:48231".into(),
+                    server_id: "server-real".into(),
+                    account: "authenticated-admin".into(),
+                    role: "Administrator".into(),
+                },
+            }),
+            ManagedTask::CreateLocal { .. } => Err(Failure { message: "Setup fixture stopped before native work".into(), disconnect: false }),
+            _ => Err(Failure { message: "Unexpected guided action".into(), disconnect: false }),
+        };
+        send.send(Completion { result, open: None }).unwrap();
+        receive
+    })
+}
+fn guided_app(recent: Vec<ConnectionSummary>) -> (Harness, Arc<Mutex<Vec<ManagedTask>>>) {
+    let mut h = Harness::new();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    h.app.services.pdm = Some(guided_worker(requests.clone(), recent));
+    h.app.start("pdm.panel");
+    h.frames(5);
+    (h, requests)
+}
+
+#[test]
+fn guided_empty_state_lists_once_and_has_no_fabricated_verified_identity() {
+    let (mut h, requests) = guided_app(Vec::new());
+    assert!(h.widget("Create a local archive to get started.").is_some());
+    assert!(h.widget("Create Local Archive").is_some());
+    assert!(h.app.pdm.runtime.status().unwrap().connection.is_none());
+    h.frames(5);
+    assert_eq!(requests.lock().unwrap().iter().filter(|task| matches!(task, ManagedTask::ListConnections)).count(), 1);
+    assert!(!requests.lock().unwrap().iter().any(|task| matches!(task, ManagedTask::CreateLocal { .. } | ManagedTask::OpenConnection { .. })));
+}
+
+#[test]
+fn guided_create_sends_only_public_label_and_administrator_to_worker() {
+    let (mut h, requests) = guided_app(Vec::new());
+    h.app.pdm.guided.label = "Fixture archive".into();
+    h.app.pdm.guided.administrator = "fixture_admin".into();
+    h.frames(2);
+    h.step(&json!({"click":{"handle":"pdm:setup_create"}})).unwrap();
+    h.frames(3);
+    assert!(
+        requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|task| matches!(task,ManagedTask::CreateLocal {label,administrator} if label=="Fixture archive" && administrator=="fixture_admin"))
+    );
+    assert!(h.app.pdm.runtime.status().unwrap().connection.is_none());
+    assert!(h.app.session.path.is_none());
+}
+
+#[test]
+fn guided_existing_open_displays_only_fresh_authenticated_metadata() {
+    let (mut h, requests) = guided_app(guided_recent());
+    assert!(h.widget("Saved archive label").is_some());
+    assert!(h.widget("Not connected").is_some());
+    assert!(h.widget("authenticated-admin").is_none());
+    assert!(h.app.pdm.runtime.status().unwrap().connection.is_none());
+    h.step(&json!({"click":{"handle":"pdm:connection:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}})).unwrap();
+    h.frames(4);
+    assert!(requests.lock().unwrap().iter().any(|task|matches!(task,ManagedTask::OpenConnection {connection_id} if connection_id=="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")));
+    assert!(h.widget("authenticated-admin").is_some());
+    assert!(h.widget("Administrator").is_some());
+    assert!(h.widget("https://localhost:48231").is_some());
+    assert!(h.widget("C:/PDM proof/Working").is_some());
+    assert!(h.widget("Connected").is_some());
+    assert!(h.widget("Not connected").is_none());
+}
+
+#[test]
+fn guided_busy_state_disables_setup_and_connection_open() {
+    let (mut h, requests) = guided_app(guided_recent());
+    h.app.pdm.guided.label = "Fixture archive".into();
+    h.frames(2);
+    let held = Arc::new(Mutex::new(Vec::<mpsc::Sender<Completion>>::new()));
+    let retained = held.clone();
+    let observed = requests.clone();
+    h.app.services.pdm = Some(Arc::new(move |job| {
+        let (send, receive) = mpsc::channel();
+        if let Task::Managed(task) = job.task {
+            observed.lock().unwrap().push(task);
+        }
+        retained.lock().unwrap().push(send);
+        receive
+    }));
+    h.app.run("pdm.connections", json!({})).unwrap();
+    h.frames(2);
+    let before = requests.lock().unwrap().len();
+    assert!(h.app.pdm.runtime.status().unwrap().busy.is_some());
+    h.step(&json!({"click":{"handle":"pdm:setup_create"}})).unwrap();
+    h.step(&json!({"click":{"handle":"pdm:connection:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}})).unwrap();
+    h.frames(2);
+    assert_eq!(requests.lock().unwrap().len(), before);
+    assert!(h.app.pdm.runtime.status().unwrap().busy.is_some());
+    assert_eq!(held.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn guided_pending_row_resumes_existing_installation_without_creating_another() {
+    let (mut h, requests) = guided_app(guided_recent());
+    assert!(h.widget("Setup incomplete").is_some());
+    h.step(&json!({"click":{"handle":"pdm:connection:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}})).unwrap();
+    h.frames(4);
+    assert!(requests.lock().unwrap().iter().any(|task|matches!(task,ManagedTask::OpenConnection {connection_id} if connection_id=="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")));
+    assert!(!requests.lock().unwrap().iter().any(|task| matches!(task, ManagedTask::CreateLocal { .. })));
+}
+
+#[test]
+fn guided_recovery_requires_confirmation_and_scopes_the_existing_connection() {
+    let (mut h, requests) = guided_app(guided_recent());
+    let id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    h.step(&json!({"click":{"handle":format!("pdm:connection_recover:{id}")}})).unwrap();
+    h.frames(2);
+    assert!(h.app.pdm.guided.pending_recovery.is_some());
+    assert!(!requests.lock().unwrap().iter().any(|task| matches!(task, ManagedTask::RecoverConnection { .. })));
+    h.step(&json!({"click":{"handle":"pdm:connection_recover_confirm"}})).unwrap();
+    h.frames(4);
+    assert!(requests.lock().unwrap().iter().any(|task| matches!(task,ManagedTask::RecoverConnection {connection_id} if connection_id==id)));
+    assert!(!requests.lock().unwrap().iter().any(|task| matches!(task, ManagedTask::CreateLocal { .. })));
+}
+
+#[test]
+fn guided_recovery_cancel_and_dirty_editor_never_queue_native_recovery() {
+    let (mut h, requests) = guided_app(guided_recent());
+    let id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    h.step(&json!({"click":{"handle":format!("pdm:connection_recover:{id}")}})).unwrap();
+    h.frames(2);
+    h.step(&json!({"click":{"handle":"pdm:connection_recover_cancel"}})).unwrap();
+    h.frames(2);
+    assert!(h.app.pdm.guided.pending_recovery.is_none());
+    h.app.run("solid.box", json!({"length":2,"width":3,"height":4})).unwrap();
+    h.frames(2);
+    h.step(&json!({"click":{"handle":format!("pdm:connection_recover:{id}")}})).unwrap();
+    h.frames(2);
+    assert!(h.app.pdm.guided.pending_recovery.is_none());
+    assert!(!requests.lock().unwrap().iter().any(|task| matches!(task, ManagedTask::RecoverConnection { .. })));
+}
+
 #[test]
 fn restore_completion_clears_temporary_ram_permission_and_reuses_its_editor() {
     use solidcraft_engine::pdm::{LocalEntry, ManagedState};
@@ -489,4 +672,153 @@ fn restore_completion_clears_temporary_ram_permission_and_reuses_its_editor() {
     assert_eq!(h.app.session.path.as_deref(), Some("part.solidcraft"));
     assert!(!h.app.session.is_dirty());
     assert_eq!(h.app.pdm.runtime.status().unwrap().managed.local.first().unwrap().base_version, 3);
+}
+
+#[test]
+fn switching_authenticated_connections_clears_old_archive_actions_and_ram_permissions() {
+    let (mut h, _) = guided_app(guided_recent());
+    let id = h.app.pdm.runtime.enqueue(Task::Connect { port: 48231 }).unwrap();
+    h.app
+        .pdm
+        .runtime
+        .finish(
+            id,
+            Ok(Outcome::Managed {
+                port: 48231,
+                state: ManagedState { server_id: Some("old-server".into()), workspace: Some("old-workspace".into()), ..Default::default() },
+            }),
+        )
+        .unwrap();
+    h.app.pdm.document = "old-document".into();
+    h.app.pdm.parent = "9".into();
+    h.app.pdm.folder = "Old folder".into();
+    h.app.pdm.logical_path = "Old folder/part.solidcraft".into();
+    h.app.pdm.selected = Some(Reference { document: "old-document".into(), version: 9 });
+    h.app.pdm.dependencies = vec![Reference { document: "old-part".into(), version: 4 }];
+    h.app.pdm.restore_confirmation = h.app.pdm.selected.clone();
+    h.app.pdm.pending_edit = Some("solid.box".into());
+    h.app.pdm.ram_paths.insert("old/part.solidcraft".into());
+    h.app.pdm.guided.pending_recovery = Some(("c".repeat(64), "Old connection".into()));
+    h.app.run("pdm.connection.open", json!({"connection_id":"a".repeat(64)})).unwrap();
+    h.frames(5);
+    assert_eq!(h.app.pdm.runtime.status().unwrap().connection.unwrap().account, "authenticated-admin");
+    assert!(h.app.pdm.document.is_empty());
+    assert!(h.app.pdm.parent.is_empty());
+    assert!(h.app.pdm.folder.is_empty());
+    assert!(h.app.pdm.logical_path.is_empty());
+    assert!(h.app.pdm.selected.is_none());
+    assert!(h.app.pdm.dependencies.is_empty());
+    assert!(h.app.pdm.restore_confirmation.is_none());
+    assert!(h.app.pdm.pending_edit.is_none());
+    assert!(h.app.pdm.ram_paths.is_empty());
+    assert!(h.app.pdm.guided.pending_recovery.is_none());
+}
+
+fn epoch_managed_state(path: &std::path::Path) -> solidcraft_engine::pdm::ManagedState {
+    use solidcraft_engine::pdm::{LocalEntry, ManagedState};
+    ManagedState {
+        server_id: Some("epoch-server".into()),
+        workspace: Some("epoch-workspace".into()),
+        local: vec![LocalEntry {
+            document: "part".into(),
+            path: path.to_string_lossy().into_owned(),
+            relative_path: "part.solidcraft".into(),
+            base_version: 1,
+            sha256: "ab".repeat(32),
+            checked_out: true,
+            modified: false,
+            present: true,
+        }],
+        ..Default::default()
+    }
+}
+fn epoch_connected(h: &mut Harness, path: &std::path::Path) {
+    h.app.pdm.runtime.set_available(true).unwrap();
+    let request = h.app.pdm.runtime.enqueue(Task::Connect { port: 48231 }).unwrap();
+    h.app.pdm.runtime.finish(request, Ok(Outcome::Managed { port: 48231, state: epoch_managed_state(path) })).unwrap();
+}
+fn epoch_recover(h: &mut Harness, path: &std::path::Path, failed: bool) {
+    h.app.pdm.runtime.set_available(true).unwrap();
+    let request = h.app.pdm.runtime.enqueue(Task::Managed(ManagedTask::RecoverConnection { connection_id: "a".repeat(64) })).unwrap();
+    let mut disk = Session::default();
+    disk.execute("solid.box", &json!({"length":7,"width":8,"height":9})).unwrap();
+    disk.execute("file.save", &json!({"path":path})).unwrap();
+    let result = if failed {
+        Err(Failure { message: "Reply lost after disk restoration".into(), disconnect: false })
+    } else {
+        Ok(Outcome::Managed { port: 48231, state: epoch_managed_state(path) })
+    };
+    h.app.pdm.runtime.finish(request, result).unwrap();
+}
+fn epoch_read_fresh(h: &Harness, path: &std::path::Path) -> Session {
+    let receipt = h.app.pdm.runtime.begin_pdm_reload().unwrap();
+    let mut fresh = Session::default();
+    fresh.execute("doc.open", &json!({"path":path})).unwrap();
+    crate::documents::bind_fresh_pdm_load(&h.app, &mut fresh, receipt).unwrap();
+    fresh
+}
+
+#[test]
+fn pdm_recovery_epoch_success_and_failure_keep_clean_cached_editor_fenced() {
+    for failed in [false, true] {
+        let mut h = Harness::new();
+        let path = h.dir.join("part.solidcraft");
+        h.app.run("solid.box", json!({"length":2,"width":3,"height":4})).unwrap();
+        h.app.run("file.save", json!({"path":path})).unwrap();
+        epoch_connected(&mut h, &path);
+        let old = h.app.session.doc.clone();
+        epoch_recover(&mut h, &path, failed);
+        let disk = std::fs::read(&path).unwrap();
+        assert!(h.app.session.check_pdm_reopen().is_err());
+        assert!(h.app.run("file.save", json!({})).is_err());
+        h.app.start("solid.box");
+        assert!(h.app.dialog.is_none());
+        assert!(h.app.pdm.pending_edit.is_none());
+        assert!(h.app.status.as_ref().is_some_and(|(text, _, _)| text.contains("Reopen")));
+        assert_eq!(*h.app.session.doc, *old);
+        let fresh = epoch_read_fresh(&h, &path);
+        let expected = fresh.doc.clone();
+        crate::documents::apply_managed(&mut h.app, fresh).unwrap();
+        assert!(h.app.session.check_pdm_reopen().is_ok());
+        assert_eq!(*h.app.session.doc, *expected);
+        assert_eq!(std::fs::read(&path).unwrap(), disk);
+    }
+}
+
+#[test]
+fn pdm_recovery_epoch_reopening_one_tab_does_not_bless_another_same_path() {
+    let mut h = Harness::new();
+    let path = h.dir.join("part.solidcraft");
+    h.app.run("solid.box", json!({"length":2,"width":3,"height":4})).unwrap();
+    h.app.run("file.save", json!({"path":path})).unwrap();
+    epoch_connected(&mut h, &path);
+    let original = h.app.docs.active;
+    let duplicate = epoch_read_fresh(&h, &path);
+    crate::documents::open_tab(&mut h.app, duplicate).unwrap();
+    epoch_recover(&mut h, &path, false);
+    let fresh = epoch_read_fresh(&h, &path);
+    crate::documents::apply_managed(&mut h.app, fresh).unwrap();
+    assert!(h.app.session.check_pdm_reopen().is_ok());
+    crate::documents::switch(&mut h.app, original);
+    assert!(h.app.session.check_pdm_reopen().is_err());
+    assert!(h.app.run("file.save", json!({})).is_err());
+    h.app.session.mark_unsaved();
+    let before = h.app.session.doc.clone();
+    let fresh = epoch_read_fresh(&h, &path);
+    assert!(crate::documents::apply_managed(&mut h.app, fresh).is_err());
+    assert_eq!(*h.app.session.doc, *before);
+    assert!(h.app.session.is_dirty());
+}
+
+#[test]
+fn pdm_recovery_epoch_cached_adoption_never_renews_its_receipt() {
+    let mut h = Harness::new();
+    let path = h.dir.join("part.solidcraft");
+    h.app.run("solid.box", json!({"length":2,"width":3,"height":4})).unwrap();
+    h.app.run("file.save", json!({"path":path})).unwrap();
+    epoch_connected(&mut h, &path);
+    let cached = epoch_read_fresh(&h, &path);
+    epoch_recover(&mut h, &path, true);
+    crate::documents::adopt(&mut h.app, cached);
+    assert!(h.app.session.check_pdm_reopen().is_err());
 }

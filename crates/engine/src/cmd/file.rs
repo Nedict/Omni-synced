@@ -235,6 +235,7 @@ fn insert_step(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
+    let reload_epoch = s.pdm.begin_pdm_reload().map_err(EngineError::Other)?;
     let path = path_arg(p, "doc.open")?;
     if !solidcraft_io::is_step_path(path) && p.get("names").is_some_and(|v| !v.is_null()) {
         return Err(bad("doc.open", "`names` applies to STEP and IGES files only"));
@@ -271,10 +272,19 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(stem) = default_name_for(&doc.name, path) {
         doc.name = stem;
     }
-    s.replace_design(Session::new(doc));
-    s.path = Some(path.to_string());
+    commit_open_design(s, Session::new(doc), path, reload_epoch)?;
     let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
     Ok(json!({"path": path, "features": s.doc.features.len(), "errors": errors, "name": s.doc.name}))
+}
+
+/// Validate the captured-before-I/O receipt on a fresh candidate before dropping
+/// any existing editor state. A recovery race leaves the old editor untouched.
+fn commit_open_design(s: &mut Session, mut candidate: Session, path: &str, reload_epoch: u64) -> Result<()> {
+    candidate.path = Some(path.to_string());
+    candidate.pdm = s.pdm.clone();
+    candidate.mark_pdm_reloaded_from(reload_epoch).map_err(EngineError::Other)?;
+    s.replace_design(candidate);
+    Ok(())
 }
 
 /// The name a design never given one by its user is shown under.
@@ -328,6 +338,8 @@ fn rename_design(s: &mut Session, from: &str, to: &str) {
 
 fn write(s: &mut Session, path: &str, format: &str, compression: &str, preview: bool, cache: bool) -> Result<Value> {
     s.check_output_path(path)?;
+    let separate_destination = s.path.as_deref().is_none_or(|original| !crate::pdm::same_file_path(original, path));
+    let destination_epoch = if separate_destination { Some(s.pdm.begin_pdm_reload().map_err(EngineError::Other)?) } else { None };
     let historical_copy = s.pdm_read_only;
     solidcraft_io::vfs::check(path).map_err(|e| EngineError::Other(e.to_string()))?;
     // Saving an unnamed design, or one named after the file it was saved as, names it after its
@@ -337,6 +349,11 @@ fn write(s: &mut Session, path: &str, format: &str, compression: &str, preview: 
         rename_design(s, from, to);
     }
     let r = write_file(s, path, format, compression, preview, cache);
+    if r.is_ok()
+        && let Some(epoch) = destination_epoch
+    {
+        s.mark_pdm_reloaded_from(epoch).map_err(EngineError::Other)?;
+    }
     if r.is_ok() && historical_copy {
         s.pdm_read_only = false;
     }
@@ -652,6 +669,34 @@ mod urdf_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raced_open_candidate_does_not_replace_existing_editor_or_history() {
+        let mut original = Session::default();
+        original.execute("solid.box", &json!({"length":10,"width":20,"height":3})).unwrap();
+        original.path = Some("original.solidcraft".into());
+        original.pdm.set_available(true).unwrap();
+        let captured_before_read = original.pdm.begin_pdm_reload().unwrap();
+        let loaded_doc = solidcraft_io::read_design(&solidcraft_io::write_design(&Session::default().doc)).unwrap();
+        let candidate = Session::new(loaded_doc);
+        let request =
+            original.pdm.enqueue(crate::pdm::Task::Managed(crate::pdm::ManagedTask::RecoverConnection { connection_id: "a".repeat(64) })).unwrap();
+        original.pdm.finish(request, Err(crate::pdm::Failure { message: "recovery interrupted".into(), disconnect: false })).unwrap();
+        let old_doc = original.doc.clone();
+        let old_path = original.path.clone();
+        let old_undo = original.undo.len();
+        let old_redo = original.redo.len();
+        let old_log = original.log.len();
+        let old_epoch = original.pdm_recovery_epoch;
+        assert!(commit_open_design(&mut original, candidate, "replacement.solidcraft", captured_before_read).is_err());
+        assert_eq!(*original.doc, *old_doc);
+        assert_eq!(original.path, old_path);
+        assert_eq!(original.undo.len(), old_undo);
+        assert_eq!(original.redo.len(), old_redo);
+        assert_eq!(original.log.len(), old_log);
+        assert_eq!(original.pdm_recovery_epoch, old_epoch);
+        assert!(original.check_pdm_reopen().is_err());
+    }
 
     #[test]
     #[ignore = "manual warmed engine save and provisional-open benchmark"]

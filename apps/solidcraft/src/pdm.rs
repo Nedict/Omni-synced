@@ -70,7 +70,17 @@ fn client(holder: &Mutex<Option<Client>>) -> Result<Client, Failure> {
         .ok_or_else(|| failure("Connect to a local PDM service first.", true))
 }
 
-pub fn service(workspace_root: Option<PathBuf>) -> Start {
+pub fn service(workspace_root: Option<PathBuf>, connections_root: Option<PathBuf>) -> Start {
+    service_with_credentials(workspace_root, connections_root, super::pdm_credentials::OsCredentialStore)
+}
+
+/// Injectable for native integration tests; production always uses the OS credential store.
+pub(crate) fn service_with_credentials<S: super::pdm_credentials::CredentialStore + Send + 'static>(
+    workspace_root: Option<PathBuf>,
+    connections_root: Option<PathBuf>,
+    credentials: S,
+) -> Start {
+    let controller = Arc::new(Mutex::new(connections_root.map(|base| super::pdm_guided::Controller::new(base, credentials))));
     let holder = Arc::new(Mutex::new(None::<Client>));
     let managed = Arc::new(Mutex::new(super::pdm_managed::Host::default()));
     Arc::new(move |job: Job| {
@@ -78,6 +88,7 @@ pub fn service(workspace_root: Option<PathBuf>) -> Start {
         let holder = holder.clone();
         let root = workspace_root.clone();
         let managed = managed.clone();
+        let controller = controller.clone();
         let fallback = sender.clone();
         if std::thread::Builder::new()
             .name("solidcraft-pdm".into())
@@ -85,6 +96,64 @@ pub fn service(workspace_root: Option<PathBuf>) -> Start {
                 let result = (|| {
                     let mut host = managed.lock().map_err(|_| failure("Managed workspace state unavailable", false))?;
                     let result = match job.task {
+                        Task::Managed(solidcraft_engine::pdm::ManagedTask::ListConnections) => {
+                            let controller = controller.lock().map_err(|_| failure("PDM connection controller unavailable", false))?;
+                            let controller = controller
+                                .as_ref()
+                                .ok_or_else(|| failure("Private PDM connection directory unavailable", false))?
+                                .as_ref()
+                                .map_err(|_| failure("Private PDM connection directory invalid", false))?;
+                            let rows = controller.list().map_err(guided_failure)?;
+                            Ok((Outcome::Connections(connection_rows(rows)), None))
+                        }
+                        Task::Managed(
+                            task @ (solidcraft_engine::pdm::ManagedTask::CreateLocal { .. }
+                            | solidcraft_engine::pdm::ManagedTask::OpenConnection { .. }
+                            | solidcraft_engine::pdm::ManagedTask::RecoverConnection { .. }),
+                        ) => {
+                            let mut controller = controller.lock().map_err(|_| failure("PDM connection controller unavailable", false))?;
+                            let controller = controller
+                                .as_mut()
+                                .ok_or_else(|| failure("Private PDM connection directory unavailable", false))?
+                                .as_mut()
+                                .map_err(|_| failure("Private PDM connection directory invalid", false))?;
+                            let recover = matches!(&task, solidcraft_engine::pdm::ManagedTask::RecoverConnection { .. });
+                            let attach = |session, path: &Path| {
+                                super::pdm_managed::Host::connect_authenticated(session, path, recover).map_err(|_| super::pdm_guided::AttachFailure)
+                            };
+                            let prepared = match task {
+                                solidcraft_engine::pdm::ManagedTask::CreateLocal { label, administrator } => {
+                                    controller.create_local(&label, &administrator, attach)
+                                }
+                                solidcraft_engine::pdm::ManagedTask::OpenConnection { connection_id }
+                                | solidcraft_engine::pdm::ManagedTask::RecoverConnection { connection_id } => controller.open(&connection_id, attach),
+                                _ => return Err(failure("Invalid PDM connection request", false)),
+                            }
+                            .map_err(guided_failure)?;
+                            let (candidate, connection, rows) = prepared.into_parts();
+                            let outcome = Outcome::ManagedConnected {
+                                port: candidate.port,
+                                state: candidate.state,
+                                connections: connection_rows(rows),
+                                connection: solidcraft_engine::pdm::ActiveConnection {
+                                    id: connection.connection_id,
+                                    label: connection.label,
+                                    origin: connection.origin,
+                                    server_id: connection.server_id,
+                                    account: connection.account,
+                                    role: match connection.role {
+                                        solidcraft_pdm::managed::Role::Administrator => "Administrator",
+                                        solidcraft_pdm::managed::Role::Contributor => "Contributor",
+                                        solidcraft_pdm::managed::Role::Viewer => "Viewer",
+                                    }
+                                    .into(),
+                                },
+                            };
+                            commit_guided_host(&mut host, &holder, candidate.host)?;
+                            // Both holders are committed. Bypass the common tail:
+                            // no fallible lock or client lookup may follow this swap.
+                            return Ok((outcome, None));
+                        }
                         Task::Managed(task) => host.execute(task, root.as_deref()),
                         Task::Connect { port } => host.execute(solidcraft_engine::pdm::ManagedTask::Connect { port, root: None }, root.as_deref()),
                         Task::Refresh if host.connected() => host.refresh(),
@@ -123,9 +192,25 @@ pub fn service(workspace_root: Option<PathBuf>) -> Start {
     })
 }
 
+/// Finish native candidate handoff only after all fallible work has succeeded.
+/// Errors preserve both the previous Host/grants and the legacy client holder.
+pub(crate) fn commit_guided_host(
+    host: &mut super::pdm_managed::Host,
+    holder: &Mutex<Option<Client>>,
+    candidate: super::pdm_managed::Host,
+) -> Result<(), Failure> {
+    let connected = candidate.client().map_err(|_| failure("PDM candidate connection unavailable; previous connection preserved", false))?;
+    let mut held = holder.lock().map_err(|_| failure("PDM connection state unavailable; previous connection preserved", false))?;
+    *host = candidate;
+    *held = Some(connected);
+    Ok(())
+}
+
 fn execute(task: Task, holder: &Mutex<Option<Client>>, workspace_root: Option<&Path>) -> Result<(Outcome, Option<Box<Session>>), Failure> {
     let outcome = match task {
-        Task::Managed(_) => return Err(failure("Managed tasks require the managed native adapter", false)),
+        Task::Managed(_) => {
+            return Err(failure("Managed tasks require the managed native adapter", false));
+        }
         Task::Connect { port } => {
             // The environment is read only here, never into a command, preferences or a design.
             let connected = Client::new(port, AuthToken::from_env().map_err(map_error)?);
@@ -203,6 +288,24 @@ pub(crate) fn validate_saved(
         return Err(failure("The saved file changed outside this design. Reopen or save explicitly before check-in.", false));
     }
     Ok(())
+}
+
+fn guided_failure(error: super::pdm_guided::GuidedFailure) -> Failure {
+    failure(&error.to_string(), false)
+}
+fn connection_rows(rows: Vec<super::pdm_connections::ConnectionRow>) -> Vec<solidcraft_engine::pdm::ConnectionSummary> {
+    use super::pdm_connections::ConnectionState;
+    use solidcraft_engine::pdm::{ConnectionKind, ConnectionStage, ConnectionSummary};
+    rows.into_iter()
+        .map(|row| {
+            let (kind, stage) = match row.state {
+                ConnectionState::PendingLocal { .. } => (ConnectionKind::Local, ConnectionStage::Pending),
+                ConnectionState::LocalReadyRecorded { .. } => (ConnectionKind::Local, ConnectionStage::SavedUnverified),
+                ConnectionState::SavedProfileUnverified { .. } => (ConnectionKind::Saved, ConnectionStage::SavedUnverified),
+            };
+            ConnectionSummary { id: row.connection_id, label: row.label, kind, stage }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -329,5 +432,189 @@ mod tests {
         assert_ne!(copy, path);
         assert_eq!(fs::read(copy).unwrap(), fs::read(path).unwrap());
         server.join().unwrap();
+    }
+    #[test]
+    fn guided_native_setup_reopen_and_historical_restore_preserve_one_working_path() {
+        use solidcraft_engine::pdm::ManagedTask;
+        let temp = Temp::new();
+        let connections = temp.0.join("settings").join("connections");
+        let worker = service_with_credentials(None, Some(connections.clone()), super::test_support::Memory::default());
+        assert!(!connections.exists());
+        let run = |task| worker(Job { id: 1, task }).recv_timeout(std::time::Duration::from_secs(30)).unwrap();
+        let empty = run(Task::Managed(ManagedTask::ListConnections));
+        assert!(matches!(empty.result, Ok(Outcome::Connections(rows)) if rows.is_empty()));
+        assert!(!temp.0.join("settings").exists(), "read-only inventory must not create settings");
+        let created = run(Task::Managed(ManagedTask::CreateLocal { label: "Private proof".into(), administrator: "admin".into() }));
+        let (connection, state) = match created.result {
+            Ok(Outcome::ManagedConnected { connection, state, .. }) => (connection, state),
+            other => panic!("guided setup failed: {other:?}"),
+        };
+        assert_eq!(connection.account, "admin");
+        assert_eq!(connection.role, "Administrator");
+        assert!(connection.origin.starts_with("https://127.0.0.1:"));
+        assert_eq!(state.server_id.as_deref(), Some(connection.server_id.as_str()));
+        let root = PathBuf::from(state.root.unwrap());
+        let path = root.join("proof.solidcraft");
+        let mut design = design();
+        design.execute("file.save", &serde_json::json!({"path":path})).unwrap();
+        let original = fs::read(&path).unwrap();
+        let archive = |design: &Session| {
+            Task::Managed(ManagedTask::Archive {
+                path: path.to_string_lossy().into_owned(),
+                logical_path: None,
+                saved: design.doc.clone(),
+                visibility: Box::new(design.visibility.clone()),
+            })
+        };
+        let first = run(archive(&design));
+        let document = match first.result {
+            Ok(Outcome::Managed { state, .. }) => state.local.first().unwrap().document.clone(),
+            other => panic!("first archive failed: {other:?}"),
+        };
+        let checked_out = run(Task::Managed(ManagedTask::Checkout { document: Some(document.clone()), path: None }));
+        assert!(checked_out.result.is_ok());
+        let mut editable = checked_out.open.unwrap();
+        assert!(run(Task::Disconnect).result.is_ok());
+        let resumed_checkout = run(Task::Managed(ManagedTask::OpenConnection { connection_id: connection.id.clone() }));
+        match resumed_checkout.result {
+            Ok(Outcome::ManagedConnected { connection: actual, state, .. }) => {
+                assert_eq!(actual.server_id, connection.server_id);
+                assert_eq!(actual.account, "admin");
+                assert_eq!(state.root.as_deref(), Some(root.to_str().unwrap()));
+                let local = state.local.iter().find(|entry| entry.document == document).unwrap();
+                assert!(local.checked_out, "saved login must resume the existing checkout capability");
+                assert_eq!(local.base_version, 1);
+            }
+            other => panic!("active checkout resume failed: {other:?}"),
+        }
+        editable.execute("solid.box", &serde_json::json!({"length":2,"width":2,"height":2})).unwrap();
+        editable.execute("file.save", &serde_json::json!({})).unwrap();
+        assert!(run(archive(&editable)).result.is_ok());
+        assert_ne!(fs::read(&path).unwrap(), original);
+        assert!(run(Task::Disconnect).result.is_ok());
+        let reopened = run(Task::Managed(ManagedTask::OpenConnection { connection_id: connection.id.clone() }));
+        match reopened.result {
+            Ok(Outcome::ManagedConnected { connection: actual, state, .. }) => {
+                assert_eq!(actual.server_id, connection.server_id);
+                assert_eq!(actual.account, "admin");
+                assert_eq!(state.root.as_deref(), Some(root.to_str().unwrap()));
+            }
+            other => panic!("saved login failed: {other:?}"),
+        }
+        for _ in 0..2 {
+            let restored = run(Task::Managed(ManagedTask::Restore { reference: Reference { document: document.clone(), version: 1 } }));
+            match restored.result {
+                Ok(Outcome::Managed { state, .. }) => {
+                    assert_eq!(state.history.len(), 3);
+                    assert_eq!(state.local.first().unwrap().base_version, 3);
+                }
+                other => panic!("historical restore failed: {other:?}"),
+            }
+            let opened = restored.open.unwrap();
+            assert_eq!(opened.path.as_deref(), Some(path.to_str().unwrap()));
+            assert_eq!(fs::read(&path).unwrap(), original);
+        }
+    }
+    #[test]
+    fn guided_workspace_recovery_fences_stale_clean_editors_until_verified_reopen() {
+        use solidcraft_engine::pdm::{ManagedTask, Runtime};
+        let temp = Temp::new();
+        let worker = service_with_credentials(None, Some(temp.0.join("settings").join("connections")), super::test_support::Memory::default());
+        let runtime = Runtime::default();
+        runtime.set_available(true).unwrap();
+        let run = |task| {
+            let load_epoch = runtime.begin_pdm_reload().unwrap();
+            let id = runtime.enqueue(task).unwrap();
+            let job = runtime.take_job().unwrap().unwrap();
+            let mut completion = worker(job).recv_timeout(std::time::Duration::from_secs(30)).unwrap();
+            runtime.finish(id, completion.result.clone()).unwrap();
+            if let Some(session) = completion.open.as_mut() {
+                session.pdm = runtime.clone();
+                session.mark_pdm_reloaded_from(load_epoch).unwrap();
+            }
+            completion
+        };
+        let created = run(Task::Managed(ManagedTask::CreateLocal { label: "Recovery proof".into(), administrator: "admin".into() }));
+        let (connection, state) = match created.result {
+            Ok(Outcome::ManagedConnected { connection, state, .. }) => (connection, state),
+            other => panic!("setup failed: {other:?}"),
+        };
+        let root = PathBuf::from(state.root.unwrap());
+        let path = root.join("recover.solidcraft");
+        let mut initial = design();
+        initial.execute("file.save", &serde_json::json!({"path":path})).unwrap();
+        let original = fs::read(&path).unwrap();
+        let archived = run(Task::Managed(ManagedTask::Archive {
+            path: path.to_string_lossy().into_owned(),
+            logical_path: None,
+            saved: initial.doc.clone(),
+            visibility: Box::new(initial.visibility.clone()),
+        }));
+        let document = match archived.result {
+            Ok(Outcome::Managed { state, .. }) => state.local.first().unwrap().document.clone(),
+            other => panic!("archive failed: {other:?}"),
+        };
+        let checked_out = run(Task::Managed(ManagedTask::Checkout { document: Some(document.clone()), path: None }));
+        let mut stale = checked_out.open.unwrap();
+        stale.execute("solid.box", &serde_json::json!({"length":2,"width":2,"height":2})).unwrap();
+        stale.execute("file.save", &serde_json::json!({})).unwrap();
+        assert!(!stale.is_dirty());
+        let interrupted = fs::read(&path).unwrap();
+        assert_ne!(interrupted, original);
+        // A disposable fixture reproduces interruption after replacement but
+        // before publication. The old checkout remains authoritative.
+        let workspace = solidcraft_pdm::managed_workspace::Workspace::open(&root, &connection.server_id).unwrap();
+        let manifest = workspace.manifest();
+        let generation = manifest.generation;
+        let relative = manifest.documents.get(&document).unwrap().relative_path.clone();
+        assert!(manifest.documents.get(&document).unwrap().checked_out);
+        let metadata = root.join(".solidcraft-pdm");
+        let pending = metadata.join("pending");
+        let backup = metadata.join(format!("backup-{generation}"));
+        assert!(!pending.exists() && !backup.exists());
+        fs::write(&backup, &original).unwrap();
+        fs::write(&pending, serde_json::to_vec(&serde_json::json!({"manifest":manifest,"relative_path":relative})).unwrap()).unwrap();
+        drop(workspace);
+        let recovered = run(Task::Managed(ManagedTask::RecoverConnection { connection_id: connection.id }));
+        match recovered.result {
+            Ok(Outcome::ManagedConnected { state, .. }) => assert!(state.local.first().unwrap().checked_out),
+            other => panic!("recovery failed: {other:?}"),
+        }
+        assert!(recovered.open.is_none());
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert_eq!(fs::read(metadata.join(format!("recovery-current-{generation}"))).unwrap(), interrupted);
+        assert!(stale.execute("file.save", &serde_json::json!({})).unwrap_err().to_string().contains("Reopen"));
+        assert!(stale.execute("solid.box", &serde_json::json!({"length":3,"width":3,"height":3})).is_err());
+        assert!(stale.execute("pdm.archive", &serde_json::json!({})).is_err());
+        assert_eq!(fs::read(&path).unwrap(), original);
+        let reopened = run(Task::Managed(ManagedTask::Open { document }));
+        let mut fresh = reopened.open.unwrap();
+        assert!(stale.execute("file.save", &serde_json::json!({})).is_err(), "reloading another editor cannot lift the old editor's fence");
+        fresh.execute("solid.box", &serde_json::json!({"length":3,"width":3,"height":3})).unwrap();
+        fresh.execute("file.save", &serde_json::json!({})).unwrap();
+        assert_ne!(fs::read(&path).unwrap(), original);
+        assert_eq!(fs::read(metadata.join(format!("recovery-current-{generation}"))).unwrap(), interrupted);
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    use crate::pdm_credentials::{BearerSecret, CredentialError, CredentialKey, CredentialStore};
+    use std::collections::BTreeMap;
+    #[derive(Clone, Default)]
+    pub struct Memory(Arc<Mutex<BTreeMap<CredentialKey, String>>>);
+    impl CredentialStore for Memory {
+        fn get(&self, key: &CredentialKey) -> Result<Option<BearerSecret>, CredentialError> {
+            self.0.lock().map_err(|_| CredentialError::Unavailable)?.get(key).cloned().map(BearerSecret::parse).transpose()
+        }
+        fn set(&self, key: &CredentialKey, secret: &BearerSecret) -> Result<(), CredentialError> {
+            self.0.lock().map_err(|_| CredentialError::Unavailable)?.insert(key.clone(), secret.expose().into());
+            Ok(())
+        }
+        fn delete(&self, key: &CredentialKey) -> Result<(), CredentialError> {
+            self.0.lock().map_err(|_| CredentialError::Unavailable)?.remove(key);
+            Ok(())
+        }
     }
 }

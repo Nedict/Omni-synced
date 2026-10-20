@@ -26,7 +26,11 @@ mod native_frame;
 #[cfg(target_os = "macos")]
 mod open_documents;
 mod pdm;
+pub mod pdm_connections;
 pub mod pdm_credentials;
+pub mod pdm_guided;
+#[cfg(test)]
+mod pdm_guided_capture;
 pub mod pdm_login;
 mod pdm_managed;
 pub mod pdm_profiles;
@@ -124,7 +128,7 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
     let program_parent = parent.clone();
     let file_parent = parent.clone();
     Services {
-        pdm: Some(pdm::service(settings_dir().map(|p| p.join("pdm-workspaces")))),
+        pdm: Some(pdm::service(settings_dir().map(|p| p.join("pdm-workspaces")), settings_dir().map(|p| p.join("pdm-connections")))),
         pick_open: Some(Box::new(move |first: &[&str]| {
             // The file type the command reads comes first, so the picker opens on it (#1801).
             let mut dialog = open_parent.clone();
@@ -196,8 +200,9 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
             let future = dialog.pick_file();
             Box::pin(async move { future.await.map(|p| p.path().to_string_lossy().into_owned()) })
         })),
-        pick_save: Some(Box::new(move |name: &str, exts: &[&str]| {
+        pick_save: Some(Box::new(move |name: &str, exts: &[&str], initial_directory: Option<&str>| {
             let dialog = parent.clone().set_file_name(name);
+            let dialog = if let Some(directory) = initial_directory { dialog.set_directory(directory) } else { dialog };
             let dialog = if exts == [io::DESIGN_EXT, "json"] {
                 if name.ends_with(".json") {
                     dialog.add_filter("Plain JSON design", &["json"]).add_filter("SolidCraft container", &[io::DESIGN_EXT])
@@ -409,7 +414,9 @@ fn graphics_path() -> Option<std::path::PathBuf> {
 /// are never changed.
 fn adopt_legacy_settings() {
     adopt_legacy_for_default_profile(std::env::var_os(SETTINGS_DIR_ENV), || {
-        let (Some(current), Some(legacy)) = (settings_dir(), eframe::storage_dir("SolveCraft")) else { return };
+        let (Some(current), Some(legacy)) = (settings_dir(), eframe::storage_dir("SolveCraft")) else {
+            return;
+        };
         let legacy_eframe = eframe::storage_dir(solidcraft_engine::io::LEGACY_APP_ID);
         let old_flatpak = solidcraft_engine::io::legacy_flatpak_path(&current);
         if let Err(e) = adopt_settings(&current, old_flatpak.as_deref(), &legacy, legacy_eframe.as_deref()) {

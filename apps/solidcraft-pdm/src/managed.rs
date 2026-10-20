@@ -668,6 +668,24 @@ impl ManagedStore {
     }
 }
 
+impl ManagedStore {
+    /// Recover only an already-existing capability for this authenticated owner
+    /// and exact workspace/machine tuple. Never creates or publishes a checkout.
+    pub(crate) fn resume_checkout(&self, principal: &Principal, document: &str, workspace: &str, machine: &str) -> Result<CheckoutGrant, Error> {
+        Self::write_permission(principal)?;
+        if !label(workspace) || !label(machine) {
+            return Err(Error::Invalid("workspace or machine"));
+        }
+        let entry = self.state.documents.get(document).ok_or(Error::NotFound)?;
+        let checkout = entry.checkout.as_ref().ok_or(Error::Conflict)?;
+        if checkout.owner != principal.id || checkout.workspace != workspace || checkout.machine != machine {
+            return Err(Error::Forbidden);
+        }
+        let token = self.state.checkout_tokens.get(document).ok_or(Error::Integrity)?;
+        Ok(CheckoutGrant { entry: entry.clone(), token: token.clone() })
+    }
+}
+
 #[cfg(test)]
 mod provider_tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
@@ -723,9 +741,15 @@ mod provider_tests {
         fn inventory(&self) -> Result<Vec<BlobReceipt>, Error> {
             self.reads.fetch_add(1, Ordering::Relaxed);
             match self.mode.load(Ordering::Relaxed) {
-                3 => return Ok(vec![BlobReceipt { sha256: "invalid".into(), bytes: 0 }]),
-                4 => return Ok((0..MAX_VERSIONS + 1).map(|i| BlobReceipt { sha256: digest(&i.to_be_bytes()), bytes: 0 }).collect()),
-                5 => return Ok((0..65usize).map(|i| BlobReceipt { sha256: digest(&i.to_be_bytes()), bytes: MAX_CONTENT as u64 }).collect()),
+                3 => {
+                    return Ok(vec![BlobReceipt { sha256: "invalid".into(), bytes: 0 }]);
+                }
+                4 => {
+                    return Ok((0..MAX_VERSIONS + 1).map(|i| BlobReceipt { sha256: digest(&i.to_be_bytes()), bytes: 0 }).collect());
+                }
+                5 => {
+                    return Ok((0..65usize).map(|i| BlobReceipt { sha256: digest(&i.to_be_bytes()), bytes: MAX_CONTENT as u64 }).collect());
+                }
                 _ => {}
             }
             Ok(self.data.lock().unwrap().iter().map(|(hash, data)| BlobReceipt { sha256: hash.clone(), bytes: data.len() as u64 }).collect())
@@ -842,5 +866,121 @@ mod provider_tests {
             assert!(!temp.0.join("managed/generations").exists());
             assert!(!temp.0.join("managed/blobs").exists());
         }
+    }
+}
+
+#[cfg(test)]
+mod resume_checkout_tests {
+    use super::*;
+    use std::{
+        collections::BTreeMap,
+        fs,
+        path::{Path, PathBuf},
+    };
+
+    struct Temp(PathBuf);
+    impl Temp {
+        fn new() -> Result<Self, Error> {
+            let root = std::env::temp_dir().join(format!("solidcraft-resume-grant-{}", crate::AuthToken::generate()?));
+            fs::create_dir(&root)?;
+            Ok(Self(root))
+        }
+    }
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    fn owner() -> Principal {
+        Principal { id: "alice".into(), role: Role::Contributor }
+    }
+    fn store(root: &Path) -> Result<ManagedStore, Error> {
+        ManagedStore::open(root)
+    }
+    fn snapshot(root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, Error> {
+        let mut pending = vec![root.to_path_buf()];
+        let mut result = BTreeMap::new();
+        while let Some(directory) = pending.pop() {
+            for entry in fs::read_dir(directory)? {
+                let entry = entry?;
+                let path = entry.path();
+                if entry.file_type()?.is_dir() {
+                    pending.push(path);
+                } else {
+                    result.insert(path.strip_prefix(root).map_err(|_| Error::Integrity)?.into(), fs::read(path)?);
+                }
+            }
+        }
+        Ok(result)
+    }
+    #[test]
+    fn same_capability_resumes_without_any_generation_or_file_publication() -> Result<(), Error> {
+        let temp = Temp::new()?;
+        let mut managed = store(&temp.0)?;
+        let entry = managed.create(&owner(), "Parts/example.solidcraft".into())?;
+        let grant = managed.checkout(&owner(), &entry.document, "workspace".into(), "machine".into())?;
+        let generation = managed.generation;
+        let before_state = serde_json::to_vec(&managed.state)?;
+        let before_files = snapshot(&temp.0)?;
+        for _ in 0..3 {
+            let resumed = managed.resume_checkout(&owner(), &entry.document, "workspace", "machine")?;
+            assert!(resumed == grant);
+        }
+        assert_eq!(managed.generation, generation);
+        assert_eq!(serde_json::to_vec(&managed.state)?, before_state);
+        assert_eq!(snapshot(&temp.0)?, before_files);
+        drop(managed);
+        let reopened = store(&temp.0)?;
+        assert!(reopened.resume_checkout(&owner(), &entry.document, "workspace", "machine")? == grant);
+        assert_eq!(snapshot(&temp.0)?, before_files);
+        Ok(())
+    }
+    #[test]
+    fn absent_or_disappeared_checkout_never_creates_a_new_reservation() -> Result<(), Error> {
+        let temp = Temp::new()?;
+        let mut managed = store(&temp.0)?;
+        let entry = managed.create(&owner(), "Parts/example.solidcraft".into())?;
+        let before = snapshot(&temp.0)?;
+        assert!(matches!(managed.resume_checkout(&owner(), &entry.document, "workspace", "machine"), Err(Error::Conflict)));
+        assert!(managed.catalog().entries.first().is_some_and(|entry| entry.checkout.is_none()));
+        assert_eq!(snapshot(&temp.0)?, before);
+        let grant = managed.checkout(&owner(), &entry.document, "workspace".into(), "machine".into())?;
+        let observed = managed.catalog();
+        assert!(observed.entries.first().is_some_and(|entry| entry.checkout.is_some()));
+        // Simulates release between a candidate catalog read and its resume RPC.
+        managed.cancel(&owner(), &entry.document, "workspace", "machine", &grant.token)?;
+        let after_cancel = snapshot(&temp.0)?;
+        let generation = managed.generation;
+        assert!(matches!(managed.resume_checkout(&owner(), &entry.document, "workspace", "machine"), Err(Error::Conflict)));
+        assert_eq!(managed.generation, generation);
+        assert_eq!(snapshot(&temp.0)?, after_cancel);
+        assert!(managed.state.checkout_tokens.is_empty());
+        Ok(())
+    }
+    #[test]
+    fn wrong_owner_workspace_machine_and_viewer_never_change_authority() -> Result<(), Error> {
+        let temp = Temp::new()?;
+        let mut managed = store(&temp.0)?;
+        let entry = managed.create(&owner(), "Parts/example.solidcraft".into())?;
+        let grant = managed.checkout(&owner(), &entry.document, "workspace".into(), "machine".into())?;
+        let before = snapshot(&temp.0)?;
+        let generation = managed.generation;
+        let bob = Principal { id: "bob".into(), role: Role::Administrator };
+        let viewer = Principal { id: "alice".into(), role: Role::Viewer };
+        for (principal, workspace, machine) in [
+            (&bob, "workspace", "machine"),
+            (&owner(), "other-workspace", "machine"),
+            (&owner(), "workspace", "other-machine"),
+            (&viewer, "workspace", "machine"),
+        ] {
+            assert!(matches!(managed.resume_checkout(principal, &entry.document, workspace, machine), Err(Error::Forbidden)));
+        }
+        assert!(matches!(managed.resume_checkout(&owner(), &entry.document, "", "machine"), Err(Error::Invalid(_))));
+        assert!(matches!(managed.resume_checkout(&owner(), &entry.document, "workspace", "bad\nmachine"), Err(Error::Invalid(_))));
+        assert!(matches!(managed.resume_checkout(&owner(), "m-missing", "workspace", "machine"), Err(Error::NotFound)));
+        assert_eq!(managed.generation, generation);
+        assert_eq!(snapshot(&temp.0)?, before);
+        assert!(managed.resume_checkout(&owner(), &entry.document, "workspace", "machine")? == grant);
+        Ok(())
     }
 }

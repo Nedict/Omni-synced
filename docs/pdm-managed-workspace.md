@@ -104,12 +104,15 @@ The trial exercised the actual restore confirmation, historical v1 content
 published as v3, unchanged historical versions, same-path normal-tab reuse,
 read-only saves after publication, and retry without an additional version.
 The delivered executable and demo are frozen separately from further development.
-The repository CI entry point passes formatting and asset attribution, then stops
-at the independently reproduced Windows accepted-icon hash mismatch. After
-merging upstream e4d9015, all 12 Wasm crates and the 34 focused native checks
-passed again.
+A local trial is not a release or a complete-CI result. Each frozen pair records
+its source revision, working patch, executable hashes and actual validation
+outcomes separately. Current checks and known limitations are reported in
+[PR #3003](https://github.com/tangency-labs/solidcraft/pull/3003).
 
-The next increment exports and verifies the filesystem BlobStore boundary and
+The following validation counts and CI failures describe their original
+increment, not the current source or every frozen trial.
+
+The subsequent increment exported and verified the filesystem BlobStore boundary and
 one-time local first-administrator enrollment. It does not enable a network
 provider, remote login or a non-loopback listener. The legacy loopback owner
 credential remains an explicit compatibility path; any secure transport must
@@ -290,9 +293,9 @@ systems report credential storage unavailable rather than using a mock backend.
 Native enrollment connects the first-administrator bootstrap to a credential
 sink before publishing the principal registry. A failed sink permits retry; a
 failed registry publication retains the captured credential for recovery.
-Neither path resets an existing archive. These are native worker foundations:
-the current connection dialog still uses the delivered local workflow. A guided
-setup/login UI and external identity-provider login remain pending. Tests use an in-memory credential store and disposable
+Neither path resets an existing archive. Guided private-local setup and saved
+connection reopening now use these native workers. External identity-provider
+login remains pending. Tests use an in-memory credential store and disposable
 HTTPS services; they do not access the actual OS keyring.
 
 All 19 focused native PDM tests and strict native Clippy passed. Coverage includes
@@ -338,8 +341,9 @@ after a committed enrollment intent. A crash before both TLS files and the
 prepared completion record leaves an incomplete installation for inspection;
 automatic repair of that earlier boundary is not implemented.
 
-This remains a native worker API. The guided setup dialog and connection to the
-application workspace are pending. Tests use only disposable installation roots
+Guided private-local creation and saved connection reopening now invoke the
+same native worker. The form sends public labels and connection identifiers;
+credentials, TLS and filesystem operations remain native-only. Tests use only disposable installation roots
 and an in-memory credential store, with actual loopback TLS authentication.
 All 30 native PDM tests and 130 service tests passed, including recovery after
 credential capture and rejection of stale verification after account demotion
@@ -348,6 +352,52 @@ Strict native/service Clippy, dependency-layer, sorted-list and resolved licence
 checks passed. The added `rcgen` dependency generates original private TLS
 material and uses its permissive MIT/Apache-2.0 licensing. Repository CI passed
 formatting/assets before the unchanged Windows accepted-icon hash failure.
+
+## Guided connections and verified editor reopening
+
+The native connection window creates a new private local archive from a display
+label and administrator account ID. Recent rows contain bounded public metadata;
+listing them does not read credentials, create missing settings or authenticate.
+A saved row remains unverified until an explicit open freshly checks its HTTPS
+server identity and current account role. The active header displays that actual
+identity, origin and working folder. Partial local setup remains discoverable and
+resumes its recorded installation without replacing trust or starting a second
+owned service. Existing foreign listeners are never taken over.
+
+Only a new unnamed design suggests the verified working folder in Save As.
+Existing designs and other exports retain their normal destination behavior.
+Public commands use labels and opaque connection IDs; bearer values and unknown
+credential fields are rejected before command recording:
+
+- `pdm.connections {}`
+- `pdm.setup.create {"label":"Private archive","administrator":"admin"}`
+- `pdm.connection.open {"connection_id":"<64 lowercase hexadecimal characters>"}`
+- `pdm.connection.recover {"connection_id":"<64 lowercase hexadecimal characters>","restore":true}`
+
+Reconnection resumes only a still-existing reservation for the authenticated
+owner and exact workspace/machine tuple. The read-only resume RPC returns the
+persisted capability without creating a checkout, rotating its token or writing
+metadata. Unsupported older servers have no fallback to a mutating checkout.
+New reservations still require the user's explicit Check Out action.
+
+Workspace recovery repairs an interrupted local transaction after explicit
+confirmation and fresh authentication; recorded base hashes must match the
+bound server. It preserves replaced current bytes in recovery files. Every saved
+editor sharing the runtime then requires a verified disk reopen before edits or
+writes to its original destination, even if recovery later fails or status is
+refreshed. Reopening one tab does not authorize another cached tab. A separate
+Save As can preserve its memory contents without replacing the recovered file.
+An asynchronous load captures its recovery state before reading and refuses a
+result if recovery changed that state; rejection preserves the existing editor.
+
+The connection inventory contains at most 64 records. It publishes local intent
+before installation side effects and uses OS locks and no-replace records.
+New directory entries are synchronized through their parents on Unix; Windows
+recovery is tested for process interruption, without a power-loss guarantee.
+Unattended native and GUI tests inject memory credentials and use actual private
+loopback TLS. The production OS credential store is not automated by those tests.
+Guided LAN enrollment, remote pairing, provider selection and hosted installation
+remain separate work; this increment does not provision any external service.
 
 ## Verified offline backup and restore foundation
 

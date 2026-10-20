@@ -404,9 +404,56 @@ pub fn read_file(path: &Path, limit: usize) -> Result<Vec<u8>, Error> {
     Ok(bytes)
 }
 
+impl Client {
+    /// Read-only resume of an existing server reservation. There is deliberately
+    /// no compatibility fallback to checkout, which could create new authority.
+    pub fn managed_resume_checkout(&self, document: String, workspace: String, machine: String) -> Result<crate::managed::CheckoutGrant, Error> {
+        match self.request(Request::ManagedResumeCheckout { document, workspace, machine })? {
+            Response::ManagedCheckout { grant } => Ok(grant),
+            _ => Err(Error::Invalid("unexpected managed resume checkout response")),
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod https_tests {
+    #[test]
+    fn unsupported_resume_never_falls_back_to_a_checkout_request() {
+        let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (done, receive) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&read_socket_frame(&stream, Duration::from_secs(5)).unwrap()).unwrap();
+            assert_eq!(body["request"]["operation"], "managed_resume_checkout");
+            let response = serde_json::to_vec(&Response::Error { code: "invalid_request".into() }).unwrap();
+            write_socket_frame(&mut stream, &response, Duration::from_secs(5)).unwrap();
+            receive.recv_timeout(Duration::from_secs(10)).unwrap();
+            listener.set_nonblocking(true).unwrap();
+            assert!(matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock));
+        });
+        let client = Client::new(port, AuthToken::parse("ab".repeat(32)).unwrap());
+        assert!(
+            matches!(client.managed_resume_checkout("part".into(), "workspace".into(), "machine".into()), Err(Error::Server(code)) if code == "invalid_request")
+        );
+        done.send(()).unwrap();
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn resume_request_cannot_choose_the_authenticated_principal_or_supply_capabilities() {
+        let original = serde_json::json!({"operation":"managed_resume_checkout","document":"part","workspace":"workspace","machine":"machine"});
+        assert!(serde_json::from_value::<Request>(original.clone()).is_ok());
+        for key in ["owner", "principal", "role", "token", "checkout_token"] {
+            let mut request = original.clone();
+            request[key] = serde_json::json!("private-value");
+            assert!(serde_json::from_value::<Request>(request).is_err());
+        }
+        let request: Request = serde_json::from_value(original).unwrap();
+        assert_eq!(format!("{request:?}"), "ManagedResumeCheckout");
+    }
+
     use super::*;
 
     #[test]

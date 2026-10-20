@@ -157,6 +157,7 @@ pub enum Request {
     ManagedCatalog,
     ManagedCreate { logical_path: String },
     ManagedCheckout { document: String, workspace: String, machine: String },
+    ManagedResumeCheckout { document: String, workspace: String, machine: String },
     ManagedCancelCheckout { document: String, workspace: String, machine: String, checkout_token: String },
     ManagedCheckIn { input: managed::ManagedCheckIn },
     ManagedHistory { document: String },
@@ -173,6 +174,7 @@ impl std::fmt::Debug for Request {
             Self::ManagedCatalog => "ManagedCatalog",
             Self::ManagedCreate { .. } => "ManagedCreate",
             Self::ManagedCheckout { .. } => "ManagedCheckout",
+            Self::ManagedResumeCheckout { .. } => "ManagedResumeCheckout",
             Self::ManagedCancelCheckout { .. } => "ManagedCancelCheckout",
             Self::ManagedCheckIn { .. } => "ManagedCheckIn",
             Self::ManagedHistory { .. } => "ManagedHistory",
@@ -461,6 +463,9 @@ impl Store {
             }),
             Request::ManagedCatalog => Ok(Response::ManagedCatalog { catalog: self.managed.catalog() }),
             Request::ManagedCreate { logical_path } => self.managed.create(principal, logical_path).map(|entry| Response::ManagedDocument { entry }),
+            Request::ManagedResumeCheckout { document, workspace, machine } => {
+                self.managed.resume_checkout(principal, &document, &workspace, &machine).map(|grant| Response::ManagedCheckout { grant })
+            }
             Request::ManagedCheckout { document, workspace, machine } => {
                 self.managed.checkout(principal, &document, workspace, machine).map(|grant| Response::ManagedCheckout { grant })
             }
@@ -499,7 +504,9 @@ impl Store {
 pub(crate) fn reject_symlink_ancestors(path: &Path) -> Result<(), Error> {
     for ancestor in path.ancestors() {
         match fs::symlink_metadata(ancestor) {
-            Ok(metadata) if metadata.file_type().is_symlink() => return Err(Error::Invalid("symlink store path")),
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(Error::Invalid("symlink store path"));
+            }
             Ok(metadata) => {
                 #[cfg(windows)]
                 {

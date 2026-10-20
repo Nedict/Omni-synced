@@ -2,11 +2,15 @@
 use super::CommandSpec;
 use crate::{
     EngineError, Result, Session,
-    pdm::{ManagedTask, Reference, Task, valid_document},
+    pdm::{ManagedTask, Reference, Task, valid_connection, valid_document},
 };
 use serde_json::{Value, json};
 
 pub static COMMANDS: &[CommandSpec] = &[
+    CommandSpec::new("pdm.connections", "Saved PDM Connections", connections).icon("list").noundo().doc_only().params("none; public saved connection metadata, without authentication"),
+    CommandSpec::new("pdm.setup.create", "Create Local PDM Archive", create_local).icon("new").noundo().doc_only().params("label,administrator; private local setup and fresh native authentication"),
+    CommandSpec::new("pdm.connection.open", "Open PDM Connection", open_connection).icon("open").noundo().doc_only().params("connection_id; freshly authenticate an existing native connection"),
+    CommandSpec::new("pdm.connection.recover", "Recover PDM Connection", recover_connection).icon("restore").noundo().doc_only().params("connection_id,restore:true; explicit scoped workspace recovery after fresh native authentication"),
     CommandSpec::new("pdm.restore_version", "Restore as New Version", restore_version).icon("restore").noundo().doc_only().params("document,version,restore:true; publish historical content as a new head version and restore the clean normal working copy"),
     CommandSpec::new("pdm.recover_workspace", "Recover Interrupted Local Update", recover_workspace).icon("restore").noundo().doc_only().params("port,root,restore:true; explicitly recover an interrupted local update after server verification, preserving recovery copies"),
     CommandSpec::new("pdm.preview", "Preview", preview).icon("render_image").noundo().doc_only().params("document,version; retrieves the embedded thumbnail for that exact version, if available"),
@@ -32,6 +36,9 @@ fn err(message: impl Into<String>) -> EngineError {
 /// In particular, accidental token/credential fields must never enter the crash journal.
 pub(crate) fn validate_params(id: &str, p: &Value) -> Result<()> {
     let keys: &[&str] = match id {
+        "pdm.setup.create" => &["label", "administrator"],
+        "pdm.connection.open" => &["connection_id"],
+        "pdm.connection.recover" => &["connection_id", "restore"],
         "pdm.connect" => &["port", "root"],
         "pdm.recover_workspace" => &["port", "root", "restore"],
         "pdm.archive" => &["logical_path"],
@@ -51,6 +58,24 @@ pub(crate) fn validate_params(id: &str, p: &Value) -> Result<()> {
         return Err(err("Unsupported local PDM parameter; credentials belong only to the native host"));
     }
     match id {
+        "pdm.setup.create" => {
+            let label = p.get("label").and_then(Value::as_str).ok_or_else(|| err("An archive name is required"))?;
+            let administrator = p.get("administrator").and_then(Value::as_str).ok_or_else(|| err("An administrator identifier is required"))?;
+            if label.trim().is_empty()
+                || label.len() > 128
+                || label.chars().any(char::is_control)
+                || !valid_document(administrator)
+                || administrator == "owner"
+            {
+                return Err(err("Invalid archive name or administrator identifier"));
+            }
+        }
+        "pdm.connection.open" | "pdm.connection.recover" => {
+            connection_id(p)?;
+            if id == "pdm.connection.recover" && p.get("restore").and_then(Value::as_bool) != Some(true) {
+                return Err(err("Recovery requires explicit restore:true"));
+            }
+        }
         "pdm.connect" | "pdm.recover_workspace" => {
             if p.get("port").and_then(Value::as_u64).filter(|v| *v > 0 && *v <= u16::MAX as u64).is_none() {
                 return Err(err("A valid local PDM port is required"));
@@ -115,6 +140,30 @@ fn enqueue(s: &Session, task: Task) -> Result<Value> {
 fn status(s: &mut Session, _: &Value) -> Result<Value> {
     serde_json::to_value(s.pdm.status().map_err(err)?).map_err(|_| err("Local PDM status unavailable"))
 }
+fn connections(s: &mut Session, _: &Value) -> Result<Value> {
+    enqueue(s, Task::Managed(ManagedTask::ListConnections))
+}
+fn create_local(s: &mut Session, p: &Value) -> Result<Value> {
+    let label = p.get("label").and_then(Value::as_str).ok_or_else(|| err("An archive name is required"))?.trim().into();
+    let administrator = p.get("administrator").and_then(Value::as_str).ok_or_else(|| err("An administrator identifier is required"))?.into();
+    enqueue(s, Task::Managed(ManagedTask::CreateLocal { label, administrator }))
+}
+fn connection_id(p: &Value) -> Result<String> {
+    p.get("connection_id")
+        .and_then(Value::as_str)
+        .filter(|id| valid_connection(id))
+        .map(str::to_owned)
+        .ok_or_else(|| err("Invalid PDM connection identifier"))
+}
+fn open_connection(s: &mut Session, p: &Value) -> Result<Value> {
+    enqueue(s, Task::Managed(ManagedTask::OpenConnection { connection_id: connection_id(p)? }))
+}
+fn recover_connection(s: &mut Session, p: &Value) -> Result<Value> {
+    if s.is_dirty() || s.active_sketch.is_some() || !s.pending_moves.is_empty() {
+        return Err(err("Finish and save current edits before recovering the working folder"));
+    }
+    enqueue(s, Task::Managed(ManagedTask::RecoverConnection { connection_id: connection_id(p)? }))
+}
 fn connect(s: &mut Session, p: &Value) -> Result<Value> {
     let port = p
         .get("port")
@@ -131,6 +180,7 @@ fn connect(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn saved_path(s: &Session) -> Result<String> {
+    s.check_pdm_reopen()?;
     if s.is_dirty() || s.active_sketch.is_some() || !s.pending_moves.is_empty() {
         return Err(err("Finish edits and save the active design first"));
     }
@@ -225,6 +275,7 @@ fn document(p: &Value) -> Result<String> {
     Ok(document.into())
 }
 fn check_in(s: &mut Session, p: &Value) -> Result<Value> {
+    s.check_pdm_reopen()?;
     if s.active_sketch.is_some() || !s.pending_moves.is_empty() {
         return Err(err("Finish active edits before checking in the saved design"));
     }

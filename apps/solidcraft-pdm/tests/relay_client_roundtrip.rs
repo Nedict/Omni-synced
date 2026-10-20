@@ -129,6 +129,10 @@ fn user_cycle(origin: &str, expected_id: &str) -> Result<[ManagedVersion; 3], St
     if checkout.entry.head != Some(2) || checkout.entry.checkout.as_ref().and_then(|value| value.base_version) != Some(2) {
         return Err("restore checkout did not reserve current version two".into());
     }
+    let resumed = client.managed_resume_checkout(entry.document.clone(), "workspace".into(), "desktop".into()).map_err(diagnostic)?;
+    if resumed != checkout {
+        return Err("relay reconnect changed the existing restore reservation".into());
+    }
     let restore_input = ManagedCheckIn {
         document: entry.document.clone(),
         workspace: "workspace".into(),
@@ -150,6 +154,11 @@ fn user_cycle(origin: &str, expected_id: &str) -> Result<[ManagedVersion; 3], St
         || restored.author != "alice"
     {
         return Err("historical restore or its receipt did not preserve version three".into());
+    }
+    // A reconnect after publication must never create a fresh reservation.
+    match client.managed_resume_checkout(entry.document.clone(), "workspace".into(), "desktop".into()) {
+        Err(Error::Server(code)) if code == "conflict" => {}
+        _ => return Err("relay resume recreated authority after restore publication".into()),
     }
     let expected_history = [version, changed, restored];
     if client.managed_history(entry.document).map_err(diagnostic)? != expected_history {
@@ -203,7 +212,10 @@ fn public_relay_client_completes_domain_cycle_over_outbound_connector() {
     });
     // No assertion/panic or early return until the caller has been joined and
     // both listeners shut down. Failure closes the gateway to wake the caller.
-    let until = Instant::now() + Duration::from_secs(30);
+    // The complete cycle includes two TLS hops, checkout resume and immutable
+    // history verification. Allow shared CI contention within a bounded overall
+    // test budget; individual production protocol deadlines remain unchanged.
+    let until = Instant::now() + Duration::from_secs(120);
     let mut connector_error = None;
     while !finished.load(Ordering::Acquire) && Instant::now() < until {
         if let Err(error) = connector.run_once(&transport, Duration::from_millis(100)) {

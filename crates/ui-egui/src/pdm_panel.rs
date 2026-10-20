@@ -10,6 +10,9 @@ use std::sync::{
     mpsc::{Receiver, TryRecvError},
 };
 
+#[path = "pdm_guided_panel.rs"]
+mod guided;
+
 pub struct Completion {
     pub result: Result<Outcome, Failure>,
     /// A separately loaded design; opening it always uses a NEW tab.
@@ -39,6 +42,7 @@ impl PreviewCache {
 }
 
 pub struct Panel {
+    pub guided: guided::GuidedState,
     pub open: bool,
     pub workspace_active: bool,
     pub root: String,
@@ -64,11 +68,13 @@ pub struct Panel {
     pub dependencies: Vec<Reference>,
     pending: Option<(u64, Receiver<Completion>)>,
     ready: Option<(u64, Completion)>,
+    pending_open_epoch: Option<u64>,
 }
 
 impl Default for Panel {
     fn default() -> Self {
         Self {
+            guided: guided::GuidedState::default(),
             open: false,
             workspace_active: false,
             root: String::new(),
@@ -94,6 +100,7 @@ impl Default for Panel {
             dependencies: Vec::new(),
             pending: None,
             ready: None,
+            pending_open_epoch: None,
         }
     }
 }
@@ -139,7 +146,15 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
             Ok(Outcome::CheckedIn(version)) if app.pdm.document == version.reference.document => Some(version.reference.version),
             _ => None,
         };
-        let managed = matches!(&completion.result, Ok(Outcome::Managed { .. }));
+        let previous = app.pdm.runtime.status().ok();
+        let context_changed = match (&previous, &completion.result) {
+            (
+                Some(previous),
+                Ok(Outcome::Managed { port, state } | Outcome::ManagedRefreshed { port, state } | Outcome::ManagedConnected { port, state, .. }),
+            ) => previous.port != Some(*port) || previous.managed.server_id != state.server_id || previous.managed.workspace != state.workspace,
+            _ => false,
+        };
+        let managed = matches!(&completion.result, Ok(Outcome::Managed { .. } | Outcome::ManagedConnected { .. }));
         let success = completion.result.is_ok();
         let accepted = match app.pdm.runtime.finish(id, completion.result) {
             Ok(()) => true,
@@ -151,6 +166,24 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
         app.pdm.last_activity = web_time::Instant::now();
         app.pdm.refresh_delay =
             if success { std::time::Duration::from_secs(10) } else { (app.pdm.refresh_delay * 2).min(std::time::Duration::from_secs(60)) };
+        if accepted && success && context_changed {
+            app.pdm.document.clear();
+            app.pdm.parent.clear();
+            app.pdm.logical_path.clear();
+            app.pdm.folder.clear();
+            app.pdm.detail_tab = 0;
+            app.pdm.selected = None;
+            app.pdm.dependencies.clear();
+            app.pdm.restore_confirmation = None;
+            app.pdm.guided.pending_recovery = None;
+            app.pdm.cancel_confirmation = false;
+            app.pdm.recovery_confirmation = false;
+            app.pdm.pending_edit = None;
+            app.pdm.pending_edit_path = None;
+            app.pdm.resume_edit = None;
+            app.pdm.ram_paths.clear();
+            app.pdm.preview_cache = PreviewCache::default();
+        }
         if accepted && success && managed && app.pdm.reset_ram_on_completion {
             app.pdm.ram_paths.clear();
         }
@@ -161,8 +194,14 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
             && success
             && let Some(mut session) = completion.open.take()
         {
-            session.pdm = app.pdm.runtime.clone();
-            if let Err(error) = documents::apply_managed(app, *session) {
+            let applied = app
+                .pdm
+                .pending_open_epoch
+                .take()
+                .ok_or_else(|| "Reopen this design from disk after workspace recovery".to_string())
+                .and_then(|epoch| documents::bind_fresh_pdm_load(app, &mut session, epoch))
+                .and_then(|()| documents::apply_managed(app, *session));
+            if let Err(error) = applied {
                 app.set_status(format!("PDM copy was saved but could not open: {error}"), true);
             }
         }
@@ -184,12 +223,23 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
         match app.pdm.runtime.take_job() {
             Ok(Some(job)) => {
                 let id = job.id;
+                // Recovery restores disk but must not bless an old editor. Normal
+                // native load jobs are serialized by this same Runtime.
+                app.pdm.pending_open_epoch =
+                    if matches!(&job.task, Task::Managed(ManagedTask::Recover { .. } | ManagedTask::RecoverConnection { .. })) {
+                        None
+                    } else {
+                        app.pdm.runtime.begin_pdm_reload().ok()
+                    };
                 app.pdm.reset_ram_on_completion = matches!(
                     &job.task,
                     Task::Managed(
-                        ManagedTask::Connect { .. }
-                            | ManagedTask::Recover { .. }
+                        ManagedTask::CreateLocal { .. }
+                            | ManagedTask::OpenConnection { .. }
+                            | ManagedTask::RecoverConnection { .. }
                             | ManagedTask::Restore { .. }
+                            | ManagedTask::Connect { .. }
+                            | ManagedTask::Recover { .. }
                             | ManagedTask::Archive { .. }
                             | ManagedTask::Checkout { .. }
                             | ManagedTask::CancelCheckout { .. }
@@ -289,7 +339,9 @@ fn dispatch(app: &mut SolveApp, id: &str, params: serde_json::Value) {
 
 /// Same commands serve the modelling ribbon and the archive workspace.
 pub fn actions(app: &mut SolveApp, ui: &mut egui::Ui) {
-    let Ok(status) = app.pdm.runtime.status() else { return };
+    let Ok(status) = app.pdm.runtime.status() else {
+        return;
+    };
     let idle = status.available && status.busy.is_none();
     let mut action = None;
     ui.horizontal_wrapped(|ui| {
@@ -325,7 +377,9 @@ pub fn actions(app: &mut SolveApp, ui: &mut egui::Ui) {
 }
 
 pub fn workspace(app: &mut SolveApp, ui: &mut egui::Ui) {
-    let Ok(status) = app.pdm.runtime.status() else { return };
+    let Ok(status) = app.pdm.runtime.status() else {
+        return;
+    };
     let catalog = &status.managed.catalog;
     let local = &status.managed.local;
     ui.heading(app.tr("ui.pdm_title"));
@@ -505,50 +559,7 @@ pub fn workspace(app: &mut SolveApp, ui: &mut egui::Ui) {
 }
 
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
-    if app.pdm.open {
-        let mut open = true;
-        let mut action = None;
-        crate::frame::window(ctx, app.tr("ui.pdm_connect"), crate::frame::Width::Normal).id(egui::Id::new("pdm_connection")).open(&mut open).show(
-            ctx,
-            |ui| {
-                ui.label(app.tr("ui.pdm_credential_hint"));
-                ui.label(app.tr("ui.pdm_port"));
-                let response = ui.text_edit_singleline(&mut app.pdm.port);
-                handle("port", &response);
-                ui.label(app.tr("ui.pdm_working_folder"));
-                let response = ui.text_edit_singleline(&mut app.pdm.root);
-                handle("root", &response);
-                let status = app.pdm.runtime.status().unwrap_or_default();
-                let response =
-                    ui.add_enabled(status.busy.is_none() && status.available && status.port.is_none(), egui::Button::new(app.tr("ui.pdm_connect")));
-                handle("connect", &response);
-                if response.clicked() {
-                    let mut params = json!({"port":app.pdm.port.parse::<u16>().ok()});
-                    if !app.pdm.root.trim().is_empty() {
-                        params["root"] = json!(app.pdm.root);
-                    }
-                    action = Some(("pdm.connect", params));
-                }
-                let response = ui.add_enabled(
-                    status.available && status.busy.is_none() && status.port.is_none() && !app.pdm.root.trim().is_empty(),
-                    egui::Button::new(app.tr("ui.pdm_recover_workspace")),
-                );
-                handle("recover_workspace", &response);
-                if response.clicked() {
-                    app.pdm.recovery_confirmation = true;
-                }
-                let response = ui.add_enabled(status.busy.is_none() && status.port.is_some(), egui::Button::new(app.tr("ui.pdm_disconnect")));
-                handle("disconnect", &response);
-                if response.clicked() {
-                    action = Some(("pdm.disconnect", json!({})));
-                }
-            },
-        );
-        app.pdm.open = open;
-        if let Some((id, params)) = action {
-            dispatch(app, id, params);
-        }
-    }
+    guided::connection_window(app, ctx);
     if let Some(reference) = app.pdm.restore_confirmation.clone() {
         egui::Modal::new(egui::Id::new("pdm_restore_version_confirmation")).show(ctx, |ui| {
             ui.heading(app.tr("ui.pdm_restore_version"));

@@ -31,6 +31,7 @@ pub mod dialogs_coupling;
 pub mod dialogs_library;
 pub mod dialogs_motion;
 pub mod dialogs_move;
+pub mod dialogs_part_size;
 pub mod dialogs_parts;
 pub mod dialogs_plastic;
 pub mod dialogs_save_mesh;
@@ -278,7 +279,7 @@ pub struct Services {
     /// Ask for a file to open. The extensions are the file type the command reads, offered as
     /// the picker's first filter (`&[]`: designs, CAD files and meshes, #1801).
     pub pick_open: Option<Box<dyn Fn(&[&str]) -> FilePickerFuture>>,
-    pub pick_save: Option<Box<dyn Fn(&str, &[&str]) -> FilePickerFuture>>,
+    pub pick_save: Option<Box<dyn Fn(&str, &[&str], Option<&str>) -> FilePickerFuture>>,
     /// Open a dialog for one file of a kind (its name, its extensions): on macOS a dialog allows
     /// only the types it names, so the agent chat's files need a dialog of their own. `None`: the
     /// Open dialog.
@@ -586,7 +587,9 @@ impl SolveApp {
 
     /// Restore preferences saved with [`SolveApp::prefs`].
     pub fn load_prefs(&mut self, prefs: &str) {
-        let Ok(v) = serde_json::from_str::<Value>(prefs) else { return };
+        let Ok(v) = serde_json::from_str::<Value>(prefs) else {
+            return;
+        };
         let flag = |k: &str| v.get(k).and_then(Value::as_bool);
         self.home.opened_at = v.get("recent_opened_at").and_then(|x| serde_json::from_value(x.clone()).ok()).unwrap_or_default();
         if let Some(d) = flag("dark") {
@@ -659,6 +662,9 @@ impl SolveApp {
     /// Run a command programmatically (JSON parameters, no dialogs).
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
         self.session.pdm = self.pdm.runtime.clone();
+        if matches!(id, "pdm.connection.recover" | "pdm.recover_workspace") && documents::any_dirty(self) {
+            return Err("Save or Save As all unsaved editors before recovering a working folder".into());
+        }
         if matches!(id, "pdm.checkout" | "pdm.get_latest" | "pdm.cancel_checkout" | "pdm.open_document" | "pdm.restore_version")
             && documents::managed_target_dirty(self, params.get("document").and_then(Value::as_str))
         {
@@ -762,6 +768,13 @@ impl SolveApp {
     /// Start a command the way a toolbar click does: interactive tools and dialogs for commands
     /// that have them, otherwise run it with defaults.
     pub fn start(&mut self, id: &str) {
+        self.session.pdm = self.pdm.runtime.clone();
+        if solidcraft_engine::find_command(id).is_some_and(|command| command.undoable)
+            && let Err(error) = self.session.check_pdm_reopen()
+        {
+            self.set_status(error.to_string(), true);
+            return;
+        }
         if solidcraft_engine::find_command(id).is_some_and(|c| c.undoable)
             && let Some(path) = &self.session.path
         {
@@ -799,7 +812,7 @@ impl SolveApp {
             return;
         }
         if id.starts_with("pdm.") {
-            if id == "pdm.panel" {
+            if matches!(id, "pdm.panel" | "pdm.connections" | "pdm.setup.create" | "pdm.connection.open" | "pdm.connection.recover") {
                 if let Err(error) = pdm_panel::enter(self) {
                     self.set_status(error, true);
                 }
@@ -981,7 +994,9 @@ impl SolveApp {
     /// timeline back to just before themselves and reopen their dialog, filled in.
     pub fn edit_feature(&mut self, id: u64) {
         use solidcraft_engine::doc::FeatureKind;
-        let Some(f) = self.session.doc.feature(id) else { return };
+        let Some(f) = self.session.doc.feature(id) else {
+            return;
+        };
         if matches!(f.kind, FeatureKind::Sketch { .. }) {
             self.edit_sketch(id);
             return;
@@ -989,7 +1004,9 @@ impl SolveApp {
         if self.session.active_sketch.is_some() {
             self.finish_sketch();
         }
-        let Some(idx) = self.session.doc.feature_index(id) else { return };
+        let Some(idx) = self.session.doc.feature_index(id) else {
+            return;
+        };
         let marker = self.session.doc.marker;
         self.tool = None;
         if dialogs::roll_marker(self, Some(idx)).is_err() {
@@ -1025,7 +1042,9 @@ impl SolveApp {
         }
         self.tool = None;
         self.dialog = None;
-        let Some(idx) = self.session.doc.feature_index(id) else { return };
+        let Some(idx) = self.session.doc.feature_index(id) else {
+            return;
+        };
         let marker = self.session.doc.marker;
         let rolled = marker.is_none_or(|m| m > idx + 1) && self.run("timeline.roll_to", json!({ "position": idx + 1 })).is_ok();
         let before = self.cam;
@@ -1305,7 +1324,9 @@ impl SolveApp {
     /// Move the viewport to the camera a command asked for (`view.apply`): animated like a view
     /// change, or at once (control requests, so a screenshot right after shows it).
     pub fn follow_view_request(&mut self, animate: bool) {
-        let Some(mut to) = self.session.camera.take() else { return };
+        let Some(mut to) = self.session.camera.take() else {
+            return;
+        };
         if render_workspace::active(self) {
             self.ui.up_axis = to.up;
         } else {
@@ -1559,7 +1580,9 @@ impl SolveApp {
             }
             // Held requests go first, in order, once the file is in.
             let held = if self.file_load.busy() || self.file_picker.is_some() { None } else { self.control_held.pop_front() };
-            let Some(req) = held.or_else(|| rx.as_ref().and_then(|rx| rx.try_recv().ok())) else { break };
+            let Some(req) = held.or_else(|| rx.as_ref().and_then(|rx| rx.try_recv().ok())) else {
+                break;
+            };
             // A file is loading: commands that change the design wait for it (the window,
             // inspection and screenshots still answer).
             if ((self.file_load.busy() || self.file_picker.is_some())

@@ -443,3 +443,288 @@ fn busy_managed_destinations_block_existing_hardlinks_until_completion() {
     runtime.may_save(alias.to_str().unwrap()).unwrap();
     std::fs::remove_dir_all(folder).unwrap();
 }
+
+#[test]
+fn guided_public_requests_validate_before_queue_and_preserve_the_design() {
+    let mut session = Session::default();
+    session.pdm.set_available(true).unwrap();
+    let before = session.doc.clone();
+    let secret = "do-not-record-credentials";
+    for (command, parameters) in [
+        ("pdm.setup.create", json!({"label":"Archive","administrator":"admin","token":secret})),
+        ("pdm.setup.create", json!({"label":"Archive\nOther","administrator":"admin"})),
+        ("pdm.setup.create", json!({"label":"Archive","administrator":"owner"})),
+        ("pdm.setup.create", json!({"label":"Archive","administrator":"ADMIN"})),
+        ("pdm.connection.open", json!({"connection_id":"../escape"})),
+        ("pdm.connection.open", json!({"connection_id":"A".repeat(64)})),
+        ("pdm.connection.recover", json!({"connection_id":"a".repeat(64)})),
+        ("pdm.connections", json!({"credential":secret})),
+    ] {
+        let error = session.execute(command, &parameters).unwrap_err().to_string();
+        assert!(!error.contains(secret));
+        assert!(session.pdm.status().unwrap().busy.is_none());
+        assert!(session.pdm.take_job().unwrap().is_none());
+        assert_eq!(*session.doc, *before);
+        assert!(session.undo.is_empty());
+    }
+    session.execute("pdm.setup.create", &json!({"label":"Archive","administrator":"admin"})).unwrap();
+    assert!(
+        matches!(session.pdm.take_job().unwrap().unwrap().task, Task::Managed(ManagedTask::CreateLocal {label,administrator}) if label=="Archive" && administrator=="admin")
+    );
+    assert_eq!(*session.doc, *before);
+}
+
+#[test]
+fn saved_inventory_never_establishes_or_replaces_authenticated_identity() {
+    let runtime = Runtime::default();
+    runtime.set_available(true).unwrap();
+    let rows = vec![ConnectionSummary {
+        id: "a".repeat(64),
+        label: "Unverified label".into(),
+        kind: ConnectionKind::Saved,
+        stage: ConnectionStage::SavedUnverified,
+    }];
+    let id = runtime.enqueue(Task::Managed(ManagedTask::ListConnections)).unwrap();
+    runtime.finish(id, Ok(Outcome::Connections(rows.clone()))).unwrap();
+    assert!(runtime.status().unwrap().connection.is_none());
+    assert!(runtime.status().unwrap().port.is_none());
+    let active = ActiveConnection {
+        id: "a".repeat(64),
+        label: "Verified archive".into(),
+        origin: "https://localhost:48231".into(),
+        server_id: "server".into(),
+        account: "actual-account".into(),
+        role: "Viewer".into(),
+    };
+    let id = runtime.enqueue(Task::Managed(ManagedTask::OpenConnection { connection_id: active.id.clone() })).unwrap();
+    runtime
+        .finish(
+            id,
+            Ok(Outcome::ManagedConnected {
+                port: 48231,
+                state: managed_snapshot("managed.solidcraft", "a", false),
+                connections: rows.clone(),
+                connection: active.clone(),
+            }),
+        )
+        .unwrap();
+    let id = runtime.enqueue(Task::Managed(ManagedTask::ListConnections)).unwrap();
+    runtime.finish(id, Ok(Outcome::Connections(rows))).unwrap();
+    assert_eq!(runtime.status().unwrap().connection, Some(active.clone()));
+    let id = runtime.enqueue(Task::Managed(ManagedTask::OpenConnection { connection_id: "b".repeat(64) })).unwrap();
+    runtime.finish(id, Err(Failure { message: "Authentication failed".into(), disconnect: false })).unwrap();
+    assert_eq!(runtime.status().unwrap().connection, Some(active));
+    apply_managed(&runtime, managed_snapshot("other.solidcraft", "b", false), true).unwrap();
+    assert!(runtime.status().unwrap().connection.is_none(), "a new workspace snapshot must not inherit verified identity");
+    assert!(runtime.may_save("managed.solidcraft").is_err());
+}
+
+#[test]
+fn scoped_recovery_rejects_unsaved_active_work_before_queueing() {
+    let mut session = Session::default();
+    session.pdm.set_available(true).unwrap();
+    session.execute("solid.box", &json!({"length":2,"width":3,"height":4})).unwrap();
+    let before = session.doc.clone();
+    assert!(session.execute("pdm.connection.recover", &json!({"connection_id":"a".repeat(64),"restore":true})).is_err());
+    assert!(session.pdm.take_job().unwrap().is_none());
+    assert_eq!(*session.doc, *before);
+}
+
+#[test]
+fn opaque_connection_recovery_blocks_saved_editors_until_native_completion() {
+    let mut session = Session::default();
+    session.pdm.set_available(true).unwrap();
+    session.path = Some("not-yet-discovered-workspace/part.solidcraft".into());
+    session.mark_saved();
+    let before = session.doc.clone();
+    let id = session.execute("pdm.connection.recover", &json!({"connection_id":"a".repeat(64),"restore":true})).unwrap()["request"].as_u64().unwrap();
+    assert!(session.pdm.blocks_path(session.path.as_deref().unwrap()));
+    assert!(session.pdm.may_save("another-destination.json").is_err());
+    assert!(session.execute("solid.box", &json!({"length":2,"width":3,"height":4})).is_err());
+    assert_eq!(*session.doc, *before);
+    session.pdm.finish(id, Err(Failure { message: "Recovery root unavailable; no files changed".into(), disconnect: false })).unwrap();
+    assert!(!session.pdm.blocks_path(session.path.as_deref().unwrap()));
+    session.pdm.may_save("another-destination.json").unwrap();
+    assert!(session.execute("solid.box", &json!({"length":2,"width":3,"height":4})).unwrap_err().to_string().contains("Reopen"));
+    assert_eq!(*session.doc, *before);
+}
+
+struct EpochTemp(std::path::PathBuf);
+impl EpochTemp {
+    fn new(label: &str) -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("solidcraft-recovery-epoch-{label}-{}-{sequence}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        Self(root)
+    }
+}
+impl Drop for EpochTemp {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+fn epoch_editor(path: &std::path::Path) -> Session {
+    let mut session = connected();
+    session.execute("solid.box", &json!({"length":10,"width":20,"height":3})).unwrap();
+    session.execute("file.save", &json!({"path":path})).unwrap();
+    let request = session.pdm.enqueue(Task::Refresh).unwrap();
+    session
+        .pdm
+        .finish(request, Ok(Outcome::ManagedRefreshed { port: 48231, state: managed_snapshot(path.to_str().unwrap(), "workspace", true) }))
+        .unwrap();
+    session
+}
+
+#[test]
+fn recovery_success_failure_and_refresh_never_authorize_stale_clean_editor() {
+    for guided in [false, true] {
+        for success in [false, true] {
+            let temp = EpochTemp::new("outcomes");
+            let path = temp.0.join("part.solidcraft");
+            let mut editor = epoch_editor(&path);
+            assert!(!editor.is_dirty());
+            let old_doc = editor.doc.clone();
+            let task = if guided {
+                ManagedTask::RecoverConnection { connection_id: "a".repeat(64) }
+            } else {
+                ManagedTask::Recover { port: 48231, root: temp.0.to_string_lossy().into_owned() }
+            };
+            let request = editor.pdm.enqueue(Task::Managed(task)).unwrap();
+            assert_eq!(editor.pdm.recovery_epoch().unwrap(), 1);
+            assert!(editor.pdm.begin_pdm_reload().is_err());
+            // Native recovery replaces bytes while the clean editor still holds B.
+            let recovered = Session::default();
+            let recovered_bytes = solidcraft_io::write_design(&recovered.doc);
+            std::fs::write(&path, &recovered_bytes).unwrap();
+            let state = managed_snapshot(path.to_str().unwrap(), "workspace", true);
+            let result = if success {
+                Ok(Outcome::ManagedRefreshed { port: 48231, state })
+            } else {
+                Err(Failure { message: "recovery interrupted".into(), disconnect: false })
+            };
+            editor.pdm.finish(request, result).unwrap();
+            let refresh = editor.pdm.enqueue(Task::Refresh).unwrap();
+            editor
+                .pdm
+                .finish(refresh, Ok(Outcome::ManagedRefreshed { port: 48231, state: managed_snapshot(path.to_str().unwrap(), "workspace", true) }))
+                .unwrap();
+            assert_eq!(editor.pdm.recovery_epoch().unwrap(), 1);
+            assert!(editor.pdm.managed_for_path(path.to_str().unwrap()).unwrap().checked_out);
+            assert!(editor.execute("solid.box", &json!({"length":1,"width":2,"height":3})).is_err());
+            assert!(editor.execute("file.save", &json!({})).is_err());
+            assert!(editor.execute("assembly.bom", &json!({"path":path,"format":"json"})).is_err());
+            assert!(editor.execute("pdm.archive", &json!({})).is_err());
+            assert!(editor.execute("pdm.check_in", &json!({"document":"part"})).is_err());
+            assert_eq!(*editor.doc, *old_doc);
+            assert_eq!(std::fs::read(&path).unwrap(), recovered_bytes);
+            assert!(!editor.is_dirty());
+            assert!(editor.pdm.status().unwrap().busy.is_none());
+            assert!(editor.pdm.take_job().unwrap().is_none());
+            editor.execute("doc.open", &json!({"path":path})).unwrap();
+            assert!(editor.doc.features.is_empty(), "verified reopen must load recovered A, not retain stale B");
+            assert!(editor.check_pdm_reopen().is_ok());
+        }
+    }
+}
+
+#[test]
+fn verified_reload_refreshes_only_that_editor_not_another_tab_or_copy() {
+    let temp = EpochTemp::new("two-editors");
+    let path = temp.0.join("part.solidcraft");
+    let mut first = epoch_editor(&path);
+    let mut second = Session { pdm: first.pdm.clone(), ..Default::default() };
+    second.execute("doc.open", &json!({"path":path})).unwrap();
+    let request = first.pdm.enqueue(Task::Managed(ManagedTask::RecoverConnection { connection_id: "a".repeat(64) })).unwrap();
+    first.pdm.finish(request, Err(Failure { message: "recovery failed".into(), disconnect: false })).unwrap();
+    first.execute("doc.open", &json!({"path":path})).unwrap();
+    assert_eq!(first.pdm_recovery_epoch, 1);
+    assert!(first.check_pdm_reopen().is_ok());
+    assert!(second.check_pdm_reopen().is_err());
+    let before = std::fs::read(&path).unwrap();
+    let old_epoch = second.pdm_recovery_epoch;
+    assert!(second.execute("file.save_as", &json!({"path":temp.0.join("missing").join("copy.solidcraft")})).is_err());
+    assert_eq!(second.pdm_recovery_epoch, old_epoch);
+    assert_eq!(second.path.as_deref(), path.to_str());
+    let copy = temp.0.join("copy.solidcraft");
+    second.execute("file.save_as", &json!({"path":copy})).unwrap();
+    assert_eq!(second.pdm_recovery_epoch, 1);
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert!(second.check_pdm_reopen().is_ok());
+    // A third cached editor remains stale even after both other editors proceed.
+    let mut third = Session { path: Some(path.to_string_lossy().into_owned()), pdm: first.pdm.clone(), ..Default::default() };
+    assert!(third.execute("file.save", &json!({})).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn recovery_between_read_start_and_stamp_cannot_authorize_cached_bytes() {
+    let temp = EpochTemp::new("async-race");
+    let path = temp.0.join("part.solidcraft");
+    let mut editor = epoch_editor(&path);
+    let captured = editor.pdm.begin_pdm_reload().unwrap();
+    let request = editor.pdm.enqueue(Task::Managed(ManagedTask::RecoverConnection { connection_id: "a".repeat(64) })).unwrap();
+    assert!(editor.mark_pdm_reloaded_from(captured).is_err());
+    editor.pdm.finish(request, Err(Failure { message: "failed".into(), disconnect: false })).unwrap();
+    assert!(editor.mark_pdm_reloaded_from(captured).is_err());
+    assert_eq!(editor.pdm_recovery_epoch, 0);
+    assert!(editor.check_pdm_reopen().is_err());
+    editor.execute("doc.open", &json!({"path":path})).unwrap();
+    assert_eq!(editor.pdm_recovery_epoch, 1);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn stale_editor_cannot_export_over_a_native_hardlink_alias() {
+    let temp = EpochTemp::new("hardlink");
+    let path = temp.0.join("part.solidcraft");
+    let alias = temp.0.join("alias.solidcraft");
+    let mut editor = epoch_editor(&path);
+    std::fs::hard_link(&path, &alias).unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let request = editor.pdm.enqueue(Task::Managed(ManagedTask::RecoverConnection { connection_id: "a".repeat(64) })).unwrap();
+    editor.pdm.finish(request, Err(Failure { message: "failed".into(), disconnect: false })).unwrap();
+    assert!(editor.execute("file.save", &json!({"path":alias})).is_err());
+    assert!(editor.execute("assembly.bom", &json!({"path":alias,"format":"json"})).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(std::fs::read(&alias).unwrap(), before);
+}
+
+#[test]
+fn unnamed_editor_is_editable_and_stamps_epoch_only_after_new_file_success() {
+    let temp = EpochTemp::new("unnamed");
+    let mut editor = connected();
+    let request = editor.pdm.enqueue(Task::Managed(ManagedTask::RecoverConnection { connection_id: "a".repeat(64) })).unwrap();
+    editor.pdm.finish(request, Err(Failure { message: "failed".into(), disconnect: false })).unwrap();
+    editor.execute("solid.box", &json!({"length":1,"width":2,"height":3})).unwrap();
+    assert_eq!(editor.pdm_recovery_epoch, 0);
+    assert!(editor.execute("file.save", &json!({"path":temp.0.join("missing").join("first.solidcraft")})).is_err());
+    assert_eq!(editor.pdm_recovery_epoch, 0);
+    assert!(editor.path.is_none());
+    editor.execute("file.save", &json!({"path":temp.0.join("first.solidcraft")})).unwrap();
+    assert_eq!(editor.pdm_recovery_epoch, 1);
+    assert!(editor.check_pdm_reopen().is_ok());
+}
+
+#[test]
+fn recovery_epoch_exhaustion_and_poison_fail_closed_for_saved_editors() {
+    let temp = EpochTemp::new("failed-protection");
+    let path = temp.0.join("part.solidcraft");
+    let mut editor = epoch_editor(&path);
+    editor.pdm.0.lock().unwrap().recovery_epoch = u64::MAX;
+    editor.pdm_recovery_epoch = u64::MAX;
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(editor.pdm.enqueue(Task::Managed(ManagedTask::RecoverConnection { connection_id: "a".repeat(64) })).is_err());
+    assert_eq!(editor.pdm.0.lock().unwrap().recovery_epoch, u64::MAX);
+    assert!(editor.execute("file.save", &json!({})).is_err());
+    assert!(editor.execute("solid.box", &json!({"length":1,"width":2,"height":3})).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    let runtime = Runtime::default();
+    let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _state = runtime.0.lock().unwrap();
+        panic!("test-only PDM runtime poisoning");
+    }));
+    assert!(poisoned.is_err());
+    assert!(runtime.requires_reopen(0, Some(path.to_str().unwrap())));
+    assert!(runtime.begin_pdm_reload().is_err());
+}
