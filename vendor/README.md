@@ -41,6 +41,10 @@ Changes:
   a moved vertex), across the passes that fold in the operands' extra shells. `and` / `or` are
   wrappers that drop the history; the `*_with_history` forms return the same solid with the
   history as an `Option` (`None` where a face or edge went unrecorded).
+- `transversal/integrate/mod.rs`: `meshes` and `and_with_history_meshed` take the first
+  operand's shell meshes made beforehand (copied for each use, since the loops stores cut their
+  edges): a large body cut down to the regions of many small ones is meshed once, which was most
+  of each operation's time.
 
 ## truck-geometry 0.5.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/truck)
 
@@ -127,6 +131,12 @@ Changes:
 - `tessellation/triangulation.rs`: meshed faces and edges are built unchecked: faces whose loop
   runs along a seam edge both ways and closed edges (a full circle on one vertex) are valid,
   but the debug-build checks rejected them (debug builds could not mesh them).
+- `tessellation/triangulation.rs`: on a periodic surface, a boundary point's projected parameter
+  is moved by whole periods to within half a period of the point before it, however many periods
+  away the search put it (it was moved by two periods at most). A hinted search on a revolved
+  surface can return an angle millions of turns from its hint; the loop then spanned those turns,
+  the polyline closing it across the seam had millions of points, and meshing never finished,
+  which hung the STEP export that reads its own file back (#1985).
 - `tessellation/triangulation.rs`: parameter searches that land outside a surface's bounded,
   non-periodic domain are rejected (a hinted B-spline search can run off and extrapolate to
   thousands of parameter units, and meshing that grid never finishes); the last-resort nearest
@@ -191,6 +201,17 @@ Changes:
   the face, many degrees round: those triangles cut through the surface and folded over each
   other (a cone face with a small hole meshed several mm² too large, and the boolean that made
   it was refused for its volume).
+- `tessellation/triangulation.rs`: a face that comes out of the triangulation with no triangle
+  at all, though the points of its one boundary loop enclose an area in space, is given the
+  triangles of that loop (ears clipped on the plane of the loop, no point added, so the faces on
+  either side of its edges still meet it). Its two edges can be different curves that, sampled
+  as they are, run along the same line in the face's parameters (a lens thinner than the
+  tolerance), and the loop then has no area there. The shell's mesh had a hole. Faces that
+  mesh are untouched, and so are preview meshes (they have their own step grid). Only a face
+  with one loop of at most 256 points is filled, and not one whose loop crosses itself, whose
+  ears would overlap (the pinched face of #1648 is one): it stays as it was.
+  `crates/kernel/src/thin_face_tests.rs` holds it, `crates/kernel/tests/tess_loop_fill.rs` the
+  ear clipping (through the `test-hooks` feature).
 
 ## matext4cgmath 0.1.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/matext4cgmath)
 

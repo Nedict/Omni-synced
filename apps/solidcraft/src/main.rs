@@ -91,6 +91,8 @@ impl eframe::App for App {
     fn on_exit(&mut self) {
         // The agent chat's agent and everything it started end with the app.
         solidcraft_ui_egui::agent_chat::shutdown(&mut self.solve);
+        // A save still being written ends before the app does.
+        solidcraft_ui_egui::save_job::tick(&mut self.solve, true);
         solidcraft_ui_egui::recovery_ui::close(&mut self.solve);
         solidcraft_engine::crash::end_session();
         // An update asked to restart into the new version or to run its installer.
@@ -179,7 +181,8 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
                 }
             }
             let all: Vec<&str> = all.iter().map(String::as_str).collect();
-            let future = file_parent.clone().add_filter(label, &all).pick_file();
+            // Any other file attaches by reference, so the list is not the only choice.
+            let future = file_parent.clone().add_filter(label, &all).add_filter("All files", &["*"]).pick_file();
             Box::pin(async move { future.await.map(|p| p.path().to_string_lossy().into_owned()) })
         })),
         pick_program: Some(Box::new(move || {
