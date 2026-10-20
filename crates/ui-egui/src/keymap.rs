@@ -3,6 +3,7 @@
 //! already uses is reported and only taken over on request; keys the app itself handles (Esc, S,
 //! V, Delete, Ctrl+Z…) can't be bound. Changes are kept between runs.
 
+use crate::fonts::RichTextExt as _;
 use std::collections::BTreeMap;
 
 use egui::RichText;
@@ -229,7 +230,7 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
                 RichText::new(
                     app.tr_label("Select Other: hold the left button still on the model (or right-click › Select Other…) to list everything under the cursor; click again on the same spot to select the next thing there. Double-click the middle button to go Home (Preferences › Navigation)."),
                 )
-                .size(11.0)
+                .size(crate::theme::Tokens::get().font_small)
                 .color(t.text_dim),
             );
             ui.separator();
@@ -243,7 +244,7 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
                             continue;
                         }
                         ui.label(translated_label);
-                        ui.label(RichText::new(c.id).size(10.5).color(t.text_dim));
+                        ui.label(RichText::new(c.id).size(crate::theme::Tokens::get().font_panel).color(t.text_dim));
                         let capturing = app.keymap.capturing.as_deref() == Some(c.id);
                         let changed = app.keymap.custom.contains_key(c.id);
                         let text = if capturing {
@@ -254,7 +255,7 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
                             key.clone()
                         };
                         if app.keymap.read_only {
-                            ui.label(RichText::new(text).strong());
+                            ui.label(RichText::new(text).semibold().color(crate::theme::Tokens::get().text));
                             ui.end_row();
                             continue;
                         }

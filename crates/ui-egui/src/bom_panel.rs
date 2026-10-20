@@ -89,7 +89,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let bom = d.rows(app);
     let rows: Vec<Value> = bom["rows"].as_array().cloned().unwrap_or_default();
     let (mut export, mut apply_row) = (None, None);
-    let title = RichText::new(crate::i18n::tr_label("Bill of Materials")).strong().size(13.0);
+    let title = RichText::new(crate::i18n::tr_label("Bill of Materials")).strong().size(t.font_button);
     crate::frame::window(ctx, title, crate::frame::Width::Wide).id(egui::Id::new("sc_bom")).open(&mut open).resizable(true).show(ctx, |ui| {
         ui.horizontal(|ui| {
             let was = (d.top, d.by_definition, d.group_children);

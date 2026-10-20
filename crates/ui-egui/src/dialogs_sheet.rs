@@ -12,7 +12,7 @@ use solidcraft_engine::doc::{FeatureKind, ProfileSel};
 use solidcraft_engine::geom::Vec3;
 
 use crate::SolveApp;
-use crate::dialogs::{Dialog, Kind, combo, edge_sel, face_sel, field, profile_indices, row_label};
+use crate::dialogs::{Dialog, Kind, combo, edge_sel, face_sel, field, form_row, profile_indices, row_label};
 use crate::selection::{AXES, BODIES, CURVES, EDGES, PLANAR_FACES, PROFILES, SelInput};
 use crate::theme::Tokens;
 
@@ -186,9 +186,9 @@ fn rule_names(app: &SolveApp) -> Vec<String> {
 fn rule_combo(app: &SolveApp, ui: &mut egui::Ui, id: &str, rule: &mut usize) {
     let names = rule_names(app);
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    row_label(ui, "Rule");
-    combo(ui, id, &refs, rule);
-    ui.end_row();
+    form_row(ui, "Rule", |ui| {
+        combo(ui, id, &refs, rule);
+    });
 }
 
 /// The flange type the picks make: edges an edge flange, sketch lines a contour, else base.
@@ -210,110 +210,104 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
     match k {
         Sm::Flange { ty, height, angle, radius, position, flip, distance, reverse, rule, own, relief, relief_size } => {
             *ty = flange_type(inputs);
-            row_label(ui, "Type");
-            ui.label(FLANGE_TYPES.get(*ty).copied().unwrap_or(""));
-            ui.end_row();
+            form_row(ui, "Type", |ui| {
+                ui.label(FLANGE_TYPES.get(*ty).copied().unwrap_or(""));
+            });
             match *ty {
                 1 => {
-                    row_label(ui, "Height");
-                    enter |= field(ui, height);
-                    ui.end_row();
-                    row_label(ui, "Angle");
-                    enter |= field(ui, angle);
-                    ui.end_row();
-                    row_label(ui, "Bend Position");
-                    combo(ui, "sm_pos", &POSITION_LABELS, position);
-                    ui.end_row();
-                    row_label(ui, "Bend Radius");
-                    let r = ui.add(egui::TextEdit::singleline(radius).hint_text(crate::i18n::tr_label("from the rule")));
-                    crate::params_dialog::complete(ui, &r, radius);
-                    enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    ui.end_row();
-                    // The relief at the corners these flanges make: the rule's unless set here.
-                    row_label(ui, "Corner Relief Shape");
-                    combo(ui, "sm_flange_relief", &FLANGE_RELIEF_LABELS, relief);
-                    ui.end_row();
-                    row_label(ui, "Corner Relief");
-                    let r = ui.add(egui::TextEdit::singleline(relief_size).hint_text(crate::i18n::tr_label("from the rule")));
-                    crate::params_dialog::complete(ui, &r, relief_size);
-                    enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    ui.end_row();
-                    // With several edges, a row for each: an angle and a height of its own, left
-                    // empty for the values above (shown as the hints).
-                    let points = edge_point_list(inputs);
-                    if points.len() > 1 || own.iter().any(|o| !(o.1.trim().is_empty() && o.2.trim().is_empty())) {
-                        row_label(ui, "Per Edge");
-                        ui.label(RichText::new(crate::i18n::tr_label("angle, height")).weak())
-                            .on_hover_text("An edge's own angle and height. Empty: the values above.");
-                        ui.end_row();
-                        let w = ((ui.spacing().text_edit_width - ui.spacing().item_spacing.x) / 2.0).max(40.0);
-                        for (n, p) in points.iter().enumerate() {
-                            let slot = own_slot(own, *p);
-                            let Some((_, a, h)) = own.get_mut(slot) else { continue };
-                            row_label(ui, &format!("Edge {}", n + 1));
-                            ui.horizontal(|ui| {
-                                for (text, hint, what, id) in
-                                    [(a, angle.as_str(), "angle", "sm_edge_angle"), (h, height.as_str(), "height", "sm_edge_height")]
-                                {
-                                    let r = ui
-                                        .add(egui::TextEdit::singleline(text).hint_text(hint).desired_width(w).id_salt((id, n)))
-                                        .on_hover_text(format!("The {what} of the edge picked at ({:.1}, {:.1}, {:.1})", p.x, p.y, p.z));
-                                    // For scenarios and the control channel: `dialog:Edge 2 angle`.
-                                    crate::scenario::publish_handle(&format!("dialog:Edge {} {what}", n + 1), r.rect.center());
-                                    crate::params_dialog::complete(ui, &r, text);
-                                    enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                                }
+                    form_row(ui, "Height", |ui| {
+                        enter |= field(ui, height);
+                    });
+                    form_row(ui, "Angle", |ui| {
+                        enter |= field(ui, angle);
+                    });
+                    form_row(ui, "Bend Position", |ui| {
+                        combo(ui, "sm_pos", &POSITION_LABELS, position);
+                    });
+                    crate::ui_kit::section(ui, "flange_advanced", "Advanced", false, |ui| {
+                        form_row(ui, "Bend Radius", |ui| {
+                            enter |= crate::ui_kit::hint_field(ui, radius, crate::i18n::tr_label("from the rule"));
+                        });
+                        // The relief at the corners these flanges make: the rule's unless set here.
+                        form_row(ui, "Corner Relief Shape", |ui| {
+                            combo(ui, "sm_flange_relief", &FLANGE_RELIEF_LABELS, relief);
+                        });
+                        form_row(ui, "Corner Relief", |ui| {
+                            enter |= crate::ui_kit::hint_field(ui, relief_size, crate::i18n::tr_label("from the rule"));
+                        });
+                        // With several edges, a row for each: an angle and a height of its own, left
+                        // empty for the values above (shown as the hints).
+                        let points = edge_point_list(inputs);
+                        if points.len() > 1 || own.iter().any(|o| !(o.1.trim().is_empty() && o.2.trim().is_empty())) {
+                            form_row(ui, "Per Edge", |ui| {
+                                ui.label(RichText::new(crate::i18n::tr_label("angle, height")).weak())
+                                    .on_hover_text("An edge's own angle and height. Empty: the values above.");
                             });
-                            ui.end_row();
+                            for (n, p) in points.iter().enumerate() {
+                                let slot = own_slot(own, *p);
+                                let Some((_, a, h)) = own.get_mut(slot) else { continue };
+                                form_row(ui, &format!("Edge {}", n + 1), |ui| {
+                                    ui.horizontal(|ui| {
+                                        let w = ((ui.available_width() - ui.spacing().item_spacing.x) / 2.0).max(0.0);
+                                        for (text, hint, what, id) in
+                                            [(a, angle.as_str(), "angle", "sm_edge_angle"), (h, height.as_str(), "height", "sm_edge_height")]
+                                        {
+                                            ui.push_id((id, n), |ui| {
+                                                ui.allocate_ui_with_layout(
+                                                    vec2(w, Tokens::get().control_height),
+                                                    egui::Layout::left_to_right(egui::Align::Center),
+                                                    |ui| {
+                                                        enter |= crate::ui_kit::hint_field(ui, text, hint);
+                                                    },
+                                                );
+                                                let at = ui.min_rect().center();
+                                                crate::scenario::publish_handle(&format!("dialog:Edge {} {what}", n + 1), at);
+                                            });
+                                        }
+                                    });
+                                });
+                            }
                         }
-                    }
+                    });
                 }
                 2 => {
-                    row_label(ui, "Distance");
-                    enter |= field(ui, distance);
-                    ui.end_row();
-                    row_label(ui, "Other side");
-                    ui.checkbox(reverse, "");
-                    ui.end_row();
+                    form_row(ui, "Distance", |ui| {
+                        enter |= field(ui, distance);
+                    });
+
                     rule_combo(app, ui, "sm_rule", rule);
                 }
                 _ => rule_combo(app, ui, "sm_rule", rule),
             }
-            row_label(ui, "Flip");
-            ui.checkbox(flip, "");
-            ui.end_row();
+            if *ty == 2 {
+                crate::ui_kit::options(ui, "sheet_options", &mut [("Flip", flip), ("Other side", reverse)]);
+            } else {
+                crate::ui_kit::options(ui, "sheet_options", &mut [("Flip", flip)]);
+            }
         }
         Sm::Hem { length, gap, flip } => {
-            row_label(ui, "Type");
-            ui.label(crate::i18n::tr_label("Flat"));
-            ui.end_row();
-            row_label(ui, "Length");
-            enter |= field(ui, length);
-            ui.end_row();
-            row_label(ui, "ui.sheet_gap");
-            let r = ui.add(egui::TextEdit::singleline(gap).hint_text(crate::i18n::tr_label("from the rule")));
-            crate::params_dialog::complete(ui, &r, gap);
-            enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            ui.end_row();
-            row_label(ui, "Flip");
-            ui.checkbox(flip, "");
-            ui.end_row();
+            form_row(ui, "Type", |ui| {
+                ui.label(crate::i18n::tr_label("Flat"));
+            });
+            form_row(ui, "Length", |ui| {
+                enter |= field(ui, length);
+            });
+            form_row(ui, "ui.sheet_gap", |ui| {
+                enter |= crate::ui_kit::hint_field(ui, gap, crate::i18n::tr_label("from the rule"));
+            });
+            crate::ui_kit::options(ui, "sheet_options", &mut [("Flip", flip)]);
         }
         Sm::Fold { angle, radius, position, flip } => {
-            row_label(ui, "Bend Line Position");
-            combo(ui, "sm_fold_pos", &FOLD_POSITION_LABELS, position);
-            ui.end_row();
-            row_label(ui, "Angle");
-            enter |= field(ui, angle);
-            ui.end_row();
-            row_label(ui, "Bend Radius");
-            let r = ui.add(egui::TextEdit::singleline(radius).hint_text(crate::i18n::tr_label("from the rule")));
-            crate::params_dialog::complete(ui, &r, radius);
-            enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            ui.end_row();
-            row_label(ui, "Flip");
-            ui.checkbox(flip, "");
-            ui.end_row();
+            form_row(ui, "Bend Line Position", |ui| {
+                combo(ui, "sm_fold_pos", &FOLD_POSITION_LABELS, position);
+            });
+            form_row(ui, "Angle", |ui| {
+                enter |= field(ui, angle);
+            });
+            form_row(ui, "Bend Radius", |ui| {
+                enter |= crate::ui_kit::hint_field(ui, radius, crate::i18n::tr_label("from the rule"));
+            });
+            crate::ui_kit::options(ui, "sheet_options", &mut [("Flip", flip)]);
         }
         Sm::Unfold { .. } => {}
         Sm::Convert { rule } => rule_combo(app, ui, "sm_conv_rule", rule),
@@ -849,7 +843,13 @@ pub fn overlay(app: &mut SolveApp, painter: &egui::Painter, rect: Rect, d: &Dial
     let (up_col, down_col) = bend_colors();
     painter.rect_filled(rect, 0.0, t.panel);
     let Some(Ok(v)) = data else {
-        painter.text(rect.center(), Align2::CENTER_CENTER, "no sheet metal body", FontId::proportional(14.0), t.text_dim);
+        painter.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            "no sheet metal body",
+            FontId::proportional(crate::theme::Tokens::get().font_heading),
+            t.text_dim,
+        );
         return true;
     };
     let read = |p: &Value| -> Option<(f64, f64)> { Some((p.get(0)?.as_f64()?, p.get(1)?.as_f64()?)) };
@@ -873,7 +873,8 @@ pub fn overlay(app: &mut SolveApp, painter: &egui::Painter, rect: Rect, d: &Dial
         .memory(|m| m.area_rect(egui::Id::new(("sc_dialog", "FLAT PATTERN"))))
         .map(|panel| panel.left())
         .unwrap_or(rect.right() - crate::frame::DIALOG_MAX_W);
-    let area = Rect::from_min_max(rect.min + vec2(40.0, 60.0), pos2(panel_left.min(rect.right()) - 20.0, rect.bottom() - 60.0));
+    let content = crate::shell::content_rect(app, rect);
+    let area = Rect::from_min_max(content.min + vec2(40.0, 60.0), pos2(panel_left.min(content.right()) - 20.0, content.bottom() - 60.0));
     if area.width() <= 0.0 || area.height() <= 0.0 {
         return true;
     }
@@ -925,7 +926,7 @@ pub fn overlay(app: &mut SolveApp, painter: &egui::Painter, rect: Rect, d: &Dial
         }
     }
     for (anchor, labels) in pocket_annotations {
-        painter.text(anchor, Align2::CENTER_BOTTOM, labels.join("\n"), FontId::proportional(12.0), t.accent);
+        painter.text(anchor, Align2::CENTER_BOTTOM, labels.join("\n"), FontId::proportional(crate::theme::Tokens::get().font_body), t.accent);
     }
     for b in v["bends"].as_array().into_iter().flatten() {
         let (Some(a), Some(e)) = (read(&b["start"]), read(&b["end"])) else { continue };
@@ -934,11 +935,17 @@ pub fn overlay(app: &mut SolveApp, painter: &egui::Painter, rect: Rect, d: &Dial
     }
     // Legend.
     let mut y = rect.top() + 14.0;
-    painter.text(pos2(rect.left() + 14.0, y), Align2::LEFT_TOP, "FLAT PATTERN", FontId::proportional(13.0), t.text);
+    painter.text(
+        pos2(rect.left() + 14.0, y),
+        Align2::LEFT_TOP,
+        "FLAT PATTERN",
+        FontId::proportional(crate::theme::Tokens::get().font_button),
+        t.text,
+    );
     for (label, col) in [("Bend up", up_col), ("Bend down", down_col)] {
         y += 20.0;
         painter.line_segment([pos2(rect.left() + 14.0, y + 7.0), pos2(rect.left() + 38.0, y + 7.0)], Stroke::new(2.0, col));
-        painter.text(pos2(rect.left() + 44.0, y), Align2::LEFT_TOP, label, FontId::proportional(12.0), t.text_dim);
+        painter.text(pos2(rect.left() + 44.0, y), Align2::LEFT_TOP, label, FontId::proportional(crate::theme::Tokens::get().font_body), t.text_dim);
     }
     if !pockets.is_empty() {
         y += 20.0;
@@ -948,7 +955,13 @@ pub fn overlay(app: &mut SolveApp, painter: &egui::Painter, rect: Rect, d: &Dial
             3.0,
             3.0,
         ));
-        painter.text(pos2(rect.left() + 44.0, y), Align2::LEFT_TOP, "Pocket boundary (material remains)", FontId::proportional(12.0), t.text_dim);
+        painter.text(
+            pos2(rect.left() + 44.0, y),
+            Align2::LEFT_TOP,
+            "Pocket boundary (material remains)",
+            FontId::proportional(crate::theme::Tokens::get().font_body),
+            t.text_dim,
+        );
     }
     true
 }

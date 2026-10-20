@@ -8,6 +8,7 @@
 //! Apply keeps them and stays open, and Restore Defaults resets the page shown. Everything is
 //! kept between runs, except anti-aliasing, which needs a restart.
 
+use crate::fonts::RichTextExt as _;
 use egui::{Modifiers, Pos2, RichText};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -371,7 +372,7 @@ pub struct Prefs {
     /// AI features (docs/agent-chat.md): the master switch. Off: no AI button, shortcut, menu
     /// entry or panel, and nothing is looked for or started.
     pub ai_features: bool,
-    /// The AI button at the toolbar row's right end (the shortcut and View menu entry stay).
+    /// The Assistant button in the application bar (the shortcut and View menu entry stay).
     pub ai_toolbar_button: bool,
     /// Agents the user added (the installed ones are found by themselves). API keys are never
     /// here: they live in the system keychain.
@@ -1123,7 +1124,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             ui_body.separator();
             ui_body.vertical(|ui| {
                 ui.set_width(ui.available_width());
-                ui.label(RichText::new(app.tr_label(PAGES.get(app.prefs_window.section).copied().unwrap_or_default())).strong().size(14.0));
+                ui.label(
+                    RichText::new(app.tr_label(PAGES.get(app.prefs_window.section).copied().unwrap_or_default()))
+                        .semibold()
+                        .color(crate::theme::Tokens::get().text)
+                        .size(crate::theme::Tokens::get().font_heading),
+                );
                 ui.add_space(6.0);
                 if app.prefs_window.section == PAGE_SHORTCUTS {
                     // The shortcuts table scrolls by itself.
@@ -1210,7 +1216,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
     let note = |ui: &mut egui::Ui, s: &str| {
         ui.label("");
         // Descriptions wrap within the page instead of widening it.
-        ui.add(egui::Label::new(RichText::new(s).size(11.0).color(t.text_dim)).wrap());
+        ui.add(egui::Label::new(RichText::new(s).size(crate::theme::Tokens::get().font_small).color(t.text_dim)).wrap());
         ui.end_row();
     };
     if app.prefs_window.section == PAGE_SHORTCUTS {
@@ -1487,7 +1493,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             // Keep accessibility controls visible before the longer rendering-quality controls.
             ui.label("");
             ui.end_row();
-            ui.label(RichText::new(app.tr("ui.colour_vision")).strong());
+            ui.label(RichText::new(app.tr("ui.colour_vision")).semibold().color(crate::theme::Tokens::get().text));
             ui.label("");
             ui.end_row();
             ui.label(app.tr("ui.colour_vision_mode"));
@@ -1686,7 +1692,7 @@ fn colour_vision_sample(ui: &mut egui::Ui, t: &Tokens) {
             cell.center_bottom() + egui::vec2(0.0, 3.0),
             egui::Align2::CENTER_TOP,
             crate::i18n::tr(name),
-            egui::FontId::proportional(11.0),
+            egui::FontId::proportional(crate::theme::Tokens::get().font_small),
             t.text_dim,
         );
     }
@@ -2474,7 +2480,7 @@ mod tests {
 
         // File and Help › Keyboard Shortcuts open the same dialog at its page.
         app.keymap.open = true;
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let mut out = ctx.run_ui(Default::default(), |ui| show(&mut app, ui.ctx()));
         out.textures_delta.clear();
         assert!(app.prefs_window.open && app.prefs_window.section == PAGE_SHORTCUTS && !app.keymap.open);
@@ -2625,7 +2631,7 @@ mod tests {
     fn up_axis_preference_turns_the_view() {
         use solidcraft_engine::render::UpAxis;
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         apply(&mut app, &ctx);
         assert_eq!(app.cam.up, UpAxis::Z);
         app.preferences.up_axis = "y".into();

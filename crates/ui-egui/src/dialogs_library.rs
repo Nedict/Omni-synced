@@ -1,6 +1,8 @@
 //! The first local appearance-library consumer, inside the existing Appearance panel.
 #[cfg(not(target_arch = "wasm32"))]
 use crate::dialogs_appearance::selected_params;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::fonts::RichTextExt as _;
 use crate::{SolveApp, dialogs::row_label, dialogs_appearance::Ap, selection::SelInput, theme::Tokens};
 use egui::RichText;
 use serde_json::json;
@@ -153,7 +155,7 @@ fn import_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &[SelI
         }
     });
     if let Some(catalog) = &k.local.catalog {
-        ui.label(RichText::new(&catalog.name).strong());
+        ui.label(RichText::new(&catalog.name).semibold().color(crate::theme::Tokens::get().text));
         let search = ui.add(egui::TextEdit::singleline(&mut k.local.search).hint_text("Search this library").desired_width(200.0));
         crate::scenario::publish_handle("library:search", search.rect.center());
         if search.changed() {

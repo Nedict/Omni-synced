@@ -88,40 +88,6 @@ thread_local! {
     static DEFERRED: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Commands registered on one panel that another panel also lists: the analyses (sketch
-/// INSPECT) on SOLID INSPECT, and Interference (SOLID INSPECT) on sketch INSPECT.
-const ALSO_IN: &[(&str, &str, &str)] = &[
-    ("SOLID", "INSPECT", "inspect.zebra"),
-    ("SOLID", "INSPECT", "inspect.draft"),
-    ("SOLID", "INSPECT", "inspect.curvature_map"),
-    ("SOLID", "INSPECT", "inspect.environment_map"),
-    ("SOLID", "INSPECT", "inspect.accessibility"),
-    ("SOLID", "INSPECT", "inspect.minimum_radius"),
-    ("SOLID", "INSPECT", "inspect.isocurve"),
-    ("SOLID", "INSPECT", "inspect.curvature_comb"),
-    ("SOLID", "INSPECT", "inspect.center_of_mass"),
-    ("SKETCH", "INSPECT", "inspect.interference"),
-];
-
-/// A panel's commands plus the ones it shares with another panel (see [`ALSO_IN`]).
-pub fn also_in<'a>(
-    tab: &str,
-    panel: &str,
-    mut cmds: Vec<&'a solidcraft_engine::CommandSpec>,
-    specs: &[&'a solidcraft_engine::CommandSpec],
-) -> Vec<&'a solidcraft_engine::CommandSpec> {
-    for (t, p, id) in ALSO_IN {
-        if *t == tab
-            && *p == panel
-            && !cmds.iter().any(|c| c.id == *id)
-            && let Some(c) = specs.iter().find(|c| c.id == *id)
-        {
-            cmds.push(c);
-        }
-    }
-    cmds
-}
-
 /// Run an analysis and keep its result as a marker.
 fn analysis(app: &mut SolveApp, cmd: &str, p: Value) {
     let Ok(v) = app.run(cmd, p) else { return };
@@ -161,7 +127,7 @@ fn continuity_legend(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     // Stable ids: this Gap is a hole between faces, not the sheet-metal gap (`ui.sheet_gap`).
     let tr = crate::i18n::tr;
     let rows = [(tr("ui.continuity_g2"), smooth), (tr("ui.continuity_g1"), jump), (tr("ui.continuity_g0"), sharp), (tr("ui.continuity_gap"), gap)];
-    let font = egui::FontId::proportional(12.0);
+    let font = egui::FontId::proportional(tk.font_body);
     let (row, pad, swatch) = (18.0, 8.0, 22.0);
     let text_width = rows.iter().map(|(label, _)| painter.layout_no_wrap(label.to_string(), font.clone(), tk.text).size().x).fold(0.0, f32::max);
     let size = egui::vec2(pad + swatch + 8.0 + text_width + pad, rows.len() as f32 * row + 2.0 * pad);
@@ -206,9 +172,21 @@ fn marks(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
             painter.circle(q, 6.0, tk.panel.gamma_multiply(0.8), Stroke::new(1.6, tk.accent));
             painter.line_segment([q - egui::vec2(10.0, 0.0), q + egui::vec2(10.0, 0.0)], Stroke::new(1.2, tk.accent));
             painter.line_segment([q - egui::vec2(0.0, 10.0), q + egui::vec2(0.0, 10.0)], Stroke::new(1.2, tk.accent));
-            let r = painter.text(q + egui::vec2(12.0, -12.0), egui::Align2::LEFT_BOTTOM, label, egui::FontId::proportional(12.0), tk.text);
+            let r = painter.text(
+                q + egui::vec2(12.0, -12.0),
+                egui::Align2::LEFT_BOTTOM,
+                label,
+                egui::FontId::proportional(crate::theme::Tokens::get().font_body),
+                tk.text,
+            );
             painter.rect_filled(r.expand(3.0), 3.0, tk.panel.gamma_multiply(0.85));
-            painter.text(q + egui::vec2(12.0, -12.0), egui::Align2::LEFT_BOTTOM, label, egui::FontId::proportional(12.0), tk.text);
+            painter.text(
+                q + egui::vec2(12.0, -12.0),
+                egui::Align2::LEFT_BOTTOM,
+                label,
+                egui::FontId::proportional(crate::theme::Tokens::get().font_body),
+                tk.text,
+            );
         }
     });
 }
@@ -1040,13 +1018,13 @@ pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) {
         // In the error colour, thicker than a hover: it is what the click deletes.
         crate::tools::paint_sketch_path(&world, 0, painter, proj, Stroke::new(4.5, tk.error));
     }
-    let stroke = Stroke::new(1.5, tk.rubber_band);
+    let stroke = Stroke::new(1.5, tk.sketch_accent);
     if let Some((hp, snap)) = &t.hover
         && let Some(sp) = to(*hp)
     {
         painter.circle_stroke(sp, if snap.is_some() { 6.0 } else { 3.0 }, stroke);
     }
-    let faint = Stroke::new(1.0, tk.rubber_band.gamma_multiply(0.6));
+    let faint = Stroke::new(1.0, tk.sketch_accent.gamma_multiply(0.6));
     let mode = crate::sketch_palette::mode(app);
     for w in t.pts.windows(2) {
         crate::tools::paint_sketch_path(&[ss.plane.to_world(w[0].0), ss.plane.to_world(w[1].0)], mode, painter, proj, faint);
@@ -1196,7 +1174,13 @@ fn glyphs(app: &SolveApp, painter: &egui::Painter, proj: &Proj, hover: Option<Po
         match pattern_icon.or_else(|| glyph_icon(c.kind.name())) {
             Some(icon) => crate::icons::paint(painter, r.shrink(2.0), icon, col, tk.glyph_bg, col),
             None => {
-                painter.text(*sp, egui::Align2::CENTER_CENTER, glyph_letter(c.kind.name()), egui::FontId::proportional(10.5), col);
+                painter.text(
+                    *sp,
+                    egui::Align2::CENTER_CENTER,
+                    glyph_letter(c.kind.name()),
+                    egui::FontId::proportional(crate::theme::Tokens::get().font_panel),
+                    col,
+                );
             }
         }
         drawn.push((id.clone(), *sp));
@@ -1210,7 +1194,7 @@ fn glyphs(app: &SolveApp, painter: &egui::Painter, proj: &Proj, hover: Option<Po
             format!("{} ({id})", c.kind.name())
         };
         let at = h + egui::vec2(12.0, 12.0);
-        let g = painter.layout_no_wrap(label, egui::FontId::proportional(11.0), tk.text);
+        let g = painter.layout_no_wrap(label, egui::FontId::proportional(crate::theme::Tokens::get().font_small), tk.text);
         painter.rect_filled(egui::Rect::from_min_size(at, g.size()).expand(3.0), 3.0, tk.panel);
         painter.galley(at, g, tk.text);
     }
@@ -1292,7 +1276,7 @@ fn snap_hint(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let tk = crate::theme::Tokens::get();
     let r = egui::Rect::from_min_size(sp + egui::vec2(12.0, -24.0), egui::vec2(24.0, 14.0));
     painter.rect_filled(r, 3.0, tk.accent_soft);
-    painter.text(r.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(10.0), tk.text);
+    painter.text(r.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(crate::theme::Tokens::get().font_micro), tk.text);
 }
 
 /// Per frame, after the viewport is drawn: constraint glyphs, snap hints and analysis marks.

@@ -72,7 +72,7 @@ fn picked_gear_faces_choose_their_joints_and_radii() {
         d.pick(&app.session, pick);
     }
     app.dialog = Some(d);
-    let ctx = egui::Context::default();
+    let ctx = crate::fonts::test_context();
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0));
     let frame = |app: &mut SolveApp| {
         let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
@@ -134,7 +134,7 @@ fn instances_of_one_gear_are_coupled_as_two() {
         d.pick(&app.session, pick);
     }
     app.dialog = Some(d);
-    let ctx = egui::Context::default();
+    let ctx = crate::fonts::test_context();
     for _ in 0..2 {
         let input =
             egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))), ..Default::default() };

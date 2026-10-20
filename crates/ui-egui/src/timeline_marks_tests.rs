@@ -32,7 +32,7 @@ fn features(app: &SolveApp) -> Vec<(String, bool)> {
 /// (the sample has no warnings, so every such image is an error mark).
 fn error_discs(app: &mut SolveApp, draw: fn(&mut SolveApp, &mut egui::Ui)) -> Vec<Pos2> {
     crate::scenario::clear_handles();
-    let ctx = egui::Context::default();
+    let ctx = crate::fonts::test_context();
     let screen = Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0));
     let mut out = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| draw(app, ui));
     // Icons upload textures; dropping their deltas unapplied would panic.

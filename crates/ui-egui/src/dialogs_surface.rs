@@ -9,8 +9,9 @@ use solidcraft_engine::doc::{AxisRef, Direction, FaceAt, FeatureKind, Mat, Plane
 use solidcraft_engine::geom::Vec3;
 
 use crate::SolveApp;
-use crate::dialogs::{Kind, OP_LABELS, OPS, combo, field, op_index, row_label};
+use crate::dialogs::{Kind, OP_LABELS, OPS, combo, field, form_row, op_index};
 use crate::selection::{AXES, BODIES, CURVES, EDGES, FACES, PLANES, PROFILES, SelInput, VERTICES};
+use crate::ui_kit;
 
 /// A surface tool dialog's values.
 #[derive(Clone, Debug, PartialEq)]
@@ -198,110 +199,94 @@ pub fn rows(ui: &mut egui::Ui, k: &mut Surf) -> bool {
     let mut enter = false;
     match k {
         Surf::Stitch { tolerance } => {
-            row_label(ui, "Tolerance");
-            let r = ui.add(egui::TextEdit::singleline(tolerance).hint_text("tight"));
-            crate::params_dialog::complete(ui, &r, tolerance);
-            enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            ui.end_row();
+            form_row(ui, "Tolerance", |ui| {
+                enter |= crate::ui_kit::hint_field(ui, tolerance, "tight");
+            });
         }
         Surf::Thicken { thickness, symmetric, operation } => {
-            row_label(ui, "Thickness");
-            enter |= field(ui, thickness);
-            ui.end_row();
-            row_label(ui, "Direction");
-            let mut dir = usize::from(*symmetric);
-            combo(ui, "th_dir", &["One Side", "Symmetric"], &mut dir);
-            *symmetric = dir == 1;
-            ui.end_row();
-            row_label(ui, "Operation");
-            combo(ui, "th_op", &OP_LABELS, operation);
-            ui.end_row();
+            form_row(ui, "Thickness", |ui| {
+                enter |= field(ui, thickness);
+            });
+            form_row(ui, "Direction", |ui| {
+                let mut dir = usize::from(*symmetric);
+                ui_kit::segmented(ui, &mut dir, &["One Side", "Symmetric"]);
+                *symmetric = dir == 1;
+            });
+            form_row(ui, "Operation", |ui| {
+                combo(ui, "th_op", &OP_LABELS, operation);
+            });
         }
         Surf::Extend { distance } => {
-            row_label(ui, "Distance");
-            enter |= field(ui, distance);
-            ui.end_row();
+            form_row(ui, "Distance", |ui| {
+                enter |= field(ui, distance);
+            });
         }
         Surf::Revolve { angle, symmetric, .. } => {
-            row_label(ui, "Angle");
-            enter |= field(ui, angle);
-            ui.end_row();
-            row_label(ui, "Direction");
-            let mut dir = usize::from(*symmetric);
-            combo(ui, "sr_dir", &["One Side", "Symmetric"], &mut dir);
-            *symmetric = dir == 1;
-            ui.end_row();
+            form_row(ui, "Angle", |ui| {
+                enter |= field(ui, angle);
+            });
+            form_row(ui, "Direction", |ui| {
+                let mut dir = usize::from(*symmetric);
+                ui_kit::segmented(ui, &mut dir, &["One Side", "Symmetric"]);
+                *symmetric = dir == 1;
+            });
         }
         Surf::Offset { distance, chain } => {
-            row_label(ui, "Distance");
-            enter |= field(ui, distance);
-            ui.end_row();
-            row_label(ui, "Tangent chain");
-            ui.checkbox(chain, "");
-            ui.end_row();
+            form_row(ui, "Distance", |ui| {
+                enter |= field(ui, distance);
+            });
+            ui_kit::options(ui, "offset_options", &mut [("Tangent chain", chain)]);
         }
         Surf::Ruled { distance, mode, angle, flip, round } => {
-            row_label(ui, "Distance");
-            enter |= field(ui, distance);
-            ui.end_row();
-            row_label(ui, "Type");
-            combo(ui, "ru_mode", &RULED_MODES.map(|(label, _)| label), mode);
-            ui.end_row();
+            form_row(ui, "Distance", |ui| {
+                enter |= field(ui, distance);
+            });
+            form_row(ui, "Type", |ui| {
+                combo(ui, "ru_mode", &RULED_MODES.map(|(label, _)| label), mode);
+            });
             if RULED_MODES.get(*mode).is_some_and(|(_, m)| *m == "angle") {
-                row_label(ui, "Angle");
-                enter |= field(ui, angle);
-                ui.end_row();
+                form_row(ui, "Angle", |ui| {
+                    enter |= field(ui, angle);
+                });
             }
-            row_label(ui, "Corners");
-            let mut corner = usize::from(*round);
-            combo(ui, "ru_corners", &["Mitre", "Round"], &mut corner);
-            *round = corner == 1;
-            ui.end_row();
-            row_label(ui, "Flip");
-            ui.checkbox(flip, "");
-            ui.end_row();
+            form_row(ui, "Corners", |ui| {
+                let mut corner = usize::from(*round);
+                ui_kit::segmented(ui, &mut corner, &["Mitre", "Round"]);
+                *round = corner == 1;
+            });
+            ui_kit::options(ui, "ruled_options", &mut [("Flip", flip)]);
         }
         Surf::Extrude { distance, direction } => {
-            row_label(ui, "Distance");
-            enter |= field(ui, distance);
-            ui.end_row();
-            row_label(ui, "Direction");
-            combo(ui, "sx_dir", &EXTRUDE_SIDES.map(|(label, _)| label), direction);
-            ui.end_row();
+            form_row(ui, "Distance", |ui| {
+                enter |= field(ui, distance);
+            });
+            form_row(ui, "Direction", |ui| {
+                ui_kit::segmented(ui, direction, &EXTRUDE_SIDES.map(|(label, _)| label));
+            });
         }
         Surf::Untrim { holes, outer, in_place } => {
-            row_label(ui, "Holes");
-            combo(ui, "ut_holes", &UNTRIM_HOLES, holes);
-            ui.end_row();
-            row_label(ui, "Restore outer boundary");
-            ui.checkbox(outer, "");
-            ui.end_row();
-            row_label(ui, "In place (surfaces)");
-            ui.checkbox(in_place, "");
-            ui.end_row();
+            form_row(ui, "Holes", |ui| {
+                combo(ui, "ut_holes", &UNTRIM_HOLES, holes);
+            });
+            ui_kit::options(ui, "untrim_options", &mut [("Restore outer boundary", outer), ("In place (surfaces)", in_place)]);
         }
         Surf::Patch { continuity } => {
-            row_label(ui, "Continuity");
-            combo(ui, "pa_cont", &PATCH_CONTINUITY.map(|(label, _)| label), continuity);
-            ui.end_row();
+            form_row(ui, "Continuity", |ui| {
+                ui_kit::segmented(ui, continuity, &PATCH_CONTINUITY.map(|(label, _)| label));
+            });
         }
         Surf::Boundary { continuity, join } => {
-            row_label(ui, "Continuity");
-            combo(ui, "bo_cont", &PATCH_CONTINUITY.map(|(label, _)| label), continuity);
-            ui.end_row();
-            row_label(ui, "Operation");
-            let mut op = usize::from(*join);
-            combo(ui, "bo_op", &BOUNDARY_OPS, &mut op);
-            *join = op == 1;
-            ui.end_row();
+            form_row(ui, "Continuity", |ui| {
+                ui_kit::segmented(ui, continuity, &PATCH_CONTINUITY.map(|(label, _)| label));
+            });
+            form_row(ui, "Operation", |ui| {
+                let mut op = usize::from(*join);
+                combo(ui, "bo_op", &BOUNDARY_OPS, &mut op);
+                *join = op == 1;
+            });
         }
         Surf::Trim { extend, stitch, .. } => {
-            row_label(ui, "Extend to meet");
-            ui.checkbox(extend, "");
-            ui.end_row();
-            row_label(ui, "Stitch the kept pieces");
-            ui.checkbox(stitch, "");
-            ui.end_row();
+            ui_kit::options(ui, "trim_options", &mut [("Extend to meet", extend), ("Stitch the kept pieces", stitch)]);
         }
         Surf::Sweep(opts) => enter |= crate::dialogs_sweep::rows(ui, opts, "ss"),
         Surf::SplitFace | Surf::Unstitch | Surf::ReverseNormal | Surf::Loft => {}

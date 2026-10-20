@@ -7,6 +7,7 @@
 //! control-channel commands that change the design are held until the file is in. A control
 //! (MCP) `doc.open` or import is answered when its file finishes loading.
 
+use crate::fonts::RichTextExt as _;
 use std::collections::VecDeque;
 use std::sync::{
     Arc,
@@ -916,8 +917,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             Kind::ExportDxf => crate::i18n::tr_label("dxf.exporting"),
                         }
                     })
-                    .strong()
-                    .size(14.0),
+                    .semibold()
+                    .color(crate::theme::Tokens::get().text)
+                    .size(crate::theme::Tokens::get().font_heading),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let b = ui.button(crate::i18n::tr("ui.cancel"));
@@ -1082,10 +1084,10 @@ mod tests {
                 app.session.revision += 1;
             }
             let newer = app.session.doc.clone();
-            tick(&mut app, &egui::Context::default());
+            tick(&mut app, &crate::fonts::test_context());
             assert!(app.file_load.running.as_ref().unwrap().preview.is_none());
             tx.send(Ok(Made { session: Session::default(), result: Value::Null, thumbnail: false })).unwrap();
-            tick(&mut app, &egui::Context::default());
+            tick(&mut app, &crate::fonts::test_context());
             assert!(Arc::ptr_eq(&newer, &app.session.doc));
             assert!(app.status.as_ref().unwrap().0.contains("discarded"));
         }
@@ -1143,7 +1145,7 @@ mod tests {
             built: None,
             staged: None,
         });
-        tick(&mut app, &egui::Context::default());
+        tick(&mut app, &crate::fonts::test_context());
         assert!(Arc::ptr_eq(&app.session.doc, &old));
         assert!(!app.file_load.busy());
         assert!(app.status.as_ref().unwrap().0.contains("bad STEP"));
@@ -1174,7 +1176,7 @@ mod tests {
         let mut computed = Session::default();
         computed.execute("solid.box", &serde_json::json!({"length":10,"width":10,"height":10})).unwrap();
         tx.send(Ok(Made { session: computed, result: Value::Null, thumbnail: false })).unwrap();
-        tick(&mut app, &egui::Context::default());
+        tick(&mut app, &crate::fonts::test_context());
         assert!(app.file_load.running.is_none());
         assert!(Arc::ptr_eq(&old, &app.session.doc));
     }
@@ -1192,7 +1194,7 @@ mod tests {
             part.execute("solid.box", &serde_json::json!({"length": 10, "width": 10, "height": 10, "corner": [i * 20, 0, 0]})).unwrap();
         }
         part.execute("file.export", &serde_json::json!({"path": path})).unwrap();
-        let ctx = egui::Context::default();
+        let ctx = crate::fonts::test_context();
         let mut app = SolveApp::new(Session::default(), Default::default());
         let bodies = |app: &SolveApp| app.session.world_state().bodies.len();
         assert!(staged_kind(&Request::new(&path, Kind::Insert)) && staged_kind(&Request::new(&path, Kind::Open)));

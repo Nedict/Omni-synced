@@ -5,6 +5,7 @@
 //! Document Settings, the root component's menu and `ui.start` of `document.metadata` or
 //! `document.metadata.set` open it.
 
+use crate::fonts::RichTextExt as _;
 use egui::RichText;
 use serde_json::{Map, Value};
 use solidcraft_engine::doc::metadata::{DESCRIPTION, WELL_KNOWN};
@@ -89,7 +90,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let mut open = true;
     let (mut ok, mut cancel) = (false, false);
     let metadata = app.session.doc.metadata.clone();
-    let title = RichText::new(crate::i18n::tr_label("Design Properties")).strong().size(13.0);
+    let title = RichText::new(crate::i18n::tr_label("Design Properties"))
+        .semibold()
+        .color(crate::theme::Tokens::get().text)
+        .size(crate::theme::Tokens::get().font_button);
     crate::frame::window(ctx, title, crate::frame::Width::Normal)
         .id(egui::Id::new("sc_design_properties"))
         .open(&mut open)
@@ -123,7 +127,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         ui.label(RichText::new(crate::i18n::tr("ui.design_properties.others_note")).small().color(t.text_dim));
                         egui::ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
                             for (k, v) in others {
-                                ui.label(RichText::new(k).monospace().size(12.0).color(t.text));
+                                ui.label(RichText::new(k).monospace().size(crate::theme::Tokens::get().font_body).color(t.text));
                                 ui.label(RichText::new(preview(v)).monospace().small().color(t.text_dim));
                             }
                         });

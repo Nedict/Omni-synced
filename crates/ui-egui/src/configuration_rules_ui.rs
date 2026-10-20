@@ -1,5 +1,6 @@
 //! Structured configuration rule editing and non-mutating row preview.
 use crate::SolveApp;
+use crate::fonts::RichTextExt as _;
 use egui::{RichText, Ui};
 use serde_json::{Value, json};
 use solidcraft_engine::doc::config::{Column, ConfigRule, RuleCondition, RuleEffect, RuleOperator};
@@ -58,7 +59,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut SolveApp, error: &mut Option<String>, 
     let suppression_features: Vec<(u64, String)> =
         features.iter().filter(|(id, _)| app.session.doc.configs.columns.contains(&Column::Suppress(*id))).cloned().collect();
     ui.separator();
-    ui.label(RichText::new(crate::i18n::tr_label("Configuration rules")).strong());
+    ui.label(RichText::new(crate::i18n::tr_label("Configuration rules")).semibold().color(crate::theme::Tokens::get().text));
     ui.add(egui::Label::new("Rules run from top to bottom. Matched drives change effective values.").wrap());
     ui.add(egui::Label::new("Matched restrictions check the final values.").wrap());
     for (index, rule) in rules.iter().enumerate() {

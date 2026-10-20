@@ -125,11 +125,12 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
 }
 
 pub fn reset_document(app: &mut SolveApp) {
+    app.ui.ribbon_context = None;
     let host = app.render_workspace.host.clone();
     let image_host = app.render_workspace.image_host.clone();
     app.render_workspace = State { host, image_host, ..Default::default() };
     if active(app) {
-        app.ui.tab = "SOLID".into();
+        app.ui.tab = "MODEL".into();
     }
     sync_backend(app);
 }
@@ -161,7 +162,7 @@ pub fn enter(app: &mut SolveApp, render: bool) -> Result<(), String> {
             app.ui.up_axis = camera.up;
             app.ui.perspective = perspective;
         }
-        app.ui.tab = "SOLID".into();
+        app.ui.tab = "MODEL".into();
     }
     app.cancel_view_animation();
     Ok(())
@@ -548,7 +549,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         Ok(())
     })();
     if let Err(error) = result {
-        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, error, egui::FontId::proportional(14.0), Tokens::get().text);
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            error,
+            egui::FontId::proportional(crate::theme::Tokens::get().font_heading),
+            Tokens::get().text,
+        );
     }
     crate::viewport::axis_view(app, ui, rect);
 }

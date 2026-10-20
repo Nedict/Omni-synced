@@ -9,7 +9,7 @@ use solidcraft_engine::geom::Vec3;
 use solidcraft_engine::{Sel, Session};
 
 use super::{Hover, body_of, capital, movable, num, pt, sel_items, snap_of};
-use crate::dialogs::{combo, field, row_label};
+use crate::dialogs::{combo, field, form_row};
 use crate::selection::SelInput;
 use crate::theme::Tokens;
 use crate::viewport::Proj;
@@ -115,58 +115,57 @@ pub fn rows(app: &mut crate::SolveApp, ui: &mut egui::Ui, f: &mut TraceForm, inp
     let studies: Vec<&str> = s.doc.assembly.studies.iter().map(|m| m.name.as_str()).collect();
     f.by_study &= !studies.is_empty();
     if !studies.is_empty() {
-        row_label(ui, "Motion");
-        let mut by = usize::from(f.by_study);
-        combo(ui, "tr_by", &["Joint", "Motion Study"], &mut by);
-        f.by_study = by == 1;
-        ui.end_row();
+        form_row(ui, "Motion", |ui| {
+            let mut by = usize::from(f.by_study);
+            combo(ui, "tr_by", &["Joint", "Motion Study"], &mut by);
+            f.by_study = by == 1;
+        });
     }
     if f.by_study {
-        row_label(ui, "Study");
-        combo(ui, "tr_study", &studies, &mut f.study);
-        ui.end_row();
+        form_row(ui, "Study", |ui| {
+            combo(ui, "tr_study", &studies, &mut f.study);
+        });
     } else {
         let list = movable(s);
         if list.is_empty() {
-            row_label(ui, "");
-            ui.label(RichText::new(crate::i18n::tr_label("no joint that moves yet")).color(t.text_dim));
-            ui.end_row();
+            form_row(ui, "", |ui| {
+                ui.label(RichText::new(crate::i18n::tr_label("no joint that moves yet")).color(t.text_dim));
+            });
             return false;
         }
         let labels: Vec<&str> = list.iter().filter_map(|i| s.doc.assembly.joints.get(*i)).map(|j| j.name.as_str()).collect();
         let mut pos = list.iter().position(|i| *i == f.joint).unwrap_or(0);
-        row_label(ui, "Joint");
-        combo(ui, "tr_joint", &labels, &mut pos);
-        ui.end_row();
+        form_row(ui, "Joint", |ui| {
+            combo(ui, "tr_joint", &labels, &mut pos);
+        });
         let joint = list.get(pos).copied().unwrap_or(0);
         let dofs = s.doc.assembly.joints.get(joint).map(|j| j.kind.dofs()).unwrap_or(&[]);
         let mut index = if joint == f.joint { f.index.min(dofs.len().saturating_sub(1)) } else { 0 };
         if dofs.len() > 1 {
-            row_label(ui, "  Of");
-            let caps: Vec<String> = dofs.iter().map(|d| capital(d)).collect();
-            let refs: Vec<&str> = caps.iter().map(String::as_str).collect();
-            combo(ui, "tr_index", &refs, &mut index);
-            ui.end_row();
+            form_row(ui, "  Of", |ui| {
+                let caps: Vec<String> = dofs.iter().map(|d| capital(d)).collect();
+                let refs: Vec<&str> = caps.iter().map(String::as_str).collect();
+                combo(ui, "tr_index", &refs, &mut index);
+            });
         }
         if joint != f.joint || index != f.index {
             (f.joint, f.index) = (joint, index);
             (f.from, f.to) = range(s, joint, index);
         }
-        row_label(ui, "From");
-        enter |= field(ui, &mut f.from);
-        ui.end_row();
-        row_label(ui, "To");
-        enter |= field(ui, &mut f.to);
-        ui.end_row();
+        form_row(ui, "From", |ui| {
+            enter |= field(ui, &mut f.from);
+        });
+        form_row(ui, "To", |ui| {
+            enter |= field(ui, &mut f.to);
+        });
     }
     let default = match s.doc.assembly.studies.get(f.study).filter(|_| f.by_study) {
         Some(m) => (u64::from(m.steps) + 1).clamp(2, 500),
         None => 100,
     };
-    row_label(ui, "Samples");
-    let r = ui.add(egui::TextEdit::singleline(&mut f.samples).hint_text(default.to_string()));
-    enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-    ui.end_row();
+    form_row(ui, "Samples", |ui| {
+        enter |= crate::ui_kit::text_field(ui, &mut f.samples, &default.to_string()).0;
+    });
     // The preview, traced again when what it traces (or the design) changes.
     let p = params(s, f, inputs);
     let key = format!("{}:{p:?}", s.revision);
@@ -183,9 +182,9 @@ pub fn rows(app: &mut crate::SolveApp, ui: &mut egui::Ui, f: &mut TraceForm, inp
             },
             Err(e) => (e.clone(), t.text_dim),
         };
-        row_label(ui, "");
-        ui.add(egui::Label::new(RichText::new(text).color(colour)).wrap());
-        ui.end_row();
+        form_row(ui, "", |ui| {
+            ui.add(egui::Label::new(RichText::new(text).color(colour)).wrap());
+        });
     }
     enter
 }
