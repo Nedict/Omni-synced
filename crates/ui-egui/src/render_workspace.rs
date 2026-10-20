@@ -24,6 +24,11 @@ mod tests;
 pub struct State {
     pub host: Option<ExecutorDescriptor>,
     pub path_host: PathHost,
+    /// How long the last path tracer setup took, in seconds, per viewport adapter
+    /// ([`adapter_key`]); kept in the preferences to estimate the next one.
+    pub setup_seconds: std::collections::BTreeMap<String, f64>,
+    /// The viewport adapter the current setup runs on.
+    pub setup_key: Option<String>,
     pub image_host: Option<solidcraft_engine::render::job::CpuHost>,
     pub view: ViewState,
     revision: u64,
@@ -41,7 +46,8 @@ pub struct State {
 pub enum PathHost {
     #[default]
     NotStarted,
-    Preparing(std::sync::mpsc::Receiver<Result<ImageHost, String>>),
+    /// The worker's answer, and when it started: shader compilation can take minutes.
+    Preparing(std::sync::mpsc::Receiver<Result<ImageHost, String>>, std::time::Instant),
     Ready(ImageHost),
     Failed(String),
 }
@@ -60,7 +66,7 @@ impl PathHost {
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(create)).unwrap_or_else(|_| Err("GPU path tracer setup panicked".into()));
             let _ = tx.send(result);
         }) {
-            Ok(_) => Self::Preparing(rx),
+            Ok(_) => Self::Preparing(rx, std::time::Instant::now()),
             Err(e) => Self::failed(format!("could not start setup worker: {e}")),
         };
     }
@@ -70,14 +76,75 @@ impl PathHost {
         Self::Failed(message)
     }
 
-    fn poll(&mut self) {
-        let Self::Preparing(rx) = self else { return };
+    /// Take the worker's answer if it has come; returns how long a successful setup took.
+    fn poll(&mut self) -> Option<std::time::Duration> {
+        let Self::Preparing(rx, started) = self else { return None };
+        let took = started.elapsed();
         *self = match rx.try_recv() {
             Ok(Ok(host)) => Self::Ready(host),
             Ok(Err(error)) => Self::failed(error),
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return None,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => Self::failed("setup worker stopped without returning a host".into()),
         };
+        matches!(self, Self::Ready(_)).then_some(took)
+    }
+}
+
+/// Setup times kept per adapter, at most.
+const MAX_SETUP_TIMES: usize = 16;
+
+/// The key [`State::setup_seconds`] files an adapter's setup time under: a driver update
+/// usually empties the driver's shader cache, so the driver is part of it.
+pub fn adapter_key(info: &egui_wgpu::wgpu::AdapterInfo) -> String {
+    format!("{} | {:?} | {} {}", info.name.trim(), info.backend, info.driver.trim(), info.driver_info.trim())
+}
+
+/// Remember how long the setup on `key` took, for the next start's estimate.
+fn record_setup(state: &mut State, took: std::time::Duration) {
+    let Some(key) = state.setup_key.clone() else { return };
+    if state.setup_seconds.len() >= MAX_SETUP_TIMES && !state.setup_seconds.contains_key(&key) {
+        return;
+    }
+    state.setup_seconds.insert(key, took.as_secs_f64());
+}
+
+/// Setup times from the preferences: finite, non-negative and at most a day each.
+pub fn load_setup_seconds(value: &serde_json::Value) -> std::collections::BTreeMap<String, f64> {
+    value
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(k, v)| Some((k.clone(), v.as_f64().filter(|s| s.is_finite() && (0.0..=86_400.0).contains(s))?)))
+        .take(MAX_SETUP_TIMES)
+        .collect()
+}
+
+/// Minutes and seconds, as `1:05`.
+fn mmss(d: std::time::Duration) -> String {
+    let s = d.as_secs();
+    format!("{}:{:02}", s / 60, s % 60)
+}
+
+/// The path tracer's setup as it goes: a progress bar estimated from the last setup on this
+/// adapter, else a spinner with the time so far. Drivers report no progress of their own.
+fn setup_progress(ui: &mut egui::Ui, app: &SolveApp, started: std::time::Instant) {
+    let elapsed = started.elapsed();
+    let expected = app.render_workspace.setup_key.as_ref().and_then(|k| app.render_workspace.setup_seconds.get(k)).copied();
+    ui.label(app.tr("render.gpu_path_preparing"));
+    match expected.map(|s| std::time::Duration::from_secs_f64(s.max(1.0))) {
+        Some(expected) if elapsed < expected.mul_f64(1.5) => {
+            let fraction = (elapsed.as_secs_f32() / expected.as_secs_f32()).min(0.99);
+            ui.add(egui::ProgressBar::new(fraction).text(format!("{} / ~{}", mmss(elapsed), mmss(expected))).animate(true));
+        }
+        _ => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(mmss(elapsed));
+            });
+            if expected.is_none() {
+                ui.small(app.tr("render.gpu_path_first_setup"));
+            }
+        }
     }
 }
 
@@ -116,6 +183,8 @@ impl Default for State {
         Self {
             host: None,
             path_host: PathHost::default(),
+            setup_seconds: Default::default(),
+            setup_key: None,
             image_host: None,
             view: Default::default(),
             revision: u64::MAX,
@@ -161,7 +230,9 @@ pub fn host_executor(max_dimension: u32, depth: bool, samples: u32) -> Result<Ex
 }
 
 pub fn sync_backend(app: &mut SolveApp) {
-    app.render_workspace.path_host.poll();
+    if let Some(took) = app.render_workspace.path_host.poll() {
+        record_setup(&mut app.render_workspace, took);
+    }
     if let PathHost::Ready(host) = &app.render_workspace.path_host
         && let Err(e) = app.session.register_render_job_host(host.clone())
     {
@@ -186,7 +257,7 @@ pub fn sync_backend(app: &mut SolveApp) {
 /// Cooperative work belongs to the frame loop, never to a status/control request. Keep
 /// scheduling frames even after leaving Render so a browser job can finish in Design.
 pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
-    if matches!(app.render_workspace.path_host, PathHost::Preparing(_)) {
+    if matches!(app.render_workspace.path_host, PathHost::Preparing(..)) {
         // Poll even in Design or an idle window, without continuously redrawing.
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }
@@ -203,7 +274,9 @@ pub fn reset_document(app: &mut SolveApp) {
     let host = app.render_workspace.host.clone();
     let image_host = app.render_workspace.image_host.clone();
     let path_host = std::mem::take(&mut app.render_workspace.path_host);
-    app.render_workspace = State { host, image_host, path_host, ..Default::default() };
+    let setup_seconds = std::mem::take(&mut app.render_workspace.setup_seconds);
+    let setup_key = app.render_workspace.setup_key.take();
+    app.render_workspace = State { host, image_host, path_host, setup_seconds, setup_key, ..Default::default() };
     if active(app) {
         app.ui.tab = "SOLID".into();
     }
@@ -355,9 +428,7 @@ fn image_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
     }
     match &app.render_workspace.path_host {
-        PathHost::Preparing(_) => {
-            ui.label(app.tr("render.gpu_path_preparing"));
-        }
+        PathHost::Preparing(_, started) => setup_progress(ui, app, *started),
         PathHost::Failed(error) => {
             ui.label(format!("{}: {error}", app.tr("render.gpu_path_failed")));
         }

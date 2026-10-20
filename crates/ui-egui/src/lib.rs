@@ -519,6 +519,9 @@ impl SolveApp {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let adapter = rs.adapter.clone();
+            if matches!(self.render_workspace.path_host, render_workspace::PathHost::NotStarted) {
+                self.render_workspace.setup_key = Some(render_workspace::adapter_key(&adapter.get_info()));
+            }
             self.render_workspace.path_host.start(move || solidcraft_gpu::path::host_on_adapter(&adapter).map_err(|e| e.to_string()));
         }
         render_workspace::sync_backend(self);
@@ -547,6 +550,7 @@ impl SolveApp {
             "ground_shadow": self.ui.ground_shadow,
             "agent_cursor": self.ui.agent_cursor,
             "preferences": self.preferences,
+            "gpu_path_setup_seconds": self.render_workspace.setup_seconds,
         })
         .to_string()
     }
@@ -558,6 +562,9 @@ impl SolveApp {
         self.home.opened_at = v.get("recent_opened_at").and_then(|x| serde_json::from_value(x.clone()).ok()).unwrap_or_default();
         if let Some(d) = flag("dark") {
             self.ui.dark = d;
+        }
+        if let Some(t) = v.get("gpu_path_setup_seconds") {
+            self.render_workspace.setup_seconds = render_workspace::load_setup_seconds(t);
         }
         if let Some(g) = flag("grid") {
             self.ui.show_grid = g;

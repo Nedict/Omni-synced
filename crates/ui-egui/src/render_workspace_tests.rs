@@ -36,7 +36,7 @@ mod async_path_host {
 
     fn finish_setup(h: &mut Harness) {
         let deadline = Instant::now() + Duration::from_secs(10);
-        while matches!(h.app.render_workspace.path_host, PathHost::Preparing(_)) {
+        while matches!(h.app.render_workspace.path_host, PathHost::Preparing(..)) {
             assert!(Instant::now() < deadline, "test setup worker did not finish");
             h.frames(1);
             std::thread::sleep(Duration::from_millis(1));
@@ -59,7 +59,7 @@ mod async_path_host {
         // A second viewport installation cannot replace or duplicate setup.
         h.app.render_workspace.path_host.start(|| panic!("setup started twice"));
         h.frames(3);
-        assert!(h.widget("GPU path tracer preparing…").is_some());
+        assert!(h.widget("GPU path tracer: compiling shaders…").is_some());
         assert!(h.widget("Progressive rendering").is_none());
         assert!(!h.app.session.render_backend().executors.iter().any(|e| e.id.as_str() == "test-path"));
         let transparent = h.app.tr("render.image_transparent").to_string();
@@ -67,17 +67,17 @@ mod async_path_host {
         assert!(h.app.render_workspace.view.transparent);
         // Replacing the current document must retain the receiver while setup waits.
         crate::documents::adopt(&mut h.app, Session::default());
-        assert!(matches!(h.app.render_workspace.path_host, PathHost::Preparing(_)));
+        assert!(matches!(h.app.render_workspace.path_host, PathHost::Preparing(..)));
         enter(&mut h.app, true).unwrap();
         h.frames(3);
-        assert!(h.widget("GPU path tracer preparing…").is_some());
+        assert!(h.widget("GPU path tracer: compiling shaders…").is_some());
         enter(&mut h.app, false).unwrap();
         release.send(()).unwrap();
         finish_setup(&mut h);
         assert!(matches!(h.app.render_workspace.path_host, PathHost::Ready(_)));
         enter(&mut h.app, true).unwrap();
         h.frames(3);
-        assert!(h.widget("GPU path tracer preparing…").is_none());
+        assert!(h.widget("GPU path tracer: compiling shaders…").is_none());
         assert!(h.widget("Progressive rendering").is_some());
         assert_eq!(h.app.session.render_backend().executors.iter().filter(|e| e.id.as_str() == "test-path").count(), 1);
         assert!(h.app.session.render_job_host().unwrap().same_host(&cpu_host));
@@ -88,6 +88,53 @@ mod async_path_host {
         assert_eq!(h.app.session.render_backend().executors.iter().filter(|e| e.id.as_str() == "test-path").count(), 1);
     }
 
+    /// The first setup on an adapter shows a spinner, the time so far and a note; a later one
+    /// a bar estimated from the time the first took, which the preferences keep.
+    #[test]
+    fn setup_progress_is_estimated_from_the_last_setup_on_the_adapter() {
+        let mut h = panel_fixture();
+        h.app.render_workspace.setup_key = Some("Test GPU | Vulkan | 1.0".into());
+        let (release, wait) = mpsc::channel::<()>();
+        h.app.render_workspace.path_host.start(move || {
+            wait.recv_timeout(Duration::from_secs(10)).unwrap();
+            job::ImageHost::with_executor(Arc::new(TestExecutor)).map_err(|e| e.to_string())
+        });
+        h.frames(3);
+        let first = h.app.tr("render.gpu_path_first_setup").to_string();
+        assert!(h.widget("GPU path tracer: compiling shaders…").is_some());
+        assert!(h.widget(&first).is_some(), "the first setup explains the wait");
+        assert!(h.widget("0:00").is_some(), "and counts the time");
+        release.send(()).unwrap();
+        finish_setup(&mut h);
+        let took = h.app.render_workspace.setup_seconds.get("Test GPU | Vulkan | 1.0").copied();
+        assert!(took.is_some_and(|s| (0.0..10.0).contains(&s)), "{took:?}");
+
+        // The next start on the same adapter has an estimate, kept in the preferences.
+        let mut h = panel_fixture();
+        h.app.load_prefs(&json!({"gpu_path_setup_seconds": {"Test GPU | Vulkan | 1.0": 120.0}}).to_string());
+        h.app.render_workspace.setup_key = Some("Test GPU | Vulkan | 1.0".into());
+        let (release, wait) = mpsc::channel::<()>();
+        h.app.render_workspace.path_host.start(move || {
+            wait.recv_timeout(Duration::from_secs(10)).unwrap();
+            job::ImageHost::with_executor(Arc::new(TestExecutor)).map_err(|e| e.to_string())
+        });
+        h.frames(3);
+        assert!(h.widget(&first).is_none());
+        assert!(h.widget("0:00 / ~2:00").is_some(), "a bar with the estimate");
+        release.send(()).unwrap();
+        finish_setup(&mut h);
+        let prefs: serde_json::Value = serde_json::from_str(&h.app.prefs()).unwrap();
+        assert!(prefs["gpu_path_setup_seconds"]["Test GPU | Vulkan | 1.0"].as_f64().is_some_and(|s| s < 10.0));
+    }
+
+    #[test]
+    fn hostile_setup_times_are_ignored() {
+        let times = load_setup_seconds(&json!({"a": -1.0, "b": 1e300, "c": "slow", "d": 30.0}));
+        assert_eq!(times.into_iter().collect::<Vec<_>>(), [("d".to_string(), 30.0)]);
+        let many: serde_json::Map<String, serde_json::Value> = (0..100).map(|i| (format!("gpu {i}"), json!(1.0))).collect();
+        assert_eq!(load_setup_seconds(&serde_json::Value::Object(many)).len(), MAX_SETUP_TIMES);
+    }
+
     #[test]
     fn setup_error_is_visible_and_survives_document_reset() {
         let mut h = panel_fixture();
@@ -95,7 +142,7 @@ mod async_path_host {
         finish_setup(&mut h);
         let message = "GPU path tracer unavailable: test driver refused the device";
         assert!(h.widget(message).is_some());
-        assert!(h.widget("GPU path tracer preparing…").is_none());
+        assert!(h.widget("GPU path tracer: compiling shaders…").is_none());
         assert!(h.widget("Progressive rendering").is_none());
         assert!(h.app.session.render_job_host().is_some());
         completed_preview(&mut h, [200, 210, 220]);
@@ -111,7 +158,7 @@ mod async_path_host {
     fn disconnected_setup_is_reported_in_the_panel() {
         let mut h = panel_fixture();
         let (tx, rx) = mpsc::channel();
-        h.app.render_workspace.path_host = PathHost::Preparing(rx);
+        h.app.render_workspace.path_host = PathHost::Preparing(rx, Instant::now());
         drop(tx);
         h.frames(3);
         assert!(h.widget("GPU path tracer unavailable: setup worker stopped without returning a host").is_some());
