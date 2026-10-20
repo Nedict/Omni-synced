@@ -766,8 +766,8 @@ fn build_sketch_scene(app: &SolveApp, proj: &Proj) -> GpuScene {
             let back = app.cam.to_frame(app.cam.back());
             let n = u.cross(v);
             let slant = back.dot(n);
-            let centre = if slant.abs() > 1e-3 { tf - back * (tf.dot(n) / slant) } else { tf };
             ext = (ext / slant.abs().max(0.25) / major).ceil() * major;
+            let centre = grid_centre(tf, back, n, ext);
             let snap = |a: Vec3| a * ((centre.dot(a) / major).round() * major);
             (snap(u) + snap(v), u, v, Box::new(|p| app.cam.from_frame(p).to_f32()))
         };
@@ -3135,6 +3135,21 @@ fn points_2d(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     {
         painter.circle(p, 4.5, t.hover_edge_halo, Stroke::new(1.5, t.hover_edge));
     }
+}
+
+/// Where the ground grid is centred: where the view's axis (`back`, through the camera's target
+/// `tf`) meets the plane through the origin with normal `n`, so the middle of the view has grid
+/// (#3087). At a grazing slant that point runs far off, and the ground in front of the camera
+/// would have none: it stays within `ext` (the grid's half-size) of the point under the target.
+fn grid_centre(tf: Vec3, back: Vec3, n: Vec3, ext: f64) -> Vec3 {
+    let under = tf - n * tf.dot(n);
+    let slant = back.dot(n);
+    if slant.abs() <= 1e-3 {
+        return under;
+    }
+    let along = tf - back * (tf.dot(n) / slant) - under;
+    let len = along.len();
+    if len > ext && len > 0.0 { under + along * (ext / len) } else { under + along }
 }
 
 /// Hover feedback for the active sketch's points and curves (drawn on top of everything).
@@ -6383,6 +6398,28 @@ mod grid_plane_tests {
         app.cam.pitch = 0.3;
         let _ = build_sketch_scene(&app, &projection(&app, rect));
         assert_eq!(*app.viewport.grid_plane.lock().unwrap(), GridPlane::Ground, "a clear turn off the ground returns");
+    }
+
+    /// The grid's centre is where the view's axis meets the ground, but at a grazing slant (a
+    /// camera 10 mm above the ground, looking almost along it) no further than the grid's
+    /// half-size from the point under the target, so the ground in front of the camera keeps
+    /// its grid.
+    #[test]
+    fn the_grid_centre_stays_within_reach_of_the_point_under_the_target() {
+        let n = Vec3::Z;
+        // Looking down at 45 degrees at a target 10 above the ground: the axis meets it 10 ahead.
+        let tf = Vec3::new(0.0, 0.0, 10.0);
+        let back = Vec3::new(0.0, -1.0, 1.0).normalized().unwrap();
+        let c = grid_centre(tf, back, n, 100.0);
+        assert!((c - Vec3::new(0.0, 10.0, 0.0)).len() < 1e-9, "{c:?}");
+        // Grazing: the axis meets the ground 1 m ahead, the grid is 120 wide.
+        let back = Vec3::new(0.0, -1.0, 0.01).normalized().unwrap();
+        let c = grid_centre(tf, back, n, 120.0);
+        assert!(c.z.abs() < 1e-9 && (c - Vec3::new(0.0, 0.0, 0.0)).len() <= 120.0 + 1e-9, "{c:?}");
+        assert!(c.y > 0.0, "still toward where the view looks: {c:?}");
+        // Edge-on: under the target.
+        let c = grid_centre(tf, Vec3::Y, n, 120.0);
+        assert!(c.len() < 1e-9, "{c:?}");
     }
 
     /// #3087: zoomed in on a target below the ground (an orbit left it there), seen at a slant,
