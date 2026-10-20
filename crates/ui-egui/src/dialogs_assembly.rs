@@ -26,8 +26,36 @@ mod trace;
 pub use trace::{TraceForm, picked_point};
 
 /// Joint types in the order the Type box lists them (command names).
-pub const TYPES: [&str; 7] = ["rigid", "revolute", "slider", "cylindrical", "pin_slot", "planar", "ball"];
-const TYPE_LABELS: [&str; 7] = ["Rigid", "Revolute", "Slider", "Cylindrical", "Pin-slot", "Planar", "Ball"];
+pub const TYPES: [&str; 13] = [
+    "rigid",
+    "revolute",
+    "slider",
+    "cylindrical",
+    "pin_slot",
+    "planar",
+    "ball",
+    "parallel",
+    "perpendicular",
+    "angle",
+    "point_on_plane",
+    "point_on_line",
+    "line_on_plane",
+];
+const TYPE_LABELS: [&str; 13] = [
+    "Rigid",
+    "Revolute",
+    "Slider",
+    "Cylindrical",
+    "Pin-slot",
+    "Planar",
+    "Ball",
+    "Parallel",
+    "Perpendicular",
+    "Angle",
+    "Point on plane",
+    "Point on line",
+    "Line on plane",
+];
 /// What a joint origin input accepts (snaps on faces, edges and vertices).
 pub const SNAPS: u16 = FACES | EDGES | VERTICES;
 /// Commands whose effect is where occurrences sit (previewed on the placed model).
@@ -281,8 +309,10 @@ pub fn edit_joint(app: &SolveApp, id: u64) -> Option<Dialog> {
     f.editing = Some(id);
     f.kind = TYPES.iter().position(|t| JointKind::parse(t) == Some(j.kind)).unwrap_or(0);
     f.flip = j.flip;
-    f.angle = num(j.angle.to_degrees(), "deg");
-    f.offset[2] = num(j.offset, "mm");
+    // An offset or angle typed as an expression shows (and is sent back) as that expression, so
+    // the joint keeps following its parameters.
+    f.angle = j.exprs.angle.clone().unwrap_or_else(|| num(j.angle.to_degrees(), "deg"));
+    f.offset[2] = j.exprs.offset.clone().unwrap_or_else(|| num(j.offset, "mm"));
     f.fit_limits();
     for (i, l) in f.limits.iter_mut().enumerate() {
         if let Some(Some((lo, hi))) = j.limits.get(i) {

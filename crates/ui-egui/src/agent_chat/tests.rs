@@ -1015,7 +1015,7 @@ fn files_wait_with_their_message_and_pictures_skip_an_agent_that_takes_none() {
 
 #[test]
 fn at_most_eight_files_on_a_message() {
-    let d = attachable("cap");
+    let d = attachable("eight");
     let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
     for _ in 0..attach::MAX_FILES {
         attach_path(&mut app, &at(&d, "brief.md")).unwrap();
@@ -1348,6 +1348,34 @@ fn files_dropped_on_the_chat_attach_and_the_app_does_not_open_them() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// The chat popped out into its own window takes drops too, and says so while files are dragged
+/// over it (#2812). Here the window floats inside the app, as it does where the system can't open
+/// one: a drop on the window is the chat's, one elsewhere is not.
+#[test]
+fn files_dropped_on_the_popped_out_chat_attach() {
+    use crate::scenario::rect_of;
+    let d = attachable("popdrop");
+    let mut h = narrow_chat();
+    h.call("ui.resize", json!({"width": 1600, "height": 1000}));
+    h.app.preferences.agent_chat_popped = true;
+    h.frames(4);
+    let window = rect_of("agent_chat:window").expect("popped out");
+    let hovered = || vec![egui::HoveredFile { path: Some(d.join("target.png")), mime: String::new() }];
+    h.drag_files(window.center(), hovered(), Vec::new());
+    assert!(rect_of("agent_chat:drop_hint").is_some_and(|r| window.contains(r.center())), "the hint over the window");
+    let outside = egui::pos2(5.0, 500.0);
+    assert!(!window.contains(outside));
+    h.drag_files(outside, hovered(), Vec::new());
+    assert!(rect_of("agent_chat:drop_hint").is_none(), "no hint away from it");
+    drop_files(&mut h, window.center(), &[d.join("target.png"), d.join("brief.md")]);
+    settle_chat(&mut h);
+    assert_eq!(status(&h.app)["attachments"], json!(["target.png", "brief.md"]));
+    assert!(!h.app.file_load.busy(), "the app doesn't open them as well");
+    drop_files(&mut h, outside, &[d.join("brief.md")]);
+    assert_eq!(status(&h.app)["attachments"].as_array().map(Vec::len), Some(2), "away from the window: not the chat's");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 /// Many files and a long message in a narrow chat: the chips wrap onto more rows and the text box
 /// keeps to the chat (a row of chips wider than the chat would widen everything under it).
 #[test]
@@ -1386,24 +1414,35 @@ fn an_agents_markdown_is_drawn_as_blocks() {
 }
 
 /// A long message scrolls inside its box: the buttons under the box stay in the window (#2224).
+/// Measured against the panel's bottom once the agents on this machine have been looked for:
+/// what that finds (and the status it reports) arrives in its own time and may change what is
+/// around the panel, which is not what this checks.
 #[test]
 fn a_long_message_keeps_the_buttons_in_the_window() {
     let mut h = crate::scenario::Harness::new();
     h.call("ui.resize", json!({"width": 1600.0, "height": 1000.0}));
     h.call("ui.agent_chat", json!({"open": true}));
     h.frames(8);
+    let began = std::time::Instant::now();
+    while h.app.agent_chat.detecting.is_some() && began.elapsed() < std::time::Duration::from_secs(30) {
+        h.frame();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    h.frames(4);
+    let bottom = |h: &crate::scenario::Harness| f64::from(h.app.agent_chat.panel_rect.map(|r| r.bottom()).expect("the panel is drawn"));
     let [_, rest] = h.widget("Send").expect("the Send button is drawn");
-    let box_before = h.app.agent_chat.panel_rect.map(|r| r.bottom());
+    let rest = bottom(&h) - rest;
     h.app.agent_chat.input = "Please make the plate thicker and then add a fillet on every outside edge.\n".repeat(60);
     h.frames(8);
     let window = 1000.0;
     for name in ["Send", "Attach view"] {
         let [_, y] = h.widget(name).unwrap_or_else(|| panic!("{name} is drawn"));
         assert!(y < window, "{name} is at {y}, below the window's bottom at {window}");
-        // The box is pinned to the bottom and grows upwards: the buttons do not move.
-        assert!((y - rest).abs() < 1.0, "{name} moved from {rest} to {y}");
+        // The box is pinned to the bottom and grows upwards: the buttons stay where they were
+        // above the panel's bottom.
+        let above = bottom(&h) - y;
+        assert!((above - rest).abs() < 1.0, "{name} moved from {rest} to {above} above the panel's bottom");
     }
-    assert_eq!(h.app.agent_chat.panel_rect.map(|r| r.bottom()), box_before, "the panel keeps its size");
 }
 
 fn test_png(colour: [u8; 4], width: u32) -> Vec<u8> {
