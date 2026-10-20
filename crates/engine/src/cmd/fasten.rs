@@ -588,7 +588,7 @@ fn seats(s: &Session) -> Vec<Seat> {
         .joints
         .iter()
         .filter(|j| j.kind == JointKind::Rigid && !j.suppressed && !j.flip)
-        .filter(|j| matches!(j.b.snap, Snap::Point { point, z: Some(z) } if point == Vec3::ZERO && z == down))
+        .filter(|j| matches!(j.b.snap, Snap::Point { point, z: Some(z), .. } if point == Vec3::ZERO && z == down))
         .filter_map(|j| {
             let o = s.doc.occurrences.iter().find(|o| o.id == j.b.occurrence)?;
             let part = s.doc.parts.get(&o.component)?;
