@@ -3155,6 +3155,8 @@ fn whole_face_tool(
             let (l, h) = if up { (lo, hi + reach) } else { (lo - reach, hi) };
             let built = centered_extrude(&ss.plane, &slab, l, h, None).ok()?;
             let [built] = built.as_slice() else { return None };
+            #[cfg(test)]
+            whole_face_tests::slab_taken();
             Some((roles(&slab).tool(built.body.clone(), None), (l, h)))
         }
         _ => None,
@@ -6023,6 +6025,10 @@ mod chain_tests {
 #[cfg(test)]
 #[path = "eval_cost_tests.rs"]
 mod cost_tests;
+
+#[cfg(test)]
+#[path = "eval_whole_face_tests.rs"]
+mod whole_face_tests;
 
 #[cfg(test)]
 mod body_name_tests {
