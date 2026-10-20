@@ -301,6 +301,10 @@ mod tests {
         let texts = english_texts();
         let mut wanted: Vec<&str> = crate::toolbar::TABS.to_vec();
         wanted.push(crate::toolbar_custom::WORKSPACE);
+        for section in crate::workspace::SECTIONS {
+            wanted.push(section.tab);
+            wanted.push(section.panel);
+        }
         for spec in solidcraft_engine::command_specs() {
             wanted.push(spec.tab);
             wanted.push(spec.panel);
@@ -453,10 +457,13 @@ mod tests {
         assert_eq!(it.given_name("Fillet"), "Fillet");
         assert_eq!(it.label("solid.extrude"), "solid.extrude");
         assert_eq!(it.format("document.save_changes", &[("name", "Staffa {v2}")]), "Salvare le modifiche a Staffa {v2}?");
+        // The bottom command-line hint retired with that surface. A live save prompt
+        // still proves that a substituted value keeps literal JSON braces intact.
         assert_eq!(
-            it.format("ui.command_palette_hint", &[("example", "solid.extrude {\"distance\": 20}")]),
-            "Digita un comando, ad es. solid.extrude {\"distance\": 20}  — oppure premi S per cercare"
+            it.format("document.save_changes", &[("name", "solid.extrude {\"distance\": 20}")]),
+            "Salvare le modifiche a solid.extrude {\"distance\": 20}?"
         );
+        assert_eq!(it.format("ui.browser_bodies_other", &[("count", "2")]), "2 corpi");
     }
 
     /// `label()`'s id fallback (an argument that matches no other entry's English text is
