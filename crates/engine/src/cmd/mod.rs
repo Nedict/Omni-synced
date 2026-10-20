@@ -37,6 +37,7 @@ mod features;
 mod features_more;
 pub(crate) use features::profiles as feature_profiles;
 pub use features::{auto_operation, extrude_reach};
+pub use sketch_modify::trim_piece;
 mod component_link;
 mod config;
 mod file;

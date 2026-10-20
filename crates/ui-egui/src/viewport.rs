@@ -40,9 +40,14 @@ pub enum NavMode {
 
 #[derive(Default)]
 pub struct ViewportState {
-    /// A two-point drawing tool's first point was placed by a press that became a drag: the
-    /// release places the second (#1630).
-    pub(crate) draw_drag: bool,
+    /// A two-point drawing tool's first point was placed by a press (here) that became a drag:
+    /// the release places the second (#1630), unless it lands within [`DRAW_DRAG_MIN`] of the
+    /// press. Such a drag was a click that moved on the way (#2448): the release places the
+    /// first point instead and the shape goes on by clicks, rather than a sliver of a shape.
+    pub(crate) draw_drag: Option<Pos2>,
+    /// A tool's click moved on the way (#2448): egui takes a press that moves past its
+    /// click distance, or is held past its click time, as a drag, so its release is the click.
+    pub(crate) tool_click: bool,
     /// Per-body boxes of one world state, held (not just its address, which a later state can
     /// reuse once the old one is freed, so stale boxes would come back).
     pick_bounds: std::sync::Mutex<Option<BodyBounds>>,
@@ -397,6 +402,10 @@ fn supersampling(app: &mut SolveApp, ctx: &egui::Context, view_proj: [[f32; 4]; 
 
 /// How long the view holds still before adaptive supersampling draws it at full quality (s).
 const SS_SETTLE: f64 = 0.25;
+
+/// How far (screen points) a press must be dragged for its release to draw a rectangle, circle
+/// or polygon (#1630); a shorter drag is a click that moved on the way (#2448).
+const DRAW_DRAG_MIN: f32 = 24.0;
 
 /// The display plan the model scene draws `b` from on the GPU, or `None` when its faces are built
 /// here from the reference mesh. Opaque shaded bodies (`opaque`: not faded, and no see-through
@@ -2472,15 +2481,34 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::frame_rate::paint(app, ui.ctx(), &painter, rect);
 
     // ---- interaction ----
+    // A tool's click that moved on the way (#2448) clicks where the button is let go.
+    if app.viewport.tool_click && resp.drag_stopped() {
+        app.viewport.tool_click = false;
+        if let Some(p) = ui.input(|i| i.pointer.latest_pos()).filter(|p| rect.contains(*p))
+            && app.tool.is_some()
+        {
+            crate::tools::on_hover(app, &proj, p);
+            crate::tools::on_click(app, &proj, p);
+        }
+    }
     // A two-point shape being dragged out (#1630) follows the pointer and ends where it is let go,
     // even over the shape's own dimension box, which rides along beside the pointer.
-    if app.viewport.draw_drag {
+    if let Some(from) = app.viewport.draw_drag {
         let at = ui.input(|i| i.pointer.latest_pos()).filter(|p| rect.contains(*p));
         if resp.drag_stopped() {
-            app.viewport.draw_drag = false;
+            app.viewport.draw_drag = None;
             if let Some(p) = at
                 && app.tool.as_ref().is_some_and(|t| t.pts.len() == 1)
             {
+                // Let go close to the press, it was a click that moved on the way (#2448): the
+                // first point goes where it was let go, as for the other tools, and the shape
+                // goes on by clicks.
+                if p.distance(from) < DRAW_DRAG_MIN
+                    && let Some(t) = app.tool.as_mut()
+                {
+                    t.pts.clear();
+                    crate::sketch_dims::reset(t);
+                }
                 crate::tools::on_hover(app, &proj, p);
                 crate::tools::on_click(app, &proj, p);
             }
@@ -2507,7 +2535,11 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             && let Some(a) = ui.input(|i| i.pointer.press_origin())
         {
             crate::tools::on_click(app, &proj, a);
-            app.viewport.draw_drag = app.tool.as_ref().is_some_and(|t| t.pts.len() == 1);
+            app.viewport.draw_drag = app.tool.as_ref().is_some_and(|t| t.pts.len() == 1).then_some(a);
+        } else if app.tool.is_some() && !held && primary_nav.is_none() && mode.is_none() && resp.drag_started_by(egui::PointerButton::Primary) {
+            // Any other press of a tool that turns into a drag is a click that moved on the way
+            // (#2448): its release clicks.
+            app.viewport.tool_click = true;
         }
         let reference_pick = (resp.clicked() || resp.double_clicked())
             && !held
@@ -2662,7 +2694,10 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             let active = app.session.active_sketch;
             match hit {
                 Some(Hit::SketchPoint { sketch, id, .. }) if Some(sketch) == active => {
-                    app.viewport.point_drag = Some((id, app.session.undo.len(), None))
+                    // A point dragged with the rest of a selection slides with it, from where it
+                    // was grabbed, rather than going to the cursor.
+                    let grab = if dragged_with(app, &id).is_empty() { None } else { on_plane(app, a) };
+                    app.viewport.point_drag = Some((id, app.session.undo.len(), grab))
                 }
                 Some(Hit::SketchCurve { sketch, id, .. }) if Some(sketch) == active => {
                     app.viewport.point_drag = on_plane(app, a).map(|q| (id, app.session.undo.len(), Some(q)));
@@ -2697,12 +2732,19 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             && let Some(mut q) = hover.and_then(|p| on_plane(app, p))
         {
             let from = grab.unwrap_or(q);
+            let with = dragged_with(app, &id);
             // Snap the dragged point (or the line's ends) to other geometry, like drawing.
             let snap = {
                 let st = app.session.world_state();
                 app.session.active_sketch.and_then(|s| st.sketch(s)).and_then(|ss| {
                     let sk = &ss.sketch;
-                    let (own, exclude) = crate::drag_snap::moving_points(sk, &id);
+                    let (mut own, mut exclude) = crate::drag_snap::moving_points(sk, &id);
+                    for (o, x) in with.iter().map(|w| crate::drag_snap::moving_points(sk, w)) {
+                        own.extend(o);
+                        exclude.extend(x);
+                    }
+                    own.sort_unstable();
+                    own.dedup();
                     if own.iter().any(|&p| sk.point_locked(p)) {
                         return crate::drag_snap::find(sk, &[], &[], 0.0);
                     }
@@ -2719,7 +2761,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 q += s.offset;
             }
             // Each frame re-solves the sketch only (`live`); the model follows when the drag ends.
-            let at = match app.session.execute("sketch.drag", &json!({"entity": id, "from": [from.x, from.y], "to": [q.x, q.y], "live": true})) {
+            let params = json!({"entity": id, "with": with, "from": [from.x, from.y], "to": [q.x, q.y], "live": true});
+            let at = match app.session.execute("sketch.drag", &params) {
                 Ok(r) => {
                     app.session.undo.truncate(depth + 1);
                     r.get("at").and_then(solidcraft_engine::params::vec2).unwrap_or(q)
@@ -2906,6 +2949,39 @@ pub(crate) fn select(app: &mut SolveApp, sel: Option<Sel>, add: bool, toggle: bo
         }
         None => {}
     }
+}
+
+/// The rest of the selected sketch geometry when the point or curve `id` is part of it (#2621):
+/// a drag that starts on a selected entity moves the whole selection with it.
+fn dragged_with(app: &SolveApp, id: &str) -> Vec<String> {
+    fn geometry(s: &Sel) -> Option<&str> {
+        match s {
+            Sel::SketchPoint { id } | Sel::SketchCurve { id } => Some(id.as_str()),
+            _ => None,
+        }
+    }
+    let selected = || app.session.selection.iter().filter_map(geometry);
+    if !selected().any(|s| s == id) {
+        return Vec::new();
+    }
+    let rest: Vec<String> = selected().filter(|s| *s != id).map(str::to_owned).collect();
+    // A curve's own points, selected with it by a window, are not a group: a circle grabbed on
+    // its edge still takes its radius from the drag.
+    let st = app.session.world_state();
+    let own: Vec<&str> = app
+        .session
+        .active_sketch
+        .and_then(|s| st.sketch(s))
+        .and_then(|ss| {
+            let sk = &ss.sketch;
+            let c = sk.curves.get(sk.curve_index(id)?)?;
+            Some(c.kind.point_ids().into_iter().filter_map(|p| sk.points.get(p).map(|p| p.id.as_str())).collect())
+        })
+        .unwrap_or_default();
+    if rest.iter().all(|r| own.contains(&r.as_str())) {
+        return Vec::new();
+    }
+    rest
 }
 
 /// What a click on `sel` picks: its pieces ([`grouped_selection`]), and for a letter of a sketch
@@ -3172,6 +3248,8 @@ fn hover_highlight(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let col = Tokens::get().hover_profile_edge;
     let st = app.session.world_state();
     match &app.viewport.hover {
+        // Trim shows the piece it would take away instead (`sketch_tools::preview`, #3052).
+        Some(Hit::SketchCurve { sketch, id, .. }) if crate::sketch_tools::trim_hover_piece(app, *sketch, id).is_some() => {}
         Some(Hit::SketchCurve { sketch, id, .. }) => {
             if let Some(ss) = st.sketch(*sketch)
                 && let Some(ci) = ss.sketch.curve_index(id)
