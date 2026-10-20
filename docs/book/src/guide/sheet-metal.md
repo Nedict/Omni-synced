@@ -57,7 +57,9 @@ square the round follows the angle of the base and the square becomes a kite, it
 square to the edges. Changing the shape in a rule changes the parts made with that rule. A
 relief that doesn't fit (under 0.01 mm across, leaving nothing of a bend, or reaching as far
 from its corner as another edge of the base is) is left out, and the flange feature reports a
-warning saying where.
+warning saying where. The reliefs at the corners of one edge are cut together, so a corner's
+relief does not depend on the order the corners are cut in; two of them that would overlap
+leave the second one out, with a warning.
 
 ```json
 {"command":"sheet.manage_rules","params":{"name":"Sheet 2 mm","thickness":"2 mm","k_factor":0.5,
