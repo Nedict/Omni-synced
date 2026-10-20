@@ -248,7 +248,7 @@ fn width(vp: egui::Rect) -> f32 {
 
 /// The viewport the palette docks into.
 fn viewport(app: &SolveApp, ctx: &egui::Context) -> egui::Rect {
-    app.viewport.rect.unwrap_or_else(|| ctx.content_rect())
+    crate::shell::content_rect(app, app.viewport.rect.unwrap_or_else(|| ctx.content_rect()))
 }
 
 /// Is a sketch being edited? That is the palette's own condition.
@@ -364,8 +364,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let vp = viewport(app, ctx);
     let bottom = vp.bottom().min(ctx.content_rect().bottom()) - 8.0;
     // Prefer the space below Axis View, but reclaim it on short/HiDPI views.
-    let top = (vp.top() + crate::viewport::AXIS_VIEW_CLEARANCE).min((bottom - 360.0).max(vp.top()));
-    let anchor = egui::pos2(vp.right(), top);
+    let top = crate::shell::panel_top(app, vp, bottom, crate::frame::Side::Right);
+    // Area rounds its left edge to a physical pixel; leave room for that rounding.
+    let anchor = egui::pos2(vp.right() - 0.5 / ctx.pixels_per_point(), top);
     let frame = crate::frame::dock_frame(ctx, crate::frame::Side::Right);
     let shown = |k: &str| match k {
         "grid" => !opts.hide_grid,
@@ -402,186 +403,205 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         let width = width(vp);
         ui.set_width(width);
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-        let line = ui.text_style_height(&egui::TextStyle::Body);
-        let gap = ui.spacing().item_spacing.y;
-        crate::frame::heading(ui, Level::Title, width, |ui| {
-            let folded = FOLDED.with(Cell::get);
-            if ui.add(egui::Button::new(RichText::new(if folded { "+" } else { "−" }).size(14.0)).frame(false)).clicked() {
-                FOLDED.with(|f| f.set(!folded));
-            }
-            ui.label(RichText::new(app.tr("ui.heading_sketch_palette")).strong().size(12.5));
-        });
-        if FOLDED.with(Cell::get) {
-            return;
-        }
-        // Feature Options sits above Options: the modes of the creation tool that is running.
-        if let Some((family, current)) = feature {
-            let ffold = FEATURE_FOLDED.with(Cell::get);
-            crate::frame::heading(ui, Level::Section, width, |ui| {
-                let (tri_rect, tri_resp) = ui.allocate_exact_size(vec2(14.0, 14.0), egui::Sense::click());
-                disclosure_triangle(ui.painter(), tri_rect.center(), !ffold, t.text);
-                crate::scenario::publish_handle("sketch_palette:feature_fold", tri_rect.center());
-                let label_resp = ui.add(egui::Label::new(RichText::new(app.tr("ui.feature_options")).size(12.0)).sense(egui::Sense::click()));
-                if tri_resp.clicked() || label_resp.clicked() {
-                    FEATURE_FOLDED.with(|f| f.set(!ffold));
+        // The options list normally scrolls on its own to keep Finish Sketch visible.
+        // When even the headings and footer cannot fit, scroll the whole palette.
+        let available_height = (bottom - anchor.y - frame.inner_margin.sum().y - 2.0 * frame.stroke.width).max(0.0);
+        let scroll_palette = bottom - anchor.y < 360.0;
+        let mut contents = |ui: &mut egui::Ui| {
+            let content_top = ui.cursor().top();
+            let line = ui.text_style_height(&egui::TextStyle::Body);
+            let gap = ui.spacing().item_spacing.y;
+            crate::frame::heading(ui, Level::Title, width, |ui| {
+                let folded = FOLDED.with(Cell::get);
+                if ui.add(egui::Button::new(RichText::new(if folded { "+" } else { "−" }).size(14.0)).frame(false)).clicked() {
+                    FOLDED.with(|f| f.set(!folded));
                 }
+                ui.label(RichText::new(app.tr("ui.heading_sketch_palette")).strong().size(12.5));
             });
-            if !ffold {
-                let section = ui.vertical(|ui| feature_row(app, ui, width, family, current));
-                start = section.inner;
-                crate::scenario::publish_rect("sketch_palette:feature_options", section.response.rect);
+            if FOLDED.with(Cell::get) {
+                return;
             }
-            ui.add_space(2.0);
-        }
-        let ofold = OPTIONS_FOLDED.with(Cell::get);
-        crate::frame::heading(ui, Level::Section, width, |ui| {
-            let (tri_rect, tri_resp) = ui.allocate_exact_size(vec2(14.0, 14.0), egui::Sense::click());
-            disclosure_triangle(ui.painter(), tri_rect.center(), !ofold, t.text);
-            crate::scenario::publish_handle("sketch_palette:options_fold", tri_rect.center());
-            let label_resp = ui.add(egui::Label::new(RichText::new(app.tr("ui.options")).size(12.0)).sense(egui::Sense::click()));
-            if tri_resp.clicked() || label_resp.clicked() {
-                OPTIONS_FOLDED.with(|f| f.set(!ofold));
-            }
-        });
-        if !ofold {
-            // Keep room for the footer: status heading and line, a line, Finish Sketch, a line.
-            let ends_rows = if open_ends > 0 { line + gap } else { 0.0 } + if untied_ends > 0 { ui.spacing().interact_size.y + gap } else { 0.0 };
-            let footer = 5.0 * line + ui.spacing().interact_size.y + 6.0 * gap + 8.0 + ends_rows;
-            let options_height = (bottom - ui.cursor().top() - footer).max(24.0);
-            let options =
-                egui::ScrollArea::vertical().id_salt("sc_palette_options").max_height(options_height).auto_shrink([false, true]).show(ui, |ui| {
-                    // Every row below: its label at the left, its control right-aligned at the
-                    // same column (`frame::right_aligned`), so every row lines up instead of
-                    // each control sitting wherever its label happened to end.
-                    ui.vertical(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(app.tr("ui.linetype"));
-                            // Taller and wider than the old text-only buttons. Construction and
-                            // Centerline need a round dot and a clear gap to read apart. 30 by
-                            // 20 px left too little square room for either.
-                            let btn_w = 36.0;
-                            let group_w = 4.0 * btn_w + 3.0 * ui.spacing().item_spacing.x;
-                            crate::frame::right_aligned(ui, width, group_w, |ui| {
-                                ui.horizontal(|ui| {
-                                    // With a selection: its line type, and a click converts it;
-                                    // without: the mode new curves are drawn in. Each button
-                                    // still carries its old glyph as hidden (transparent) text.
-                                    // That keeps its hit target, size and accessible name
-                                    // exactly as before. A drawn icon (icons.rs) paints over it.
-                                    // Construction and Centerline always draw in the theme's
-                                    // construction orange. Normal's icon never changes with the
-                                    // accent colour. It stays neutral in every case.
-                                    let current = mode(app);
-                                    for (i, (label, icon, tip)) in [
-                                        ("—", "normal", "Normal"),
-                                        ("- -", "construction", "Construction"),
-                                        ("-·-", "centerline", "Centerline"),
-                                        ("↔", "infinite", "Infinite"),
-                                    ]
-                                    .iter()
-                                    .enumerate()
-                                    {
-                                        let on = if has_curves { selected_types.get(i).copied().unwrap_or(false) } else { current == i as u8 };
-                                        let tr_tip = app.tr_label(tip);
-                                        let hover = if has_curves {
-                                            crate::i18n::format("sketch.make_selection", &[("linetype", tr_tip)])
-                                        } else {
-                                            crate::i18n::format("sketch.draw_curves", &[("linetype", tr_tip)])
-                                        };
-                                        let btn = egui::Button::new(RichText::new(*label).color(Color32::TRANSPARENT))
-                                            .selected(on)
-                                            .min_size(vec2(btn_w, 28.0));
-                                        let resp = ui.add(btn).on_hover_text(hover);
-                                        let accent = if *icon == "normal" { t.icon } else { t.construction_geom };
-                                        // A square icon area. The button's own rect is
-                                        // text-shaped, wider than tall. A flattened diagonal
-                                        // leaves less room for a dash pattern's gaps to read.
-                                        let side = (resp.rect.width().min(resp.rect.height()) - 3.0).max(12.0);
-                                        let icon_rect = egui::Rect::from_center_size(resp.rect.center(), vec2(side, side));
-                                        crate::icons::paint(ui.painter(), icon_rect, icon, t.icon, t.icon_fill, accent);
-                                        if resp.clicked() {
-                                            linetype = Some(i as u8);
-                                        }
-                                    }
-                                });
-                            });
-                        });
-                        ui.horizontal(|ui| {
-                            // One label, one icon button (the "lookat" glyph already used on the
-                            // viewport's own navigation overlay): not the word "Look At" twice.
-                            // The button carries no visible text of its own; `labelled_by` gives
-                            // it the row's own label as its accessible name, so a screen reader
-                            // still hears "Look At" the way the old text button said it.
-                            let label_resp = ui.label(app.tr("ui.look_at"));
-                            let icon_w = 28.0;
-                            let resp = crate::frame::right_aligned(ui, width, icon_w, |ui| {
-                                let r = ui.add(egui::Button::new("").min_size(vec2(icon_w, 20.0)));
-                                let side = (r.rect.width().min(r.rect.height()) - 4.0).max(12.0);
-                                let icon_rect = egui::Rect::from_center_size(r.rect.center(), vec2(side, side));
-                                crate::icons::paint(ui.painter(), icon_rect, "lookat", t.icon, t.icon_fill, t.accent);
-                                crate::scenario::publish_handle("sketch_palette:look_at", r.rect.center());
-                                r.labelled_by(label_resp.id)
-                            });
-                            let resp = resp.on_hover_text(app.tr("ui.look_at"));
-                            if resp.clicked() {
-                                look = true;
-                            }
-                        });
-                    });
-                    for (k, label) in TOGGLES {
-                        ui.horizontal(|ui| {
-                            // The label is still part of the toggle: clicking it flips the
-                            // checkbox too, same as before the checkbox moved to its own column.
-                            let label_resp = ui.add(egui::Label::new(app.tr_label(label)).sense(egui::Sense::click()));
-                            let mut on = shown(k);
-                            let box_w = ui.spacing().interact_size.y;
-                            let cb = crate::frame::right_aligned(ui, width, box_w, |ui| {
-                                ui.add(egui::Checkbox::without_text(&mut on)).labelled_by(label_resp.id)
-                            });
-                            if cb.changed() {
-                                set = Some((k.to_string(), on));
-                            } else if label_resp.clicked() {
-                                set = Some((k.to_string(), !on));
-                            }
-                        });
+            // Feature Options sits above Options: the modes of the creation tool that is running.
+            if let Some((family, current)) = feature {
+                let ffold = FEATURE_FOLDED.with(Cell::get);
+                crate::frame::heading(ui, Level::Section, width, |ui| {
+                    let (tri_rect, tri_resp) = ui.allocate_exact_size(vec2(14.0, 14.0), egui::Sense::click());
+                    disclosure_triangle(ui.painter(), tri_rect.center(), !ffold, t.text);
+                    crate::scenario::publish_handle("sketch_palette:feature_fold", tri_rect.center());
+                    let label_resp = ui.add(egui::Label::new(RichText::new(app.tr("ui.feature_options")).size(12.0)).sense(egui::Sense::click()));
+                    if tri_resp.clicked() || label_resp.clicked() {
+                        FEATURE_FOLDED.with(|f| f.set(!ffold));
                     }
                 });
-            crate::scenario::publish_rect("sketch_palette:options", options.inner_rect);
-        }
-        ui.add_space(4.0);
-        // The status changes when the sketch needs attention, so it gets its own heading.
-        crate::frame::heading(ui, Level::Section, width, |ui| {
-            ui.label(RichText::new(app.tr("ui.sketch_status")).size(12.0));
-        });
-        ui.label(RichText::new(crate::i18n::tr_dyn(&dof_line)).color(if ok { t.sketch_accent } else { t.text_dim }));
-        // Where a profile can fail (the viewport rings and diamonds them).
-        if open_ends > 0 {
-            let text = crate::i18n::format("sketch.open_ends", &[("count", &open_ends.to_string())]);
-            ui.label(RichText::new(text).color(t.warning)).on_hover_text(app.tr("ui.open_ends_tip"));
-        }
-        if untied_ends > 0 {
-            ui.horizontal(|ui| {
-                let text = crate::i18n::format("sketch.untied_ends", &[("count", &untied_ends.to_string())]);
-                ui.label(RichText::new(text).color(t.warning)).on_hover_text(app.tr("ui.untied_ends_tip"));
-                let button = ui.button(app.tr("ui.tie_ends")).on_hover_text(app.tr("ui.tie_ends_tip"));
-                crate::scenario::publish_handle("sketch_palette:tie_ends", button.rect.center());
-                if button.clicked() {
-                    tie = true;
+                if !ffold {
+                    let section = ui.vertical(|ui| feature_row(app, ui, width, family, current));
+                    start = section.inner;
+                    crate::scenario::publish_rect("sketch_palette:feature_options", section.response.rect);
+                }
+                ui.add_space(2.0);
+            }
+            let ofold = OPTIONS_FOLDED.with(Cell::get);
+            crate::frame::heading(ui, Level::Section, width, |ui| {
+                let (tri_rect, tri_resp) = ui.allocate_exact_size(vec2(14.0, 14.0), egui::Sense::click());
+                disclosure_triangle(ui.painter(), tri_rect.center(), !ofold, t.text);
+                crate::scenario::publish_handle("sketch_palette:options_fold", tri_rect.center());
+                let label_resp = ui.add(egui::Label::new(RichText::new(app.tr("ui.options")).size(12.0)).sense(egui::Sense::click()));
+                if tri_resp.clicked() || label_resp.clicked() {
+                    OPTIONS_FOLDED.with(|f| f.set(!ofold));
                 }
             });
-        }
-        // One line between the status and Finish Sketch, and below it to the edge.
-        ui.add_space((line - gap).max(0.0));
-        // A row as tall as the button, so the gap below it is just the line.
-        ui.allocate_ui_with_layout(vec2(ui.available_width(), 0.0), egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            let button = ui.add(egui::Button::new(RichText::new(app.tr("ui.finish_sketch")).color(Color32::WHITE)).fill(t.accent));
-            crate::scenario::publish_rect("sketch_palette:finish", button.rect);
-            crate::scenario::publish_handle("sketch_palette:finish", button.rect.center());
-            if button.clicked() {
-                finish = true;
+            if !ofold {
+                // Keep room for the footer: status heading and line, a line, Finish Sketch, a line.
+                let ends_rows = if open_ends > 0 { line + gap } else { 0.0 } + if untied_ends > 0 { ui.spacing().interact_size.y + gap } else { 0.0 };
+                let footer = 5.0 * line + ui.spacing().interact_size.y + 6.0 * gap + 8.0 + ends_rows;
+                let options_height =
+                    if scroll_palette { available_height - (ui.cursor().top() - content_top) - footer } else { bottom - ui.cursor().top() - footer }
+                        .max(24.0);
+                let options =
+                    egui::ScrollArea::vertical().id_salt("sc_palette_options").max_height(options_height).auto_shrink([false, true]).show(ui, |ui| {
+                        // Every row below: its label at the left, its control right-aligned at the
+                        // same column (`frame::right_aligned`), so every row lines up instead of
+                        // each control sitting wherever its label happened to end.
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(app.tr("ui.linetype"));
+                                // Taller and wider than the old text-only buttons. Construction and
+                                // Centerline need a round dot and a clear gap to read apart. 30 by
+                                // 20 px left too little square room for either.
+                                let btn_w = 36.0;
+                                let group_w = 4.0 * btn_w + 3.0 * ui.spacing().item_spacing.x;
+                                crate::frame::right_aligned(ui, width, group_w, |ui| {
+                                    ui.horizontal(|ui| {
+                                        // With a selection: its line type, and a click converts it;
+                                        // without: the mode new curves are drawn in. Each button
+                                        // still carries its old glyph as hidden (transparent) text.
+                                        // That keeps its hit target, size and accessible name
+                                        // exactly as before. A drawn icon (icons.rs) paints over it.
+                                        // Construction and Centerline always draw in the theme's
+                                        // construction orange. Normal's icon never changes with the
+                                        // accent colour. It stays neutral in every case.
+                                        let current = mode(app);
+                                        for (i, (label, icon, tip)) in [
+                                            ("—", "normal", "Normal"),
+                                            ("- -", "construction", "Construction"),
+                                            ("-·-", "centerline", "Centerline"),
+                                            ("↔", "infinite", "Infinite"),
+                                        ]
+                                        .iter()
+                                        .enumerate()
+                                        {
+                                            let on = if has_curves { selected_types.get(i).copied().unwrap_or(false) } else { current == i as u8 };
+                                            let tr_tip = app.tr_label(tip);
+                                            let hover = if has_curves {
+                                                crate::i18n::format("sketch.make_selection", &[("linetype", tr_tip)])
+                                            } else {
+                                                crate::i18n::format("sketch.draw_curves", &[("linetype", tr_tip)])
+                                            };
+                                            let btn = egui::Button::new(RichText::new(*label).color(Color32::TRANSPARENT))
+                                                .selected(on)
+                                                .min_size(vec2(btn_w, 28.0));
+                                            let resp = ui.add(btn).on_hover_text(hover);
+                                            let accent = if *icon == "normal" { t.icon } else { t.construction_geom };
+                                            // A square icon area. The button's own rect is
+                                            // text-shaped, wider than tall. A flattened diagonal
+                                            // leaves less room for a dash pattern's gaps to read.
+                                            let side = (resp.rect.width().min(resp.rect.height()) - 3.0).max(12.0);
+                                            let icon_rect = egui::Rect::from_center_size(resp.rect.center(), vec2(side, side));
+                                            crate::icons::paint(ui.painter(), icon_rect, icon, t.icon, t.icon_fill, accent);
+                                            if resp.clicked() {
+                                                linetype = Some(i as u8);
+                                            }
+                                        }
+                                    });
+                                });
+                            });
+                            ui.horizontal(|ui| {
+                                // One label, one icon button (the "lookat" glyph already used on the
+                                // viewport's own navigation overlay): not the word "Look At" twice.
+                                // The button carries no visible text of its own; `labelled_by` gives
+                                // it the row's own label as its accessible name, so a screen reader
+                                // still hears "Look At" the way the old text button said it.
+                                let label_resp = ui.label(app.tr("ui.look_at"));
+                                let icon_w = 28.0;
+                                let resp = crate::frame::right_aligned(ui, width, icon_w, |ui| {
+                                    let r = ui.add(egui::Button::new("").min_size(vec2(icon_w, 20.0)));
+                                    let side = (r.rect.width().min(r.rect.height()) - 4.0).max(12.0);
+                                    let icon_rect = egui::Rect::from_center_size(r.rect.center(), vec2(side, side));
+                                    crate::icons::paint(ui.painter(), icon_rect, "lookat", t.icon, t.icon_fill, t.accent);
+                                    crate::scenario::publish_handle("sketch_palette:look_at", r.rect.center());
+                                    r.labelled_by(label_resp.id)
+                                });
+                                let resp = resp.on_hover_text(app.tr("ui.look_at"));
+                                if resp.clicked() {
+                                    look = true;
+                                }
+                            });
+                        });
+                        for (k, label) in TOGGLES {
+                            ui.horizontal(|ui| {
+                                // The label is still part of the toggle: clicking it flips the
+                                // checkbox too, same as before the checkbox moved to its own column.
+                                let label_resp = ui.add(egui::Label::new(app.tr_label(label)).sense(egui::Sense::click()));
+                                let mut on = shown(k);
+                                let box_w = ui.spacing().interact_size.y;
+                                let cb = crate::frame::right_aligned(ui, width, box_w, |ui| {
+                                    ui.add(egui::Checkbox::without_text(&mut on)).labelled_by(label_resp.id)
+                                });
+                                if cb.changed() {
+                                    set = Some((k.to_string(), on));
+                                } else if label_resp.clicked() {
+                                    set = Some((k.to_string(), !on));
+                                }
+                            });
+                        }
+                    });
+                crate::scenario::publish_rect("sketch_palette:options", options.inner_rect);
             }
-        });
-        ui.add_space((line - margin_bottom).max(0.0));
+            ui.add_space(4.0);
+            // The status changes when the sketch needs attention, so it gets its own heading.
+            crate::frame::heading(ui, Level::Section, width, |ui| {
+                ui.label(RichText::new(app.tr("ui.sketch_status")).size(12.0));
+            });
+            ui.label(RichText::new(crate::i18n::tr_dyn(&dof_line)).color(if ok { t.sketch_accent } else { t.text_dim }));
+            // Where a profile can fail (the viewport rings and diamonds them).
+            if open_ends > 0 {
+                let text = crate::i18n::format("sketch.open_ends", &[("count", &open_ends.to_string())]);
+                ui.label(RichText::new(text).color(t.warning)).on_hover_text(app.tr("ui.open_ends_tip"));
+            }
+            if untied_ends > 0 {
+                ui.horizontal(|ui| {
+                    let text = crate::i18n::format("sketch.untied_ends", &[("count", &untied_ends.to_string())]);
+                    ui.label(RichText::new(text).color(t.warning)).on_hover_text(app.tr("ui.untied_ends_tip"));
+                    let button = ui.button(app.tr("ui.tie_ends")).on_hover_text(app.tr("ui.tie_ends_tip"));
+                    crate::scenario::publish_handle("sketch_palette:tie_ends", button.rect.center());
+                    if button.clicked() {
+                        tie = true;
+                    }
+                });
+            }
+            // One line between the status and Finish Sketch, and below it to the edge.
+            ui.add_space((line - gap).max(0.0));
+            // A row as tall as the button, so the gap below it is just the line.
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 0.0), egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                let button = ui.add(egui::Button::new(RichText::new(app.tr("ui.finish_sketch")).color(t.on_accent)).fill(t.accent));
+                crate::scenario::publish_rect("sketch_palette:finish", button.rect);
+                crate::scenario::publish_handle("sketch_palette:finish", button.rect.center());
+                if button.clicked() {
+                    finish = true;
+                }
+            });
+            ui.add_space((line - margin_bottom).max(0.0));
+        };
+        if scroll_palette {
+            egui::ScrollArea::vertical()
+                .id_salt("sc_palette_content")
+                .max_height(available_height)
+                .min_scrolled_height(0.0)
+                .auto_shrink([false, true])
+                .show(ui, contents);
+        } else {
+            contents(ui);
+        }
     });
     app.viewport.palette_rect = response.map(|r| r.response.rect);
     if let Some(r) = app.viewport.palette_rect {

@@ -53,6 +53,8 @@ pub fn drawn_occurrences() -> Vec<(Vec<u64>, String, Rect, bool)> {
 /// Browser state kept between frames.
 #[derive(Default)]
 pub struct TreeState {
+    /// The floating browser card is folded to its header.
+    pub panel_collapsed: bool,
     /// Geometry and assembly queries, independent of the camera, selection and row visibility.
     model: Option<model::Model>,
     /// Folders closed by the user (keys like `c0/bodies`).
@@ -266,7 +268,11 @@ pub fn group_action(app: &mut SolveApp, action: &str, p: &Value) {
 // Drawing
 // ---------------------------------------------------------------------------------------------
 
-const ROW_H: f32 = 22.0;
+const ROW_H: f32 = 26.0;
+/// The floating card's inner margin: the header highlight sits this far from the card's top, left
+/// and right edges, so its corners are concentric with the card's.
+const CARD_INSET: f32 = 4.0;
+const HEADER_H: f32 = 26.0;
 const INDENT: f32 = 14.0;
 /// Opacity of a dimmed row's icon (a hidden body, sketch, origin item, …).
 const DIM_ICON_OPACITY: f32 = 0.4;
@@ -327,7 +333,7 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
     let dragged_over = egui::DragAndDrop::has_any_payload(ui.ctx()) && ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| r.contains(p));
     let mut out = RowResp { rect: Some(r), hovered: resp.hovered() || dragged_over, ..Default::default() };
     if row.selected {
-        ui.painter().rect_filled(r, 3.0, t.accent_soft);
+        ui.painter().rect_filled(r, 3.0, crate::theme::TabAccent::current(ui.ctx()).soft);
     } else if resp.hovered() {
         ui.painter().rect_filled(r, 3.0, t.hover);
     }
@@ -357,8 +363,8 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
     // Fold arrow.
     if let Some(open) = row.fold {
         let ar = Rect::from_center_size(pos2(x + 6.0, cy), vec2(12.0, 12.0));
-        let ink = if hover_on == 1 { t.text } else { t.text_dim };
-        crate::icons::glyphs::disclosure(ui.painter(), ar, open, ink);
+        let strength = if hover_on == 1 { 1.0 } else { 0.7 };
+        icons::paint_icon(ui.painter(), ar, if open { "disclosure_open" } else { "disclosure_closed" }, strength);
         out.fold = resp.clicked() && click_on == 1;
         crate::scenario::publish_handle(&format!("fold:{}", row.label), fold_r.center());
     }
@@ -366,11 +372,8 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
     // Eye.
     if let Some(vis) = row.eye {
         let er = Rect::from_center_size(pos2(x + 8.0, cy), vec2(15.0, 15.0));
-        // A closed eye, or the eye of a faded row, draws faint like the row's icon.
-        icons::paint_icon(ui.painter(), er, "eye", if vis && !row.dim { 1.0 } else { DIM_ICON_OPACITY });
-        if !vis {
-            ui.painter().line_segment([er.left_bottom() + vec2(2.0, -2.0), er.right_top() + vec2(-2.0, 2.0)], Stroke::new(1.4, t.text_dim));
-        }
+        // Hidden or faded rows keep main's dimming, with the rounded suppression asset.
+        icons::paint_icon(ui.painter(), er, if vis { "eye" } else { "suppress" }, if vis && !row.dim { 0.85 } else { DIM_ICON_OPACITY });
         out.eye = resp.clicked() && click_on == 2;
         crate::scenario::publish_handle(&format!("eye:{}", row.label), er.center());
     }
@@ -392,9 +395,10 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
         icons::paint_icon(ui.painter(), ir, row.icon, if row.dim { DIM_ICON_OPACITY } else { 1.0 });
         x += 21.0;
     }
-    let col = row.color.unwrap_or(if row.dim { t.text_dim } else { t.text });
+    let col =
+        if row.selected { crate::theme::TabAccent::current(ui.ctx()).color } else { row.color.unwrap_or(if row.dim { t.text_dim } else { t.text }) };
     let label_display = if row.name { crate::i18n::tr_name(row.label) } else { crate::i18n::tr_dyn(row.label) };
-    let galley = ui.painter().layout_no_wrap(label_display, FontId::proportional(12.5), col);
+    let galley = ui.painter().layout_no_wrap(label_display, FontId::proportional(t.font_label), col);
     let lw = galley.size().x;
     ui.painter().galley(pos2(x, cy - galley.size().y / 2.0), galley, col);
     let mut bx = (x + lw + 6.0).min(r.right() - 16.0);
@@ -516,12 +520,11 @@ fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
     DRAWN.with(|d| d.borrow_mut().clear());
     OCCURRENCES.with(|d| d.borrow_mut().clear());
     let mut acts = Actions::default();
-    let remembered = app.preferences.browser_width;
-    let width = if remembered.is_finite() { remembered.clamp(MIN_BROWSER_WIDTH, MAX_BROWSER_WIDTH) } else { crate::prefs::DEFAULT_BROWSER_WIDTH };
+    let width = browser_width(app);
     let panel = egui::Panel::left("sc_browser")
         .exact_size(width)
         .resizable(false)
-        .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(6, 6)))
+        .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(t.space_6 as i8, t.space_6 as i8)))
         .show(ui, |ui| {
             if timeline_above {
                 let available = ui.available_height();
@@ -549,73 +552,135 @@ fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
                 }
                 let arrow = if browser_collapsed { "▶" } else { "▼" };
                 let response =
-                    ui.add(egui::Button::new(RichText::new(format!("{arrow}  BROWSER")).size(11.0).strong().color(t.text_dim)).frame(false));
+                    ui.add(egui::Button::new(RichText::new(format!("{arrow}  BROWSER")).size(t.font_small).strong().color(t.text_dim)).frame(false));
                 crate::scenario::publish_handle("left-browser-toggle", response.rect.center());
                 if response.clicked() {
                     app.preferences.timeline_left_browser_collapsed = !browser_collapsed;
                 }
                 if !browser_collapsed {
-                    ui.add_space(4.0);
+                    ui.add_space(t.space_4);
                     browser_rows(app, ui, &mut acts);
                 }
             } else {
-                browser_contents(app, ui, &mut acts);
+                browser_contents(app, ui, &mut acts, false);
             }
         });
-    // The sidebar's right edge is a drag handle; the width it is dragged to is remembered.
-    let rect = panel.response.rect;
-    let rail = egui::Rect::from_x_y_ranges(rect.right() - BROWSER_RAIL..=rect.right(), rect.y_range());
-    let response = ui.interact(rail, egui::Id::new("sc_browser_rail"), egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+    resize_browser(app, ui, panel.response.rect, width);
+    finish_browser(app, ui, acts);
+}
+
+fn browser_width(app: &SolveApp) -> f32 {
+    let remembered = app.preferences.browser_width;
+    if remembered.is_finite() { remembered.clamp(MIN_BROWSER_WIDTH, MAX_BROWSER_WIDTH) } else { crate::prefs::DEFAULT_BROWSER_WIDTH }
+}
+
+fn resize_browser(app: &mut SolveApp, ui: &egui::Ui, rect: Rect, width: f32) {
+    let rail = Rect::from_x_y_ranges(rect.right() - BROWSER_RAIL..=rect.right(), rect.y_range());
+    let response = ui.interact(rail, egui::Id::new("sc_browser_rail"), Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
     if response.dragged() {
         let delta = ui.input(|input| input.pointer.delta().x);
         if delta.is_finite() {
             app.preferences.browser_width = (width + delta).clamp(MIN_BROWSER_WIDTH, MAX_BROWSER_WIDTH);
         }
     }
-    crate::scenario::publish_handle("left-browser-rail", egui::pos2(rect.right() - BROWSER_RAIL / 2.0, rect.center().y));
-    finish_browser(app, ui, acts);
+    crate::scenario::publish_handle("left-browser-rail", pos2(rect.right() - BROWSER_RAIL / 2.0, rect.center().y));
 }
 
-/// The tree on a translucent card over the workspace, instead of a column that takes width from
-/// it (Preferences: "Float it over the workspace"). Drawn before the central view, in a layer
-/// above it, so the viewport keeps the whole window and the card sits on top of it.
-pub fn floating(app: &mut SolveApp, ui: &mut egui::Ui, viewport: egui::Rect) {
+/// One browser card for the floating shell and the docked shell's optional overlay.
+/// The preference keeps its translucent overlay semantics; the floating shell always has a card.
+pub fn floating(app: &mut SolveApp, ui: &mut egui::Ui, available: Rect) {
     let t = Tokens::get();
     app.tree.order.clear();
     DRAWN.with(|d| d.borrow_mut().clear());
     OCCURRENCES.with(|d| d.borrow_mut().clear());
     let mut acts = Actions::default();
-    let remembered = app.preferences.browser_width;
-    let width = if remembered.is_finite() { remembered.clamp(MIN_BROWSER_WIDTH, MAX_BROWSER_WIDTH) } else { crate::prefs::DEFAULT_BROWSER_WIDTH };
-    // Tall enough for the tree, short enough to leave the view room; the rows scroll inside.
-    let height = (viewport.height() * 0.7).clamp(160.0, 560.0);
-    let card = crate::frame::area(egui::Id::new("sc_browser_float")).fixed_pos(viewport.min + vec2(8.0, 8.0)).order(egui::Order::Middle).show(
-        ui.ctx(),
-        |ui| {
-            egui::Frame::new()
-                .fill(t.panel.gamma_multiply(BROWSER_FLOAT_ALPHA))
-                .stroke(egui::Stroke::new(1.0, t.border))
-                .corner_radius(6)
-                .inner_margin(egui::Margin::symmetric(8, 6))
-                .show(ui, |ui| {
-                    ui.set_width(width - 16.0);
-                    ui.set_max_height(height);
-                    ui.label(RichText::new(crate::i18n::tr_label("BROWSER")).size(11.0).strong().color(t.text_dim));
-                    ui.add_space(4.0);
-                    // The card hugs the tree, so it hides as little of the view as it can.
-                    browser_rows_hugging(app, ui, &mut acts);
-                });
-        },
-    );
-    crate::scenario::publish_rect("browser:float", card.response.rect);
+    let gap = crate::shell::SHELL_GAP;
+    let top_gap = if app.ui.layout == crate::shell::LayoutMode::Docked { gap } else { 0.0 };
+    let min = available.min + vec2(gap, top_gap);
+    let right = (available.right() - gap).max(min.x);
+    let bottom = app.shell.history.map_or(available.bottom() - gap, |r| r.top() - gap).max(min.y);
+    let width = browser_width(app);
+    let bounds = Rect::from_min_max(min, pos2((min.x + width).min(right), bottom));
+    app.shell.browser = None;
+    let min_height = HEADER_H + 2.0 * (CARD_INSET + 1.0);
+    if bounds.is_positive() && bounds.height() >= min_height {
+        let fill = if app.preferences.browser_float { t.panel.gamma_multiply(BROWSER_FLOAT_ALPHA) } else { t.panel };
+        let frame = crate::frame::shell_card(fill).inner_margin(CARD_INSET as i8);
+        let inner_width = (bounds.width() - frame.total_margin().sum().x).max(0.0);
+        let inner_height = (bounds.height() - frame.total_margin().sum().y).max(0.0);
+        let card = crate::frame::area(egui::Id::new("sc_browser_card")).fixed_pos(bounds.min).order(egui::Order::Middle).show(ui.ctx(), |ui| {
+            let response = frame.show(ui, |ui| {
+                ui.set_width(inner_width);
+                ui.set_max_height(inner_height);
+                browser_contents(app, ui, &mut acts, true);
+            });
+            resize_browser(app, ui, response.response.rect, width);
+        });
+        let rect = card.response.rect;
+        app.shell.browser = Some(rect);
+        crate::scenario::publish_rect("browser:card", rect);
+        // Preserve the overlay handle used by main's automation.
+        if app.preferences.browser_float {
+            crate::scenario::publish_rect("browser:float", rect);
+        }
+    }
     finish_browser(app, ui, acts);
 }
 
-fn browser_contents(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
+fn browser_contents(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions, collapsible: bool) {
     let t = Tokens::get();
-    ui.label(RichText::new(crate::i18n::tr_label("BROWSER")).size(11.0).strong().color(t.text_dim));
-    ui.add_space(4.0);
-    browser_rows(app, ui, acts);
+    // Only the floating card folds; the docked column keeps its full height.
+    browser_header(app, ui, collapsible);
+    if collapsible && app.tree.panel_collapsed {
+        return;
+    }
+    ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top() + 1.0, egui::Stroke::new(1.0, t.toolbar.lerp_to_gamma(t.border, 0.5)));
+    ui.add_space(t.space_3);
+    if collapsible {
+        browser_rows_hugging(app, ui, acts);
+    } else {
+        browser_rows(app, ui, acts);
+    }
+}
+
+/// The header: the title, the body count and (on the floating card) a chevron that folds the
+/// card to just this row. The whole row is the button.
+fn browser_header(app: &mut SolveApp, ui: &mut egui::Ui, collapsible: bool) {
+    let t = Tokens::get();
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), Sense::hover());
+    let response = ui.interact(rect, ui.id().with("browser_header"), if collapsible { Sense::click() } else { Sense::hover() });
+    crate::scenario::publish_handle("browser:header", rect.center());
+    crate::scenario::publish_rect("browser:header", rect);
+    let collapsed = collapsible && app.tree.panel_collapsed;
+    if collapsible && (response.hovered() || response.has_focus()) {
+        ui.painter().rect_filled(rect, t.radius_lg.saturating_sub(CARD_INSET as u8), t.hover);
+    }
+    let title = crate::i18n::tr("ui.browser_title").to_string();
+    let kind = if collapsible { egui::WidgetType::Button } else { egui::WidgetType::Label };
+    response.widget_info(|| egui::WidgetInfo::labeled(kind, true, &title));
+    let galley = ui.painter().layout_no_wrap(title, FontId::proportional(t.font_heading), t.text);
+    ui.painter().galley(pos2(rect.left() + t.space_6, rect.center().y - galley.size().y / 2.0), galley, t.text);
+    let mut right = rect.right() - t.space_6;
+    if collapsible {
+        let chevron = Rect::from_center_size(pos2(right - 5.0, rect.center().y), vec2(12.0, 12.0));
+        if collapsed {
+            crate::icons::paint_ink(ui.painter(), chevron, "chevron", t.text_dim);
+        } else {
+            crate::icons::paint_ink_flipped(ui.painter(), chevron, "chevron", t.text_dim);
+        }
+        right -= 18.0;
+    }
+    let bodies = app.session.model.state().bodies.len();
+    let key = if bodies == 1 { "ui.browser_bodies_one" } else { "ui.browser_bodies_other" };
+    let count = crate::i18n::format(key, &[("count", &bodies.to_string())]);
+    let galley = ui.painter().layout_no_wrap(count, FontId::proportional(t.font_body), t.text_dim);
+    ui.painter().galley(pos2(right - galley.size().x, rect.center().y - galley.size().y / 2.0), galley, t.text_dim);
+    if collapsible {
+        let tip = crate::i18n::tr(if collapsed { "ui.browser_expand" } else { "ui.browser_collapse" });
+        if response.on_hover_text(tip).clicked() {
+            app.tree.panel_collapsed = !app.tree.panel_collapsed;
+        }
+    }
 }
 
 fn prepare_model(app: &mut SolveApp) {
@@ -2067,7 +2132,7 @@ pub fn dims_overlay(app: &SolveApp, ctx: &egui::Context) {
             let col = if c.driven { tk.dimension_driven } else { tk.dimension };
             let galley = painter.layout_no_wrap(
                 crate::dim_view::label(&c.kind, expr, c.driven, &app.session.doc.units, app.preferences.length_decimals),
-                FontId::proportional(11.5),
+                FontId::proportional(tk.font_caption),
                 col,
             );
             let size = galley.size() + vec2(6.0, 2.0);
@@ -2091,7 +2156,7 @@ pub fn dims_overlay(app: &SolveApp, ctx: &egui::Context) {
 
 /// Where the browser's panels open: the viewport's top left corner.
 fn panel_pos(app: &SolveApp) -> Pos2 {
-    app.viewport.rect.map(|r| r.left_top() + vec2(16.0, 16.0)).unwrap_or(pos2(270.0, 140.0))
+    app.viewport.rect.map(|r| crate::shell::content_rect(app, r).left_top() + vec2(16.0, 16.0)).unwrap_or(pos2(270.0, 140.0))
 }
 
 /// The Capture Position question stands for saving.
@@ -2185,3 +2250,7 @@ pub(crate) fn body_rows(app: &SolveApp) -> Vec<String> {
 #[cfg(test)]
 #[path = "section_browser_tests.rs"]
 mod section_browser_tests;
+
+#[cfg(test)]
+#[path = "browser_card_tests.rs"]
+mod card_tests;

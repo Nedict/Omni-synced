@@ -88,40 +88,6 @@ thread_local! {
     static DEFERRED: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Commands registered on one panel that another panel also lists: the analyses (sketch
-/// INSPECT) on SOLID INSPECT, and Interference (SOLID INSPECT) on sketch INSPECT.
-const ALSO_IN: &[(&str, &str, &str)] = &[
-    ("SOLID", "INSPECT", "inspect.zebra"),
-    ("SOLID", "INSPECT", "inspect.draft"),
-    ("SOLID", "INSPECT", "inspect.curvature_map"),
-    ("SOLID", "INSPECT", "inspect.environment_map"),
-    ("SOLID", "INSPECT", "inspect.accessibility"),
-    ("SOLID", "INSPECT", "inspect.minimum_radius"),
-    ("SOLID", "INSPECT", "inspect.isocurve"),
-    ("SOLID", "INSPECT", "inspect.curvature_comb"),
-    ("SOLID", "INSPECT", "inspect.center_of_mass"),
-    ("SKETCH", "INSPECT", "inspect.interference"),
-];
-
-/// A panel's commands plus the ones it shares with another panel (see [`ALSO_IN`]).
-pub fn also_in<'a>(
-    tab: &str,
-    panel: &str,
-    mut cmds: Vec<&'a solidcraft_engine::CommandSpec>,
-    specs: &[&'a solidcraft_engine::CommandSpec],
-) -> Vec<&'a solidcraft_engine::CommandSpec> {
-    for (t, p, id) in ALSO_IN {
-        if *t == tab
-            && *p == panel
-            && !cmds.iter().any(|c| c.id == *id)
-            && let Some(c) = specs.iter().find(|c| c.id == *id)
-        {
-            cmds.push(c);
-        }
-    }
-    cmds
-}
-
 /// Run an analysis and keep its result as a marker.
 fn analysis(app: &mut SolveApp, cmd: &str, p: Value) {
     let Ok(v) = app.run(cmd, p) else { return };
@@ -1040,13 +1006,13 @@ pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) {
         // In the error colour, thicker than a hover: it is what the click deletes.
         crate::tools::paint_sketch_path(&world, 0, painter, proj, Stroke::new(4.5, tk.error));
     }
-    let stroke = Stroke::new(1.5, tk.rubber_band);
+    let stroke = Stroke::new(1.5, tk.sketch_accent);
     if let Some((hp, snap)) = &t.hover
         && let Some(sp) = to(*hp)
     {
         painter.circle_stroke(sp, if snap.is_some() { 6.0 } else { 3.0 }, stroke);
     }
-    let faint = Stroke::new(1.0, tk.rubber_band.gamma_multiply(0.6));
+    let faint = Stroke::new(1.0, tk.sketch_accent.gamma_multiply(0.6));
     let mode = crate::sketch_palette::mode(app);
     for w in t.pts.windows(2) {
         crate::tools::paint_sketch_path(&[ss.plane.to_world(w[0].0), ss.plane.to_world(w[1].0)], mode, painter, proj, faint);

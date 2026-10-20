@@ -151,6 +151,10 @@ fn second_occurrence_drawn_wire_fit_picks_and_world_triad_drag_stay_aligned() {
     h.call("ui.view", json!({"view":"fit"}));
     h.app.start("sketch.line");
     h.frames(2);
+    // The clickable Line instruction toast covers the fitted lower endpoint. This scenario
+    // tests model picks, so dismiss the transient instruction before clicking through that area.
+    h.app.status = None;
+    h.frames(2);
     for world in [Vec3::new(17.0, 32.0, 45.0), Vec3::new(17.0, 32.0, 55.0)] {
         let [x, y] = h.at(&json!({"world":[world.x,world.y,world.z]})).unwrap();
         let proj = crate::viewport::projection(&h.app, h.app.viewport.rect.unwrap());
