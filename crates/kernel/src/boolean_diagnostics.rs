@@ -163,7 +163,8 @@ pub(crate) fn record(event: BooleanFallback) {
     });
 }
 
-pub(crate) fn merge(report: BooleanDiagnostics) {
+/// Add `report`, captured by a nested call, to the events the caller captures.
+pub fn merge(report: BooleanDiagnostics) {
     for event in report.events {
         record(event);
     }
