@@ -17,6 +17,10 @@ use crate::body::{from_p3, p3, v3};
 /// circles reach the kernel as two half arcs, and their walls stay two faces.
 const MAX_SWEEP: f64 = PI + 1e-7;
 
+/// A cylinder split into more strips than this keeps them: finding the runs takes n² lengths and
+/// n² log n time for n strips, and a dense hole pattern under a ring can make thousands.
+const MAX_STRIPS: usize = 256;
+
 /// The cylinder a face lies on: a point on its axis, the axis (the same way for every face on
 /// the cylinder), the radius, and whether the face's outward normal points away from the axis.
 #[derive(Clone, Copy)]
@@ -241,6 +245,9 @@ pub(super) fn merge_cocylindrical(shell: &mt::Shell, tol: f64, keep: &[Vec<Vec3>
 /// the turn and height they span.
 fn runs(members: &[usize], spans: &[Span], pairs: &[(usize, usize)]) -> Vec<(Vec<usize>, (f64, f64, f64, f64))> {
     let n = members.len();
+    if n > MAX_STRIPS {
+        return Vec::new();
+    }
     let mut order: Vec<usize> = (0..n).collect();
     let start = |k: usize| spans.get(k).map_or(0.0, |s| s.lo.rem_euclid(TAU));
     order.sort_by(|a, b| start(*a).total_cmp(&start(*b)));
