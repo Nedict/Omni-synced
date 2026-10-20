@@ -5,7 +5,7 @@
 use serde_json::json;
 
 use crate::SolveApp;
-use crate::browser::{answer_capture, apply_occurrence_move, occurrence_origin, panel_pos, revert_occurrence_dialog, triad};
+use crate::browser::{answer_capture, apply_occurrence_move, occurrence_origin, panel_pos, revert_occurrence_dialog};
 use crate::ui_kit;
 
 /// Move/Copy of an occurrence: offsets and a rotation about Z, pending until Capture Position.
@@ -63,7 +63,6 @@ pub(crate) fn occurrence_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
             }
         });
-    triad(app, ui, &mut m);
     if (m.translate, m.angles) != before {
         apply_occurrence_move(app, &m);
     }

@@ -38,10 +38,19 @@ pub const TOGGLES: [(&str, &str); 10] = [
     ("sketch_3d", "3D Sketch"),
 ];
 
-/// The degrees-of-freedom line: "Fully constrained" or "N degrees of freedom".
-pub fn dof_text(dof: usize, ok: bool) -> String {
+/// Does the sketch hold any geometry of its own: a drawn curve or a 3D curve? Projected curves
+/// and the origin are held in place and do not count.
+pub fn has_geometry(sketch: &solidcraft_engine::sketch::Sketch) -> bool {
+    !sketch.curves.is_empty() || !sketch.wires.is_empty()
+}
+
+/// The degrees-of-freedom line: "No geometry yet" (an empty sketch only has its fixed origin),
+/// "Fully constrained" or "N degrees of freedom".
+pub fn dof_text(dof: usize, ok: bool, has_geometry: bool) -> String {
     if !ok {
         "Constraints conflict".into()
+    } else if !has_geometry {
+        "No geometry yet".into()
     } else if dof == 0 {
         "Fully constrained".into()
     } else if dof == 1 {
@@ -296,7 +305,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     if !visible(app, ctx) {
         return;
     }
-    let (opts, name, remaining, solved, total, open_ends, untied_ends) = {
+    let (opts, name, remaining, solved, total, geometry, open_ends, untied_ends) = {
         let st = app.session.world_state();
         let Some(ss) = app.session.active_sketch.and_then(|s| st.sketch(s)) else { return };
         (
@@ -305,6 +314,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             ss.report.dof,
             ss.report.ok(),
             unconstrained_total(&ss.sketch),
+            has_geometry(&ss.sketch),
             ss.ends.open.len(),
             ss.ends.untied.len(),
         )
@@ -351,8 +361,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let response = panel.window().show(ctx, |ui| {
         panel.palette(ui, bottom, top, |ui, part| match part {
             crate::ui_kit::Part::Header => {
-                let status = if !solved || remaining == 0 {
-                    crate::i18n::tr_dyn(&dof_text(remaining, solved))
+                let status = if !solved || !geometry || remaining == 0 {
+                    crate::i18n::tr_dyn(&dof_text(remaining, solved, geometry))
                 } else {
                     crate::i18n::format(if remaining == 1 { "sketch.dof_left_one" } else { "sketch.dof_left" }, &[("count", &remaining.to_string())])
                 };
@@ -363,8 +373,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     crate::ui_kit::StatusHeader {
                         icon: "sketch",
                         text: &status,
-                        complete: solved && remaining == 0,
-                        fraction: constrained_fraction(remaining, total, solved),
+                        complete: solved && remaining == 0 && geometry,
+                        fraction: constrained_fraction(remaining, total, solved && geometry),
                     },
                 );
             }
@@ -902,9 +912,31 @@ mod tests {
 
     #[test]
     fn dof_readout() {
-        assert_eq!(dof_text(0, true), "Fully constrained");
-        assert_eq!(dof_text(1, true), "1 degree of freedom");
-        assert_eq!(dof_text(4, true), "4 degrees of freedom");
-        assert_eq!(dof_text(4, false), "Constraints conflict");
+        assert_eq!(dof_text(0, true, true), "Fully constrained");
+        assert_eq!(dof_text(1, true, true), "1 degree of freedom");
+        assert_eq!(dof_text(4, true, true), "4 degrees of freedom");
+        assert_eq!(dof_text(4, false, true), "Constraints conflict");
+        assert_eq!(dof_text(0, true, false), "No geometry yet");
+    }
+
+    /// #2906: a new sketch has no degree of freedom (only the fixed origin), which is not
+    /// "Fully constrained"; the palette says there is no geometry until a curve is drawn.
+    #[test]
+    fn an_empty_sketch_is_not_reported_fully_constrained() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        h.settle();
+        let line = |h: &crate::scenario::Harness| {
+            let st = h.app.session.world_state();
+            let ss = h.app.session.active_sketch.and_then(|s| st.sketch(s)).unwrap();
+            dof_text(ss.report.dof, ss.report.ok(), has_geometry(&ss.sketch))
+        };
+        assert_eq!(line(&h), "No geometry yet");
+        assert!(h.widget("No geometry yet").is_some(), "the kit header shows the empty-sketch status");
+        assert!(h.widget("Fully constrained").is_none());
+        assert_eq!(crate::scenario::count_of("sketch_palette:constrained_fraction"), Some(0.0));
+        h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[10,5]})).unwrap();
+        h.settle();
+        assert_ne!(line(&h), "No geometry yet", "a drawn rectangle is geometry");
     }
 }
