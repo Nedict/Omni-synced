@@ -1216,7 +1216,7 @@ mod rename_tests {
             .collect();
         let sketches: Vec<String> = st.sketches.iter().map(|sk| format!("{} {}", sk.feature, sk.name)).collect();
         let construct: Vec<String> = st.construct.iter().map(|c| format!("{} {}", c.feature, c.name)).collect();
-        format!("{bodies:?} {threads:?} {sheets:?} {links:?} {sketches:?} {construct:?}")
+        format!("{bodies:?} {threads:?} {sheets:?} {links:?} {sketches:?} {construct:?} counter {}", st.body_counter)
     }
 
     /// Rename body `old` to `new`; whether that built nothing again. The model then is the one a
@@ -1283,6 +1283,20 @@ mod rename_tests {
 
     /// The copies a pattern makes are named after their body when the pattern is evaluated:
     /// renaming the body renames them, so it evaluates, and gives what an evaluation gives.
+    /// A body the counter named (`Body1`) is renamed by evaluating: the counter then is what a
+    /// full evaluation gives, and the next counted body is named the same as after reopening.
+    #[test]
+    fn a_counted_body_is_renamed_by_evaluating() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10}));
+        assert!(!rename(&mut s, "Body1", "Plate"));
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [20, 0, 0], "operation": "new_body"}));
+        let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+        let reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        let again: Vec<String> = reopened.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+        assert_eq!(names, again, "the next counted body is named as after reopening");
+    }
+
     #[test]
     fn a_patterned_body_is_renamed_by_evaluating() {
         let mut s = Session::default();

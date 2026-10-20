@@ -1427,6 +1427,15 @@ impl Model {
         let made_from_old = |name: &str| name.strip_prefix(old).is_some_and(|rest| rest.starts_with(" (") || rest.starts_with('\''));
         let kept = |b: &ModelBody| after.feature(b.feature).is_some_and(|f| f.body_names.contains(&b.name));
         let names_old = |m: &Option<String>| m.as_deref().is_some_and(|m| m.contains(old));
+        // A body the counter named (`BodyN`, no stored name for it in `before`: see `new_name`)
+        // moved `body_counter` on; once renamed its name is stored, and a full evaluation no longer
+        // counts it. Evaluate, so the next counted body gets the same name now as after reopening.
+        let counter_named = old.strip_prefix("Body").is_some_and(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()));
+        let counted =
+            |b: &ModelBody| counter_named && b.name == old && before.feature(b.feature).is_none_or(|f| !f.body_names.iter().any(|n| n == old));
+        if self.results.iter().any(|r| r.state.bodies.iter().any(counted)) {
+            return false;
+        }
         for (r, f) in self.results.iter().zip(&after.features) {
             if r.id != f.id || r.stale || names_old(&r.error) || names_old(&r.warning) {
                 return false;
