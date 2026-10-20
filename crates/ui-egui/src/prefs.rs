@@ -1354,7 +1354,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.add_enabled(!touchpad, egui::Checkbox::new(&mut app.preferences.trackpad_pan, "")).on_hover_text(if touchpad {
                 crate::i18n::tr("nav.touchpad.scroll")
             } else {
-                crate::i18n::tr_label("Trackpad gestures pan (off: they zoom like the wheel); mouse wheel zooms, thumb wheel pans sideways, pinch always zooms")
+                crate::i18n::tr("ui.trackpad_pan_tip")
             });
             ui.end_row();
             ui.label(crate::i18n::tr_label("Reverse horizontal pan direction"));
