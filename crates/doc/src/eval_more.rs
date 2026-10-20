@@ -100,20 +100,22 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             let tn = tp.normal();
             let i = body_at(st, body, &crate::plain(faces))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
-            let mut b = mb.body.clone();
+            // Each face moved is a step of the body's lineage, as Offset Face's is: without it no face of
+            // the result could take a sketch's attachment.
+            let mut b = mb.traced();
             for p in faces {
-                let n =
-                    planar_normal_at(&b, p.0).ok_or_else(|| DocError::Invalid("not supported yet: replacing a face that is not planar".into()))?;
+                let n = planar_normal_at(&b.body, p.0)
+                    .ok_or_else(|| DocError::Invalid("not supported yet: replacing a face that is not planar".into()))?;
                 if n.dot(tn).abs() < 1.0 - 1e-9 {
                     return Err(DocError::Invalid("not supported yet: a target that is not parallel to the face".into()));
                 }
                 let d = (tp.origin - p.0).dot(n);
                 if d.abs() > 1e-9 {
-                    b = kernel::offset_faces(&b, &[p.0], d)?;
+                    b = Traced::step(kernel::offset_faces(&b.body, &[p.0], d)?, &[&b]);
                 }
             }
             if let Some(slot) = st.bodies.get_mut(i) {
-                *slot = ModelBody::new(mb.name, b, mb.feature);
+                *slot = ModelBody::traced_new(mb.name, b, mb.feature);
             }
             Ok(())
         }
@@ -1880,16 +1882,24 @@ pub(super) fn plastic_eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &F
             // The band along the chosen edge, inside the rim face. A groove's cutter reaches past
             // the edge into the free side (the cavity, or outside), so no wall coincides.
             let free = if *groove { bw } else { 0.0 };
-            let band = if *outside {
-                Region2 {
-                    outer: Loop2::polygon(&offset_left(&outer, -free)).ccw(),
-                    holes: vec![Loop2::polygon(&offset_left(&outer, bw)).ccw().reversed()],
-                }
+            let (plane, band) = if let Ok(exact) = kernel::rim_band(&mb.body, face.0, bw, free, *outside) {
+                exact
+            } else if *outside {
+                (
+                    plane,
+                    Region2 {
+                        outer: Loop2::polygon(&offset_left(&outer, -free)).ccw(),
+                        holes: vec![Loop2::polygon(&offset_left(&outer, bw)).ccw().reversed()],
+                    },
+                )
             } else {
-                Region2 {
-                    outer: Loop2::polygon(&offset_left(&inner, -bw)).ccw(),
-                    holes: vec![Loop2::polygon(&offset_left(&inner, free)).ccw().reversed()],
-                }
+                (
+                    plane,
+                    Region2 {
+                        outer: Loop2::polygon(&offset_left(&inner, -bw)).ccw(),
+                        holes: vec![Loop2::polygon(&offset_left(&inner, free)).ccw().reversed()],
+                    },
+                )
             };
             let delta = (h * 0.05).clamp(1e-3, 0.5);
             if *groove {
