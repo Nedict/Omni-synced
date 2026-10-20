@@ -4248,7 +4248,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-manufacture"
-version = "0.15.0"
+version = "0.16.2"
 dependencies = [
  "serde",
  "serde_json",
