@@ -95,9 +95,9 @@ pub fn speed_slider(ui: &mut egui::Ui, speed: &mut Speed) -> egui::Response {
         Speed::Times(x) => x.clamp(1.0, 5.0),
         Speed::Instant => 5.5,
     };
-    let r = ui.add(
-        egui::Slider::new(&mut v, 1.0..=5.5).step_by(0.5).custom_formatter(|v, _| if v > 5.25 { "Instant".into() } else { Speed::Times(v).label() }),
-    );
+    let r = crate::ui_kit::formatted_slider(ui, &mut v, 1.0..=5.5, 0.5, |v| {
+        if v > 5.25 { crate::i18n::tr_label("Instant").into() } else { Speed::Times(v).label() }
+    });
     if r.changed() {
         *speed = if v > 5.25 { Speed::Instant } else { Speed::Times(v) };
     }
@@ -153,7 +153,7 @@ pub fn stops(app: &SolveApp, command: &str, params: &Value) -> Vec<Pos2> {
     let mut out = Vec::new();
     if let Some(spec) = solidcraft_engine::find_command(command) {
         let button = crate::scenario::handle_at(&format!("toolbar:{}", spec.id))
-            .or_else(|| crate::scenario::handle_at(&format!("panel:{}:{}", spec.tab, spec.panel)));
+            .or_else(|| crate::workspace::destination(spec).and_then(|(t, p)| crate::scenario::handle_at(&format!("panel:{t}:{p}"))));
         out.extend(button);
     }
     let Some(rect) = app.viewport.rect else { return out };

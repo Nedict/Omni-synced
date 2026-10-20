@@ -23,6 +23,54 @@ include!(concat!(env!("OUT_DIR"), "/icon_data.rs"));
 /// The id drawn for every icon that has no master yet.
 pub const PLACEHOLDER: &str = "placeholder";
 
+/// Opt-in icon discovery on the UI thread. Disabled rendering only checks a thread-local flag.
+pub mod audit {
+    use std::cell::{Cell, RefCell};
+    use std::collections::BTreeMap;
+
+    /// One requested semantic id and the artwork actually selected by the renderer.
+    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+    pub struct Requested {
+        pub name: String,
+        pub master: String,
+        pub placeholder: bool,
+    }
+
+    thread_local! {
+        static ACTIVE: Cell<bool> = const { Cell::new(false) };
+        static REQUESTS: RefCell<BTreeMap<String, Requested>> = const { RefCell::new(BTreeMap::new()) };
+    }
+
+    /// Enable collection and reset the accumulated names.
+    pub fn start() {
+        REQUESTS.with(|requests| requests.borrow_mut().clear());
+        ACTIVE.set(true);
+    }
+
+    /// Drain sorted, unique requests; collection stays enabled until `stop`.
+    pub fn take() -> Vec<Requested> {
+        REQUESTS.with(|requests| std::mem::take(&mut *requests.borrow_mut()).into_values().collect())
+    }
+
+    /// Disable collection, releasing any requests that were not taken.
+    pub fn stop() {
+        ACTIVE.set(false);
+        REQUESTS.with(|requests| requests.borrow_mut().clear());
+    }
+
+    pub(super) fn record(name: &str, resolved: super::Resolved) {
+        if ACTIVE.get() {
+            REQUESTS.with(|requests| {
+                requests.borrow_mut().entry(name.to_owned()).or_insert_with(|| Requested {
+                    name: name.to_owned(),
+                    master: resolved.master.to_owned(),
+                    placeholder: resolved.placeholder,
+                });
+            });
+        }
+    }
+}
+
 /// How a shape is painted.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Paint {
@@ -561,6 +609,12 @@ pub(crate) fn role_colour(name: &str, look: Look) -> egui::Color32 {
 /// The master and accent for an app icon id: an alias (with its accent), a master of that name,
 /// or the placeholder.
 pub fn resolve(name: &str) -> Resolved {
+    let resolved = resolve_master(name);
+    audit::record(name, resolved);
+    resolved
+}
+
+fn resolve_master(name: &str) -> Resolved {
     let (big, _) = table();
     let placeholder = Resolved { master: PLACEHOLDER, accent: None, placeholder: true };
     if let Some((_, master, accent)) = ALIASES.iter().find(|(a, _, _)| *a == name) {
@@ -585,6 +639,7 @@ pub fn doc_for(master: &str, px: u32) -> Option<&'static Doc> {
 }
 
 /// Every master id (not the small variants), for tests and tooling.
+#[cfg(test)]
 pub fn master_ids() -> Vec<&'static str> {
     let mut v: Vec<_> = table().0.keys().copied().collect();
     v.sort_unstable();

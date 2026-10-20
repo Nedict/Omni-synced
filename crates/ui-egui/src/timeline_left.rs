@@ -1,5 +1,6 @@
 //! The left feature-history panel: named rows, folders, rollback and drag-and-drop.
 
+use crate::fonts::RichTextExt as _;
 use egui::{Color32, Rect, RichText, Sense, Stroke, pos2, vec2};
 use serde_json::json;
 
@@ -73,8 +74,11 @@ pub fn left_timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let groups = app.session.doc.timeline_groups.clone();
     ui.horizontal(|ui| {
-        ui.set_min_height(22.0);
-        ui.label(RichText::new("FEATURE HISTORY").size(11.0).strong().color(t.text_dim));
+        // Reserve the selection menu's measured height even when no features are selected.
+        let font = egui::TextStyle::Button.resolve(ui.style());
+        let menu_height = ui.fonts_mut(|fonts| fonts.row_height(&font)) + 2.0 * ui.spacing().button_padding.y;
+        ui.set_min_height(menu_height.ceil().max(22.0));
+        ui.label(RichText::new("FEATURE HISTORY").size(crate::theme::Tokens::get().font_small).semibold().color(t.text_dim));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let count = selected_feature_ids(app).len() + app.tree.picked_timeline_groups.len();
             if count > 0 {
@@ -195,7 +199,7 @@ fn vertical_marker(app: &mut SolveApp, ui: &mut egui::Ui, drag: &mut Option<Drag
     let t = Tokens::get();
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 7.0), Sense::drag());
     let line = Rect::from_min_max(pos2(rect.left() + 8.0, rect.center().y - 1.5), pos2(rect.right() - 5.0, rect.center().y + 1.5));
-    let colour = t.accent;
+    let colour = crate::theme::TabAccent::for_tab(&t, &app.ui.tab).color;
     ui.painter().rect_filled(line, 1.5, colour);
     ui.painter().circle_filled(pos2(line.right(), line.center().y), 4.0, colour);
     crate::scenario::publish_handle("timeline:rollback", rect.center());
@@ -310,7 +314,7 @@ fn selection_actions(app: &mut SolveApp, ui: &mut egui::Ui, groups: &[solidcraft
     let selected_groups = app.tree.picked_timeline_groups.clone();
     let has_selection = !features.is_empty() || !selected_groups.is_empty();
     if has_selection {
-        if ui.button("Add to New Folder").clicked() {
+        if crate::context_menu::button(ui, "Add to New Folder", "folder").clicked() {
             let result = app.run("timeline.group", json!({"features": features, "groups": selected_groups}));
             if let Ok(result) = result
                 && let Some(group) = result.get("group").and_then(serde_json::Value::as_u64)
@@ -321,7 +325,7 @@ fn selection_actions(app: &mut SolveApp, ui: &mut egui::Ui, groups: &[solidcraft
             ui.close();
         }
         let grouped = features.iter().any(|feature| group_for(groups, *feature).is_some()) || !selected_groups.is_empty();
-        if grouped && ui.button("Remove from Folder").clicked() {
+        if grouped && crate::context_menu::button(ui, "Remove from Folder", "folder").clicked() {
             let mut params = json!({"group": null});
             if !features.is_empty() {
                 params["features"] = json!(features);
@@ -337,7 +341,10 @@ fn selection_actions(app: &mut SolveApp, ui: &mut egui::Ui, groups: &[solidcraft
         if !features.is_empty() || !selected_groups.is_empty() {
             ui.separator();
         }
-        if ui.button("Delete Selected Folders").on_hover_text("Keep their features and nested folders in the history").clicked() {
+        if crate::context_menu::button(ui, "Delete Selected Folders", "delete")
+            .on_hover_text("Keep their features and nested folders in the history")
+            .clicked()
+        {
             let ids = app.tree.picked_timeline_groups.clone();
             let _ = app.run("timeline.ungroup", json!({"groups": ids}));
             app.tree.picked_timeline_groups.clear();
@@ -346,7 +353,7 @@ fn selection_actions(app: &mut SolveApp, ui: &mut egui::Ui, groups: &[solidcraft
     }
     if !features.is_empty() {
         ui.separator();
-        if ui.button("Delete Selected Features…").clicked() {
+        if crate::context_menu::button(ui, "Delete Selected Features…", "delete").clicked() {
             delete_features(app, features);
             ui.close();
         }
@@ -494,7 +501,7 @@ fn timeline_group_name(
             pos2(rect.left() + 40.0 + offset, rect.center().y),
             egui::Align2::LEFT_CENTER,
             &group.name,
-            egui::FontId::proportional(12.0),
+            egui::FontId::proportional(crate::theme::Tokens::get().font_body),
             t.text,
         );
         return false;
@@ -558,7 +565,7 @@ fn vertical_group_row(
     drop_zones.push((rect, group.id));
     slots.push(VerticalSlot { y: rect.bottom(), position: if open { position } else { end_position }, group: Some(group.id), indent_group: None });
     if selected || response.hovered() {
-        ui.painter().rect_filled(rect, 3.0, if selected { t.accent_soft } else { t.hover });
+        ui.painter().rect_filled(rect, 3.0, if selected { crate::theme::TabAccent::current(ui.ctx()).soft } else { t.hover });
     }
     let offset = depth as f32 * 14.0;
     let centre = pos2(rect.left() + 9.0 + offset, rect.center().y);
@@ -598,7 +605,7 @@ fn vertical_group_row(
         select_only(app, TimelineItem::Group(group.id));
     }
     response.context_menu(|ui| {
-        if ui.button("Rename Folder").clicked() {
+        if crate::context_menu::button(ui, "Rename Folder", "rename").clicked() {
             crate::context_menu::start_rename(app, crate::context_menu::RenameWhat::TimelineGroup(group.id), rect.center());
             ui.close();
         }
@@ -704,7 +711,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
         let background = if error.is_some() {
             t.timeline_item_error
         } else if selected {
-            t.accent_soft
+            crate::theme::TabAccent::current(ui.ctx()).soft
         } else if response.hovered() || from_view == Some(*id) {
             t.hover
         } else {
@@ -729,7 +736,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             pos2(icon_rect.right() + 7.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             name,
-            egui::FontId::proportional(12.0),
+            egui::FontId::proportional(crate::theme::Tokens::get().font_body),
             text_colour,
         );
         // A failed feature has a mark of its own, not only its colour (#972).
@@ -757,13 +764,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             let origin_x = drag_press_x(&response, rect.center().x);
             drag = Some(Drag::Items(selected_drag_items(app, origin_x, group_id)));
         }
-        let mut tip = format!("{name}  ({ty})");
-        if let Some(error) = &error {
-            tip.push_str(&format!("\nError: {error}"));
-        }
-        if let Some(warning) = &warning {
-            tip.push_str(&format!("\nWarning: {warning}"));
-        }
+        let mut tip = crate::timeline::status_text(name, ty, error.as_deref(), warning.as_deref());
         tip.push_str("\nDouble-click to edit · drag to reorder · right-click for more");
         let response = response.on_hover_text(tip);
         if response.clicked() && on_fold {
@@ -779,25 +780,25 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             select_only(app, TimelineItem::Feature(*id));
         }
         response.context_menu(|ui| {
-            if ui.button("Edit Feature").clicked() {
+            if crate::context_menu::button(ui, "Edit Feature", "edit").clicked() {
                 edit = Some(*id);
                 ui.close();
             }
             if let Some(sketch) = sketch
-                && ui.button("Edit Profile Sketch").clicked()
+                && crate::context_menu::button(ui, "Edit Profile Sketch", "sketch").clicked()
             {
                 app.edit_sketch(sketch.0);
                 ui.close();
             }
-            if ui.button("Rename Feature").clicked() {
+            if crate::context_menu::button(ui, "Rename Feature", "rename").clicked() {
                 crate::context_menu::start_rename(app, crate::context_menu::RenameWhat::Feature(*id), rect.center());
                 ui.close();
             }
-            if ui.button(if *suppressed { "Unsuppress Feature" } else { "Suppress Feature" }).clicked() {
+            if crate::context_menu::button(ui, if *suppressed { "Unsuppress Feature" } else { "Suppress Feature" }, "suppress").clicked() {
                 let _ = app.run_heavy("timeline.suppress", json!({"feature": id}));
                 ui.close();
             }
-            if ui.button("Roll Back Here").clicked() {
+            if crate::context_menu::button(ui, "Roll Back Here", "rollback").clicked() {
                 let _ = app.run_heavy("timeline.roll_to", json!({"feature": id}));
                 ui.close();
             }
@@ -807,7 +808,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.separator();
             selection_actions(app, ui, &groups);
             ui.separator();
-            if ui.button("Delete").clicked() {
+            if crate::context_menu::button(ui, "Delete", "delete").clicked() {
                 delete_feature(app, *id);
                 ui.close();
             }
@@ -864,7 +865,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             let left = vertical_drop_bar_left(ui.min_rect().left(), folder_target, &groups);
             ui.painter().line_segment(
                 [pos2(left, slot.y), pos2(ui.max_rect().right() - 5.0, slot.y)],
-                Stroke::new(2.0, if matches!(active, Drag::Marker) { t.accent } else { t.sketch_accent }),
+                Stroke::new(2.0, if matches!(active, Drag::Marker) { crate::theme::TabAccent::current(ui.ctx()).color } else { t.sketch_accent }),
             );
         }
     }
@@ -975,18 +976,27 @@ mod tests {
 
     #[test]
     fn floating_browser_sits_over_the_workspace_and_docks_again() {
-        let mut harness = Harness::new();
-        harness.app.preferences.browser_float = true;
-        harness.frames(4);
-        let card = crate::scenario::rect_of("browser:float").expect("the floating browser is drawn");
-        assert!(card.min.x < 40.0, "the card sits at the view's left edge: {card:?}");
-        assert!(handle_at("left-browser-rail").is_none(), "a floating browser must not take a column of the window");
-        assert!(handle_at("row:Untitled").is_some(), "the tree is still drawn and usable");
+        for mode in [crate::shell::LayoutMode::Floating, crate::shell::LayoutMode::Docked] {
+            let mut harness = Harness::new();
+            harness.app.ui.layout = mode;
+            harness.app.preferences.browser_float = true;
+            harness.frames(4);
+            let card = crate::scenario::rect_of("browser:float").expect("the floating browser is drawn");
+            assert!(card.min.x < 40.0, "the card sits at the view's left edge: {card:?}");
+            assert_eq!(harness.app.viewport.rect.unwrap().left(), 0.0, "a floating browser must not take a column");
+            assert!(handle_at("left-browser-rail").is_some(), "the card retains the saved-width drag grip");
+            assert!(handle_at("row:Untitled").is_some(), "the tree is still drawn and usable");
 
-        harness.app.preferences.browser_float = false;
-        harness.frames(4);
-        assert!(crate::scenario::rect_of("browser:float").is_none(), "docking again removes the card");
-        assert!(handle_at("left-browser-rail").is_some(), "the docked sidebar is back");
+            harness.app.preferences.browser_float = false;
+            harness.frames(4);
+            assert!(crate::scenario::rect_of("browser:float").is_none(), "the explicit overlay is off");
+            assert_eq!(crate::scenario::rect_of("browser:card").is_some(), mode == crate::shell::LayoutMode::Floating);
+            assert_eq!(
+                harness.app.viewport.rect.unwrap().left(),
+                if mode == crate::shell::LayoutMode::Docked { harness.app.preferences.browser_width } else { 0.0 }
+            );
+            assert!(handle_at("left-browser-rail").is_some(), "both card and sidebar resize");
+        }
     }
 
     #[test]

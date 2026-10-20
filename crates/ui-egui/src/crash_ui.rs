@@ -1,11 +1,10 @@
 //! The Crash Reports window (Help > Crash Reports…): the reports `solidcraft_engine::crash`
 //! keeps on this computer, each with a reviewed issue draft. It opens by itself after a crash.
 
-use egui::{RichText, vec2};
 use solidcraft_engine::crash::{self, Summary};
 
 use crate::SolveApp;
-use crate::theme::Tokens;
+use crate::ui_kit;
 
 #[derive(Default)]
 pub struct CrashUi {
@@ -33,12 +32,12 @@ impl CrashUi {
 }
 
 fn kind_label(kind: &str) -> &'static str {
-    match kind {
-        "command_panic" => "Internal error in a command",
-        "kernel_panic_recovered" => "Kernel error (recovered)",
-        "unclean_exit" => "Closed unexpectedly",
-        _ => "Internal error",
-    }
+    crate::i18n::tr(match kind {
+        "command_panic" => "crash.kind_command",
+        "kernel_panic_recovered" => "crash.kind_kernel",
+        "unclean_exit" => "crash.kind_unclean",
+        _ => "crash.kind_internal",
+    })
 }
 
 /// The host found these new reports at startup: tell the user about real crashes (recovered
@@ -50,80 +49,67 @@ pub fn announce(app: &mut SolveApp, fresh: &[Summary]) {
     }
     app.crashes.open = true;
     app.crashes.refresh();
-    app.set_status("SolidCraft closed unexpectedly or hit an internal error last time. A crash report was saved (Help > Crash Reports…).", true);
+    app.set_status(crate::i18n::tr("crash.announce"), true);
 }
 
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     if !app.crashes.open {
         return;
     }
-    let t = Tokens::get();
-    let mut open = true;
     let mut report: Option<String> = None;
     let mut delete: Option<Option<String>> = None;
-    crate::frame::window(ctx, crate::i18n::tr_label("Crash Reports"), crate::frame::Width::Wide)
-        .id(egui::Id::new("sc_crash_reports"))
-        .open(&mut open)
-        .default_size(vec2(620.0, 420.0))
-        .show(ctx, |ui| {
-            ui.label(
-                RichText::new(
-                    "Crash reports stay on this computer and are never sent anywhere. Report… opens a draft you review before anything is shared.",
-                )
-                .color(t.text_dim),
-            );
+    let (closed, action) = ui_kit::Prompt::new(egui::Id::new("sc_crash_reports"), "bug_report", crate::i18n::tr_label("Crash Reports"))
+        .cards(2.0)
+        .actions("", crate::i18n::tr("ui.close"), None)
+        .show(ctx, true, |ui| {
+            ui_kit::text(ui, crate::i18n::tr("crash.intro"), ui_kit::Text::Note("intro"));
             if let Some(d) = app.crashes.dir.clone() {
-                // A long path is cut short (hover shows it all): it must not widen the window
-                // past its title bar.
-                ui.horizontal(|ui| {
-                    if ui.small_button("Copy folder path").clicked() {
+                // A long path is cut short (hover shows it all): it must not widen the card.
+                ui_kit::label_actions(ui, &d, |ui| {
+                    if ui_kit::button(ui, crate::i18n::tr("crash.copy_folder"), ui_kit::Button::Small).clicked() {
                         ctx.copy_text(d.clone());
                     }
-                    ui.add(egui::Label::new(RichText::new(&d).monospace().size(11.0)).truncate()).on_hover_text(&d);
                 });
             }
-            ui.separator();
+            ui_kit::divider(ui, "reports");
             if app.crashes.reports.is_empty() {
-                ui.label(crate::i18n::tr_label("No crash reports."));
+                ui_kit::text(ui, crate::i18n::tr_label("No crash reports."), ui_kit::Text::Note("none"));
             }
             egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                 for r in &app.crashes.reports {
-                    ui.horizontal(|ui| {
-                        let times = if r.count > 1 { format!("  ×{}", r.count) } else { String::new() };
-                        ui.label(
-                            RichText::new(format!("{}  {}{times}", r.time.replace('T', " ").trim_end_matches('Z'), kind_label(&r.kind))).strong(),
-                        );
-                        if let Some(c) = &r.command {
-                            ui.label(RichText::new(c).monospace().size(11.0).color(t.text_dim));
-                        }
-                    });
-                    ui.label(RichText::new(&r.message).size(12.0));
-                    ui.horizontal(|ui| {
-                        if ui.small_button("Report…").clicked() {
+                    let times = if r.count > 1 { format!("  ×{}", r.count) } else { String::new() };
+                    let title = format!("{}  {}{times}", r.time.replace('T', " ").trim_end_matches('Z'), kind_label(&r.kind));
+                    ui_kit::label_actions(ui, &title, |ui| {
+                        if ui_kit::button(ui, crate::i18n::tr("crash.report"), ui_kit::Button::Small).clicked() {
                             report = Some(r.id.clone());
                         }
-                        if ui.small_button("Copy path").clicked() {
+                        if ui_kit::button(ui, crate::i18n::tr("crash.copy_path"), ui_kit::Button::Small).clicked() {
                             ctx.copy_text(r.path.clone());
                         }
-                        if ui.small_button("Delete").clicked() {
+                        if ui_kit::button(ui, crate::i18n::tr("ui.delete"), ui_kit::Button::Small).clicked() {
                             delete = Some(Some(r.id.clone()));
                         }
-                        if r.replayable {
-                            ui.label(RichText::new("replayable").size(11.0).color(t.text_dim));
-                        }
                     });
-                    ui.add_space(6.0);
+                    let mut detail = r.command.clone().unwrap_or_default();
+                    if r.replayable {
+                        let sep = if detail.is_empty() { "" } else { " · " };
+                        detail = format!("{detail}{sep}{}", crate::i18n::tr("crash.replayable"));
+                    }
+                    if !detail.is_empty() {
+                        ui_kit::text(ui, &detail, ui_kit::Text::Note(&format!("detail:{}", r.id)));
+                    }
+                    ui_kit::text(ui, &r.message, ui_kit::Text::Report(&format!("message:{}", r.id), false));
+                    ui_kit::divider(ui, &format!("end:{}", r.id));
                 }
             });
             if !app.crashes.note.is_empty() {
-                ui.label(RichText::new(&app.crashes.note).color(t.text_dim));
+                ui_kit::text(ui, &app.crashes.note, ui_kit::Text::Note("note"));
             }
-            ui.separator();
-            if !app.crashes.reports.is_empty() && ui.button(crate::i18n::tr_label("Delete all")).clicked() {
+            if ui_kit::button(ui, "Delete all", ui_kit::Button::Enabled(!app.crashes.reports.is_empty())).clicked() {
                 delete = Some(None);
             }
         });
-    app.crashes.open = open;
+    app.crashes.open = !(closed || action == ui_kit::Action::Cancel);
     if let Some(id) = report
         && let Some(dir) = app.crashes.dir_path()
     {
@@ -136,7 +122,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         && let Some(dir) = app.crashes.dir_path()
     {
         let n = crash::clear(&dir, which.as_deref());
-        app.crashes.note = format!("Deleted {n} report(s).");
+        app.crashes.note = crate::i18n::format("crash.deleted", &[("count", &n.to_string())]);
         app.crashes.refresh();
     }
 }
@@ -214,7 +200,7 @@ mod tests {
         h.frames(6);
         let window = h.ctx.memory(|m| m.area_rect(egui::Id::new("sc_crash_reports"))).unwrap();
         // The frame's margins come on top of the content's maximum width.
-        assert!(window.width() <= crate::frame::WINDOW_WIDE_MAX_W + 40.0, "{} wide", window.width());
+        assert!(window.width() <= 760.0 + 40.0, "{} wide", window.width());
         let _ = std::fs::remove_dir_all(&d);
     }
 

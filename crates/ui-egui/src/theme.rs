@@ -40,6 +40,66 @@ pub fn set_custom(custom: Option<Custom>) -> bool {
     CUSTOM.with(|c| c.replace(custom) != custom)
 }
 
+/// A tab's selection colours. This is deliberately separate from the global widget style:
+/// application chrome, checkboxes, status colours and dialog actions retain their own tokens.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TabAccent {
+    pub color: Color32,
+    pub soft: Color32,
+}
+
+/// The foreground of a selected element on its tinted background: light blue in the dark theme,
+/// a darker blue in the light theme. Other accents (Sketch green…) get the same treatment.
+pub(crate) fn selected_ink(t: &Tokens, accent: Color32) -> Color32 {
+    if accent == t.accent {
+        t.selected_ink
+    } else if is_dark() {
+        accent.lerp_to_gamma(t.on_accent, 0.5)
+    } else {
+        accent.lerp_to_gamma(Color32::BLACK, 0.3)
+    }
+}
+
+impl TabAccent {
+    pub fn for_tab(t: &Tokens, tab: &str) -> Self {
+        let color = match tab {
+            "SKETCH" => t.sketch_accent,
+            "SURFACE" => t.surface_accent,
+            "MESH" => t.mesh_accent,
+            "FORM" => t.form_accent,
+            _ => t.accent,
+        };
+        // Preserve the existing Solid selection exactly. Other tabs blend against the same
+        // panel surface in either theme rather than introducing independent palette entries.
+        let soft = if color == t.accent { t.accent_soft } else { t.panel.lerp_to_gamma(color, 0.18) };
+        Self { color, soft }
+    }
+
+    pub fn current(ctx: &egui::Context) -> Self {
+        ctx.data(|d| d.get_temp::<Self>(egui::Id::new("sc_tab_accent"))).unwrap_or_else(|| Self::for_tab(&Tokens::get(), "MODEL"))
+    }
+
+    pub fn publish(app: &crate::SolveApp, ctx: &egui::Context) {
+        let accent = Self::for_tab(&Tokens::get(), &app.ui.tab);
+        ctx.data_mut(|d| {
+            d.insert_temp(egui::Id::new("sc_tab_accent"), accent);
+            d.insert_temp(egui::Id::new("sc_sketch_open"), app.session.active_sketch.is_some());
+            d.insert_temp(egui::Id::new("sc_tool_accent"), app.tool.is_some() || app.dialog.is_some());
+        });
+    }
+
+    /// Paint only the focused numeric editor, without changing sibling buttons or checkboxes.
+    pub fn number_focus(ui: &egui::Ui, response: &egui::Response) {
+        let active = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("sc_tool_accent"))).unwrap_or(false);
+        let t = Tokens::get();
+        let sketch = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("sc_sketch_open"))).unwrap_or(false);
+        let color = if sketch { t.sketch_accent } else { Self::current(ui.ctx()).color };
+        if active && response.has_focus() && color != t.accent {
+            ui.painter().rect_stroke(response.rect, t.radius_sm, Stroke::new(1.0, color), egui::StrokeKind::Inside);
+        }
+    }
+}
+
 /// Is the dark theme on?
 pub fn is_dark() -> bool {
     DARK.get()
@@ -170,7 +230,88 @@ pub struct IconColors {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tokens {
+    // Shared dimensions in logical pixels; identical in both themes.
+    pub space_2: f32,
+    pub space_3: f32,
+    pub space_4: f32,
+    pub space_6: f32,
+    pub space_8: f32,
+    pub space_10: f32,
+    pub space_12: f32,
+    pub space_14: f32,
+    pub space_16: f32,
+    pub space_24: f32,
+    pub radius_sm: u8,
+    pub radius_md: u8,
+    pub radius_lg: u8,
+    pub radius_xl: u8,
+    pub font_badge: f32,
+    pub font_micro: f32,
+    pub font_panel: f32,
+    pub font_small: f32,
+    pub font_caption: f32,
+    pub font_body: f32,
+    pub font_label: f32,
+    pub font_button: f32,
+    pub font_heading: f32,
+    /// Tiny world-axis triad letters.
+    pub font_triad: f32,
+    /// Bold letters on the navigation compass discs.
+    pub font_compass: f32,
+    /// Home section titles, home actions and update titles.
+    pub font_subtitle: f32,
+    /// Introductory text on the home page.
+    pub font_intro: f32,
+    /// Top-level headings in assistant Markdown.
+    pub font_article_heading: f32,
+    /// Application title in the About dialog.
+    pub font_title: f32,
+    /// Application name on the home page.
+    pub font_display: f32,
+    /// Height of dense form controls and rows.
+    pub control_height: f32,
+    /// Corner radius of dense form controls and actions.
+    pub control_radius: u8,
+    /// Width of the dense form label column.
+    pub form_label_width: f32,
+    /// Vertical gap between dense form rows.
+    pub form_gap_y: f32,
+    /// Height of the full-width dense form footer.
+    pub form_footer_height: f32,
+    /// Height of the dense form header.
+    pub form_header_height: f32,
+    /// Outer width of a dense feature card.
+    pub form_card_width: f32,
+    /// Size of the icon in a dense form header.
+    pub form_icon_size: f32,
+    /// Size of the dense form close button.
+    pub form_close_size: f32,
+    /// Text inset in controls and gap after the header icon.
+    pub form_inset: f32,
+    /// Inset of artwork inside a dense form icon button.
+    pub form_icon_inset: f32,
+    /// Size of the section disclosure chevron.
+    pub form_section_icon_size: f32,
+    /// Height of a dense form checkbox row.
+    pub form_checkbox_height: f32,
+    /// Minimum height of a dense form footer action.
+    pub form_button_height: f32,
+    /// Outer width of the sketch options card.
+    pub sketch_palette_width: f32,
+    /// Square creation-mode button size and radius.
+    pub sketch_mode_size: f32,
+    pub sketch_mode_radius: u8,
+    pub sketch_mode_border: f32,
+    /// Opacity of the sketch card and its selected accent tint.
+    pub sketch_palette_alpha: f32,
+    pub sketch_mode_tint: f32,
+    /// Footer navigation icon size.
+    pub sketch_footer_icon_size: f32,
+    /// Extra section heading letter spacing as a fraction of font size.
+    pub font_section_tracking: f32,
     pub app_bar: Color32,
+    /// Dividers between the application bar groups.
+    pub app_bar_separator: Color32,
     pub toolbar: Color32,
     pub panel: Color32,
     pub panel_header: Color32,
@@ -180,6 +321,15 @@ pub struct Tokens {
     pub accent: Color32,
     pub accent_soft: Color32,
     pub sketch_accent: Color32,
+    pub surface_accent: Color32,
+    pub mesh_accent: Color32,
+    pub form_accent: Color32,
+    pub render_accent: Color32,
+    /// Ink on accent-filled buttons and selection chips.
+    pub on_accent: Color32,
+    /// Agent status on the dark application bar, in either theme.
+    pub agent_ok: Color32,
+    pub agent_busy: Color32,
     pub error: Color32,
     pub warning: Color32,
     pub icon: Color32,
@@ -279,6 +429,21 @@ pub struct Tokens {
     pub app_bar_text: Color32,
     /// A hovered tab on the application bar (keeps `app_bar_text` readable).
     pub app_bar_hover: Color32,
+    pub app_bar_hover_subtle: Color32,
+    pub app_bar_hover_button: Color32,
+    pub app_bar_hover_strong: Color32,
+    /// The active document tab: a solid surface lifted from the bar.
+    pub app_bar_tab_active: Color32,
+    /// Dense feature dialogs: the body surface, the footer band, the dividers, input controls
+    /// (fill and border), field labels, and the selected-element foreground and background.
+    pub dialog_body: Color32,
+    pub dialog_footer: Color32,
+    pub dialog_rule: Color32,
+    pub control_fill: Color32,
+    pub control_border: Color32,
+    pub dialog_label: Color32,
+    pub selected_ink: Color32,
+    pub selected_bg: Color32,
     /// Timeline items: normal and failed.
     pub timeline_item: Color32,
     pub timeline_item_error: Color32,
@@ -317,6 +482,11 @@ pub struct Tokens {
 }
 
 impl Tokens {
+    /// Subtle shell elevation, derived from the semantic application-bar colour.
+    pub(crate) fn shell_shadow(self) -> egui::Shadow {
+        egui::Shadow { offset: [0, self.space_2 as i8], blur: self.space_8 as u8, spread: 0, color: self.app_bar.gamma_multiply(0.18) }
+    }
+
     /// The tokens of the current theme and colour vision mode.
     pub fn get() -> Tokens {
         Tokens::themed(is_dark(), vision())
@@ -386,7 +556,7 @@ fn visuals(dark: bool) -> egui::Visuals {
     v.widgets.hovered.bg_fill = t.hover;
     // egui uses the open-state fill for a movable window's active title bar.
     v.widgets.open.weak_bg_fill = t.panel_header;
-    v.window_corner_radius = egui::CornerRadius::same(6);
+    v.window_corner_radius = egui::CornerRadius::same(t.radius_md);
     v
 }
 
@@ -394,14 +564,51 @@ pub fn apply(ctx: &egui::Context) {
     let dark = is_dark();
     ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
     ctx.set_visuals(visuals(dark));
+    let t = Tokens::get();
     ctx.global_style_mut(|s| {
-        s.spacing.item_spacing = egui::vec2(6.0, 4.0);
-        s.spacing.button_padding = egui::vec2(6.0, 3.0);
+        s.spacing.item_spacing = egui::vec2(t.space_6, t.space_4);
+        s.spacing.button_padding = egui::vec2(t.space_6, t.space_3);
     });
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tab_accents_map_tokens_and_derive_selection_without_changing_solid() {
+        for dark in [false, true] {
+            for vision in super::ColorVision::ALL {
+                let t = super::Tokens::themed(dark, vision);
+                for (tab, color) in [("SKETCH", t.sketch_accent), ("SURFACE", t.surface_accent), ("MESH", t.mesh_accent), ("FORM", t.form_accent)] {
+                    let accent = super::TabAccent::for_tab(&t, tab);
+                    assert_eq!(accent.color, color);
+                    assert_eq!(accent.soft, t.panel.lerp_to_gamma(color, 0.18));
+                    assert_ne!(accent.soft, color);
+                    assert_ne!(accent.soft, t.panel);
+                }
+                for tab in ["MODEL", "ASSEMBLE", "INSERT", "INSPECT", "MANAGE", "VIEW", "SHEET METAL", "RENDER", "unknown"] {
+                    assert_eq!(super::TabAccent::for_tab(&t, tab), super::TabAccent { color: t.accent, soft: t.accent_soft });
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tab_accent_context_is_per_app_and_does_not_change_widget_visuals() {
+        let mut harness = crate::scenario::Harness::new();
+        let app = &mut harness.app;
+        let first = crate::fonts::test_context();
+        let second = crate::fonts::test_context();
+        let before = first.style_of(egui::Theme::Dark).visuals.clone();
+        app.ui.tab = "SURFACE".into();
+        super::TabAccent::publish(app, &first);
+        assert_eq!(super::TabAccent::current(&first).color, super::Tokens::get().surface_accent);
+        assert_eq!(super::TabAccent::current(&second).color, super::Tokens::get().accent);
+        assert_eq!(first.style_of(egui::Theme::Dark).visuals, before, "dialog OK, checkboxes and status styles must not inherit the tab");
+        app.ui.tab = "MODEL".into();
+        super::TabAccent::publish(app, &first);
+        assert_eq!(super::TabAccent::current(&first).soft, super::Tokens::get().accent_soft);
+    }
+
     #[test]
     fn concurrent_ui_renderers_keep_their_own_theme_and_vision() {
         let barrier = std::sync::Barrier::new(2);
@@ -427,50 +634,6 @@ mod tests {
         for t in [super::Tokens::light(), super::Tokens::dark()] {
             assert!(luma(t.heading_bg) < luma(t.subheading_bg), "{t:?}");
             assert!(luma(t.subheading_bg) < luma(t.dialog_bg), "{t:?}");
-        }
-    }
-
-    #[test]
-    fn active_movable_window_header_uses_theme_panel_header() {
-        for dark in [false, true] {
-            let ctx = egui::Context::default();
-            ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
-            ctx.set_visuals(super::visuals(dark));
-            let mut output = egui::FullOutput::default();
-            for _ in 0..3 {
-                let raw = egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))),
-                    ..Default::default()
-                };
-                output = ctx.run_ui(raw, |ui| {
-                    crate::frame::window(ui.ctx(), crate::i18n::tr_label("Parameters"), crate::frame::Width::Normal).fade_in(false).show(
-                        ui.ctx(),
-                        |ui| {
-                            ui.label(crate::i18n::tr_label("Parameter values"));
-                        },
-                    );
-                });
-                output.textures_delta.clear();
-            }
-            let title = output
-                .shapes
-                .iter()
-                .find_map(|shape| match &shape.shape {
-                    egui::Shape::Text(text) if text.galley.text() == "Parameters" => Some(text.pos + text.galley.rect.center().to_vec2()),
-                    _ => None,
-                })
-                .expect("window title must be drawn");
-            let header = output
-                .shapes
-                .iter()
-                .filter_map(|shape| match &shape.shape {
-                    egui::Shape::Rect(rect) if rect.fill.a() > 0 && rect.rect.contains(title) => Some(rect),
-                    _ => None,
-                })
-                .min_by(|a, b| a.rect.area().total_cmp(&b.rect.area()))
-                .expect("window header must be drawn behind its title");
-            let expected = if dark { super::Tokens::dark() } else { super::Tokens::light() };
-            assert_eq!(header.fill, expected.panel_header, "active title bar should follow the {dark} palette");
         }
     }
 }

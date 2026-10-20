@@ -18,7 +18,7 @@ impl Win {
     fn new() -> Self {
         let mut app = SolveApp::new(Session::default(), Default::default());
         app.custom_titlebar = true;
-        let mut w = Win { ctx: egui::Context::default(), app, time: 0.0 };
+        let mut w = Win { ctx: crate::fonts::test_context(), app, time: 0.0 };
         for _ in 0..3 {
             w.frame(vec![]);
         }
