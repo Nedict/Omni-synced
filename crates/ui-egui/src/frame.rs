@@ -53,8 +53,8 @@ impl Side {
 pub fn dock_frame(ctx: &egui::Context, side: Side) -> egui::Frame {
     let t = crate::theme::Tokens::get();
     let (corner_radius, shadow_x) = match side {
-        Side::Right => (egui::CornerRadius { nw: 4, sw: 4, ne: 0, se: 0 }, -2),
-        Side::Left => (egui::CornerRadius { nw: 0, sw: 0, ne: 4, se: 4 }, 2),
+        Side::Right => (egui::CornerRadius { nw: t.radius_sm, sw: t.radius_sm, ne: 0, se: 0 }, -2),
+        Side::Left => (egui::CornerRadius { nw: 0, sw: 0, ne: t.radius_sm, se: t.radius_sm }, 2),
     };
     egui::Frame::window(&ctx.global_style())
         .fill(t.dialog_bg)
@@ -243,84 +243,90 @@ pub fn right_aligned<R>(ui: &mut Ui, total: f32, width: f32, add: impl FnOnce(&m
 mod tests {
     #[test]
     fn feature_forms_use_available_height_and_keep_actions_visible() {
-        use crate::scenario::Harness;
-        use serde_json::json;
-        for (width, height, scale) in [(1400.0, 900.0, 1.0), (1400.0, 900.0, 2.0)] {
-            let mut h = Harness::new();
-            h.app.preferences.ui_scale = scale;
-            h.call("ui.resize", json!({"width":width / scale,"height":height / scale}));
-            h.app.run("sketch.create", json!({"plane":"XY","name":"Base"})).unwrap();
-            h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[10,10]})).unwrap();
-            h.app.run("sketch.finish", json!({})).unwrap();
-            h.step(&json!({"start":"solid.extrude"})).unwrap();
-            h.frames(10);
-            let dialog = h.app.viewport.dialog_rect.unwrap();
-            let viewport = h.app.viewport.rect.unwrap();
-            assert!(dialog.height() > 230.0, "scale={scale}: {dialog:?}");
-            assert!(viewport.expand(1.0).contains_rect(dialog), "scale={scale}: {dialog:?} outside {viewport:?}");
-            assert!(h.widget("Distance").is_some(), "distance must be visible without scrolling");
-            if scale == 1.0 {
-                assert!(h.widget("Operation").is_some(), "operation must be visible without scrolling");
+        for mode in [crate::shell::LayoutMode::Floating, crate::shell::LayoutMode::Docked] {
+            use crate::scenario::Harness;
+            use serde_json::json;
+            for (width, height, scale) in [(1400.0, 900.0, 1.0), (1400.0, 950.0, 2.0)] {
+                let mut h = Harness::new();
+                h.call("ui.set", json!({"layout":mode}));
+                h.app.preferences.ui_scale = scale;
+                h.call("ui.resize", json!({"width":width / scale,"height":height / scale}));
+                h.app.run("sketch.create", json!({"plane":"XY","name":"Base"})).unwrap();
+                h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[10,10]})).unwrap();
+                h.app.run("sketch.finish", json!({})).unwrap();
+                h.step(&json!({"start":"solid.extrude"})).unwrap();
+                h.frames(10);
+                let dialog = h.app.viewport.dialog_rect.unwrap();
+                let viewport = h.app.viewport.rect.unwrap();
+                assert!(dialog.height() > 230.0, "scale={scale}: {dialog:?}");
+                assert!(viewport.expand(1.0).contains_rect(dialog), "scale={scale}: {dialog:?} outside {viewport:?}");
+                assert!(h.widget("Distance").is_some(), "distance must be visible without scrolling");
+                if scale == 1.0 {
+                    assert!(h.widget("Operation").is_some(), "operation must be visible without scrolling");
+                }
+                assert!(dialog.contains(crate::scenario::handle_at("dialog:OK").unwrap()));
+                assert!(h.widget("Cancel").is_some(), "cancel must be visible without scrolling");
+                h.step(&json!({"widget":"Cancel"})).unwrap();
+                assert!(h.app.dialog.is_none());
+                h.step(&json!({"start":"solid.shell"})).unwrap();
+                h.frames(8);
+                let short = h.app.viewport.dialog_rect.unwrap();
+                assert!(short.height() < dialog.height(), "short forms should shrink: {short:?}, {dialog:?}");
+                assert!(h.widget("Cancel").is_some());
+                h.step(&json!({"widget":"Cancel"})).unwrap();
+                h.step(&json!({"start":"solid.hole"})).unwrap();
+                if let Some(crate::dialogs::Dialog { kind: crate::dialogs::Kind::Hole { kind, opts, .. }, .. }) = h.app.dialog.as_mut() {
+                    *kind = 1;
+                    opts.tapped = true;
+                }
+                h.frames(8);
+                let long = h.app.viewport.dialog_rect.unwrap();
+                assert!(viewport.expand(1.0).contains_rect(long), "long form clipped: {long:?}");
+                assert!(h.widget("Cancel").is_some(), "long-form actions must stay visible");
+                assert!(long.contains(crate::scenario::handle_at("dialog:OK").unwrap()));
+                h.step(&json!({"widget":"Cancel"})).unwrap();
+                assert!(h.app.dialog.is_none());
             }
-            assert!(dialog.contains(crate::scenario::handle_at("dialog:OK").unwrap()));
-            assert!(h.widget("Cancel").is_some(), "cancel must be visible without scrolling");
-            h.step(&json!({"widget":"Cancel"})).unwrap();
-            assert!(h.app.dialog.is_none());
-            h.step(&json!({"start":"solid.shell"})).unwrap();
-            h.frames(8);
-            let short = h.app.viewport.dialog_rect.unwrap();
-            assert!(short.height() < dialog.height(), "short forms should shrink: {short:?}, {dialog:?}");
-            assert!(h.widget("Cancel").is_some());
-            h.step(&json!({"widget":"Cancel"})).unwrap();
-            h.step(&json!({"start":"solid.hole"})).unwrap();
-            if let Some(crate::dialogs::Dialog { kind: crate::dialogs::Kind::Hole { kind, opts, .. }, .. }) = h.app.dialog.as_mut() {
-                *kind = 1;
-                opts.tapped = true;
-            }
-            h.frames(8);
-            let long = h.app.viewport.dialog_rect.unwrap();
-            assert!(viewport.expand(1.0).contains_rect(long), "long form clipped: {long:?}");
-            assert!(h.widget("Cancel").is_some(), "long-form actions must stay visible");
-            assert!(long.contains(crate::scenario::handle_at("dialog:OK").unwrap()));
-            h.step(&json!({"widget":"Cancel"})).unwrap();
-            assert!(h.app.dialog.is_none());
         }
     }
     /// #1335: a dialog keeps its size while its Select chip is hovered, and its title band
     /// drags it; it opens docked again after it closes.
     #[test]
     fn a_docked_dialog_keeps_its_size_under_the_pointer_and_moves_by_its_title() {
-        use crate::scenario::Harness;
-        use serde_json::json;
-        let mut h = Harness::new();
-        h.call("ui.resize", json!({"width":1400.0,"height":900.0}));
-        h.step(&json!({"start":"sketch.create"})).unwrap();
-        h.frames(6);
-        let rest = h.app.viewport.dialog_rect.unwrap();
-        let chip = crate::scenario::handle_at("dialog:Plane").unwrap();
-        h.call("ui.move", json!({"x": chip.x, "y": chip.y}));
-        h.frames(6);
-        let hovered = h.app.viewport.dialog_rect.unwrap();
-        assert!((hovered.size() - rest.size()).length() < 0.01, "hovering resized the dialog: {rest:?} -> {hovered:?}");
-        // Dragged by its title text.
-        let title = h.widget("CREATE SKETCH").map(|[x, y]| egui::pos2(x as f32, y as f32)).unwrap();
-        h.call("ui.drag", json!({"x0": title.x, "y0": title.y, "x1": title.x - 300.0, "y1": title.y + 120.0, "steps": 8}));
-        h.frames(4);
-        let moved = h.app.viewport.dialog_rect.unwrap();
-        assert!((moved.min - rest.min - egui::vec2(-300.0, 120.0)).length() < 2.0, "{rest:?} -> {moved:?}");
-        assert!(h.app.dialog.is_some(), "dragging the title keeps the dialog open");
-        // Dragged far off, it stays on screen.
-        let title = crate::scenario::handle_at("dialog:title").unwrap();
-        h.call("ui.drag", json!({"x0": title.x, "y0": title.y, "x1": title.x + 3000.0, "y1": title.y + 3000.0, "steps": 8}));
-        h.frames(4);
-        let viewport = h.app.viewport.rect.unwrap();
-        assert!(viewport.contains(h.app.viewport.dialog_rect.unwrap().min));
-        h.step(&json!({"key":"Escape"})).unwrap();
-        h.frames(2);
-        assert!(h.app.dialog.is_none());
-        h.step(&json!({"start":"sketch.create"})).unwrap();
-        h.frames(6);
-        assert!((h.app.viewport.dialog_rect.unwrap().min - rest.min).length() < 0.01, "a new dialog opens docked");
+        for mode in [crate::shell::LayoutMode::Floating, crate::shell::LayoutMode::Docked] {
+            use crate::scenario::Harness;
+            use serde_json::json;
+            let mut h = Harness::new();
+            h.call("ui.set", json!({"layout":mode}));
+            h.call("ui.resize", json!({"width":1400.0,"height":900.0}));
+            h.step(&json!({"start":"sketch.create"})).unwrap();
+            h.frames(6);
+            let rest = h.app.viewport.dialog_rect.unwrap();
+            let chip = crate::scenario::handle_at("dialog:Plane").unwrap();
+            h.call("ui.move", json!({"x": chip.x, "y": chip.y}));
+            h.frames(6);
+            let hovered = h.app.viewport.dialog_rect.unwrap();
+            assert!((hovered.size() - rest.size()).length() < 0.01, "hovering resized the dialog: {rest:?} -> {hovered:?}");
+            // Drag the published title band, independent of similarly labelled toolbar controls.
+            let title = crate::scenario::handle_at("dialog:title").unwrap();
+            h.call("ui.drag", json!({"x0": title.x, "y0": title.y, "x1": title.x - 300.0, "y1": title.y + 120.0, "steps": 8}));
+            h.frames(4);
+            let moved = h.app.viewport.dialog_rect.unwrap();
+            assert!((moved.min - rest.min - egui::vec2(-300.0, 120.0)).length() < 2.0, "{rest:?} -> {moved:?}");
+            assert!(h.app.dialog.is_some(), "dragging the title keeps the dialog open");
+            // Dragged far off, it stays on screen.
+            let title = crate::scenario::handle_at("dialog:title").unwrap();
+            h.call("ui.drag", json!({"x0": title.x, "y0": title.y, "x1": title.x + 3000.0, "y1": title.y + 3000.0, "steps": 8}));
+            h.frames(4);
+            let viewport = h.app.viewport.rect.unwrap();
+            assert!(viewport.contains(h.app.viewport.dialog_rect.unwrap().min));
+            h.step(&json!({"key":"Escape"})).unwrap();
+            h.frames(2);
+            assert!(h.app.dialog.is_none());
+            h.step(&json!({"start":"sketch.create"})).unwrap();
+            h.frames(6);
+            assert!((h.app.viewport.dialog_rect.unwrap().min - rest.min).length() < 0.01, "a new dialog opens docked");
+        }
     }
 
     /// Windows are made in this file only, so none can skip the width limits.

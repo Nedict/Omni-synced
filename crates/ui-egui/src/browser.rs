@@ -327,7 +327,7 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
     let dragged_over = egui::DragAndDrop::has_any_payload(ui.ctx()) && ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| r.contains(p));
     let mut out = RowResp { rect: Some(r), hovered: resp.hovered() || dragged_over, ..Default::default() };
     if row.selected {
-        ui.painter().rect_filled(r, 3.0, t.accent_soft);
+        ui.painter().rect_filled(r, 3.0, crate::theme::TabAccent::current(ui.ctx()).soft);
     } else if resp.hovered() {
         ui.painter().rect_filled(r, 3.0, t.hover);
     }
@@ -394,7 +394,7 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
     }
     let col = row.color.unwrap_or(if row.dim { t.text_dim } else { t.text });
     let label_display = if row.name { crate::i18n::tr_name(row.label) } else { crate::i18n::tr_dyn(row.label) };
-    let galley = ui.painter().layout_no_wrap(label_display, FontId::proportional(12.5), col);
+    let galley = ui.painter().layout_no_wrap(label_display, FontId::proportional(t.font_label), col);
     let lw = galley.size().x;
     ui.painter().galley(pos2(x, cy - galley.size().y / 2.0), galley, col);
     let mut bx = (x + lw + 6.0).min(r.right() - 16.0);
@@ -521,7 +521,7 @@ fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
     let panel = egui::Panel::left("sc_browser")
         .exact_size(width)
         .resizable(false)
-        .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(6, 6)))
+        .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(t.space_6 as i8, t.space_6 as i8)))
         .show(ui, |ui| {
             if timeline_above {
                 let available = ui.available_height();
@@ -549,13 +549,13 @@ fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
                 }
                 let arrow = if browser_collapsed { "▶" } else { "▼" };
                 let response =
-                    ui.add(egui::Button::new(RichText::new(format!("{arrow}  BROWSER")).size(11.0).strong().color(t.text_dim)).frame(false));
+                    ui.add(egui::Button::new(RichText::new(format!("{arrow}  BROWSER")).size(t.font_small).strong().color(t.text_dim)).frame(false));
                 crate::scenario::publish_handle("left-browser-toggle", response.rect.center());
                 if response.clicked() {
                     app.preferences.timeline_left_browser_collapsed = !browser_collapsed;
                 }
                 if !browser_collapsed {
-                    ui.add_space(4.0);
+                    ui.add_space(t.space_4);
                     browser_rows(app, ui, &mut acts);
                 }
             } else {
@@ -577,8 +577,8 @@ fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
 }
 
 /// The tree on a translucent card over the workspace, instead of a column that takes width from
-/// it (Preferences: "Float it over the workspace"). Drawn before the central view, in a layer
-/// above it, so the viewport keeps the whole window and the card sits on top of it.
+/// it (Preferences: "Float it over the workspace"). The card occupies the content below the
+/// ribbon in either shell layout, leaving the viewport projection unchanged.
 pub fn floating(app: &mut SolveApp, ui: &mut egui::Ui, viewport: egui::Rect) {
     let t = Tokens::get();
     app.tree.order.clear();
@@ -607,14 +607,15 @@ pub fn floating(app: &mut SolveApp, ui: &mut egui::Ui, viewport: egui::Rect) {
                 });
         },
     );
+    app.shell.browser = Some(card.response.rect);
     crate::scenario::publish_rect("browser:float", card.response.rect);
     finish_browser(app, ui, acts);
 }
 
 fn browser_contents(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
     let t = Tokens::get();
-    ui.label(RichText::new(crate::i18n::tr_label("BROWSER")).size(11.0).strong().color(t.text_dim));
-    ui.add_space(4.0);
+    ui.label(RichText::new(crate::i18n::tr_label("BROWSER")).size(t.font_small).strong().color(t.text_dim));
+    ui.add_space(t.space_4);
     browser_rows(app, ui, acts);
 }
 
@@ -2067,7 +2068,7 @@ pub fn dims_overlay(app: &SolveApp, ctx: &egui::Context) {
             let col = if c.driven { tk.dimension_driven } else { tk.dimension };
             let galley = painter.layout_no_wrap(
                 crate::dim_view::label(&c.kind, expr, c.driven, &app.session.doc.units, app.preferences.length_decimals),
-                FontId::proportional(11.5),
+                FontId::proportional(tk.font_caption),
                 col,
             );
             let size = galley.size() + vec2(6.0, 2.0);
@@ -2091,7 +2092,7 @@ pub fn dims_overlay(app: &SolveApp, ctx: &egui::Context) {
 
 /// Where the browser's panels open: the viewport's top left corner.
 fn panel_pos(app: &SolveApp) -> Pos2 {
-    app.viewport.rect.map(|r| r.left_top() + vec2(16.0, 16.0)).unwrap_or(pos2(270.0, 140.0))
+    app.viewport.rect.map(|r| crate::shell::content_rect(app, r).left_top() + vec2(16.0, 16.0)).unwrap_or(pos2(270.0, 140.0))
 }
 
 /// The Capture Position question stands for saving.
