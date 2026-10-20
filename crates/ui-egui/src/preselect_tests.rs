@@ -660,6 +660,54 @@ fn edges_then_fillet_takes_them_with_chains() {
     assert_eq!(d.inputs[0].items.len(), 2, "box edges are not tangent to others");
     let cmds = apply_commands(&app, &d).unwrap();
     assert_eq!(cmds[0].1["edges"].as_array().unwrap().len(), 2);
+
+    // #3370: on a bar with rounded ends and a slot whose wall lies on the seam between the flat
+    // top and the rounded end, picking the slot's sharp top edge must not chain the two smooth
+    // seams that continue it in a straight line.
+    let mut h = crate::scenario::Harness::new();
+    for (cmd, p) in [
+        ("sketch.create", json!({"plane": "YZ", "name": "Stadium"})),
+        ("sketch.line", json!({"points": [[0, -9.5], [25, -9.5]]})),
+        ("sketch.arc.center_point", json!({"center": [25, 0], "start": [25, -9.5], "end": [25, 9.5]})),
+        ("sketch.line", json!({"points": [[25, 9.5], [0, 9.5]]})),
+        ("sketch.arc.center_point", json!({"center": [0, 0], "start": [0, 9.5], "end": [0, -9.5]})),
+        ("sketch.finish", json!({})),
+        ("solid.extrude", json!({"sketch": "Stadium", "distance": 14})),
+        ("solid.box", json!({"corner": [3.5, -12, -10], "length": 6, "width": 12, "height": 20, "operation": "cut"})),
+    ] {
+        h.app.run(cmd, p).unwrap();
+    }
+    let slot_top = crate::viewport::grouped_selection(&h.app.session, &edge(&h.app, Vec3::new(6.5, 0.0, 9.5)));
+    h.app.session.selection = slot_top.clone();
+    h.app.start("solid.fillet");
+    assert_eq!(h.app.dialog.as_ref().unwrap().inputs[0].items, slot_top, "smooth stadium seams are not chained onto a sharp slot edge");
+
+    // On a rounded slot extrusion, picking one straight top edge chains the 4 tangent top edges;
+    // unticking Tangent Chain leaves only the picked edge, and ticking it again re-chains all 4.
+    let mut h = crate::scenario::Harness::new();
+    for (cmd, p) in [
+        ("sketch.create", json!({"plane":"XY"})),
+        ("sketch.slot.center_to_center", json!({"p0":[-20,0],"p1":[20,0],"width":20})),
+        ("sketch.finish", json!({})),
+        ("solid.extrude", json!({"distance":10})),
+    ] {
+        h.app.run(cmd, p).unwrap();
+    }
+    let top_line = crate::viewport::grouped_selection(&h.app.session, &edge(&h.app, Vec3::new(0.0, 10.0, 10.0)));
+    h.app.session.selection = top_line.clone();
+    h.app.start("solid.fillet");
+    h.frames(2);
+    assert_eq!(h.app.dialog.as_ref().unwrap().inputs[0].items.len(), 4);
+    h.step(&json!({"click":{"handle":"dialog:Tangent Chain"}})).unwrap();
+    assert_eq!(h.app.dialog.as_ref().unwrap().inputs[0].items, top_line);
+    h.step(&json!({"click":{"handle":"dialog:Tangent Chain"}})).unwrap();
+    assert_eq!(h.app.dialog.as_ref().unwrap().inputs[0].items.len(), 4);
+    // Picking while Tangent Chain is off adds only that edge; unpicking with Tangent Chain on removes its chain.
+    h.step(&json!({"click":{"handle":"dialog:Tangent Chain"}})).unwrap();
+    assert_eq!(h.app.dialog.as_ref().unwrap().inputs[0].items, top_line);
+    h.step(&json!({"click":{"handle":"dialog:Tangent Chain"}})).unwrap();
+    h.app.dialog.as_mut().unwrap().pick(&h.app.session, top_line[0].clone());
+    assert!(h.app.dialog.as_ref().unwrap().inputs[0].items.is_empty());
 }
 
 #[test]
