@@ -809,6 +809,7 @@ mod tests {
         crate::toolbar::save(&mut h.app);
         assert!(h.app.file_picker_busy());
         crate::file_picker::tick(&mut h.app, &h.ctx);
+        crate::save_job::tick(&mut h.app, true);
         wait(&mut h.app);
         assert_eq!(h.app.session.path.as_deref(), saved.to_str());
         assert_eq!(h.app.library.visible().len(), 1);
@@ -817,6 +818,7 @@ mod tests {
         // Normal Save also updates the list; no folder picker or Refresh is invoked.
         std::fs::copy(&saved, h.dir.join("Saved copy.solidcraft")).unwrap();
         crate::toolbar::save(&mut h.app);
+        crate::save_job::tick(&mut h.app, true);
         wait(&mut h.app);
         assert_eq!(h.app.library.visible().len(), 2);
         assert_eq!(h.app.library.search, "saved");
