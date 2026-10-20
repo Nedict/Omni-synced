@@ -11,6 +11,7 @@
 pub mod access;
 pub mod agent_chat;
 pub mod agent_cursor;
+pub mod bom_panel;
 pub mod browser;
 pub mod canvas;
 #[cfg(test)]
@@ -30,6 +31,7 @@ pub mod dialogs_coupling;
 pub mod dialogs_library;
 pub mod dialogs_motion;
 pub mod dialogs_move;
+pub mod dialogs_part_size;
 pub mod dialogs_parts;
 pub mod dialogs_plastic;
 pub mod dialogs_save_mesh;
@@ -177,6 +179,7 @@ pub mod smart_extrude;
 #[cfg(test)]
 mod smart_extrude_ui_tests;
 pub mod space_mouse;
+pub mod space_mouse_calibration;
 pub mod stand_up;
 #[cfg(test)]
 mod sweep_dialog_tests;
@@ -187,6 +190,7 @@ mod thin_extrude_tests;
 pub mod timeline;
 pub mod timeline_left;
 pub mod titlebar;
+pub mod tool_modifiers;
 pub mod toolbar;
 pub mod toolbar_custom;
 pub mod tools;
@@ -315,6 +319,8 @@ pub struct SolveApp {
     pub params: Option<params_dialog::ParamsDialog>,
     /// The Design Properties window, when open.
     pub design_properties: Option<design_properties::DesignProperties>,
+    /// The Bill of Materials window, when open.
+    pub bom: Option<bom_panel::BomPanel>,
     material_card_review: Option<material_card_review::ReviewWindow>,
     pub palette: palette::Palette,
     /// Context menus, rename box and Properties window.
@@ -411,6 +417,8 @@ pub struct SolveApp {
     pub flat_view: dialogs_sheet::FlatView,
     /// The start page.
     pub home: home::HomeState,
+    /// The 3D mouse: which device, its reading, and the calibration window.
+    pub space_mouse: space_mouse::Input,
     pub file_load: file_load::FileLoad,
     /// The other open designs (tabs).
     pub docs: documents::Documents,
@@ -448,6 +456,7 @@ impl SolveApp {
             dialog: None,
             params: None,
             design_properties: None,
+            bom: None,
             material_card_review: None,
             palette: palette::Palette::default(),
             menu: context_menu::MenuState::default(),
@@ -502,6 +511,7 @@ impl SolveApp {
             pending_fit: None,
             flat_view: Default::default(),
             home: home::HomeState::default(),
+            space_mouse: Default::default(),
             file_load: file_load::FileLoad::default(),
             docs: documents::Documents::default(),
             applied_fonts_language: "en".into(),
@@ -814,6 +824,10 @@ impl SolveApp {
         }
         if matches!(id, "document.metadata" | "document.metadata.set") {
             design_properties::open(self);
+            return;
+        }
+        if id == "assembly.bom" {
+            bom_panel::open(self);
             return;
         }
         if id == "sketch.finish" {
@@ -1447,6 +1461,7 @@ impl SolveApp {
         self.resolve_fit(ui.ctx());
         params_dialog::show(self, ui.ctx());
         design_properties::show(self, ui.ctx());
+        bom_panel::show(self, ui.ctx());
         material_card_review::show(self, ui.ctx());
         recovery_ui::show(self, ui.ctx());
         stand_up::show(self, ui.ctx());
