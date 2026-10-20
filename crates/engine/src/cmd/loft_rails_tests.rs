@@ -26,8 +26,9 @@ fn root_integral() -> f64 {
 }
 
 /// Circles `Base` (z = 0) and `Top` (z = 40) of radius 10, lines `Low` and `High` across them
-/// from x = −10 to 10, and in `Rail` on XZ the arc `arc` from (10, 0, 0) to (10, 0, 40) bulging
-/// out to x = 15 halfway, and a straight `short` one that stops at z = 30.
+/// from x = −10 to 10, rings `RingLow` and `RingHigh` (radius 10 round a hole of 5) there, and
+/// in `Rail` on XZ the arc `arc` from (10, 0, 0) to (10, 0, 40) bulging out to x = 15 halfway,
+/// and a straight `short` one that stops at z = 30.
 fn setup() -> Session {
     let mut s = Session::default();
     for (name, z) in [("Base", 0), ("Top", 40)] {
@@ -38,6 +39,12 @@ fn setup() -> Session {
     for (name, z) in [("Low", 0), ("High", 40)] {
         run(&mut s, "sketch.create", json!({"name": name, "plane": {"origin": [0, 0, z], "x_dir": [1, 0, 0], "y_dir": [0, 1, 0]}}));
         run(&mut s, "sketch.line", json!({"points": [[-10, 0], [10, 0]], "ids": ["l"]}));
+        run(&mut s, "sketch.finish", json!({}));
+    }
+    for (name, z) in [("RingLow", 0), ("RingHigh", 40)] {
+        run(&mut s, "sketch.create", json!({"name": name, "plane": {"origin": [0, 0, z], "x_dir": [1, 0, 0], "y_dir": [0, 1, 0]}}));
+        run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "radius": 10}));
+        run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "radius": 5}));
         run(&mut s, "sketch.finish", json!({}));
     }
     run(&mut s, "sketch.create", json!({"plane": "XZ", "name": "Rail"}));
@@ -143,6 +150,11 @@ fn hostile_rails_are_refused() {
     // Rails on what the railed loft does not build yet.
     let apex = json!({"sections": [{"sketch": "Base"}, {"sketch": "Rail", "point": "arc.start"}], "rails": rail});
     assert!(s.execute("solid.loft", &apex).is_err());
+    // Rings (a circle with a hole) loft without rails, not with them yet.
+    let ring = |name: &str| json!({"sketch": name, "profiles": [{"point": [7.5, 0]}]});
+    let rings = json!({"sections": [ring("RingLow"), ring("RingHigh")], "operation": "new", "rails": rail});
+    let refused = s.execute("solid.loft", &rings).unwrap_err().to_string();
+    assert!(refused.contains("not supported yet") && refused.contains("holes"), "{refused}");
     let g1 =
         json!({"sections": [{"sketch": "Low", "curves": ["l"]}, {"sketch": "High", "curves": ["l"]}], "rails": rail, "continuity": ["g1", "g0"]});
     let refused = s.execute("surface.loft", &g1).unwrap_err().to_string();

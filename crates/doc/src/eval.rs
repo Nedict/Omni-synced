@@ -3829,7 +3829,8 @@ fn feature_tools_with_constructor(
             let body = if rails.is_empty() {
                 kernel::loft_regions(&secs)?
             } else {
-                // Rails shape each section's outline; holes are lofted without them.
+                // Rails shape the sections' outlines; sections with holes wait for rails that
+                // carry the holes too.
                 if secs.iter().any(|(_, r)| !r.holes.is_empty()) {
                     return Err(DocError::Invalid("not supported yet: guide rails on a loft whose sections have holes".into()));
                 }
