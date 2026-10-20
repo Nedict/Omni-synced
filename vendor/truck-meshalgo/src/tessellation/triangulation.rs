@@ -720,18 +720,23 @@ impl PolyBoundary {
     // a few points where the loop is sound; one with more than `MAX_EDGE_POINTS` (a loop laid
     // out across millions of periods gave 4.3 million, and meshing them never finished, #1985)
     // leaves the face unmeshed (`None`), which `Body::validity` reports, instead of hanging.
+    // A sound face stays far below it: a full turn needs 20,000 points only past a radius of ~2e7 chord tolerances (measured); export uses 2e-4 of the body size.
     fn with_steps<S: PreMeshableSurface>(pieces: Vec<PolyBoundaryPiece>, surface: &S, tol: Deflection, steps: Option<usize>) -> Option<Self> {
         let overflow = std::cell::Cell::new(false);
         let polyline_on_surface = |surface: &S, p: Point2, q: Point2, tol| {
             if let Some(n) = steps {
                 (0..=n).map(|i| p + (q - p) * (i as f64 / n as f64)).collect()
+            } else if overflow.get() {
+                // The face is left unmeshed: the other closing polylines are not computed.
+                vec![p, q]
             } else {
-                let line: Vec<Point2> = polyline_on_surface(surface, p, q, tol);
-                if line.len() > MAX_EDGE_POINTS {
-                    overflow.set(true);
-                    return vec![p, q];
+                match polyline_on_surface(surface, p, q, tol) {
+                    Some(line) if line.len() <= MAX_EDGE_POINTS => line,
+                    _ => {
+                        overflow.set(true);
+                        vec![p, q]
+                    }
                 }
-                line
             }
         };
         let (mut closed, mut open) = (Vec::new(), Vec::new());
@@ -1500,18 +1505,45 @@ fn triangulation_into_polymesh<'a>(
     )
 }
 
+/// SolidCraft, bounded work: `None` where the line would need more than `MAX_EDGE_POINTS`
+/// points, however far apart its ends are (truck's `parameter_division` copied vectors at
+/// each of 100 levels first: 23 s and 1.3 GB for 200,000 turns, and an out-of-memory abort for
+/// millions, #1374).
 fn polyline_on_surface(
     surface: impl PreMeshableSurface,
     p: Point2,
     q: Point2,
     tol: Deflection,
-) -> Vec<Point2> {
+) -> Option<Vec<Point2>> {
     use truck_geometry::prelude::*;
     let line = Line(p, q);
     let pcurve = PCurve::new(line, surface);
-    let (vec, _) = pcurve.parameter_division(pcurve.range_tuple(), tol.chord);
+    let (t0, t1) = pcurve.range_tuple();
+    let vec = bounded_parameter_division(|t| pcurve.subs(t), (t0, t1), tol.chord)?;
     let vec = halved_while_turning(|t| pcurve.subs(t), vec, tol);
-    vec.into_iter().map(|t| line.subs(t)).collect()
+    Some(vec.into_iter().map(|t| line.subs(t)).collect())
+}
+
+/// SolidCraft: truck's `parameter_division` (the same probe, bisection and 100 levels), iterative,
+/// returning `None` once the division has more than `MAX_EDGE_POINTS` pieces.
+fn bounded_parameter_division(curve: impl Fn(f64) -> Point3, range: (f64, f64), tol: f64) -> Option<Vec<f64>> {
+    let mut out = vec![range.0];
+    let mut stack = vec![(range.0, range.1, curve(range.0), curve(range.1), 100usize)];
+    while let Some((a, b, pa, pb, trials)) = stack.pop() {
+        let p = 0.5 + (0.2 * HashGen::hash1(pa.midpoint(pb)) - 0.1);
+        let probe = curve(a * (1.0 - p) + b * p);
+        if probe.distance2(pa + (pb - pa) * p) < tol * tol || trials == 0 {
+            out.push(b);
+        } else if out.len() + stack.len() >= MAX_EDGE_POINTS {
+            return None;
+        } else {
+            let tm = (a + b) / 2.0;
+            let pm = curve(tm);
+            stack.push((tm, b, pm, pb, trials - 1));
+            stack.push((a, tm, pa, pm, trials - 1));
+        }
+    }
+    Some(out)
 }
 
 /// SolidCraft: `params` with every interval halved while the curve turns more over it than the
