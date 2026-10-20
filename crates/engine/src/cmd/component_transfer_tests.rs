@@ -60,6 +60,8 @@ fn shared_destination_refuses_without_mutating_document_or_session() {
     run(&mut s, "solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Block"}));
     let c = run(&mut s, "component.create", json!({"name":"Shared"}))["component"].as_u64().unwrap();
     run(&mut s, "occurrence.copy", json!({"component":c,"translate":[20,0,0]}));
+    // No placement of the shared target is named or active to place the body by.
+    run(&mut s, "component.activate", json!({"component":0}));
     let document = s.doc.to_json();
     let active = s.active_component;
     assert!(s.execute("component.move_bodies", &json!({"component":c,"bodies":["Block"]})).is_err());

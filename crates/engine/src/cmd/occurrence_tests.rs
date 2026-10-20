@@ -662,3 +662,87 @@ fn matrix_move_orthonormalises_rounding_and_refuses_what_is_not_rigid() {
     assert_eq!(s.doc.occurrences.iter().find(|o| o.id == occ).unwrap().transform, before);
     run(&mut s, "occurrence.move", json!({"occurrence": occ, "matrix": rounded, "tolerance": 1e-3}));
 }
+
+/// Pasting a body into a component placed elsewhere puts the copy in that component, where the
+/// body is in the world, as one step to undo.
+#[test]
+fn pasted_bodies_go_into_the_component_where_the_body_is() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 20, "body_name": "Cube"}));
+    let (component, occurrence) = created(&mut s, "A");
+    run(&mut s, "occurrence.move", json!({"occurrence": occurrence, "translate": [100,0,0]}));
+    let undo = s.undo.len();
+    let out = run(&mut s, "component.copy_bodies", json!({"bodies": ["Cube"]}));
+    let copy = out["bodies"][0].as_str().unwrap().to_string();
+    assert_eq!(s.undo.len(), undo + 1, "one step to undo");
+    let state = s.model.state();
+    assert_eq!(s.doc.model_body_component(state.body(&copy).unwrap()), component);
+    let placed = run(&mut s, "occurrence.properties", json!({"occurrence": occurrence, "path": [occurrence]}));
+    for i in 0..3 {
+        near(&placed["total"]["center_of_mass"][i], 10.0);
+    }
+    assert_eq!(s.selection, vec![crate::Sel::Body { name: copy.clone() }]);
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.model.state().body(&copy).is_none());
+}
+
+/// A component pasted into another component, as an instance or as a new copy, sits where the
+/// copied placement is in the world; a new copy can't go inside the component itself.
+#[test]
+fn components_paste_in_place_into_another_component() {
+    let mut s = Session::default();
+    let (part, part_occurrence) = created(&mut s, "Part");
+    run(&mut s, "solid.box", json!({"length": 2, "width": 2, "height": 2}));
+    run(&mut s, "occurrence.move", json!({"occurrence": part_occurrence, "translate": [50,0,0]}));
+    run(&mut s, "component.activate", json!({"component": 0}));
+    let (holder, holder_occurrence) = created(&mut s, "Holder");
+    run(&mut s, "occurrence.move", json!({"occurrence": holder_occurrence, "translate": [0,100,0]}));
+    let source = json!({"component": part, "occurrence": part_occurrence, "parent": holder, "in_place": true});
+    let instance = run(&mut s, "occurrence.copy", source.clone())["occurrence"].as_u64().unwrap();
+    let copy = run(&mut s, "component.paste_new", source)["occurrence"].as_u64().unwrap();
+    for placed in [instance, copy] {
+        let result = run(&mut s, "occurrence.properties", json!({"occurrence": placed, "path": [holder_occurrence, placed]}));
+        for (i, expected) in [51.0, 1.0, 1.0].into_iter().enumerate() {
+            near(&result["total"]["center_of_mass"][i], expected);
+        }
+    }
+    let into_itself = json!({"component": holder, "occurrence": holder_occurrence, "parent": holder, "in_place": true});
+    assert!(s.execute("component.paste_new", &into_itself).is_err());
+}
+
+/// Pasted into a component placed more than once, a component goes into every instance: placed
+/// by the active instance where the copied one is, and in the same place in the other.
+#[test]
+fn a_component_pasted_into_an_instanced_component_goes_into_every_instance() {
+    let mut s = Session::default();
+    let (_, part_occurrence) = created(&mut s, "Part");
+    run(&mut s, "solid.box", json!({"length": 2, "width": 2, "height": 2}));
+    run(&mut s, "component.activate", json!({"component": 0}));
+    let (plate, first) = created(&mut s, "Plate");
+    let second = run(&mut s, "occurrence.copy", json!({"component": plate, "translate": [0,100,0]}))["occurrence"].as_u64().unwrap();
+    run(&mut s, "component.activate", json!({"component": 0}));
+    let source = json!({"occurrence": part_occurrence, "parent": plate, "in_place": true});
+    assert!(s.execute("occurrence.copy", &source).is_err(), "no instance of Plate to place it by");
+    run(&mut s, "component.activate", json!({"component": plate, "occurrence": second, "path": [second]}));
+    let pasted = run(&mut s, "occurrence.copy", source)["occurrence"].as_u64().unwrap();
+    for (instance, y) in [(second, 1.0), (first, -99.0)] {
+        let result = run(&mut s, "occurrence.properties", json!({"occurrence": pasted, "path": [instance, pasted]}));
+        near(&result["total"]["center_of_mass"][1], y);
+    }
+}
+
+/// A body pasted into a component placed more than once goes into every instance: placed by the
+/// active instance where the body is, and in the same place in the other.
+#[test]
+fn a_body_pasted_into_an_instanced_component_goes_into_every_instance() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 2, "width": 2, "height": 2, "body_name": "Cube"}));
+    let (plate, first) = created(&mut s, "Plate");
+    let second = run(&mut s, "occurrence.copy", json!({"component": plate, "translate": [0,100,0]}))["occurrence"].as_u64().unwrap();
+    run(&mut s, "component.activate", json!({"component": plate, "occurrence": second, "path": [second]}));
+    run(&mut s, "component.copy_bodies", json!({"bodies": ["Cube"]}));
+    for (instance, y) in [(second, 1.0), (first, -99.0)] {
+        let result = run(&mut s, "occurrence.properties", json!({"occurrence": instance, "path": [instance]}));
+        near(&result["total"]["center_of_mass"][1], y);
+    }
+}

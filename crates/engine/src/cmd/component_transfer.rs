@@ -60,7 +60,15 @@ fn transfer(s: &mut Session, name: &str, to: u64, frames: &UniqueFrames, cmd: &s
             bad(cmd, "body transfer requires one source and destination placement; shared instances cannot preserve a unique world pose")
         })
     };
-    let source = unique(from)?;
+    // A body of a component placed more than once goes by its name at the first placement,
+    // where the name is its own: it moves from there.
+    let first =
+        frames.get(&from).is_some_and(Option::is_none).then(|| doc.first_path(from)).and_then(|path| Some((doc.path_transform(from, &path)?, path)));
+    let first = first.map(|(frame, path)| (path, frame));
+    let source = match &first {
+        Some(placed) => placed,
+        None => unique(from)?,
+    };
     let destination = unique(to)?;
     let old = doc.model_body_offset(body).map(|offset| solidcraft_doc::mat_mul(&source.1, offset)).unwrap_or(source.1);
     let inv = solidcraft_doc::mat_inverse(&destination.1).ok_or_else(|| bad(cmd, "destination frame is not invertible"))?;
@@ -124,6 +132,17 @@ pub(super) fn from_bodies(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"components":made}))
 }
 
+/// The `component_path` parameter: the target component's placement to place by.
+fn component_path(p: &Value, cmd: &str) -> Result<Option<Vec<u64>>> {
+    let Some(value) = p.get("component_path") else { return Ok(None) };
+    value
+        .as_array()
+        .filter(|a| a.len() <= 64)
+        .and_then(|a| a.iter().map(Value::as_u64).collect::<Option<Vec<_>>>())
+        .map(Some)
+        .ok_or_else(|| bad(cmd, "`component_path` must list 0..64 occurrence ids"))
+}
+
 pub(super) fn move_bodies(s: &mut Session, p: &Value) -> Result<Value> {
     move_at_boundary(s, p, false)
 }
@@ -139,7 +158,14 @@ fn move_at_boundary(s: &mut Session, p: &Value, allow_boundary: bool) -> Result<
     let to = super::component(s, p, "component", cmd)?;
     let bodies = body_names(s, p, cmd, allow_boundary)?;
     let mut scratch = s.scratch();
-    let frames = unique_frames(&scratch, cmd)?;
+    let mut frames = unique_frames(&scratch, cmd)?;
+    // The target is placed by `component_path`, else its only placement, else the active one: a
+    // component placed more than once gets the bodies in every instance, placed by that one.
+    let given = component_path(p, cmd)?;
+    if given.is_some() || frames.get(&to).is_some_and(Option::is_none) {
+        let placed = super::placing::placement_of(&scratch, &scratch.placed_document(), to, given.as_deref(), cmd)?;
+        frames.insert(to, Some(placed));
+    }
     let mut features = Vec::new();
     for name in &bodies {
         features.push(transfer(&mut scratch, name, to, &frames, cmd)?);
