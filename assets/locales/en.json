@@ -349,6 +349,7 @@
   "cmd.component_activate": "Activate Component",
   "cmd.component_break_link": "Break Link",
   "cmd.component_capture_position": "Capture Position",
+  "cmd.component_copy_bodies": "Paste Bodies",
   "cmd.component_create": "New Component",
   "cmd.component_delete": "Delete Component",
   "cmd.component_from_bodies": "Create Components from Bodies",

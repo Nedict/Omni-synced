@@ -1407,8 +1407,9 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                 _ if !shown => {}
                 Key::Z => drop(app.run("edit.undo", json!({}))),
                 Key::Y => drop(app.run("edit.redo", json!({}))),
-                // Copy, Cut and Paste (`edit_clipboard::handle`).
-                Key::C | Key::X | Key::V if !mods.shift && !mods.alt => {}
+                // Copy, Cut and Paste, and Paste New with Shift (`edit_clipboard::handle`).
+                Key::C | Key::X if !mods.shift && !mods.alt => {}
+                Key::V if !mods.alt => {}
                 Key::S => save(app),
                 _ => crate::keymap::press(app, &crate::keymap::key_name(k, mods)),
             }

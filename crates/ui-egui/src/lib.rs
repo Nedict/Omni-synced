@@ -370,6 +370,11 @@ pub struct SolveApp {
     pub apply_off_thread: Option<std::time::Duration>,
     /// The last command started interactively (id, label), for Repeat.
     pub last_command: Option<(String, String)>,
+    /// Bodies copied with Copy (by name), pasted into the active component by Paste.
+    pub copied_bodies: Vec<String>,
+    /// Component placements copied with Copy (by path): Paste places new instances of them in
+    /// the active component, Paste New (Ctrl+Shift+V) independent copies.
+    pub copied_placements: Vec<Vec<u64>>,
     /// Esc was already acted on this frame (by the shortcuts), so later handlers skip it.
     pub esc_handled: bool,
     pub status: Option<(String, f64, bool)>,
@@ -489,6 +494,8 @@ impl SolveApp {
             deferred_queue: Vec::new(),
             apply_off_thread: None,
             last_command: None,
+            copied_bodies: Vec::new(),
+            copied_placements: Vec::new(),
             esc_handled: false,
             status: None,
             quit_requested: false,
