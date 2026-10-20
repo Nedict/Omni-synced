@@ -1,30 +1,29 @@
-//! `solvecraft-cli`: the CLI's former name, kept for at least one release so existing scripts
-//! and MCP client setups (`claude mcp add solvecraft -- solvecraft-cli mcp`) keep working.
-//! Compatibility shim: it runs `solidcraft-cli` (next to this executable, else on PATH) with the
-//! same arguments and standard streams, after a one-line deprecation note on stderr (stdout
-//! stays clean for MCP's JSON-RPC), and exits with its status.
-#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
-#![forbid(unsafe_code)]
+[package]
+name = "omni-synced-cli"
+description = "OmniSynced headless CLI: run command scripts, measure, export, render snapshots, replay oracle recipes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+default-run = "omni-synced-cli"
 
-use std::process::{Command, ExitCode};
+[lints]
+workspace = true
 
-const TARGET: &str = "solidcraft-cli";
+[[bin]]
+name = "omni-synced-cli"
+path = "src/main.rs"
 
-fn main() -> ExitCode {
-    eprintln!("solvecraft-cli is deprecated and will be removed in a later release: use solidcraft-cli");
-    let sibling = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join(format!("{TARGET}{}", std::env::consts::EXE_SUFFIX))))
-        .filter(|p| p.is_file());
-    let program = sibling.map(|p| p.into_os_string()).unwrap_or_else(|| TARGET.into());
-    match Command::new(&program).args(std::env::args_os().skip(1)).status() {
-        Ok(status) => match status.code() {
-            Some(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
-            None => ExitCode::FAILURE,
-        },
-        Err(e) => {
-            eprintln!("solvecraft-cli: could not run {}: {e}", program.to_string_lossy());
-            ExitCode::FAILURE
-        }
-    }
-}
+# Legacy compatibility alias kept for older scripts and MCP setups.
+[[bin]]
+name = "solvecraft-cli"
+path = "src/alias.rs"
+
+[dependencies]
+solidcraft-engine = { workspace = true }
+solidcraft-gpu = { workspace = true }
+solidcraft-mcp = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# Snapshot tests decode the pictures to compare them with a tolerance.
+image = { workspace = true }
