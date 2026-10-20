@@ -96,6 +96,8 @@ pub struct ViewportState {
     pub hover_bodies: Vec<String>,
     /// The model point an orbit turns around (Preferences: orbit around the cursor).
     pub orbit_pivot: Option<Vec3>,
+    /// The orbit drag under way, summed from where it began (see [`crate::navigation::orbit`]).
+    pub orbit_from: Option<crate::navigation::OrbitFrom>,
     /// Continuous orbit: the view turns about the vertical until the next click or key.
     pub spin: bool,
     /// The 3D mouse's motion this frame, for the page showing the camera to apply with what its
@@ -309,7 +311,8 @@ fn scene_key(app: &SolveApp) -> u64 {
     app.ui.hidden_profiles.hash(&mut h);
     app.session.active_component.hash(&mut h);
     app.session.active_occurrence_path.hash(&mut h);
-    app.preview.replaced.hash(&mut h);
+    app.preview.effective_replaced().hash(&mut h);
+    app.preview.rolled_back.hash(&mut h);
     app.tree.redefine.hash(&mut h);
     crate::theme::is_dark().hash(&mut h);
     crate::theme::vision().hash(&mut h);
@@ -499,7 +502,7 @@ fn update_refinement(app: &mut SolveApp, ctx: &egui::Context, proj: &Proj) {
         if b.name != *name || b.body.is_mesh() {
             continue;
         }
-        let shown = app.session.body_visible(&b.name) && !app.preview.replaced.contains(&b.name);
+        let shown = app.session.body_visible(&b.name) && !app.preview.effective_replaced().contains(&b.name);
         let on_screen = match screen_box(proj, bx, 0.0).filter(|_| shown) {
             Some(r) => r.intersects(proj.rect).then(|| f64::from(r.width().max(r.height())) * ppp),
             // A corner behind the eye: the view is inside or right by the box.
@@ -647,7 +650,7 @@ fn build_scene(app: &SolveApp) -> GpuScene {
     let mut run: Vec<BodyDraw> = Vec::new();
     let mut run_key = std::collections::hash_map::DefaultHasher::new();
     for b in &st.bodies {
-        if !app.session.body_visible(&b.name) || app.preview.replaced.contains(&b.name) {
+        if !app.session.body_visible(&b.name) || app.preview.effective_replaced().contains(&b.name) {
             continue;
         }
         let faded = body_faded(app, b, &active_bodies);
@@ -734,33 +737,39 @@ fn build_sketch_scene(app: &SolveApp, proj: &Proj) -> GpuScene {
     let s = &app.session;
     let st = s.world_state();
     let mut fill_budget = 131_072;
-    if app.ui.show_grid && !active_view(app).hide_grid {
+    let sketch_plane = solidcraft_engine::view::open_sketch_plane(s);
+    if sketch_plane.is_some() || (app.ui.show_grid && !active_view(app).hide_grid) {
         let (minor, major) = grid_step(app.cam.half_height());
         let ext = (app.cam.half_height() * 3.0 / major).ceil() * major;
-        // The ground plane: XY with Z up, XZ with Y up (laid out in the camera's Z-up frame), or
-        // the upright origin plane facing the view when the ground is seen edge-on.
-        let tf = app.cam.to_frame(app.cam.target);
-        // On the ground (XY) unless the Grid follows the view preference is on (#1470); then on
-        // the plane the last frame drew, so the choice is hysteretic near the thresholds (#1993).
-        let (u, v) = if app.preferences.grid_follows_view {
-            app.viewport.grid_plane.lock().map_or((Vec3::X, Vec3::Y), |mut last| {
-                *last = grid_plane(app.cam.to_frame(app.cam.back()), *last);
-                last.axes()
-            })
+        // An open sketch always has its grid on its own plane; otherwise the ground plane: XY with
+        // Z up, XZ with Y up (laid out in the camera's Z-up frame), or the upright origin plane
+        // facing the view when the ground is seen edge-on.
+        let (c, u, v, w3): (Vec3, Vec3, Vec3, Box<dyn Fn(Vec3) -> [f32; 3]>) = if let Some(pl) = &sketch_plane {
+            let (c, u, v) = solidcraft_engine::view::sketch_grid_frame(pl, app.cam.target, major);
+            (c, u, v, Box::new(|p| p.to_f32()))
         } else {
-            (Vec3::X, Vec3::Y)
+            let tf = app.cam.to_frame(app.cam.target);
+            // On the ground (XY) unless the Grid follows the view preference is on (#1470); then on
+            // the plane the last frame drew, so the choice is hysteretic near the thresholds (#1993).
+            let (u, v) = if app.preferences.grid_follows_view {
+                app.viewport.grid_plane.lock().map_or((Vec3::X, Vec3::Y), |mut last| {
+                    *last = grid_plane(app.cam.to_frame(app.cam.back()), *last);
+                    last.axes()
+                })
+            } else {
+                (Vec3::X, Vec3::Y)
+            };
+            let snap = |a: Vec3| a * ((tf.dot(a) / major).round() * major);
+            (snap(u) + snap(v), u, v, Box::new(|p| app.cam.from_frame(p).to_f32()))
         };
-        let snap = |a: Vec3| a * ((tf.dot(a) / major).round() * major);
-        let c = snap(u) + snap(v);
-        let w3 = |p: Vec3| app.cam.from_frame(p).to_f32();
         let n = ((ext / minor) as i64).clamp(1, 300);
         for i in -n..=n {
             let t = i as f64 * minor;
             let maj = (t / major).round() * major == t;
             let col = if maj { c4(tk.grid_major) } else { c4(tk.grid) };
-            let w = if maj { 1.0 } else { 0.7 };
-            sc.under_line(w3(c + u * t - v * ext), w3(c + u * t + v * ext), col, w);
-            sc.under_line(w3(c - u * ext + v * t), w3(c + u * ext + v * t), col, w);
+            let wd = if maj { 1.0 } else { 0.7 };
+            sc.under_line(w3(c + u * t - v * ext), w3(c + u * t + v * ext), col, wd);
+            sc.under_line(w3(c - u * ext + v * t), w3(c + u * ext + v * t), col, wd);
         }
     }
     for sid in visible_sketches(app) {
@@ -1472,7 +1481,7 @@ fn feature_geometry(app: &SolveApp, id: u64) -> Vec<Sel> {
     let prefix = format!("F{id}:");
     let mut out = Vec::new();
     for b in &st.bodies {
-        if !app.session.body_visible(&b.name) || app.preview.replaced.contains(&b.name) {
+        if !app.session.body_visible(&b.name) || app.preview.effective_replaced().contains(&b.name) {
             continue;
         }
         if b.feature == id {
@@ -1895,7 +1904,8 @@ fn highlight_geometry_key(app: &SolveApp) -> u64 {
     (app.dialog.is_some(), app.tool.is_some()).hash(&mut h);
     crate::theme::is_dark().hash(&mut h);
     crate::theme::vision().hash(&mut h);
-    app.preview.replaced.hash(&mut h);
+    app.preview.effective_replaced().hash(&mut h);
+    app.preview.rolled_back.hash(&mut h);
     app.origin_visible().hash(&mut h);
     app.picking_sketch_plane().hash(&mut h);
     app.session.visibility.hidden_origin.hash(&mut h);
@@ -2025,7 +2035,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
         match x {
             Sel::Face { body, index, .. } => {
                 // A live preview stands in for the body: its old faces would fight with it.
-                if let Some(b) = st.body(body).filter(|_| app.session.body_visible(body) && !app.preview.replaced.contains(body)) {
+                if let Some(b) = st.body(body).filter(|_| app.session.body_visible(body) && !app.preview.effective_replaced().contains(body)) {
                     face_tris(&mut feedback, &shown(b), *index, c4(t.sel_face), false);
                     hidden_face_outline(&mut feedback, &drawn_mesh(app, b), *index, t.sel_edge);
                 }
@@ -2088,7 +2098,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
     // Timeline modifiers light only their resulting faces; browser rows light whole bodies.
     let mut hovered = app.viewport.hover_feature.map(|id| feature_geometry(app, id)).unwrap_or_default();
     hovered.extend(app.viewport.hover_bodies.iter().map(|name| Sel::Body { name: name.clone() }));
-    for b in st.bodies.iter().filter(|b| app.session.body_visible(&b.name) && !app.preview.replaced.contains(&b.name)) {
+    for b in st.bodies.iter().filter(|b| app.session.body_visible(&b.name) && !app.preview.effective_replaced().contains(&b.name)) {
         let whole = hovered.iter().any(|x| matches!(x, Sel::Body { name } if name == &b.name));
         let faces: Vec<_> = if whole {
             (0..b.body.face_count()).collect()
@@ -2148,7 +2158,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
             }
         }
         Some(Hit::Face { body, index, .. })
-            if !app.preview.replaced.contains(body)
+            if !app.preview.effective_replaced().contains(body)
                 && !sel.iter().any(|x| matches!(x, Sel::Face { body: b, index: i, .. } if b == body && i == index)) =>
         {
             if let Some(b) = st.body(body) {
@@ -2282,6 +2292,14 @@ pub fn delete_selection(app: &mut SolveApp) {
     crate::delete::delete_selection(app);
 }
 
+/// Whether Primary should hide the live command preview so obscured geometry can be reselected.
+///
+/// Shared by [`show`] so tests can lock the same path: a manipulator drag never rolls the
+/// preview back, even when Primary (preview-reselect) is held.
+pub(crate) fn preview_should_roll_back(app: &SolveApp, held: crate::tool_modifiers::Held, manipulator_dragging: bool) -> bool {
+    app.dialog.as_ref().is_some_and(|d| d.previews()) && app.preview.active && crate::tool_modifiers::preview_reselect(held, manipulator_dragging)
+}
+
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let rect = ui.max_rect();
@@ -2311,6 +2329,28 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         mode,
     } = input;
     app.viewport.physical_scale = ui.ctx().pixels_per_point();
+    // Suppress-snap chord and manipulator-free prefs; Shift midpoint targeting while sketching.
+    // Preview reselect uses Primary but is skipped while a manipulator drag is under way.
+    crate::drag_snap::set_suppressed(crate::prefs::suppress_sketch_snap_held(app, mods));
+    crate::tool_modifiers::set_manipulator_free(crate::prefs::manipulator_free_held(app, mods));
+    let manipulator_dragging = crate::tool_modifiers::manipulator_dragging();
+    crate::tool_modifiers::set_manipulator_dragging(false);
+    {
+        let held = crate::tool_modifiers::Held::from_modifiers(mods);
+        let mid = if let Some(cmd) = app.tool.as_ref().map(|t| t.cmd) {
+            let live = crate::tool_modifiers::resolve(
+                &[crate::tool_modifiers::Scope::SketchDraw, crate::tool_modifiers::Scope::SketchDrag],
+                crate::tool_modifiers::descriptor(cmd),
+                held,
+                crate::tool_modifiers::Trigger::Live,
+            );
+            live.contains(crate::tool_modifiers::ModAction::TargetMidpoint)
+        } else {
+            false
+        };
+        crate::tool_modifiers::set_target_midpoint(mid);
+        app.preview.rolled_back = preview_should_roll_back(app, held, manipulator_dragging);
+    }
     let proj = projection(app, rect);
     if let Ok(mut cache) = app.viewport.display.lock() {
         cache.prepare(app.session.world_state(), &proj, app.viewport.pixels_per_point());
@@ -2404,6 +2444,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             hl_slot: app.viewport.hl_slot.clone(),
             pv_key: app.preview.key,
             pv_slot: app.preview.slot.clone(),
+            pv_hide: app.preview.rolled_back,
             clip: section_clip(app),
             cap: t.section_cap.to_normalized_gamma_f32(),
             view_proj: proj.vp.to_f32(),
@@ -2414,6 +2455,11 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             analysis_colors: crate::gpu::analysis_colors(&t.analysis),
             access: crate::access::map(app),
             outline: matches!(app.ui.visual_style, 0 | 3),
+            ao_radius: if app.preferences.ambient_occlusion && app.ui.visual_style != 2 {
+                (model_bounds(app).diagonal() * 0.04).clamp(1e-4, 1e6) as f32
+            } else {
+                0.0
+            },
             eye: {
                 let e = proj.cam.eye().to_f32();
                 [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }]
@@ -2442,7 +2488,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             crate::tools::on_hover(app, &proj, p);
         }
     }
-    let add = mods.shift || mods.command || mods.ctrl;
+    // Selection chords via resolve (add-only Shift is a preference; default both toggle).
+    let held_mods = crate::tool_modifiers::Held::from_modifiers(mods);
+    let (add, allow_toggle) = crate::tool_modifiers::selection_click(held_mods, app.preferences.selection_shift_add_only);
     crate::sketch_text::set_one_letter(mods.shift);
     if let Some(p) = hover.filter(|_| inside) {
         if app.tool.is_some() {
@@ -2496,13 +2544,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                     // A text's resize or rotation handle: the text stays selected.
                 } else if !crate::sketch3d::click(app, &proj, p) {
                     match on_dim.or(on_glyph) {
-                        Some(id) => select(app, Some(Sel::SketchConstraint { id }), add),
+                        Some(id) => select(app, Some(Sel::SketchConstraint { id }), add, allow_toggle),
                         // Clicking again on the same spot selects the next thing under it (not
                         // the second click of a double-click, which has its own actions).
                         None if !add && !resp.double_clicked() && crate::select_other::cycle_click(app, &proj, p) => {}
                         None => {
                             let sel = cand.and_then(|c| c.1);
-                            select(app, sel.clone(), add);
+                            select(app, sel.clone(), add, allow_toggle);
                             crate::select_other::note_click(app, p, if add { None } else { sel });
                         }
                     }
@@ -2614,7 +2662,10 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             let active = app.session.active_sketch;
             match hit {
                 Some(Hit::SketchPoint { sketch, id, .. }) if Some(sketch) == active => {
-                    app.viewport.point_drag = Some((id, app.session.undo.len(), None))
+                    // A point dragged with the rest of a selection slides with it, from where it
+                    // was grabbed, rather than going to the cursor.
+                    let grab = if dragged_with(app, &id).is_empty() { None } else { on_plane(app, a) };
+                    app.viewport.point_drag = Some((id, app.session.undo.len(), grab))
                 }
                 Some(Hit::SketchCurve { sketch, id, .. }) if Some(sketch) == active => {
                     app.viewport.point_drag = on_plane(app, a).map(|q| (id, app.session.undo.len(), Some(q)));
@@ -2649,12 +2700,19 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             && let Some(mut q) = hover.and_then(|p| on_plane(app, p))
         {
             let from = grab.unwrap_or(q);
+            let with = dragged_with(app, &id);
             // Snap the dragged point (or the line's ends) to other geometry, like drawing.
             let snap = {
                 let st = app.session.world_state();
                 app.session.active_sketch.and_then(|s| st.sketch(s)).and_then(|ss| {
                     let sk = &ss.sketch;
-                    let (own, exclude) = crate::drag_snap::moving_points(sk, &id);
+                    let (mut own, mut exclude) = crate::drag_snap::moving_points(sk, &id);
+                    for (o, x) in with.iter().map(|w| crate::drag_snap::moving_points(sk, w)) {
+                        own.extend(o);
+                        exclude.extend(x);
+                    }
+                    own.sort_unstable();
+                    own.dedup();
                     if own.iter().any(|&p| sk.point_locked(p)) {
                         return crate::drag_snap::find(sk, &[], &[], 0.0);
                     }
@@ -2671,7 +2729,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 q += s.offset;
             }
             // Each frame re-solves the sketch only (`live`); the model follows when the drag ends.
-            let at = match app.session.execute("sketch.drag", &json!({"entity": id, "from": [from.x, from.y], "to": [q.x, q.y], "live": true})) {
+            let params = json!({"entity": id, "with": with, "from": [from.x, from.y], "to": [q.x, q.y], "live": true});
+            let at = match app.session.execute("sketch.drag", &params) {
                 Ok(r) => {
                     app.session.undo.truncate(depth + 1);
                     r.get("at").and_then(solidcraft_engine::params::vec2).unwrap_or(q)
@@ -2818,6 +2877,11 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             let r = Rect::from_min_size(pos, galley.size() + vec2(16.0, 8.0));
             painter.rect_filled(r, 4.0, t.overlay);
             painter.galley(pos + vec2(8.0, 4.0), galley, t.text);
+            // A click opens every message of the run, to read and copy (#2763).
+            crate::scenario::publish_handle("status:chip", r.center());
+            if ui.interact(r, egui::Id::new("sc_status_chip"), Sense::click()).on_hover_text(crate::i18n::tr("messages.chip_hint")).clicked() {
+                app.messages.open = true;
+            }
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
         } else {
             app.status = None;
@@ -2825,9 +2889,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
 }
 
-/// A click without a command: select the candidate (replacing the selection, or toggling it
-/// in with Shift/Ctrl); a click on nothing clears.
-pub(crate) fn select(app: &mut SolveApp, sel: Option<Sel>, add: bool) {
+/// A click without a command: select the candidate (replacing the selection, or adding /
+/// toggling with modifiers); a click on nothing clears.
+///
+/// `toggle`: whether already-selected items may be removed by this click (Ctrl/Cmd held).
+/// When `add` is true but `toggle` is false (Shift add-only preference), picked items
+/// are only added.
+pub(crate) fn select(app: &mut SolveApp, sel: Option<Sel>, add: bool, toggle: bool) {
     if !add {
         // A joint picked in the browser (highlighted even when hidden) lets go.
         app.tree.picked_joints.clear();
@@ -2835,7 +2903,8 @@ pub(crate) fn select(app: &mut SolveApp, sel: Option<Sel>, add: bool) {
     match sel {
         Some(x) => {
             let items = picked_selection(&app.session, &x);
-            if add && items.iter().all(|x| app.session.selection.iter().any(|y| crate::selection::same_item(x, y))) {
+            // Toggle-removal: all picked items are already selected and toggle is allowed.
+            if add && toggle && items.iter().all(|x| app.session.selection.iter().any(|y| crate::selection::same_item(x, y))) {
                 let rest: Vec<Sel> =
                     app.session.selection.iter().filter(|y| !items.iter().any(|x| crate::selection::same_item(x, y))).cloned().collect();
                 let _ = app.run("select.set", json!({ "items": rest }));
@@ -2848,6 +2917,39 @@ pub(crate) fn select(app: &mut SolveApp, sel: Option<Sel>, add: bool) {
         }
         None => {}
     }
+}
+
+/// The rest of the selected sketch geometry when the point or curve `id` is part of it (#2621):
+/// a drag that starts on a selected entity moves the whole selection with it.
+fn dragged_with(app: &SolveApp, id: &str) -> Vec<String> {
+    fn geometry(s: &Sel) -> Option<&str> {
+        match s {
+            Sel::SketchPoint { id } | Sel::SketchCurve { id } => Some(id.as_str()),
+            _ => None,
+        }
+    }
+    let selected = || app.session.selection.iter().filter_map(geometry);
+    if !selected().any(|s| s == id) {
+        return Vec::new();
+    }
+    let rest: Vec<String> = selected().filter(|s| *s != id).map(str::to_owned).collect();
+    // A curve's own points, selected with it by a window, are not a group: a circle grabbed on
+    // its edge still takes its radius from the drag.
+    let st = app.session.world_state();
+    let own: Vec<&str> = app
+        .session
+        .active_sketch
+        .and_then(|s| st.sketch(s))
+        .and_then(|ss| {
+            let sk = &ss.sketch;
+            let c = sk.curves.get(sk.curve_index(id)?)?;
+            Some(c.kind.point_ids().into_iter().filter_map(|p| sk.points.get(p).map(|p| p.id.as_str())).collect())
+        })
+        .unwrap_or_default();
+    if rest.iter().all(|r| own.contains(&r.as_str())) {
+        return Vec::new();
+    }
+    rest
 }
 
 /// What a click on `sel` picks: its pieces ([`grouped_selection`]), and for a letter of a sketch
@@ -3114,6 +3216,8 @@ fn hover_highlight(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let col = Tokens::get().hover_profile_edge;
     let st = app.session.world_state();
     match &app.viewport.hover {
+        // Trim shows the piece it would take away instead (`sketch_tools::preview`, #3052).
+        Some(Hit::SketchCurve { sketch, id, .. }) if crate::sketch_tools::trim_hover_piece(app, *sketch, id).is_some() => {}
         Some(Hit::SketchCurve { sketch, id, .. }) => {
             if let Some(ss) = st.sketch(*sketch)
                 && let Some(ci) = ss.sketch.curve_index(id)
@@ -3439,7 +3543,7 @@ fn nav_bar(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
         ("home", "Home view"),
         ("perspective", "Perspective / orthographic"),
         ("style", "Visual style: shaded with edges, shaded, wireframe, shaded with hidden edges"),
-        ("settings", "View settings: grid, ground shadow, agent cursor"),
+        ("settings", "View settings: grid, ground shadow, ambient occlusion, agent cursor"),
     ];
     let menu_id = ui.id().with("nav_view_menu");
     let mut menu_open = ui.data(|d| d.get_temp::<bool>(menu_id)).unwrap_or(false);
@@ -3512,6 +3616,8 @@ fn nav_bar(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
 /// The View settings above the navigation bar's last button: grid, ground shadow and the agent
 /// cursor (#35). False once it should close (a click outside it).
 fn view_menu(app: &mut SolveApp, ui: &mut egui::Ui, button: Rect) -> bool {
+    // A preset dropdown extends beyond this menu; let it consume its own clicks.
+    let child_popup_open = egui::Popup::is_any_open(ui.ctx());
     let area = crate::frame::area(egui::Id::new("sc_view_menu"))
         .order(egui::Order::Foreground)
         .pivot(Align2::RIGHT_BOTTOM)
@@ -3520,8 +3626,12 @@ fn view_menu(app: &mut SolveApp, ui: &mut egui::Ui, button: Rect) -> bool {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_width(220.0);
             ui.label(egui::RichText::new(crate::i18n::tr_label("VIEW")).strong().size(11.5));
+            ui.label(app.tr("ui.graphics_preset"));
+            crate::prefs::graphics_preset_selector(app, ui);
+            ui.separator();
             ui.checkbox(&mut app.ui.show_grid, crate::i18n::tr_label("Grid"));
             ui.checkbox(&mut app.ui.ground_shadow, crate::i18n::tr_label("Ground shadow"));
+            crate::prefs::ambient_occlusion_checkbox(app, ui, "Ambient occlusion");
             ui.separator();
             let s = &mut app.ui.agent_cursor;
             let show = ui.checkbox(&mut s.show, crate::i18n::tr_label("Show Agent Cursor"));
@@ -3546,7 +3656,8 @@ fn view_menu(app: &mut SolveApp, ui: &mut egui::Ui, button: Rect) -> bool {
             }
         });
     });
-    let clicked_out = ui.input(|i| i.pointer.any_pressed())
+    let clicked_out = !child_popup_open
+        && ui.input(|i| i.pointer.any_pressed())
         && ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| !r.response.rect.contains(p) && !button.contains(p));
     !clicked_out
 }
@@ -5212,12 +5323,12 @@ mod tests {
             app.viewport.hover = Some(Hit::Edge { body: b.name.clone(), index: i, mid });
             assert_eq!(build_highlight(&app).merged().lines.len(), 2 * line_count * crate::gpu::LINE_SIZE);
             let item = hit_sel(app.viewport.hover.as_ref().unwrap()).unwrap();
-            select(&mut app, Some(item.clone()), false);
+            select(&mut app, Some(item.clone()), false, false);
             assert_eq!(app.session.selection.len(), 2);
             // Selecting both pieces must not draw each highlight twice.
             assert_eq!(build_highlight(&app).merged().lines.len(), 2 * line_count * crate::gpu::LINE_SIZE);
             // Ctrl/Shift clicking either half deselects the entire rim.
-            select(&mut app, Some(item.clone()), true);
+            select(&mut app, Some(item.clone()), true, true);
             assert!(app.session.selection.is_empty());
             let mut d = crate::dialogs::Dialog::for_command(&app, "solid.chamfer").unwrap();
             if let crate::dialogs::Kind::Fillet { chain, .. } = &mut d.kind {
@@ -5261,7 +5372,7 @@ mod tests {
             app.viewport.hover = Some(Hit::Face { body: b.name.clone(), index, point });
             assert_eq!(build_highlight(&app).merged().tris.len(), triangle_count * 3 * crate::gpu::TRI_SIZE);
             let item = hit_sel(app.viewport.hover.as_ref().unwrap()).unwrap();
-            select(&mut app, Some(item.clone()), false);
+            select(&mut app, Some(item.clone()), false, false);
             assert_eq!(app.session.selection.len(), 2);
             assert_eq!(build_highlight(&app).merged().tris.len(), triangle_count * 3 * crate::gpu::TRI_SIZE);
             assert_eq!(app.session.selection.first(), Some(&item), "keep the original tool placement point first");
@@ -5273,7 +5384,7 @@ mod tests {
             assert_eq!(dialog.items().len(), 2);
             // A point elsewhere on the opposite half still toggles the whole surface off.
             let other = faces.iter().find(|&&x| x != f).unwrap();
-            select(&mut app, Some(Sel::Face { body: b.name.clone(), index: *other as usize, point: m.positions[0] }), true);
+            select(&mut app, Some(Sel::Face { body: b.name.clone(), index: *other as usize, point: m.positions[0] }), true, true);
             assert!(app.session.selection.is_empty());
         }
         // Planar caps and box corners stay separate.
@@ -5937,6 +6048,57 @@ mod tests {
         }
     }
 
+    /// An erratic orbit drag (big jumps, reversals, the pointer over the panels and back) keeps
+    /// the point picked when it began on its pixel the whole way, and coming back to where it
+    /// began brings back the view it began with (up to the rounding of the pointer's f32 steps).
+    #[test]
+    fn an_erratic_cursor_orbit_keeps_its_pivot_and_comes_back() {
+        for perspective in [false, true] {
+            let mut h = crate::scenario::Harness::new();
+            h.app.preferences.orbit_around = crate::prefs::OrbitAround::Cursor;
+            h.app.ui.perspective = perspective;
+            h.app.run("solid.box", json!({"length":80,"width":50,"height":20})).unwrap();
+            h.app.fit_view();
+            h.frames(2);
+            let rect = h.app.viewport.rect.unwrap();
+            let at = rect.center() + vec2(30.0, 20.0);
+            let pivot = crate::prefs::pivot_under(&h.app, &projection(&h.app, rect), at);
+            let start = h.app.cam;
+            let shift = egui::Modifiers { shift: true, ..Default::default() };
+            let send = |h: &mut crate::scenario::Harness, e: egui::Event| {
+                h.app.synthetic.push(e);
+                h.frame();
+            };
+            send(&mut h, egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+            send(&mut h, egui::Event::PointerMoved(at));
+            send(&mut h, egui::Event::PointerButton { pos: at, button: egui::PointerButton::Middle, pressed: true, modifiers: shift });
+            let mut seed: u32 = 12345;
+            let mut next = move || {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                f32::from((seed >> 16) as u16) / 65535.0
+            };
+            for i in 0..300 {
+                // Mostly small moves, now and then a big jump, some of them over the panels.
+                let p = if i % 17 == 0 { pos2(next() * 1600.0, next() * 1000.0) } else { at + vec2((next() - 0.5) * 900.0, (next() - 0.5) * 200.0) };
+                send(&mut h, egui::Event::PointerMoved(p));
+                assert_eq!(h.app.viewport.orbit_pivot, Some(pivot), "move {i}: the pivot is picked once, when the drag begins");
+                let s = projection(&h.app, rect).to_screen(pivot).unwrap();
+                assert!(s.distance(at) < 1.0, "perspective={perspective}, move {i} to {p:?}: the pivot moved to {s:?}");
+            }
+            send(&mut h, egui::Event::PointerMoved(at));
+            let s = projection(&h.app, rect).to_screen(pivot).unwrap();
+            assert!(s.distance(at) < 1.0, "{s:?}");
+            let back = h.app.cam;
+            assert!(
+                (back.yaw - start.yaw).rem_euclid(std::f64::consts::TAU).min((start.yaw - back.yaw).rem_euclid(std::f64::consts::TAU)) < 1e-6,
+                "{start:?} -> {back:?}"
+            );
+            assert!((back.pitch - start.pitch).abs() < 1e-6, "{start:?} -> {back:?}");
+            assert!((back.target - start.target).len() < 1e-4, "back where it began: {start:?} -> {back:?}");
+            send(&mut h, egui::Event::PointerButton { pos: at, button: egui::PointerButton::Middle, pressed: false, modifiers: shift });
+        }
+    }
+
     #[test]
     fn shift_orbit_keeps_cursor_pivot_and_default_middle_pan() {
         let mut h = crate::scenario::Harness::new();
@@ -6298,6 +6460,29 @@ mod grid_plane_tests {
         assert_eq!(*app.viewport.grid_plane.lock().unwrap(), GridPlane::Ground, "a clear turn off the ground returns");
     }
 
+    /// An open sketch always has its grid, on its own plane, whatever the Grid switch and the
+    /// follow-the-view preference say; outside a sketch the switch decides.
+    #[test]
+    fn an_open_sketch_always_shows_a_grid_on_its_plane() {
+        let rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        app.ui.show_grid = false;
+        let grid = |app: &SolveApp| build_sketch_scene(app, &projection(app, rect)).under;
+        assert!(grid(&app).is_empty(), "no grid outside a sketch with the switch off");
+        app.run("sketch.create", json!({"plane": "XZ"})).unwrap();
+        for follows in [false, true] {
+            app.preferences.grid_follows_view = follows;
+            let under = grid(&app);
+            assert!(!under.is_empty(), "the open sketch shows a grid (follows the view: {follows})");
+            // Each line is 32 bytes: two f32 points, a colour and a width; the XZ plane is Y = 0.
+            let ys: Vec<f32> =
+                under.as_chunks::<32>().0.iter().flat_map(|l| [&l[4..8], &l[16..20]]).map(|b| f32::from_le_bytes(b.try_into().unwrap())).collect();
+            assert!(ys.iter().all(|y| y.abs() < 1e-3), "the grid lies on the sketch plane");
+        }
+        app.ui.show_grid = true;
+        assert!(!grid(&app).is_empty());
+    }
+
     /// A sketch is drawn in a parallel view even when the preference asks for perspective; the
     /// preference comes back when the sketch is finished.
     #[test]
@@ -6335,5 +6520,22 @@ mod grid_plane_tests {
         app.ui.show_origin = true;
         let sc = build_highlight(&app);
         assert!(sc.xray.is_empty() && !sc.guide_trans.is_empty(), "outside Create Sketch the planes are depth-tested");
+    }
+
+    /// Primary rolls a live preview back for reselect, but not while a manipulator is dragged
+    /// (same gate [`show`] uses via [`preview_should_roll_back`]).
+    #[test]
+    fn preview_rollback_stays_off_while_manipulator_dragging() {
+        let mut s = solidcraft_engine::Session::default();
+        s.execute("sketch.create", &json!({"plane": "xy"})).unwrap();
+        s.execute("sketch.line", &json!({"points": [[0, 0], [20, 0]]})).unwrap();
+        s.execute("sketch.finish", &json!({})).unwrap();
+        let mut app = SolveApp::new(s, crate::Services::default());
+        app.dialog = crate::dialogs::Dialog::for_command(&app, "solid.extrude");
+        assert!(app.dialog.as_ref().is_some_and(|d| d.previews()), "extrude opens a preview dialog");
+        app.preview.active = true;
+        let primary = crate::tool_modifiers::Held { primary: true, ..Default::default() };
+        assert!(preview_should_roll_back(&app, primary, false), "Primary alone rolls the preview back when a preview dialog is open");
+        assert!(!preview_should_roll_back(&app, primary, true), "Primary must not roll the preview back while a manipulator arrow is dragged");
     }
 }

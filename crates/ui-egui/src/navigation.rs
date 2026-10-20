@@ -169,6 +169,7 @@ pub(crate) fn modifier_motion(
     let previous = app.viewport.modifier_nav;
     if previous.map(|(m, _)| m) != next.map(|(m, _)| m) {
         app.viewport.orbit_pivot = None;
+        app.viewport.orbit_from = None;
         app.viewport.orbit_free = None;
         app.viewport.orbit_snap = None;
     }
@@ -282,8 +283,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     // with no window or menu above it.
     let inside = resp.contains_pointer() && ui.rect_contains_pointer(rect) && hover.is_some_and(|p| !axes.contains(p));
     app.viewport.mouse = hover.filter(|_| inside);
-    // Ctrl or Alt held: drawing and dragging don't snap.
-    crate::drag_snap::set_suppressed(mods.ctrl || mods.alt || mods.command);
+    // Sketch snap suppression is set once in `viewport::show` from preferences.
     middle_double_click(app, ui, inside);
     // The 3D mouse's motion this frame, with what this page's camera may do.
     device(app, rect, caps);
@@ -452,7 +452,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     } else if mode == Some(NavMode::Orbit) {
         let press = ui.input(|i| i.pointer.press_origin());
         app.cancel_view_animation();
-        // Shift can be required to enter orbit (Fusion/Inventor middle drag, Alias Shift+Alt),
+        // Shift can be required to enter orbit (middle drag, Alias Shift+Alt),
         // rather than an additional request for snapping. Only an extra modifier snaps.
         let without_shift = egui::Modifiers { shift: false, ..mods };
         let snap = app.preferences.nav != crate::prefs::OPENSCAD_NAV
@@ -482,6 +482,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     }
     if !dragging && motion.is_none() {
         app.viewport.orbit_pivot = None;
+        app.viewport.orbit_from = None;
     }
     if app.viewport.spin {
         // A click on the navigation bar (its own button) is not a stop.
@@ -715,11 +716,40 @@ pub fn orbit(app: &mut SolveApp, rect: egui::Rect, dx: f64, dy: f64, press: Opti
             }
         }),
     };
-    let Some(pivot) = pivot else {
-        orbit_camera(app, dx, dy);
+    if app.preferences.free_orbit {
+        app.viewport.orbit_from = None;
+        match pivot {
+            Some(p) => orbit_about(app, rect, dx, dy, p),
+            None => orbit_camera(app, dx, dy),
+        }
         return;
+    }
+    // The drag's whole turn so far, applied to the camera it began with: the view depends on
+    // where the pointer is, not on the path it took, so fast or erratic drags (a pitch held at
+    // straight up or down for a while, many tiny steps) can't drift. Anything else that moves
+    // the camera meanwhile (a wheel zoom, a new pivot) starts the sum again from there.
+    let from = match app.viewport.orbit_from {
+        Some(f) if f.last == app.cam && f.pivot == pivot => f,
+        _ => OrbitFrom { start: app.cam, dx: 0.0, dy: 0.0, pivot, last: app.cam },
     };
-    orbit_about(app, rect, dx, dy, pivot);
+    let (dx, dy) = (from.dx + dx, from.dy + dy);
+    app.cam = from.start;
+    match pivot {
+        Some(p) => app.cam.orbit_about(dx, dy, p),
+        None => app.cam.orbit(dx, dy),
+    }
+    app.viewport.orbit_from = Some(OrbitFrom { dx, dy, last: app.cam, ..from });
+}
+
+/// An orbit drag so far: the camera it began with, the pointer's total motion since, the pivot
+/// and the camera that produced.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OrbitFrom {
+    start: Camera,
+    dx: f64,
+    dy: f64,
+    pivot: Option<Vec3>,
+    last: Camera,
 }
 
 /// Rotate rigidly about the chosen pivot, keeping its camera-frame position unchanged.
@@ -739,6 +769,32 @@ fn orbit_camera(app: &mut SolveApp, dx: f64, dy: f64) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn clamped_drag_stays_reversible_and_restarts_after_free_orbit() {
+        use super::*;
+        let rect = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+        for fov in [0.0, 0.6] {
+            let mut app = crate::SolveApp::new(Default::default(), crate::Services::default());
+            app.preferences.orbit_around = OrbitAround::Origin;
+            app.cam = Camera { target: Vec3::new(2.0, 3.0, 4.0), pitch: 1.4, roll: 0.7, fov, ..Default::default() };
+            let start = app.cam;
+            for (dx, dy) in [(120.0, 400.0), (90.0, -200.0), (-210.0, -200.0)] {
+                orbit(&mut app, rect, dx, dy, None);
+            }
+            assert!(app.cam.back().dist(start.back()) < 1e-9);
+            assert!(app.cam.target.dist(start.target) < 1e-9);
+            app.preferences.free_orbit = true;
+            orbit(&mut app, rect, 0.0, 80.0, None);
+            assert!((app.cam.back().dot(start.back()) - 0.64_f64.cos()).abs() < 1e-9);
+            let mut next = app.cam;
+            next.orbit_about(10.0, 20.0, Vec3::ZERO);
+            app.preferences.free_orbit = false;
+            orbit(&mut app, rect, 10.0, 20.0, None);
+            assert!(app.cam.back().dist(next.back()) < 1e-9);
+            assert!(app.cam.target.dist(next.target) < 1e-9);
+        }
+    }
+
     fn touchpad_frame(app: &mut crate::SolveApp, ctx: &egui::Context, caps: super::NavCaps, at: egui::Pos2, mods: egui::Modifiers, time: &mut f64) {
         *time += 1.0 / 60.0;
         let raw = egui::RawInput {
